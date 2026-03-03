@@ -1,0 +1,68 @@
+# Paper Soccer Strategy Engine (Base v0)
+
+This repository contains a deterministic C++20 baseline for paper soccer with:
+
+- A pure rules engine (`papersoccer_core`)
+- A terminal CLI for human-vs-human play (`papersoccer_cli`)
+- Dependency-free tests integrated with CTest (`papersoccer_tests`)
+
+The current version intentionally focuses on core game correctness so minimax/MCTS bots can be added on top without refactoring game state logic.
+
+## Rules Implemented (Kurnik-style defaults)
+
+- Field points: `x in [0,8]`, `y in [0,10]`
+- Start point: `(4,5)`
+- 8-direction moves to neighboring points
+- Segments are undirected and cannot be reused
+- Movement along the outer boundary lines is forbidden
+- Player 1 attacks north goal `(4,-1)`, Player 2 attacks south goal `(4,11)`
+- Goal entries are legal only from mouth points:
+  - North mouth: `(3,0)`, `(4,0)`, `(5,0)`
+  - South mouth: `(3,10)`, `(4,10)`, `(5,10)`
+- Entering opponent goal wins immediately
+- Extra turn when landing on:
+  - Any previously visited point
+  - Any boundary point of the field rectangle
+- If the player to move has zero legal moves at turn start, that player loses
+
+## Build
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+## Run Tests
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+You can also run the test binary directly:
+
+```bash
+./build/papersoccer_tests
+```
+
+## Run CLI
+
+```bash
+./build/papersoccer_cli
+```
+
+CLI commands:
+
+- `<index>`: play the move with that index
+- `h`: help
+- `q`: quit
+
+## Project Layout
+
+- `include/papersoccer/types.hpp` - core types and hashing
+- `include/papersoccer/geometry.hpp` - geometry and adjacency helpers
+- `include/papersoccer/rules.hpp` - game rules API
+- `src/geometry.cpp` - geometry implementation
+- `src/rules.cpp` - state transitions and legal move logic
+- `src/cli/main.cpp` - terminal game loop
+- `tests/test_main.cpp` - test entrypoint
+- `tests/rules_test.cpp` - rule correctness scenarios
