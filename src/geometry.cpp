@@ -9,19 +9,24 @@ namespace {
 
 int center_x(const RulesConfig &config) { return config.width / 2; }
 
+int mouth_left_x(const RulesConfig &config) { return center_x(config) - 1; }
+
+int mouth_right_x(const RulesConfig &config) { return center_x(config) + 1; }
+
+bool is_mouth_x(const RulesConfig &config, int x) {
+  return x >= mouth_left_x(config) && x <= mouth_right_x(config);
+}
+
 bool is_north_goal(const RulesConfig &config, Point point) {
-  return point.x == center_x(config) && point.y == -1;
+  return is_mouth_x(config, point.x) && point.y == -1;
 }
 
 bool is_south_goal(const RulesConfig &config, Point point) {
-  return point.x == center_x(config) && point.y == config.height + 1;
+  return is_mouth_x(config, point.x) && point.y == config.height + 1;
 }
 
 bool is_goal_mouth_point(const RulesConfig &config, Point point) {
-  const int mouth_left = center_x(config) - 1;
-  const int mouth_right = center_x(config) + 1;
-  const bool in_mouth_x = point.x >= mouth_left && point.x <= mouth_right;
-  return in_mouth_x && (point.y == 0 || point.y == config.height);
+  return is_mouth_x(config, point.x) && (point.y == 0 || point.y == config.height);
 }
 
 }  // namespace
@@ -94,10 +99,10 @@ std::vector<Point> neighbors(const RulesConfig &config, Point from, Player playe
 
   if (is_goal_mouth_point(config, from)) {
     if (player == Player::One && from.y == 0) {
-      result.push_back(Point{center_x(config), -1});
+      result.push_back(Point{from.x, -1});
     }
     if (player == Player::Two && from.y == config.height) {
-      result.push_back(Point{center_x(config), config.height + 1});
+      result.push_back(Point{from.x, config.height + 1});
     }
   }
 

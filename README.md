@@ -15,10 +15,11 @@ The current version intentionally focuses on core game correctness so minimax/MC
 - 8-direction moves to neighboring points
 - Segments are undirected and cannot be reused
 - Movement along the outer boundary lines is forbidden
-- Player 1 attacks north goal `(4,-1)`, Player 2 attacks south goal `(4,11)`
-- Goal entries are legal only from mouth points:
-  - North mouth: `(3,0)`, `(4,0)`, `(5,0)`
-  - South mouth: `(3,10)`, `(4,10)`, `(5,10)`
+- Player 1 attacks north goal row `y=-1`, Player 2 attacks south goal row `y=11`
+- Goal nodes per side: `(3,±1)`, `(4,±1)`, `(5,±1)` (north uses `-1`, south uses `11`)
+- Goal entries are legal only from matching mouth lanes:
+  - `(3,0)->(3,-1)`, `(4,0)->(4,-1)`, `(5,0)->(5,-1)`
+  - `(3,10)->(3,11)`, `(4,10)->(4,11)`, `(5,10)->(5,11)`
 - Entering opponent goal wins immediately
 - Extra turn when landing on:
   - Any previously visited point

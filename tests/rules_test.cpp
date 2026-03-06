@@ -147,12 +147,14 @@ void no_legal_moves_on_turn_causes_loss() {
 
 void goal_move_is_legal_only_from_goal_mouth_points() {
   ps::GameState not_mouth = make_clean_state_at(ps::Point{2, 0}, ps::Player::One);
-  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{4, -1}),
+  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{3, -1}),
           "North goal should not be reachable from non-mouth point.");
 
   ps::GameState mouth = make_clean_state_at(ps::Point{3, 0}, ps::Player::One);
-  require(contains_move(ps::legal_moves(mouth), ps::Point{4, -1}),
-          "North goal should be reachable from mouth point.");
+  require(contains_move(ps::legal_moves(mouth), ps::Point{3, -1}),
+          "North goal lane should be reachable from matching mouth point.");
+  require(!contains_move(ps::legal_moves(mouth), ps::Point{4, -1}),
+          "North goal lanes should map by matching x-coordinate.");
 }
 
 void apply_move_is_pure_on_invalid_move() {

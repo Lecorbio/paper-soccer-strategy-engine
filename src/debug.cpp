@@ -22,6 +22,10 @@ int row_count(const RulesConfig &config) {
 
 int col_count(const RulesConfig &config) { return (config.width + 1) * 2 - 1; }
 
+int mouth_left_x(const RulesConfig &config) { return (config.width / 2) - 1; }
+
+int mouth_right_x(const RulesConfig &config) { return (config.width / 2) + 1; }
+
 bool is_renderable_point(const RulesConfig &config, Point point) {
   return is_regular_point(config, point) || is_goal_point(config, point);
 }
@@ -82,15 +86,32 @@ std::string render_ascii(const GameState &state) {
                                 std::string(static_cast<std::size_t>(cols), ' '));
 
   for (int x = 0; x < state.config.width; ++x) {
-    put(grid, to_row(state.config, Point{x, 0}), to_col(Point{x, 0}) + 1, '=');
-    put(grid, to_row(state.config, Point{x, state.config.height}),
-        to_col(Point{x, state.config.height}) + 1, '=');
+    const bool in_goal_opening = (x >= mouth_left_x(state.config) && x < mouth_right_x(state.config));
+    if (!in_goal_opening) {
+      put(grid, to_row(state.config, Point{x, 0}), to_col(Point{x, 0}) + 1, '=');
+      put(grid, to_row(state.config, Point{x, state.config.height}),
+          to_col(Point{x, state.config.height}) + 1, '=');
+    }
   }
   for (int y = 0; y < state.config.height; ++y) {
     put(grid, to_row(state.config, Point{0, y}) + 1, to_col(Point{0, y}), '!');
     put(grid, to_row(state.config, Point{state.config.width, y}) + 1,
         to_col(Point{state.config.width, y}), '!');
   }
+
+  for (int x = mouth_left_x(state.config); x < mouth_right_x(state.config); ++x) {
+    put(grid, to_row(state.config, Point{x, -1}), to_col(Point{x, -1}) + 1, '=');
+    put(grid, to_row(state.config, Point{x, state.config.height + 1}),
+        to_col(Point{x, state.config.height + 1}) + 1, '=');
+  }
+  put(grid, to_row(state.config, Point{mouth_left_x(state.config), -1}) + 1,
+      to_col(Point{mouth_left_x(state.config), -1}), '!');
+  put(grid, to_row(state.config, Point{mouth_right_x(state.config), -1}) + 1,
+      to_col(Point{mouth_right_x(state.config), -1}), '!');
+  put(grid, to_row(state.config, Point{mouth_left_x(state.config), state.config.height}) + 1,
+      to_col(Point{mouth_left_x(state.config), state.config.height}), '!');
+  put(grid, to_row(state.config, Point{mouth_right_x(state.config), state.config.height}) + 1,
+      to_col(Point{mouth_right_x(state.config), state.config.height}), '!');
 
   for (const Segment &segment : state.used_segments) {
     if (!is_renderable_point(state.config, segment.a) ||
@@ -110,10 +131,12 @@ std::string render_ascii(const GameState &state) {
     }
   }
 
-  const Point north_goal{state.config.width / 2, -1};
-  const Point south_goal{state.config.width / 2, state.config.height + 1};
-  put(grid, to_row(state.config, north_goal), to_col(north_goal), '^');
-  put(grid, to_row(state.config, south_goal), to_col(south_goal), 'v');
+  for (int x = mouth_left_x(state.config); x <= mouth_right_x(state.config); ++x) {
+    const Point north_goal{x, -1};
+    const Point south_goal{x, state.config.height + 1};
+    put(grid, to_row(state.config, north_goal), to_col(north_goal), '^');
+    put(grid, to_row(state.config, south_goal), to_col(south_goal), 'v');
+  }
 
   if (is_renderable_point(state.config, state.ball)) {
     put(grid, to_row(state.config, state.ball), to_col(state.ball), '@');
