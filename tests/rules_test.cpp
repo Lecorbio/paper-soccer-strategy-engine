@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "papersoccer/debug.hpp"
 #include "papersoccer/rules.hpp"
 
 namespace ps = papersoccer;
@@ -169,6 +170,24 @@ void apply_move_is_pure_on_invalid_move() {
   require(same_state(state, snapshot), "apply_move must not mutate input state on failure.");
 }
 
+void renderer_includes_ball_goals_and_walls() {
+  const ps::GameState state = ps::make_initial_state();
+  const std::string rendered = ps::render_ascii(state);
+  require(rendered.find("@") != std::string::npos, "Renderer should show current ball.");
+  require(rendered.find("^") != std::string::npos, "Renderer should show north goal.");
+  require(rendered.find("v") != std::string::npos, "Renderer should show south goal.");
+  require(rendered.find("=") != std::string::npos, "Renderer should show top/bottom walls.");
+  require(rendered.find("!") != std::string::npos, "Renderer should show left/right walls.");
+}
+
+void renderer_shows_used_segments() {
+  ps::GameState state = ps::make_initial_state();
+  state = ps::apply_move(state, ps::Move{{5, 5}});
+  const std::string rendered = ps::render_ascii(state);
+  require(rendered.find("-") != std::string::npos,
+          "Renderer should include segment markers for used edges.");
+}
+
 }  // namespace
 
 int run_rules_tests() {
@@ -190,6 +209,8 @@ int run_rules_tests() {
       {"goal_move_is_legal_only_from_goal_mouth_points",
        goal_move_is_legal_only_from_goal_mouth_points},
       {"apply_move_is_pure_on_invalid_move", apply_move_is_pure_on_invalid_move},
+      {"renderer_includes_ball_goals_and_walls", renderer_includes_ball_goals_and_walls},
+      {"renderer_shows_used_segments", renderer_shows_used_segments},
   };
 
   int failures = 0;

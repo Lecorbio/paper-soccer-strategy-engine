@@ -11,6 +11,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_library(papersoccer_core
+  src/debug.cpp
   src/geometry.cpp
   src/rules.cpp
 )
