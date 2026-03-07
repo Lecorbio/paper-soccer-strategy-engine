@@ -64,6 +64,10 @@ std::string player_to_string(Player player) {
   return player == Player::One ? "One" : "Two";
 }
 
+std::string format_position(Point point) {
+  return "(" + std::to_string(point.y) + ", " + std::to_string(point.x) + ")";
+}
+
 void put(std::vector<std::string> &grid, int row, int col, char value) {
   if (row < 0 || col < 0) {
     return;
@@ -145,7 +149,7 @@ std::string render_ascii(const GameState &state) {
   std::ostringstream out;
   out << "Turn: " << player_to_string(state.to_move) << "\n";
   out << "Status: " << status_to_string(state.status) << "\n";
-  out << "Ball: (" << state.ball.x << ", " << state.ball.y << ")\n";
+  out << "Ball: " << format_position(state.ball) << " [row, column]\n";
   out << "Legend: @ ball, . interior, o boundary, ^ north goal, v south goal, =/! walls\n";
   out << "\n";
 

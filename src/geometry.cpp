@@ -99,10 +99,20 @@ std::vector<Point> neighbors(const RulesConfig &config, Point from, Player playe
 
   if (is_goal_mouth_point(config, from)) {
     if (player == Player::One && from.y == 0) {
-      result.push_back(Point{from.x, -1});
+      for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
+        const Point goal_point{goal_x, -1};
+        if (is_neighbor(from, goal_point)) {
+          result.push_back(goal_point);
+        }
+      }
     }
     if (player == Player::Two && from.y == config.height) {
-      result.push_back(Point{from.x, config.height + 1});
+      for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
+        const Point goal_point{goal_x, config.height + 1};
+        if (is_neighbor(from, goal_point)) {
+          result.push_back(goal_point);
+        }
+      }
     }
   }
 
