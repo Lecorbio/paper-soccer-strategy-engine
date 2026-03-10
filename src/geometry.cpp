@@ -29,6 +29,29 @@ bool is_goal_mouth_point(const RulesConfig &config, Point point) {
   return is_mouth_x(config, point.x) && (point.y == 0 || point.y == config.height);
 }
 
+bool is_north_goal_post_segment(const RulesConfig &config, Segment segment) {
+  const bool touches_north_goal = is_north_goal(config, segment.a) || is_north_goal(config, segment.b);
+  if (!touches_north_goal) {
+    return false;
+  }
+
+  return segment.a.x == segment.b.x &&
+         (segment.a.x == mouth_left_x(config) || segment.a.x == mouth_right_x(config)) &&
+         ((segment.a.y == -1 && segment.b.y == 0) || (segment.a.y == 0 && segment.b.y == -1));
+}
+
+bool is_south_goal_post_segment(const RulesConfig &config, Segment segment) {
+  const bool touches_south_goal = is_south_goal(config, segment.a) || is_south_goal(config, segment.b);
+  if (!touches_south_goal) {
+    return false;
+  }
+
+  return segment.a.x == segment.b.x &&
+         (segment.a.x == mouth_left_x(config) || segment.a.x == mouth_right_x(config)) &&
+         ((segment.a.y == config.height && segment.b.y == config.height + 1) ||
+          (segment.a.y == config.height + 1 && segment.b.y == config.height));
+}
+
 }  // namespace
 
 bool is_regular_point(const RulesConfig &config, Point point) {
@@ -55,6 +78,10 @@ bool is_neighbor(Point from, Point to) {
 }
 
 bool is_forbidden_boundary_segment(const RulesConfig &config, Segment segment) {
+  if (is_north_goal_post_segment(config, segment) || is_south_goal_post_segment(config, segment)) {
+    return true;
+  }
+
   if (!is_regular_point(config, segment.a) || !is_regular_point(config, segment.b)) {
     return false;
   }

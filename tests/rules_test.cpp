@@ -153,8 +153,8 @@ void goal_move_is_legal_only_from_goal_mouth_points() {
           "North goal should not be reachable from non-mouth point.");
 
   ps::GameState left_mouth = make_clean_state_at(ps::Point{3, 0}, ps::Player::One);
-  require(contains_move(ps::legal_moves(left_mouth), ps::Point{3, -1}),
-          "Left mouth point should connect to adjacent left goal point.");
+  require(!contains_move(ps::legal_moves(left_mouth), ps::Point{3, -1}),
+          "Left mouth point should not move straight onto the left goal post.");
   require(contains_move(ps::legal_moves(left_mouth), ps::Point{4, -1}),
           "Left mouth point should connect diagonally to center goal point.");
   require(!contains_move(ps::legal_moves(left_mouth), ps::Point{5, -1}),
@@ -167,6 +167,12 @@ void goal_move_is_legal_only_from_goal_mouth_points() {
           "Center mouth point should connect to center goal point.");
   require(contains_move(ps::legal_moves(center_mouth), ps::Point{5, -1}),
           "Center mouth point should connect diagonally to right goal point.");
+
+  ps::GameState right_mouth = make_clean_state_at(ps::Point{5, 0}, ps::Player::One);
+  require(contains_move(ps::legal_moves(right_mouth), ps::Point{4, -1}),
+          "Right mouth point should connect diagonally to center goal point.");
+  require(!contains_move(ps::legal_moves(right_mouth), ps::Point{5, -1}),
+          "Right mouth point should not move straight onto the right goal post.");
 }
 
 void apply_move_is_pure_on_invalid_move() {
