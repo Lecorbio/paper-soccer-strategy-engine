@@ -1,0 +1,287 @@
+:root {
+  color-scheme: light;
+  --page: #e7e4d8;
+  --panel: #f7f3e7;
+  --panel-strong: #fffaf0;
+  --ink: #20252b;
+  --muted: #65707a;
+  --line: #c7c0ad;
+  --field: #4f8d4d;
+  --field-dark: #386f3d;
+  --wall: #f1ecd6;
+  --p1: #c93b3b;
+  --p2: #2067a6;
+  --accent: #d99b2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.35rem;
+  font-weight: 720;
+}
+
+h2 {
+  font-size: 0.95rem;
+  font-weight: 720;
+}
+
+.topbar p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.file-button,
+button {
+  border: 1px solid #a99f88;
+  border-radius: 7px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+.file-button:hover,
+button:hover {
+  background: #fffdf7;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.file-button input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 340px;
+  gap: 18px;
+  min-height: calc(100vh - 88px);
+  padding: 18px;
+}
+
+.board-panel,
+.control-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.board-panel {
+  height: calc(100vh - 124px);
+  min-height: 620px;
+  max-height: 860px;
+  overflow: hidden;
+}
+
+#boardCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--field-dark);
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 124px);
+  min-height: 620px;
+  max-height: 860px;
+  padding: 16px;
+}
+
+.status-block {
+  border-top: 1px solid var(--line);
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.status-row span,
+.range-row span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status-row strong,
+.range-row strong {
+  font-size: 0.95rem;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.button-row button {
+  padding-inline: 8px;
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: 78px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.range-row:first-of-type {
+  grid-template-columns: 78px 1fr;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+  min-width: 0;
+}
+
+.move-list-section {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.move-list {
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ede7d6;
+}
+
+.move-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid #d5cbb6;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.move-row:last-child {
+  border-bottom: 0;
+}
+
+.move-row.is-active {
+  background: #fff3cf;
+}
+
+.move-row .player-one {
+  color: var(--p1);
+  font-weight: 720;
+}
+
+.move-row .player-two {
+  color: var(--p2);
+  font-weight: 720;
+}
+
+.extra-turn {
+  border-radius: 999px;
+  background: #d6ead2;
+  color: #245a2a;
+  font-size: 0.78rem;
+  padding: 2px 7px;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .board-panel,
+  .control-panel {
+    height: auto;
+    max-height: none;
+    min-height: auto;
+  }
+
+  #boardCanvas {
+    height: 620px;
+  }
+
+  .control-panel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 620px) {
+  body {
+    font-size: 15px;
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 14px;
+  }
+
+  .app-shell {
+    padding: 10px;
+  }
+
+  #boardCanvas {
+    height: 520px;
+  }
+
+  .button-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

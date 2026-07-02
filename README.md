@@ -5,6 +5,8 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A pure rules engine (`papersoccer_core`)
 - A terminal CLI for human and bot play (`papersoccer_cli`)
 - A seeded bot layer for automated play experiments
+- A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
+- A static browser replay viewer (`web/index.html`)
 - Dependency-free tests integrated with CTest (`papersoccer_tests`)
 
 The current version intentionally focuses on core game correctness so minimax/MCTS bots can be added on top without refactoring game state logic.
@@ -76,6 +78,29 @@ Player 2 uses `base_seed + 1`, which makes bot games reproducible.
 User-facing coordinates in the CLI and renderer are shown as `(row, column)`.
 Internally, the engine still stores points as `Point{x, y}`.
 
+## Run Web Replay Viewer
+
+Open the static viewer directly:
+
+```bash
+open web/index.html
+```
+
+The viewer includes a built-in RandomBot replay, so it works without a server.
+
+Generate a new bot-vs-bot replay as JSON:
+
+```bash
+./build/papersoccer_replay_export 12345 512 > replay.json
+```
+
+Arguments are optional:
+
+- `base-seed`: defaults to `RandomBot::default_seed()`
+- `max-plies`: defaults to `512`
+
+Use the viewer's `Load JSON` button to load the generated file.
+
 ## Project Layout
 
 - `include/papersoccer/types.hpp` - core types and hashing
@@ -86,6 +111,10 @@ Internally, the engine still stores points as `Point{x, y}`.
 - `src/geometry.cpp` - geometry implementation
 - `src/rules.cpp` - state transitions and legal move logic
 - `src/cli/main.cpp` - terminal game loop
+- `src/replay/main.cpp` - bot self-play JSON replay exporter
+- `web/index.html` - static web replay viewer
+- `web/app.js` - canvas rendering and replay controls
+- `web/styles.css` - viewer styling
 - `tests/bot_test.cpp` - bot determinism and legality checks
 - `tests/test_main.cpp` - test entrypoint
 - `tests/rules_test.cpp` - rule correctness scenarios

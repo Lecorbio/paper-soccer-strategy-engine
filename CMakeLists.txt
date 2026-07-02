@@ -21,6 +21,9 @@ target_include_directories(papersoccer_core PUBLIC include)
 add_executable(papersoccer_cli src/cli/main.cpp)
 target_link_libraries(papersoccer_cli PRIVATE papersoccer_core)
 
+add_executable(papersoccer_replay_export src/replay/main.cpp)
+target_link_libraries(papersoccer_replay_export PRIVATE papersoccer_core)
+
 add_executable(papersoccer_tests
   tests/bot_test.cpp
   tests/test_main.cpp
