@@ -232,14 +232,25 @@
     const height = canvas.clientHeight;
     const spanX = replay.rules.width;
     const spanY = replay.rules.height + 2;
-    const gutter = Math.max(34, Math.min(width, height) * 0.07);
-    const cell = Math.min((width - gutter * 2) / spanX, (height - gutter * 2) / spanY);
+    const shortSide = Math.min(width, height);
+    const safeMargin = Math.max(24, shortSide * 0.045);
+    const axisSpace = Math.max(36, Math.min(48, shortSide * 0.075));
+    const margins = {
+      top: safeMargin,
+      right: safeMargin,
+      bottom: safeMargin + axisSpace,
+      left: safeMargin + axisSpace,
+    };
+    const availableWidth = Math.max(1, width - margins.left - margins.right);
+    const availableHeight = Math.max(1, height - margins.top - margins.bottom);
+    const cell = Math.min(availableWidth / spanX, availableHeight / spanY);
     const boardWidth = cell * spanX;
     const boardHeight = cell * spanY;
-    const originX = (width - boardWidth) / 2;
-    const originY = (height - boardHeight) / 2;
+    const originX = margins.left + (availableWidth - boardWidth) / 2;
+    const originY = margins.top + (availableHeight - boardHeight) / 2;
 
     return {
+      axisGap: Math.max(28, axisSpace * 0.72),
       cell,
       point(point) {
         return {
@@ -426,20 +437,24 @@
   }
 
   function drawCoordinates(mapper) {
-    ctx.fillStyle = "rgba(255, 250, 230, 0.75)";
-    ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+    const fontSize = Math.max(12, Math.min(14, mapper.cell * 0.3));
+    const xAxisY = mapper.point({ x: 0, y: southGoalY() }).y + mapper.axisGap;
+    const yAxisX = mapper.point({ x: 0, y: 0 }).x - mapper.axisGap;
+
+    ctx.fillStyle = "rgba(255, 250, 230, 0.8)";
+    ctx.font = `600 ${fontSize}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
     for (let x = 0; x <= replay.rules.width; x += 1) {
-      const point = mapper.point({ x, y: fieldBottomY() });
-      ctx.fillText(String(x), point.x, point.y + mapper.cell * 0.48);
+      const point = mapper.point({ x, y: southGoalY() });
+      ctx.fillText(String(x), point.x, xAxisY);
     }
 
     ctx.textAlign = "right";
     for (let y = 0; y <= southGoalY(); y += 1) {
       const point = mapper.point({ x: 0, y });
-      ctx.fillText(String(y), point.x - mapper.cell * 0.34, point.y);
+      ctx.fillText(String(y), yAxisX, point.y);
     }
   }
 
