@@ -18,6 +18,7 @@ enum class WebGameErrorCode {
   TerminalGame,
   MoveOutOfRange,
   NoLegalMoves,
+  ReplayComplete,
 };
 
 std::string_view web_game_error_code_name(WebGameErrorCode code) noexcept;
@@ -37,12 +38,15 @@ struct WebGameCommandResult {
 
 class WebGameSession {
  public:
+  WebGameSession(Player human_player, BotConfig bot_config,
+                 const RulesConfig &config = {}, std::uint32_t session_id = 0);
   WebGameSession(Player human_player, std::uint64_t bot_seed,
                  const RulesConfig &config = {}, std::uint32_t session_id = 0);
 
   const Match &match() const noexcept;
   Player human_player() const noexcept;
   Player bot_player() const noexcept;
+  const BotConfig &bot_config() const noexcept;
   std::uint64_t bot_seed() const noexcept;
   std::uint32_t session_id() const noexcept;
   std::uint64_t revision() const noexcept;
@@ -61,10 +65,45 @@ class WebGameSession {
 
   Match match_;
   Player human_player_;
-  std::uint64_t bot_seed_;
-  RandomBot bot_;
+  BotConfig bot_config_;
+  std::unique_ptr<Bot> bot_;
   std::uint32_t session_id_;
   std::uint64_t revision_{0};
+};
+
+class WebBotReplaySession {
+ public:
+  WebBotReplaySession(BotConfig player_one, BotConfig player_two,
+                      std::size_t max_plies = 512,
+                      const RulesConfig &config = {},
+                      std::uint32_t session_id = 0);
+
+  const Match &match() const noexcept;
+  const BotConfig &player_one_config() const noexcept;
+  const BotConfig &player_two_config() const noexcept;
+  std::size_t max_plies() const noexcept;
+  std::uint32_t session_id() const noexcept;
+  std::uint64_t revision() const noexcept;
+  bool done() const noexcept;
+  bool truncated() const noexcept;
+
+  std::string snapshot_json() const;
+  WebGameCommandResult play_next(std::uint64_t expected_revision);
+
+ private:
+  WebGameCommandResult success(PlayedMove move) const;
+  WebGameCommandResult failure(WebGameErrorCode code, std::string message) const;
+
+  Match match_;
+  BotConfig player_one_config_;
+  BotConfig player_two_config_;
+  std::unique_ptr<Bot> player_one_bot_;
+  std::unique_ptr<Bot> player_two_bot_;
+  std::size_t max_plies_;
+  std::uint32_t session_id_;
+  std::uint64_t revision_{0};
+  bool done_{false};
+  bool truncated_{false};
 };
 
 }  // namespace papersoccer

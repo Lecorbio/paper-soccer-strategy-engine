@@ -99,6 +99,50 @@ void player_two_snapshot_assigns_the_bot_to_player_one() {
           "Typed session metadata should match the serialized controller assignment.");
 }
 
+void configured_bot_kind_is_used_and_serialized() {
+  const ps::BotConfig config{
+      ps::BotKind::Mcts,
+      std::numeric_limits<std::uint64_t>::max(),
+      8,
+  };
+  ps::WebGameSession session(ps::Player::Two, config, ps::RulesConfig{}, 43);
+  std::unique_ptr<ps::Bot> control = ps::make_bot(config);
+  const ps::Move expected = control->choose_move(session.match().state());
+
+  require(ps::bot_kind_name(ps::BotKind::Random) == "RandomBot" &&
+              ps::bot_kind_name(ps::BotKind::Mcts) == "MctsBot",
+          "Bot kinds should expose stable replay names.");
+  require(session.bot_config().kind == ps::BotKind::Mcts &&
+              session.bot_config().seed == config.seed &&
+              session.bot_config().mcts_iterations == 8,
+          "The web session should expose the complete selected bot config.");
+
+  const std::string before = session.snapshot_json();
+  require(before.find("\"one\":{\"kind\":\"MctsBot\",\"seed\":"
+                      "\"18446744073709551615\",\"iterations\":8}") !=
+              std::string::npos,
+          "The replay should serialize MCTS kind, exact seed, and iteration budget.");
+  require(before.find("\"two\":{\"kind\":\"Human\"}") != std::string::npos,
+          "The selected human side should remain human in MCTS replay metadata.");
+
+  const ps::WebGameCommandResult result = session.play_bot(0);
+  require(result.ok() && result.move.has_value() && result.move->to == expected.to,
+          "The live web session should move with the configured MctsBot.");
+}
+
+void bot_factory_rejects_unknown_kinds() {
+  ps::BotConfig config;
+  config.kind = static_cast<ps::BotKind>(99);
+
+  bool threw = false;
+  try {
+    (void)ps::make_bot(config);
+  } catch (const std::invalid_argument &) {
+    threw = true;
+  }
+  require(threw, "The shared bot factory should reject unknown bot kinds.");
+}
+
 void stale_revision_is_rejected_without_advancing_the_bot_rng() {
   ps::WebGameSession rejected_first(ps::Player::Two, 17);
   ps::WebGameSession control(ps::Player::Two, 17);
@@ -194,6 +238,121 @@ void terminal_session_rejects_both_controller_commands() {
           "A terminal snapshot should expose no legal destinations.");
 }
 
+void zero_length_bot_replay_is_immediately_truncated() {
+  const ps::BotConfig player_one{
+      ps::BotKind::Random,
+      std::numeric_limits<std::uint64_t>::max(),
+      8,
+  };
+  const ps::BotConfig player_two{ps::BotKind::Mcts, 29, 8};
+  ps::WebBotReplaySession replay(player_one, player_two, 0,
+                                 ps::RulesConfig{}, 71);
+
+  require(replay.done() && replay.truncated() && replay.revision() == 0 &&
+              replay.match().history().empty(),
+          "A zero-ply replay should finish immediately without choosing a move.");
+  require(replay.max_plies() == 0 &&
+              replay.player_one_config().seed == player_one.seed &&
+              replay.player_two_config().kind == ps::BotKind::Mcts,
+          "A replay session should expose its independent configurations and limit.");
+
+  const std::string snapshot = replay.snapshot_json();
+  require(snapshot.find("\"schema\":\"papersoccer.bot-replay-session.v1\"") !=
+              std::string::npos,
+          "A bot replay snapshot should identify its session schema.");
+  require(snapshot.find("\"sessionId\":71,\"revision\":0,\"done\":true") !=
+              std::string::npos,
+          "The initial snapshot should expose replay identity, revision, and completion.");
+  require(snapshot.find("\"one\":{\"kind\":\"RandomBot\",\"seed\":"
+                      "\"18446744073709551615\"}") != std::string::npos,
+          "Player One metadata should preserve its independently selected full seed.");
+  require(snapshot.find("\"two\":{\"kind\":\"MctsBot\",\"seed\":\"29\","
+                      "\"iterations\":8}") != std::string::npos,
+          "Player Two metadata should preserve its independent MCTS config.");
+  require(snapshot.find("\"status\":\"inProgress\",\"winner\":null,"
+                      "\"truncated\":true,\"moves\":[]") != std::string::npos,
+          "A zero-ply replay document should be in progress but explicitly truncated.");
+
+  require_error(replay.play_next(0), ps::WebGameErrorCode::ReplayComplete,
+                "A completed zero-ply replay should reject generation commands");
+}
+
+void bot_replay_steps_one_ply_per_revision_and_truncates_at_limit() {
+  const ps::BotConfig player_one{ps::BotKind::Random, 17, 8};
+  const ps::BotConfig player_two{ps::BotKind::Random, 18, 8};
+  ps::WebBotReplaySession replay(player_one, player_two, 2,
+                                 ps::RulesConfig{}, 73);
+  ps::WebBotReplaySession control(player_one, player_two, 2);
+
+  const std::string initial = replay.snapshot_json();
+  require_error(replay.play_next(9), ps::WebGameErrorCode::StaleRevision,
+                "A stale bot-replay command should be rejected");
+  require(replay.snapshot_json() == initial,
+          "Rejecting a stale replay command should not consume bot randomness.");
+
+  const ps::WebGameCommandResult first = replay.play_next(0);
+  const ps::WebGameCommandResult expected_first = control.play_next(0);
+  require(first.ok() && expected_first.ok() && first.move == expected_first.move,
+          "A current replay command should choose exactly one deterministic bot move.");
+  require(first.revision == 1 && replay.revision() == 1 && !replay.done() &&
+              replay.match().history().size() == 1,
+          "The first replay move should advance one revision without reaching the limit.");
+
+  const ps::WebGameCommandResult second = replay.play_next(1);
+  require(second.ok() && second.revision == 2 && replay.done() && replay.truncated(),
+          "The second in-progress move should finish and truncate a two-ply replay.");
+  require(replay.match().history().size() == 2,
+          "Reaching the replay limit should retain exactly the configured move count.");
+  const std::string complete = replay.snapshot_json();
+  require(complete.find("\"revision\":2,\"done\":true") != std::string::npos &&
+              complete.find("\"truncated\":true,\"moves\":[") !=
+                  std::string::npos,
+          "A limited replay snapshot should expose its final revision and truncation.");
+
+  require_error(replay.play_next(2), ps::WebGameErrorCode::ReplayComplete,
+                "A replay at its ply limit should reject further commands");
+  require(replay.snapshot_json() == complete,
+          "Rejecting a command after completion should not mutate the replay.");
+}
+
+void bounded_mcts_bot_replay_uses_the_selected_player_config() {
+  const ps::BotConfig player_one{ps::BotKind::Mcts, 31, 8};
+  const ps::BotConfig player_two{ps::BotKind::Random, 37, 8};
+  ps::WebBotReplaySession replay(player_one, player_two, 1);
+  std::unique_ptr<ps::Bot> control = ps::make_bot(player_one);
+  const ps::Move expected = control->choose_move(replay.match().state());
+
+  const ps::WebGameCommandResult result = replay.play_next(0);
+  require(result.ok() && result.move.has_value() &&
+              result.move->player == ps::Player::One &&
+              result.move->to == expected.to,
+          "The replay should use Player One's selected bounded MctsBot.");
+  require(replay.done() && replay.truncated(),
+          "A one-ply nonterminal MCTS replay should truncate at its bound.");
+}
+
+void bot_replay_runs_to_a_terminal_untruncated_game() {
+  ps::WebBotReplaySession replay(
+      ps::BotConfig{ps::BotKind::Random, 17, 8},
+      ps::BotConfig{ps::BotKind::Random, 18, 8}, 512);
+
+  while (!replay.done()) {
+    const ps::WebGameCommandResult result = replay.play_next(replay.revision());
+    require(result.ok(), "Every current self-play command should succeed.");
+    require(replay.revision() <= 512,
+            "The deterministic self-play fixture should finish within its limit.");
+  }
+
+  require(ps::is_terminal(replay.match().state()) && !replay.truncated() &&
+              replay.revision() == replay.match().history().size(),
+          "A naturally completed bot replay should be terminal and untruncated.");
+  const std::string snapshot = replay.snapshot_json();
+  require(snapshot.find("\"done\":true") != std::string::npos &&
+              snapshot.find("\"truncated\":false") != std::string::npos &&
+              snapshot.find("\"winner\":null") == std::string::npos,
+          "A terminal replay snapshot should expose completion and a winner.");
+}
+
 void error_codes_have_stable_bridge_names() {
   require(ps::web_game_error_code_name(ps::WebGameErrorCode::StaleSession) ==
                   "stale_session" &&
@@ -206,7 +365,9 @@ void error_codes_have_stable_bridge_names() {
               ps::web_game_error_code_name(ps::WebGameErrorCode::MoveOutOfRange) ==
                   "move_out_of_range" &&
               ps::web_game_error_code_name(ps::WebGameErrorCode::NoLegalMoves) ==
-                  "no_legal_moves",
+                  "no_legal_moves" &&
+              ps::web_game_error_code_name(ps::WebGameErrorCode::ReplayComplete) ==
+                  "replay_complete",
           "Every command error should have a stable machine-readable bridge name.");
 }
 
@@ -235,6 +396,9 @@ int run_web_game_session_tests() {
        successful_human_move_advances_revision_and_replay},
       {"player_two_snapshot_assigns_the_bot_to_player_one",
        player_two_snapshot_assigns_the_bot_to_player_one},
+      {"configured_bot_kind_is_used_and_serialized",
+       configured_bot_kind_is_used_and_serialized},
+      {"bot_factory_rejects_unknown_kinds", bot_factory_rejects_unknown_kinds},
       {"stale_revision_is_rejected_without_advancing_the_bot_rng",
        stale_revision_is_rejected_without_advancing_the_bot_rng},
       {"wrong_controller_is_rejected_without_mutation",
@@ -245,6 +409,14 @@ int run_web_game_session_tests() {
        bot_command_uses_the_cpp_random_bot_and_returns_one_ply},
       {"terminal_session_rejects_both_controller_commands",
        terminal_session_rejects_both_controller_commands},
+      {"zero_length_bot_replay_is_immediately_truncated",
+       zero_length_bot_replay_is_immediately_truncated},
+      {"bot_replay_steps_one_ply_per_revision_and_truncates_at_limit",
+       bot_replay_steps_one_ply_per_revision_and_truncates_at_limit},
+      {"bounded_mcts_bot_replay_uses_the_selected_player_config",
+       bounded_mcts_bot_replay_uses_the_selected_player_config},
+      {"bot_replay_runs_to_a_terminal_untruncated_game",
+       bot_replay_runs_to_a_terminal_untruncated_game},
       {"error_codes_have_stable_bridge_names", error_codes_have_stable_bridge_names},
       {"invalid_human_player_is_rejected", invalid_human_player_is_rejected},
   };

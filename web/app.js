@@ -6,7 +6,7 @@
     throw new Error("Paper soccer game engine did not load");
   }
 
-  const { Player, Status, samePoint } = engine;
+  const { BotKind, Player, Status, samePoint } = engine;
   const gameEngine = await engine.ready;
 
   const canvas = document.querySelector("#boardCanvas");
@@ -31,9 +31,35 @@
   const playModeButton = document.querySelector("#playModeButton");
   const replayModeButton = document.querySelector("#replayModeButton");
   const gameSetup = document.querySelector("#gameSetup");
+  const playSetupEyebrow = document.querySelector("#playSetupEyebrow");
+  const botSelect = document.querySelector("#botSelect");
   const sideSelect = document.querySelector("#sideSelect");
   const seedInput = document.querySelector("#seedInput");
+  const botIterationsField = document.querySelector("#botIterationsField");
+  const botIterationsInput = document.querySelector("#botIterationsInput");
   const setupError = document.querySelector("#setupError");
+  const replaySetup = document.querySelector("#replaySetup");
+  const generateReplayButton = document.querySelector("#generateReplayButton");
+  const replayOneBotSelect = document.querySelector("#replayOneBotSelect");
+  const replayOneSeedInput = document.querySelector("#replayOneSeedInput");
+  const replayOneIterationsField = document.querySelector(
+    "#replayOneIterationsField",
+  );
+  const replayOneIterationsInput = document.querySelector(
+    "#replayOneIterationsInput",
+  );
+  const replayTwoBotSelect = document.querySelector("#replayTwoBotSelect");
+  const replayTwoSeedInput = document.querySelector("#replayTwoSeedInput");
+  const replayTwoIterationsField = document.querySelector(
+    "#replayTwoIterationsField",
+  );
+  const replayTwoIterationsInput = document.querySelector(
+    "#replayTwoIterationsInput",
+  );
+  const replaySetupError = document.querySelector("#replaySetupError");
+  const replayGenerationStatus = document.querySelector(
+    "#replayGenerationStatus",
+  );
   const moveChoicesSection = document.querySelector("#moveChoicesSection");
   const moveChoices = document.querySelector("#moveChoices");
   const replayControls = document.querySelector("#replayControls");
@@ -41,6 +67,9 @@
   const MODE_PLAY = "play";
   const MODE_REPLAY = "replay";
   const BOT_DELAY_MS = 520;
+  const DEFAULT_MCTS_ITERATIONS = 2000;
+  const MAX_MCTS_ITERATIONS = 10000;
+  const MAX_REPLAY_PLIES = 512;
   const MAX_UINT64 = (1n << 64n) - 1n;
 
   let mode = MODE_PLAY;
@@ -58,6 +87,13 @@
   let gameError = "";
   let hoveredDestination = null;
   let lastLiveMove = null;
+  let activeBotConfig = {
+    kind: BotKind.Random,
+    seed: "12345",
+    iterations: DEFAULT_MCTS_ITERATIONS,
+  };
+  let replayGenerationId = 0;
+  let isGeneratingReplay = false;
 
   function readDefaultReplay() {
     const raw = document.querySelector("#default-replay").textContent;
@@ -132,7 +168,7 @@
     if (mode !== MODE_PLAY) {
       return playerName(player);
     }
-    return player === humanPlayer ? "You" : "RandomBot";
+    return player === humanPlayer ? "You" : activeBotName();
   }
 
   function statusName(status) {
@@ -163,8 +199,23 @@
     }
     const hasSeed = player.seed !== undefined && player.seed !== null &&
       String(player.seed).length > 0;
-    const seed = hasSeed ? " (seed " + String(player.seed) + ")" : "";
-    return label + ": " + (player.kind ?? "Unknown") + seed;
+    const details = [];
+    if (hasSeed) {
+      details.push("seed " + String(player.seed));
+    }
+    if (Number.isInteger(player.iterations) && player.iterations > 0) {
+      details.push(player.iterations + " iterations");
+    }
+    const suffix = details.length > 0 ? " (" + details.join(", ") + ")" : "";
+    return label + ": " + (player.kind ?? "Unknown") + suffix;
+  }
+
+  function botDisplayName(kind) {
+    return kind === BotKind.Mcts ? "MctsBot" : "RandomBot";
+  }
+
+  function activeBotName() {
+    return botDisplayName(activeBotConfig.kind);
   }
 
   function parseSeed(input) {
@@ -177,6 +228,47 @@
       throw new Error("The seed must be at most 18446744073709551615.");
     }
     return seed;
+  }
+
+  function parseIterations(input) {
+    const value = input.trim();
+    if (!/^[1-9][0-9]*$/.test(value)) {
+      throw new Error("Enter a positive whole number for MCTS iterations.");
+    }
+    const iterations = Number(value);
+    if (!Number.isSafeInteger(iterations) || iterations > MAX_MCTS_ITERATIONS) {
+      throw new Error("MCTS iterations must be at most " + MAX_MCTS_ITERATIONS + ".");
+    }
+    return iterations;
+  }
+
+  function readBotConfig(kindSelect, botSeedInput, iterationsInput) {
+    const kind = kindSelect.value === BotKind.Mcts
+      ? BotKind.Mcts
+      : BotKind.Random;
+    let seed;
+    try {
+      seed = parseSeed(botSeedInput.value);
+    } catch (error) {
+      error.input = botSeedInput;
+      throw error;
+    }
+
+    let iterations = DEFAULT_MCTS_ITERATIONS;
+    if (kind === BotKind.Mcts) {
+      try {
+        iterations = parseIterations(iterationsInput.value);
+      } catch (error) {
+        error.input = iterationsInput;
+        throw error;
+      }
+    }
+
+    return {
+      kind: kind,
+      seed: seed.toString(),
+      iterations: iterations,
+    };
   }
 
   function clearBotTimer() {
@@ -220,6 +312,7 @@
       currentPly: currentPly,
       snapshot: liveSnapshot,
       humanPlayer: humanPlayer,
+      botConfig: activeBotConfig,
       gameError: gameError,
       lastLiveMove: lastLiveMove,
     };
@@ -249,6 +342,7 @@
       return;
     }
 
+    cancelReplayGeneration();
     replaySession = { replay: replay, currentPly: currentPly };
     stopPlayback();
     if (!liveSession) {
@@ -263,6 +357,7 @@
     currentPly = session.currentPly;
     liveSnapshot = session.snapshot;
     humanPlayer = session.humanPlayer;
+    activeBotConfig = session.botConfig;
     gameError = session.gameError;
     lastLiveMove = session.lastLiveMove;
     hoveredDestination = null;
@@ -278,12 +373,12 @@
   function startNewGame(event) {
     event?.preventDefault();
 
-    let seed;
+    let botConfig;
     try {
-      seed = parseSeed(seedInput.value);
+      botConfig = readBotConfig(botSelect, seedInput, botIterationsInput);
     } catch (error) {
       setupError.textContent = error.message;
-      seedInput.focus();
+      error.input?.focus();
       return;
     }
 
@@ -294,11 +389,17 @@
     mode = MODE_PLAY;
     liveSession = null;
     humanPlayer = sideSelect.value === Player.Two ? Player.Two : Player.One;
+    activeBotConfig = botConfig;
     hoveredDestination = null;
     lastLiveMove = null;
 
     try {
-      adoptLiveSnapshot(gameEngine.startGame(seed.toString(), humanPlayer));
+      adoptLiveSnapshot(gameEngine.startGame(
+        botConfig.seed,
+        humanPlayer,
+        botConfig.kind,
+        botConfig.iterations,
+      ));
     } catch (error) {
       liveSnapshot = null;
       gameError = "The C++ game engine could not start: " + error.message;
@@ -384,13 +485,136 @@
         );
         continueLiveGame();
       } catch (error) {
-        gameError = "RandomBot could not move: " + error.message;
+        gameError = activeBotName() + " could not move: " + error.message;
         renderInterface();
       }
     }, BOT_DELAY_MS);
   }
 
-  function loadReplay(raw) {
+  function syncReplayGenerationControls() {
+    if (!replaySetup) {
+      return;
+    }
+    for (const control of replaySetup.elements) {
+      if (control !== replayOneIterationsInput &&
+          control !== replayTwoIterationsInput) {
+        control.disabled = isGeneratingReplay;
+      }
+    }
+    replayOneIterationsInput.disabled = isGeneratingReplay ||
+      replayOneBotSelect.value !== BotKind.Mcts;
+    replayTwoIterationsInput.disabled = isGeneratingReplay ||
+      replayTwoBotSelect.value !== BotKind.Mcts;
+    generateReplayButton.textContent = isGeneratingReplay
+      ? "Generating…"
+      : "Generate";
+    replaySetup.setAttribute("aria-busy", String(isGeneratingReplay));
+  }
+
+  function cancelReplayGeneration(clearStatus = true) {
+    if (isGeneratingReplay) {
+      replayGenerationId += 1;
+      isGeneratingReplay = false;
+    }
+    if (clearStatus && replayGenerationStatus) {
+      replayGenerationStatus.textContent = "";
+    }
+    if (clearStatus && replaySetupError) {
+      replaySetupError.textContent = "";
+    }
+    syncReplayGenerationControls();
+  }
+
+  function nextAnimationFrame() {
+    return new Promise(function (resolve) {
+      window.requestAnimationFrame(resolve);
+    });
+  }
+
+  async function generateBotReplay(event) {
+    event.preventDefault();
+
+    let playerOne;
+    let playerTwo;
+    try {
+      playerOne = readBotConfig(
+        replayOneBotSelect,
+        replayOneSeedInput,
+        replayOneIterationsInput,
+      );
+      playerTwo = readBotConfig(
+        replayTwoBotSelect,
+        replayTwoSeedInput,
+        replayTwoIterationsInput,
+      );
+    } catch (error) {
+      replaySetupError.textContent = error.message;
+      error.input?.focus();
+      return;
+    }
+
+    stopPlayback();
+    replaySetupError.textContent = "";
+    const generationId = replayGenerationId + 1;
+    replayGenerationId = generationId;
+    isGeneratingReplay = true;
+    replayGenerationStatus.textContent = "Preparing bot match…";
+    syncReplayGenerationControls();
+
+    try {
+      await nextAnimationFrame();
+      if (generationId !== replayGenerationId) {
+        return;
+      }
+
+      let generated = gameEngine.startBotReplay(
+        playerOne,
+        playerTwo,
+        MAX_REPLAY_PLIES,
+      );
+      replayGenerationStatus.textContent = "Generating bot match…";
+      let nextProgressUpdate = 25;
+      while (!generated.done) {
+        if (generated.replay.moves.length >= nextProgressUpdate) {
+          replayGenerationStatus.textContent = "Generating… " +
+            generated.replay.moves.length + " moves";
+          nextProgressUpdate += 25;
+        }
+        await nextAnimationFrame();
+        if (generationId !== replayGenerationId) {
+          return;
+        }
+        generated = gameEngine.playBotReplay(
+          generated.sessionId,
+          generated.revision,
+        );
+      }
+
+      if (generationId !== replayGenerationId) {
+        return;
+      }
+      isGeneratingReplay = false;
+      syncReplayGenerationControls();
+      loadReplay(generated.replay, true);
+      const moveCount = generated.replay.moves.length;
+      replayGenerationStatus.textContent = "Generated " + moveCount +
+        (moveCount === 1 ? " move." : " moves.") +
+        (generated.replay.truncated ? " Replay reached the 512-move limit." : "");
+    } catch (error) {
+      if (generationId !== replayGenerationId) {
+        return;
+      }
+      isGeneratingReplay = false;
+      replaySetupError.textContent = "Could not generate replay: " + error.message;
+      replayGenerationStatus.textContent = "";
+      syncReplayGenerationControls();
+    }
+  }
+
+  function loadReplay(raw, preserveGeneration = false) {
+    if (!preserveGeneration) {
+      cancelReplayGeneration();
+    }
     const normalized = normalizeReplay(raw);
     if (mode === MODE_PLAY) {
       saveLiveSession();
@@ -470,17 +694,17 @@
       boardTurnBadge.textContent = "Game stopped";
     } else if (isLiveTerminal()) {
       const humanWon = liveState().winner === humanPlayer;
-      statusLabel.textContent = humanWon ? "You won!" : "RandomBot won";
+      statusLabel.textContent = humanWon ? "You won!" : activeBotName() + " won";
       moveLabel.textContent = "Game over after " + replay.moves.length +
         (replay.moves.length === 1 ? " move." : " moves.") +
         " Start a new game to play again.";
-      boardTurnBadge.textContent = humanWon ? "You won!" : "RandomBot won";
+      boardTurnBadge.textContent = humanWon ? "You won!" : activeBotName() + " won";
     } else if (botThinking || liveState().toMove !== humanPlayer) {
       const movesAgain = lastLiveMove?.player !== humanPlayer &&
         lastLiveMove?.extraTurn;
       statusLabel.textContent = movesAgain
-        ? "RandomBot moves again"
-        : "RandomBot’s turn";
+        ? activeBotName() + " moves again"
+        : activeBotName() + "’s turn";
       moveLabel.textContent = movesAgain
         ? "It bounced off a boundary or visited point. Choosing another move…"
         : "Choosing a move…";
@@ -542,6 +766,7 @@
   function updateModeControls() {
     const playingGame = mode === MODE_PLAY;
     gameSetup.hidden = !playingGame;
+    replaySetup.hidden = playingGame;
     moveChoicesSection.hidden = !playingGame;
     replayControls.hidden = playingGame;
     boardTargets.hidden = !playingGame;
@@ -556,7 +781,24 @@
       "aria-label",
       playingGame ? "Game controls" : "Replay controls",
     );
+    controlPanel.classList.toggle("is-replay-mode", !playingGame);
     canvas.classList.toggle("is-playable", canHumanMove());
+    syncBotSetupFields();
+    syncReplayGenerationControls();
+  }
+
+  function syncBotSetupFields() {
+    const playUsesMcts = botSelect.value === BotKind.Mcts;
+    botIterationsField.hidden = !playUsesMcts;
+    botIterationsInput.disabled = !playUsesMcts;
+    playSetupEyebrow.textContent = "Play vs " + botDisplayName(botSelect.value);
+
+    const playerOneUsesMcts = replayOneBotSelect.value === BotKind.Mcts;
+    const playerTwoUsesMcts = replayTwoBotSelect.value === BotKind.Mcts;
+    replayOneIterationsField.hidden = !playerOneUsesMcts;
+    replayTwoIterationsField.hidden = !playerTwoUsesMcts;
+    replayOneIterationsInput.disabled = isGeneratingReplay || !playerOneUsesMcts;
+    replayTwoIterationsInput.disabled = isGeneratingReplay || !playerTwoUsesMcts;
   }
 
   function updateReplayControls() {
@@ -593,7 +835,7 @@
       } else if (isLiveTerminal()) {
         message.textContent = "The game is finished.";
       } else {
-        message.textContent = "Waiting for RandomBot…";
+        message.textContent = "Waiting for " + activeBotName() + "…";
       }
       moveChoices.append(message);
       return;
@@ -702,19 +944,31 @@
     const spanY = replay.rules.height + 2;
     const shortSide = Math.min(width, height);
     const safeMargin = Math.max(24, shortSide * 0.045);
-    const axisSpace = Math.max(36, Math.min(48, shortSide * 0.075));
-    const frameMargin = safeMargin + axisSpace / 2;
-    const availableWidth = Math.max(1, width - frameMargin * 2);
-    const availableHeight = Math.max(1, height - frameMargin * 2);
+    const coordinateFontSize = Math.max(12, Math.min(14, shortSide * 0.024));
+    const directionFontSize = Math.max(10, Math.min(12, shortSide * 0.02));
+    const axisGap = Math.max(24, coordinateFontSize + 10);
+    const directionOffset = Math.max(16, directionFontSize / 2 + 8);
+    const coordinateOffset = directionOffset + directionFontSize / 2 + 8 +
+      coordinateFontSize / 2;
+    const leftGutter = safeMargin + axisGap + coordinateFontSize;
+    const rightGutter = safeMargin + 8;
+    const topGutter = safeMargin + directionOffset + directionFontSize / 2;
+    const bottomGutter = safeMargin + coordinateOffset + coordinateFontSize / 2;
+    const availableWidth = Math.max(1, width - leftGutter - rightGutter);
+    const availableHeight = Math.max(1, height - topGutter - bottomGutter);
     const cell = Math.min(availableWidth / spanX, availableHeight / spanY);
     const boardWidth = cell * spanX;
     const boardHeight = cell * spanY;
-    const originX = (width - boardWidth) / 2;
-    const originY = (height - boardHeight) / 2;
+    const originX = leftGutter + (availableWidth - boardWidth) / 2;
+    const originY = topGutter + (availableHeight - boardHeight) / 2;
 
     return {
-      axisGap: Math.max(24, axisSpace * 0.68),
+      axisGap: axisGap,
       cell: cell,
+      coordinateFontSize: coordinateFontSize,
+      coordinateOffset: coordinateOffset,
+      directionFontSize: directionFontSize,
+      directionOffset: directionOffset,
       point: function (point) {
         return {
           x: originX + point.x * cell,
@@ -941,12 +1195,13 @@
   }
 
   function drawCoordinates(mapper) {
-    const fontSize = Math.max(12, Math.min(14, mapper.cell * 0.3));
-    const xAxisY = mapper.point({ x: 0, y: southGoalY() }).y + mapper.axisGap;
+    const xAxisY = mapper.point({ x: 0, y: southGoalY() }).y +
+      mapper.coordinateOffset;
     const yAxisX = mapper.point({ x: 0, y: 0 }).x - mapper.axisGap;
 
     ctx.fillStyle = "rgba(255, 250, 230, 0.8)";
-    ctx.font = "600 " + fontSize + "px ui-sans-serif, system-ui, sans-serif";
+    ctx.font = "600 " + mapper.coordinateFontSize +
+      "px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
@@ -966,15 +1221,14 @@
     const center = Math.floor(replay.rules.width / 2);
     const top = mapper.point({ x: center, y: 0 });
     const bottom = mapper.point({ x: center, y: southGoalY() });
-    const offset = Math.max(18, mapper.cell * 0.42);
-    const fontSize = Math.max(10, Math.min(12, mapper.cell * 0.24));
 
     ctx.fillStyle = "rgba(255, 248, 220, 0.88)";
-    ctx.font = "750 " + fontSize + "px ui-sans-serif, system-ui, sans-serif";
+    ctx.font = "750 " + mapper.directionFontSize +
+      "px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("P1 ATTACKS ↑", top.x, top.y - offset);
-    ctx.fillText("P2 ATTACKS ↓", bottom.x, bottom.y + offset);
+    ctx.fillText("P1 ATTACKS ↑", top.x, top.y - mapper.directionOffset);
+    ctx.fillText("P2 ATTACKS ↓", bottom.x, bottom.y + mapper.directionOffset);
   }
 
   function renderBoardTargets() {
@@ -1187,6 +1441,10 @@
     speed = Number(speedSelect.value);
   });
   gameSetup.addEventListener("submit", startNewGame);
+  replaySetup.addEventListener("submit", generateBotReplay);
+  botSelect.addEventListener("change", syncBotSetupFields);
+  replayOneBotSelect.addEventListener("change", syncBotSetupFields);
+  replayTwoBotSelect.addEventListener("change", syncBotSetupFields);
   playModeButton.addEventListener("click", showPlayMode);
   replayModeButton.addEventListener("click", showReplayMode);
 
@@ -1195,6 +1453,7 @@
     if (!file) {
       return;
     }
+    cancelReplayGeneration();
     try {
       const raw = JSON.parse(await file.text());
       loadReplay(raw);

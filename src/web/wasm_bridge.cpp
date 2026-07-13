@@ -1,9 +1,11 @@
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <emscripten/emscripten.h>
 
@@ -14,7 +16,9 @@ namespace ps = papersoccer;
 namespace {
 
 std::unique_ptr<ps::WebGameSession> session;
+std::unique_ptr<ps::WebBotReplaySession> bot_replay_session;
 std::string snapshot_cache;
+std::string bot_replay_snapshot_cache;
 std::string last_error;
 std::uint32_t next_session_id{1};
 
@@ -36,6 +40,36 @@ bool parse_seed(std::string_view input, std::uint64_t &value) noexcept {
   }
 
   value = parsed;
+  return true;
+}
+
+bool parse_bot_kind(int input, ps::BotKind &kind) noexcept {
+  if (input == 0) {
+    kind = ps::BotKind::Random;
+    return true;
+  }
+  if (input == 1) {
+    kind = ps::BotKind::Mcts;
+    return true;
+  }
+  return false;
+}
+
+bool parse_bot_config(const char *seed_text, int kind_value,
+                      std::uint32_t iterations, ps::BotConfig &config) {
+  if (seed_text == nullptr || !parse_seed(seed_text, config.seed)) {
+    last_error = "the bot seed must be an unsigned 64-bit decimal integer";
+    return false;
+  }
+  if (!parse_bot_kind(kind_value, config.kind)) {
+    last_error = "the bot kind must be 0 (RandomBot) or 1 (MctsBot)";
+    return false;
+  }
+  if (iterations == 0) {
+    last_error = "bot iterations must be greater than zero";
+    return false;
+  }
+  config.mcts_iterations = iterations;
   return true;
 }
 
@@ -69,14 +103,26 @@ bool validate_session(std::uint32_t expected_session_id) {
   return true;
 }
 
+bool validate_bot_replay_session(std::uint32_t expected_session_id) {
+  if (!bot_replay_session) {
+    last_error = "no bot replay has been started";
+    return false;
+  }
+  if (bot_replay_session->session_id() != expected_session_id) {
+    last_error = "stale_session: command belongs to a replaced bot replay session";
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 extern "C" {
 
-EMSCRIPTEN_KEEPALIVE int ps_start_game(const char *seed_text, int human_player) {
-  std::uint64_t seed = 0;
-  if (seed_text == nullptr || !parse_seed(seed_text, seed)) {
-    last_error = "the bot seed must be an unsigned 64-bit decimal integer";
+EMSCRIPTEN_KEEPALIVE int ps_start_game(const char *seed_text, int human_player,
+                                      int bot_kind, std::uint32_t iterations) {
+  ps::BotConfig bot_config;
+  if (!parse_bot_config(seed_text, bot_kind, iterations, bot_config)) {
     return 0;
   }
   if (human_player != 1 && human_player != 2) {
@@ -86,8 +132,15 @@ EMSCRIPTEN_KEEPALIVE int ps_start_game(const char *seed_text, int human_player) 
 
   const ps::Player human =
       human_player == 2 ? ps::Player::Two : ps::Player::One;
-  session = std::make_unique<ps::WebGameSession>(
-      human, seed, ps::RulesConfig{}, issue_session_id());
+  std::unique_ptr<ps::WebGameSession> replacement;
+  try {
+    replacement = std::make_unique<ps::WebGameSession>(
+        human, bot_config, ps::RulesConfig{}, issue_session_id());
+  } catch (const std::exception &error) {
+    last_error = std::string("could not start the game: ") + error.what();
+    return 0;
+  }
+  session = std::move(replacement);
   snapshot_cache.clear();
   last_error.clear();
   return 1;
@@ -129,6 +182,52 @@ EMSCRIPTEN_KEEPALIVE int ps_play_bot(std::uint32_t expected_session_id,
   return 1;
 }
 
+EMSCRIPTEN_KEEPALIVE int ps_start_bot_replay(
+    const char *one_seed, int one_kind, std::uint32_t one_iterations,
+    const char *two_seed, int two_kind, std::uint32_t two_iterations,
+    std::uint32_t max_plies) {
+  ps::BotConfig player_one;
+  if (!parse_bot_config(one_seed, one_kind, one_iterations, player_one)) {
+    return 0;
+  }
+  ps::BotConfig player_two;
+  if (!parse_bot_config(two_seed, two_kind, two_iterations, player_two)) {
+    return 0;
+  }
+
+  std::unique_ptr<ps::WebBotReplaySession> replacement;
+  try {
+    replacement = std::make_unique<ps::WebBotReplaySession>(
+        player_one, player_two, static_cast<std::size_t>(max_plies),
+        ps::RulesConfig{}, issue_session_id());
+  } catch (const std::exception &error) {
+    last_error = std::string("could not start the bot replay: ") + error.what();
+    return 0;
+  }
+  bot_replay_session = std::move(replacement);
+  bot_replay_snapshot_cache.clear();
+  last_error.clear();
+  return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int ps_play_bot_replay(
+    std::uint32_t expected_session_id, std::uint32_t expected_revision) {
+  if (!validate_bot_replay_session(expected_session_id)) {
+    return 0;
+  }
+
+  const ps::WebGameCommandResult result =
+      bot_replay_session->play_next(expected_revision);
+  if (!result.ok()) {
+    set_command_error(result);
+    return 0;
+  }
+
+  bot_replay_snapshot_cache.clear();
+  last_error.clear();
+  return 1;
+}
+
 EMSCRIPTEN_KEEPALIVE const char *ps_snapshot_json() {
   if (!session) {
     last_error = "no live game has been started";
@@ -137,6 +236,16 @@ EMSCRIPTEN_KEEPALIVE const char *ps_snapshot_json() {
 
   snapshot_cache = session->snapshot_json();
   return snapshot_cache.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE const char *ps_bot_replay_snapshot_json() {
+  if (!bot_replay_session) {
+    last_error = "no bot replay has been started";
+    return nullptr;
+  }
+
+  bot_replay_snapshot_cache = bot_replay_session->snapshot_json();
+  return bot_replay_snapshot_cache.c_str();
 }
 
 EMSCRIPTEN_KEEPALIVE const char *ps_last_error() { return last_error.c_str(); }

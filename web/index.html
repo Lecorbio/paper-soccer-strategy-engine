@@ -48,11 +48,19 @@
         <form id="gameSetup" class="game-setup">
           <div class="setup-heading">
             <div>
-              <p class="eyebrow">Play vs RandomBot</p>
+              <p id="playSetupEyebrow" class="eyebrow">Play vs RandomBot</p>
               <h2>New game</h2>
             </div>
             <button id="newGameButton" class="primary-control" type="submit">Start</button>
           </div>
+
+          <label class="form-field" for="botSelect">
+            <span>Opponent</span>
+            <select id="botSelect">
+              <option value="random" selected>RandomBot</option>
+              <option value="mcts">MctsBot</option>
+            </select>
+          </label>
 
           <label class="form-field" for="sideSelect">
             <span>Your side</span>
@@ -63,12 +71,89 @@
           </label>
 
           <label class="form-field" for="seedInput">
-            <span>Bot seed</span>
+            <span>Opponent seed</span>
             <input id="seedInput" type="text" inputmode="numeric"
               value="12345" autocomplete="off" spellcheck="false">
           </label>
-          <p class="setup-help">Player 1 moves first. Reuse a seed to repeat the bot.</p>
-          <p id="setupError" class="form-error" role="alert"></p>
+
+          <label id="botIterationsField" class="form-field" for="botIterationsInput" hidden>
+            <span>Iterations</span>
+            <input id="botIterationsInput" type="number" min="1" max="10000" step="1"
+              value="2000" inputmode="numeric" autocomplete="off" disabled>
+          </label>
+
+          <p class="setup-help">Player 1 moves first. Reuse the same settings to repeat the bot.</p>
+          <p id="setupError" class="form-error" role="alert" aria-atomic="true"></p>
+        </form>
+
+        <form id="replaySetup" class="game-setup replay-setup"
+          aria-labelledby="replaySetupHeading" aria-describedby="replaySetupHelp" hidden>
+          <div class="setup-heading replay-setup-heading">
+            <div>
+              <p class="eyebrow">Bot vs bot</p>
+              <h2 id="replaySetupHeading">Generate replay</h2>
+            </div>
+            <button id="generateReplayButton" class="primary-control" type="submit">Generate</button>
+          </div>
+
+          <div class="replay-player-grid">
+            <fieldset class="replay-player-card">
+              <legend>Player 1 · attacks top</legend>
+
+              <label class="compact-form-field" for="replayOneBotSelect">
+                <span>Bot</span>
+                <select id="replayOneBotSelect">
+                  <option value="random" selected>RandomBot</option>
+                  <option value="mcts">MctsBot</option>
+                </select>
+              </label>
+
+              <label class="compact-form-field" for="replayOneSeedInput">
+                <span>Seed</span>
+                <input id="replayOneSeedInput" type="text" inputmode="numeric"
+                  value="12345" autocomplete="off" spellcheck="false">
+              </label>
+
+              <label id="replayOneIterationsField" class="compact-form-field"
+                for="replayOneIterationsInput" hidden>
+                <span>Iterations</span>
+                <input id="replayOneIterationsInput" type="number" min="1" max="10000" step="1"
+                  value="2000" inputmode="numeric" autocomplete="off" disabled>
+              </label>
+            </fieldset>
+
+            <fieldset class="replay-player-card">
+              <legend>Player 2 · attacks bottom</legend>
+
+              <label class="compact-form-field" for="replayTwoBotSelect">
+                <span>Bot</span>
+                <select id="replayTwoBotSelect">
+                  <option value="random" selected>RandomBot</option>
+                  <option value="mcts">MctsBot</option>
+                </select>
+              </label>
+
+              <label class="compact-form-field" for="replayTwoSeedInput">
+                <span>Seed</span>
+                <input id="replayTwoSeedInput" type="text" inputmode="numeric"
+                  value="12346" autocomplete="off" spellcheck="false">
+              </label>
+
+              <label id="replayTwoIterationsField" class="compact-form-field"
+                for="replayTwoIterationsInput" hidden>
+                <span>Iterations</span>
+                <input id="replayTwoIterationsInput" type="number" min="1" max="10000" step="1"
+                  value="2000" inputmode="numeric" autocomplete="off" disabled>
+              </label>
+            </fieldset>
+          </div>
+
+          <p id="replaySetupHelp" class="setup-help">
+            Player 1 moves first. The same settings reproduce the match. Generation stops after 512 moves.
+          </p>
+          <p id="replaySetupError" class="form-error" role="alert" aria-atomic="true"></p>
+          <p id="replayGenerationStatus" class="generation-status" role="status"
+            aria-live="polite" aria-atomic="true"></p>
         </form>
 
         <div class="replay-summary" aria-live="polite" aria-atomic="true">

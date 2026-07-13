@@ -43,13 +43,22 @@ void write_winner(std::ostream &out, const GameState &state) {
   }
 }
 
+void write_bot(std::ostream &out, const BotConfig &config) {
+  out << "{\"kind\":\"" << bot_kind_name(config.kind) << "\",\"seed\":\""
+      << config.seed << '"';
+  if (config.kind == BotKind::Mcts) {
+    out << ",\"iterations\":" << config.mcts_iterations;
+  }
+  out << '}';
+}
+
 void write_player(std::ostream &out, Player player, Player human_player,
-                  std::uint64_t bot_seed) {
+                  const BotConfig &bot_config) {
   if (player == human_player) {
     out << "{\"kind\":\"Human\"}";
     return;
   }
-  out << "{\"kind\":\"RandomBot\",\"seed\":\"" << bot_seed << "\"}";
+  write_bot(out, bot_config);
 }
 
 void write_played_move(std::ostream &out, const PlayedMove &move) {
@@ -60,6 +69,37 @@ void write_played_move(std::ostream &out, const PlayedMove &move) {
   write_point(out, move.to);
   out << ",\"extraTurn\":" << (move.extra_turn ? "true" : "false")
       << ",\"statusAfter\":\"" << status_to_json(move.status_after) << "\"}";
+}
+
+template <typename PlayerWriter>
+void write_replay(std::ostream &out, const GameState &state,
+                  const std::vector<PlayedMove> &history, bool truncated,
+                  PlayerWriter write_player_metadata) {
+  const Point start = state.path.empty()
+                          ? Point{state.config.width / 2, state.config.height / 2 + 1}
+                          : state.path.front();
+
+  out << "{\"schema\":\"papersoccer.replay.v2\",\"rules\":{"
+      << "\"width\":" << state.config.width << ",\"height\":"
+      << state.config.height << "},\"players\":{\"one\":";
+  write_player_metadata(out, Player::One);
+  out << ",\"two\":";
+  write_player_metadata(out, Player::Two);
+  out << "},\"start\":";
+  write_point(out, start);
+  out << ",\"status\":\"" << status_to_json(state.status)
+      << "\",\"winner\":";
+  write_winner(out, state);
+  out << ",\"truncated\":" << (truncated ? "true" : "false")
+      << ",\"moves\":[";
+
+  for (std::size_t i = 0; i < history.size(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    write_played_move(out, history[i]);
+  }
+  out << "]}";
 }
 
 }  // namespace
@@ -78,21 +118,29 @@ std::string_view web_game_error_code_name(WebGameErrorCode code) noexcept {
       return "move_out_of_range";
     case WebGameErrorCode::NoLegalMoves:
       return "no_legal_moves";
+    case WebGameErrorCode::ReplayComplete:
+      return "replay_complete";
   }
   return "unknown";
 }
 
-WebGameSession::WebGameSession(Player human_player, std::uint64_t bot_seed,
+WebGameSession::WebGameSession(Player human_player, BotConfig bot_config,
                                const RulesConfig &config, std::uint32_t session_id)
     : match_(config),
       human_player_(human_player),
-      bot_seed_(bot_seed),
-      bot_(bot_seed),
+      bot_config_(bot_config),
+      bot_(make_bot(bot_config_)),
       session_id_(session_id) {
   if (human_player != Player::One && human_player != Player::Two) {
     throw std::invalid_argument("human player must be Player::One or Player::Two");
   }
 }
+
+WebGameSession::WebGameSession(Player human_player, std::uint64_t bot_seed,
+                               const RulesConfig &config, std::uint32_t session_id)
+    : WebGameSession(human_player,
+                     BotConfig{BotKind::Random, bot_seed}, config,
+                     session_id) {}
 
 const Match &WebGameSession::match() const noexcept { return match_; }
 
@@ -100,7 +148,9 @@ Player WebGameSession::human_player() const noexcept { return human_player_; }
 
 Player WebGameSession::bot_player() const noexcept { return opponent(human_player_); }
 
-std::uint64_t WebGameSession::bot_seed() const noexcept { return bot_seed_; }
+const BotConfig &WebGameSession::bot_config() const noexcept { return bot_config_; }
+
+std::uint64_t WebGameSession::bot_seed() const noexcept { return bot_config_.seed; }
 
 std::uint32_t WebGameSession::session_id() const noexcept { return session_id_; }
 
@@ -109,10 +159,6 @@ std::uint64_t WebGameSession::revision() const noexcept { return revision_; }
 std::string WebGameSession::snapshot_json() const {
   const GameState &state = match_.state();
   const std::vector<Move> legal = match_.legal_moves();
-  const std::vector<PlayedMove> &history = match_.history();
-  const Point start = state.path.empty()
-                          ? Point{state.config.width / 2, state.config.height / 2 + 1}
-                          : state.path.front();
 
   std::ostringstream out;
   out.imbue(std::locale::classic());
@@ -136,26 +182,12 @@ std::string WebGameSession::snapshot_json() const {
         << (grants_extra_turn(state, legal[i].to) ? "true" : "false") << '}';
   }
 
-  out << "],\"replay\":{\"schema\":\"papersoccer.replay.v2\",\"rules\":{"
-      << "\"width\":" << state.config.width << ",\"height\":" << state.config.height
-      << "},\"players\":{\"one\":";
-  write_player(out, Player::One, human_player_, bot_seed_);
-  out << ",\"two\":";
-  write_player(out, Player::Two, human_player_, bot_seed_);
-  out << "},\"start\":";
-  write_point(out, start);
-  out << ",\"status\":\"" << status_to_json(state.status) << "\",\"winner\":";
-  write_winner(out, state);
-  out << ",\"truncated\":false,\"moves\":[";
-
-  for (std::size_t i = 0; i < history.size(); ++i) {
-    if (i != 0) {
-      out << ',';
-    }
-    write_played_move(out, history[i]);
-  }
-
-  out << "]}}";
+  out << "],\"replay\":";
+  write_replay(out, state, match_.history(), false,
+               [this](std::ostream &replay_out, Player player) {
+                 write_player(replay_out, player, human_player_, bot_config_);
+               });
+  out << '}';
   return out.str();
 }
 
@@ -188,7 +220,7 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
                    "the bot cannot move because the game has no legal moves");
   }
 
-  const Move chosen = bot_.choose_move(match_.state());
+  const Move chosen = bot_->choose_move(match_.state());
   const PlayedMove played = match_.play(chosen);
   ++revision_;
   return success(played);
@@ -217,6 +249,107 @@ WebGameCommandResult WebGameSession::success(PlayedMove move) const {
 
 WebGameCommandResult WebGameSession::failure(WebGameErrorCode code,
                                              std::string message) const {
+  return WebGameCommandResult{
+      revision_,
+      std::nullopt,
+      WebGameError{code, std::move(message)},
+  };
+}
+
+WebBotReplaySession::WebBotReplaySession(BotConfig player_one,
+                                         BotConfig player_two,
+                                         std::size_t max_plies,
+                                         const RulesConfig &config,
+                                         std::uint32_t session_id)
+    : match_(config),
+      player_one_config_(player_one),
+      player_two_config_(player_two),
+      player_one_bot_(make_bot(player_one_config_)),
+      player_two_bot_(make_bot(player_two_config_)),
+      max_plies_(max_plies),
+      session_id_(session_id) {
+  done_ = is_terminal(match_.state()) || max_plies_ == 0;
+  truncated_ = max_plies_ == 0 && !is_terminal(match_.state());
+}
+
+const Match &WebBotReplaySession::match() const noexcept { return match_; }
+
+const BotConfig &WebBotReplaySession::player_one_config() const noexcept {
+  return player_one_config_;
+}
+
+const BotConfig &WebBotReplaySession::player_two_config() const noexcept {
+  return player_two_config_;
+}
+
+std::size_t WebBotReplaySession::max_plies() const noexcept { return max_plies_; }
+
+std::uint32_t WebBotReplaySession::session_id() const noexcept {
+  return session_id_;
+}
+
+std::uint64_t WebBotReplaySession::revision() const noexcept { return revision_; }
+
+bool WebBotReplaySession::done() const noexcept { return done_; }
+
+bool WebBotReplaySession::truncated() const noexcept { return truncated_; }
+
+std::string WebBotReplaySession::snapshot_json() const {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << "{\"schema\":\"papersoccer.bot-replay-session.v1\",\"sessionId\":"
+      << session_id_ << ",\"revision\":" << revision_ << ",\"done\":"
+      << (done_ ? "true" : "false") << ",\"replay\":";
+  write_replay(out, match_.state(), match_.history(), truncated_,
+               [this](std::ostream &replay_out, Player player) {
+                 write_bot(replay_out, player == Player::One
+                                           ? player_one_config_
+                                           : player_two_config_);
+               });
+  out << '}';
+  return out.str();
+}
+
+WebGameCommandResult WebBotReplaySession::play_next(
+    std::uint64_t expected_revision) {
+  if (expected_revision != revision_) {
+    return failure(WebGameErrorCode::StaleRevision,
+                   "command revision does not match the current replay revision");
+  }
+  if (done_) {
+    return failure(WebGameErrorCode::ReplayComplete,
+                   "cannot play a move after replay generation has finished");
+  }
+  if (is_terminal(match_.state())) {
+    done_ = true;
+    return failure(WebGameErrorCode::ReplayComplete,
+                   "cannot play a move after replay generation has finished");
+  }
+  if (match_.legal_moves().empty()) {
+    return failure(WebGameErrorCode::NoLegalMoves,
+                   "the bot cannot move because the game has no legal moves");
+  }
+
+  Bot &bot = match_.state().to_move == Player::One ? *player_one_bot_
+                                                    : *player_two_bot_;
+  const PlayedMove played = match_.play(bot.choose_move(match_.state()));
+  ++revision_;
+
+  if (is_terminal(match_.state())) {
+    done_ = true;
+  } else if (match_.history().size() >= max_plies_) {
+    done_ = true;
+    truncated_ = true;
+  }
+  return success(played);
+}
+
+WebGameCommandResult WebBotReplaySession::success(PlayedMove move) const {
+  return WebGameCommandResult{revision_, move, std::nullopt};
+}
+
+WebGameCommandResult WebBotReplaySession::failure(WebGameErrorCode code,
+                                                  std::string message) const {
   return WebGameCommandResult{
       revision_,
       std::nullopt,

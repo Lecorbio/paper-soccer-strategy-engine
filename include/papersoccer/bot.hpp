@@ -9,6 +9,13 @@
 
 namespace papersoccer {
 
+enum class BotKind {
+  Random,
+  Mcts,
+};
+
+std::string_view bot_kind_name(BotKind kind) noexcept;
+
 class Bot {
  public:
   virtual ~Bot() = default;
@@ -30,6 +37,12 @@ class RandomBot final : public Bot {
   std::uint64_t state_;
 
   std::uint64_t next_random() noexcept;
+};
+
+struct BotConfig {
+  BotKind kind{BotKind::Random};
+  std::uint64_t seed{RandomBot::default_seed()};
+  std::uint32_t mcts_iterations{2000};
 };
 
 struct MctsConfig {
@@ -75,5 +88,7 @@ class MctsBot final : public Bot {
   MctsConfig config_;
   SearchStats last_search_stats_{};
 };
+
+std::unique_ptr<Bot> make_bot(const BotConfig &config);
 
 }  // namespace papersoccer

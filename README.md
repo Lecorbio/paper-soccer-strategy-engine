@@ -181,19 +181,21 @@ open web/index.html
 
 The app starts in **Play vs bot** mode:
 
-1. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
+1. Choose `RandomBot` or `MctsBot` as the opponent.
+2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
    move first and attack the bottom goal.
-2. Enter a bot seed. Reusing the same side, seed, and human moves reproduces the bot's
-   choices.
-3. Select **Start**, then click any highlighted destination on the board. Destinations
+3. Enter the opponent seed. MCTS games also expose the fixed iteration budget used for
+   each move. Reusing the same settings and human moves reproduces the bot's choices.
+4. Select **Start**, then click any highlighted destination on the board. Destinations
    marked with `↻` grant another move.
 
-Select **Watch replay** to inspect the built-in RandomBot game, or use **Open replay**
-to load another replay file. The app remains fully static and works without a server.
-
-Browser play continues to use `RandomBot`. MCTS is not exposed through the WebAssembly bridge
-or browser controls in this milestone. Browser MCTS integration is deferred so a future version
-can run the search away from the rendering thread, for example in a Web Worker.
+Select **Watch replay** to inspect the built-in game or generate a new bot-vs-bot match.
+Player 1 and Player 2 each have an independent bot, seed, and MCTS iteration setting.
+Generation advances one move at a time so the controls can update between searches, stops after
+512 moves if the game has not finished, reports progress during longer matches, and opens the
+result directly in the replay viewer.
+Use **Open replay** to load another replay file. The app remains fully static and works without
+a server.
 
 The browser does not contain a second implementation of the game. C++ owns the live
 state, legal moves, rebounds, win detection, bot RNG, and replay history. The small
@@ -204,7 +206,7 @@ the remaining JavaScript handles canvas drawing, controls, accessibility, and an
 
 The generated single-file module is checked in, so playing the web game does not require
 a compiler or local server. It is currently pinned to Emscripten 6.0.2 for byte-reproducible
-builds. After changing C++ rules, RandomBot, or the web-session layer used by the browser,
+builds. After changing C++ rules, either bot, or the web-session layer used by the browser,
 rebuild it with:
 
 ```bash
@@ -222,9 +224,8 @@ To verify that the checked-in module exactly matches the C++ sources without upd
 cmake --build build/wasm --target check_papersoccer_web
 ```
 
-The versioned command/snapshot boundary remains the scaling seam for future browser bots, so
-MCTS will not need a second JavaScript rules implementation. A future integration may also need
-a deliberately larger fixed Emscripten memory budget. Memory growth is disabled because
+The versioned command/snapshot boundary keeps both browser bots in C++; JavaScript only schedules
+their turns and renders the returned session snapshots. Memory growth remains disabled because
 growable Wasm buffers are not compatible with every direct-file browser.
 
 Generate a new bot-vs-bot replay as JSON:
