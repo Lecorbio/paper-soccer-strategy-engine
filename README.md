@@ -13,19 +13,21 @@ The current version intentionally focuses on core game correctness so minimax/MC
 
 ## Rules Implemented (Kurnik-style defaults)
 
-- Field points: `x in [0,8]`, `y in [0,10]`
-- Start point: `(4,5)`
+- Board coordinates are zero-based: `x in [0,8]`, `y in [0,12]`
+- Field points exclude the goals: `x in [0,8]`, `y in [1,11]`
+- Start point: `(4,6)`
 - 8-direction moves to neighboring points
 - Segments are undirected and cannot be reused
 - Movement along the outer boundary lines is forbidden
-- Player 1 attacks north goal row `y=-1`, Player 2 attacks south goal row `y=11`
-- Goal nodes per side: `(3,±1)`, `(4,±1)`, `(5,±1)` (north uses `-1`, south uses `11`)
+- Player 1 attacks north goal row `y=0`, Player 2 attacks south goal row `y=12`
+- North goal nodes: `(3,0)`, `(4,0)`, `(5,0)`
+- South goal nodes: `(3,12)`, `(4,12)`, `(5,12)`
 - Goal entries are legal only from the 3-point mouth on each side
 - Goal-post segments still count as walls, so straight entry from the side mouth points is illegal
 - Legal north-goal entries are:
-  - from `(3,0)` only to `(4,-1)`
-  - from `(4,0)` to `(3,-1)`, `(4,-1)`, `(5,-1)`
-  - from `(5,0)` only to `(4,-1)`
+  - from `(3,1)` only to `(4,0)`
+  - from `(4,1)` to `(3,0)`, `(4,0)`, `(5,0)`
+  - from `(5,1)` only to `(4,0)`
 - Entering opponent goal wins immediately
 - Extra turn when landing on:
   - Any previously visited point
@@ -75,8 +77,13 @@ On startup, the CLI now lets you choose:
 If a bot is involved, the CLI prompts for a base seed. Player 1 uses the base seed and
 Player 2 uses `base_seed + 1`, which makes bot games reproducible.
 
-User-facing coordinates in the CLI and renderer are shown as `(row, column)`.
-Internally, the engine still stores points as `Point{x, y}`.
+Rule examples above use the engine's `Point{x, y}` order. User-facing coordinates in the
+CLI and renderer are shown as `(row, column)`, which corresponds to `(y, x)`. For example,
+the initial engine point `(4,6)` is displayed as `(6,4)`. Every coordinate is zero-based.
+
+`RulesConfig.width` and `RulesConfig.height` describe the field span, not the largest board
+coordinate. The default height remains `10`, while the field boundary rows are `1` and `11`
+and the goal rows are `0` and `12`.
 
 ## Run Web Replay Viewer
 
@@ -99,7 +106,12 @@ Arguments are optional:
 - `base-seed`: defaults to `RandomBot::default_seed()`
 - `max-plies`: defaults to `512`
 
-Use the viewer's `Load JSON` button to load the generated file.
+Use the viewer's `Open replay` button to load the generated file.
+
+The exporter writes the `papersoccer.replay.v2` schema, whose points use the zero-based board
+coordinates described above. The viewer also accepts legacy `papersoccer.replay.v1` files;
+it translates every v1 point one row down (`y + 1`) while loading, so old replays keep the
+same geometry.
 
 ## Project Layout
 

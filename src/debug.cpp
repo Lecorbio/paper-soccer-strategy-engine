@@ -11,9 +11,16 @@ namespace papersoccer {
 
 namespace {
 
-int min_y(const RulesConfig &) { return -1; }
+constexpr int kNorthGoalY = 0;
+constexpr int kFieldTopY = 1;
 
-int max_y(const RulesConfig &config) { return config.height + 1; }
+int field_bottom_y(const RulesConfig &config) { return config.height + 1; }
+
+int south_goal_y(const RulesConfig &config) { return config.height + 2; }
+
+int min_y(const RulesConfig &) { return kNorthGoalY; }
+
+int max_y(const RulesConfig &config) { return south_goal_y(config); }
 
 int row_count(const RulesConfig &config) {
   const int points = max_y(config) - min_y(config) + 1;
@@ -92,30 +99,34 @@ std::string render_ascii(const GameState &state) {
   for (int x = 0; x < state.config.width; ++x) {
     const bool in_goal_opening = (x >= mouth_left_x(state.config) && x < mouth_right_x(state.config));
     if (!in_goal_opening) {
-      put(grid, to_row(state.config, Point{x, 0}), to_col(Point{x, 0}) + 1, '=');
-      put(grid, to_row(state.config, Point{x, state.config.height}),
-          to_col(Point{x, state.config.height}) + 1, '=');
+      put(grid, to_row(state.config, Point{x, kFieldTopY}),
+          to_col(Point{x, kFieldTopY}) + 1, '=');
+      put(grid, to_row(state.config, Point{x, field_bottom_y(state.config)}),
+          to_col(Point{x, field_bottom_y(state.config)}) + 1, '=');
     }
   }
-  for (int y = 0; y < state.config.height; ++y) {
+  for (int y = kFieldTopY; y < field_bottom_y(state.config); ++y) {
     put(grid, to_row(state.config, Point{0, y}) + 1, to_col(Point{0, y}), '!');
     put(grid, to_row(state.config, Point{state.config.width, y}) + 1,
         to_col(Point{state.config.width, y}), '!');
   }
 
   for (int x = mouth_left_x(state.config); x < mouth_right_x(state.config); ++x) {
-    put(grid, to_row(state.config, Point{x, -1}), to_col(Point{x, -1}) + 1, '=');
-    put(grid, to_row(state.config, Point{x, state.config.height + 1}),
-        to_col(Point{x, state.config.height + 1}) + 1, '=');
+    put(grid, to_row(state.config, Point{x, kNorthGoalY}),
+        to_col(Point{x, kNorthGoalY}) + 1, '=');
+    put(grid, to_row(state.config, Point{x, south_goal_y(state.config)}),
+        to_col(Point{x, south_goal_y(state.config)}) + 1, '=');
   }
-  put(grid, to_row(state.config, Point{mouth_left_x(state.config), -1}) + 1,
-      to_col(Point{mouth_left_x(state.config), -1}), '!');
-  put(grid, to_row(state.config, Point{mouth_right_x(state.config), -1}) + 1,
-      to_col(Point{mouth_right_x(state.config), -1}), '!');
-  put(grid, to_row(state.config, Point{mouth_left_x(state.config), state.config.height}) + 1,
-      to_col(Point{mouth_left_x(state.config), state.config.height}), '!');
-  put(grid, to_row(state.config, Point{mouth_right_x(state.config), state.config.height}) + 1,
-      to_col(Point{mouth_right_x(state.config), state.config.height}), '!');
+  put(grid, to_row(state.config, Point{mouth_left_x(state.config), kNorthGoalY}) + 1,
+      to_col(Point{mouth_left_x(state.config), kNorthGoalY}), '!');
+  put(grid, to_row(state.config, Point{mouth_right_x(state.config), kNorthGoalY}) + 1,
+      to_col(Point{mouth_right_x(state.config), kNorthGoalY}), '!');
+  put(grid, to_row(state.config,
+                   Point{mouth_left_x(state.config), field_bottom_y(state.config)}) + 1,
+      to_col(Point{mouth_left_x(state.config), field_bottom_y(state.config)}), '!');
+  put(grid, to_row(state.config,
+                   Point{mouth_right_x(state.config), field_bottom_y(state.config)}) + 1,
+      to_col(Point{mouth_right_x(state.config), field_bottom_y(state.config)}), '!');
 
   for (const Segment &segment : state.used_segments) {
     if (!is_renderable_point(state.config, segment.a) ||
@@ -127,7 +138,7 @@ std::string render_ascii(const GameState &state) {
     put(grid, row, col, segment_char(segment));
   }
 
-  for (int y = 0; y <= state.config.height; ++y) {
+  for (int y = kFieldTopY; y <= field_bottom_y(state.config); ++y) {
     for (int x = 0; x <= state.config.width; ++x) {
       const Point point{x, y};
       const char marker = is_boundary_point(state.config, point) ? 'o' : '.';
@@ -136,8 +147,8 @@ std::string render_ascii(const GameState &state) {
   }
 
   for (int x = mouth_left_x(state.config); x <= mouth_right_x(state.config); ++x) {
-    const Point north_goal{x, -1};
-    const Point south_goal{x, state.config.height + 1};
+    const Point north_goal{x, kNorthGoalY};
+    const Point south_goal{x, south_goal_y(state.config)};
     put(grid, to_row(state.config, north_goal), to_col(north_goal), '^');
     put(grid, to_row(state.config, south_goal), to_col(south_goal), 'v');
   }

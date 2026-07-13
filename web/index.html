@@ -11,54 +11,56 @@
   <body>
     <header class="topbar">
       <div>
-        <h1>Paper Soccer</h1>
+        <h1>Paper Soccer Replay</h1>
         <p id="replayTitle">Replay Viewer</p>
       </div>
       <label class="file-button">
-        Load JSON
+        Open replay
         <input id="fileInput" type="file" accept="application/json,.json">
       </label>
     </header>
 
     <main class="app-shell">
-      <section class="board-panel" aria-label="Replay board">
-        <canvas id="boardCanvas"></canvas>
+      <section class="board-panel" aria-labelledby="boardHeading">
+        <h2 id="boardHeading" class="visually-hidden">Replay board</h2>
+        <p id="boardDescription" class="visually-hidden">
+          Paper soccer replay board. Coordinates are shown as row, column. Use the replay controls
+          or move list to inspect the game.
+        </p>
+        <canvas id="boardCanvas" role="img" aria-labelledby="boardHeading"
+          aria-describedby="boardDescription">
+          Paper soccer replay board. The move list contains a text version of the replay.
+        </canvas>
       </section>
 
       <aside class="control-panel" aria-label="Replay controls">
-        <div class="status-block">
-          <div class="status-row">
-            <span>Ply</span>
-            <strong id="plyLabel">0 / 0</strong>
-          </div>
-          <div class="status-row">
-            <span>State</span>
-            <strong id="statusLabel">Ready</strong>
-          </div>
-          <div class="status-row">
-            <span>Move</span>
-            <strong id="moveLabel">Start</strong>
-          </div>
+        <div class="replay-summary" aria-live="polite" aria-atomic="true">
+          <p id="plyLabel" class="summary-position">Move 0 of 0</p>
+          <h2 id="statusLabel" class="summary-title">Ready to replay</h2>
+          <p id="moveLabel" class="summary-detail">The ball is at its starting position.</p>
         </div>
 
-        <div class="button-row">
-          <button id="startButton" type="button">Start</button>
-          <button id="prevButton" type="button">Prev</button>
-          <button id="playButton" type="button">Play</button>
+        <div class="button-row" role="group" aria-label="Playback">
+          <button id="prevButton" type="button" disabled>Previous</button>
+          <button id="playButton" class="primary-control" type="button"
+            aria-pressed="false">Play</button>
           <button id="nextButton" type="button">Next</button>
-          <button id="endButton" type="button">End</button>
         </div>
 
-        <label class="range-row">
-          <span>Timeline</span>
+        <label class="timeline-row">
+          <span>Replay position</span>
           <input id="plyRange" type="range" min="0" max="0" value="0">
         </label>
 
-        <label class="range-row">
-          <span>Speed</span>
-          <input id="speedRange" type="range" min="0.5" max="4" step="0.5" value="1">
-          <strong id="speedLabel">1x</strong>
-        </label>
+        <div class="setting-row">
+          <label for="speedSelect">Playback speed</label>
+          <select id="speedSelect">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </div>
 
         <section class="move-list-section" aria-label="Move list">
           <h2>Moves</h2>
@@ -69,51 +71,51 @@
 
     <script id="default-replay" type="application/json">
 {
-  "schema": "papersoccer.replay.v1",
+  "schema": "papersoccer.replay.v2",
   "rules": {"width": 8, "height": 10},
   "players": {
     "one": {"kind": "RandomBot", "seed": 12345},
     "two": {"kind": "RandomBot", "seed": 12346}
   },
-  "start": {"x":4,"y":5},
+  "start": {"x":4,"y":6},
   "status": "wonByOne",
   "winner": "one",
   "truncated": false,
   "moves": [
-    {"ply": 1, "player": "one", "from": {"x":4,"y":5}, "to": {"x":3,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 2, "player": "two", "from": {"x":3,"y":4}, "to": {"x":2,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 3, "player": "one", "from": {"x":2,"y":3}, "to": {"x":2,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 4, "player": "two", "from": {"x":2,"y":2}, "to": {"x":2,"y":1}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 5, "player": "one", "from": {"x":2,"y":1}, "to": {"x":3,"y":1}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 6, "player": "two", "from": {"x":3,"y":1}, "to": {"x":4,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 7, "player": "one", "from": {"x":4,"y":2}, "to": {"x":5,"y":1}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 8, "player": "two", "from": {"x":5,"y":1}, "to": {"x":5,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 9, "player": "one", "from": {"x":5,"y":2}, "to": {"x":5,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 10, "player": "two", "from": {"x":5,"y":3}, "to": {"x":4,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 11, "player": "one", "from": {"x":4,"y":3}, "to": {"x":5,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 12, "player": "two", "from": {"x":5,"y":4}, "to": {"x":4,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 13, "player": "one", "from": {"x":4,"y":4}, "to": {"x":3,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 14, "player": "two", "from": {"x":3,"y":5}, "to": {"x":4,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 15, "player": "one", "from": {"x":4,"y":6}, "to": {"x":4,"y":5}, "extraTurn": true, "statusAfter": "inProgress"},
-    {"ply": 16, "player": "one", "from": {"x":4,"y":5}, "to": {"x":3,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 17, "player": "two", "from": {"x":3,"y":6}, "to": {"x":2,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 18, "player": "one", "from": {"x":2,"y":7}, "to": {"x":1,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 19, "player": "two", "from": {"x":1,"y":6}, "to": {"x":2,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 20, "player": "one", "from": {"x":2,"y":5}, "to": {"x":1,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 21, "player": "two", "from": {"x":1,"y":5}, "to": {"x":2,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 22, "player": "one", "from": {"x":2,"y":6}, "to": {"x":3,"y":6}, "extraTurn": true, "statusAfter": "inProgress"},
-    {"ply": 23, "player": "one", "from": {"x":3,"y":6}, "to": {"x":3,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 24, "player": "two", "from": {"x":3,"y":7}, "to": {"x":4,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 25, "player": "one", "from": {"x":4,"y":8}, "to": {"x":5,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 26, "player": "two", "from": {"x":5,"y":8}, "to": {"x":4,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 27, "player": "one", "from": {"x":4,"y":7}, "to": {"x":3,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 28, "player": "two", "from": {"x":3,"y":8}, "to": {"x":2,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 29, "player": "one", "from": {"x":2,"y":8}, "to": {"x":1,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 30, "player": "two", "from": {"x":1,"y":9}, "to": {"x":0,"y":8}, "extraTurn": true, "statusAfter": "inProgress"},
-    {"ply": 31, "player": "two", "from": {"x":0,"y":8}, "to": {"x":1,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 32, "player": "one", "from": {"x":1,"y":8}, "to": {"x":2,"y":7}, "extraTurn": true, "statusAfter": "inProgress"},
-    {"ply": 33, "player": "one", "from": {"x":2,"y":7}, "to": {"x":1,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
-    {"ply": 34, "player": "two", "from": {"x":1,"y":7}, "to": {"x":0,"y":8}, "extraTurn": true, "statusAfter": "wonByOne"}
+    {"ply": 1, "player": "one", "from": {"x":4,"y":6}, "to": {"x":3,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 2, "player": "two", "from": {"x":3,"y":5}, "to": {"x":2,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 3, "player": "one", "from": {"x":2,"y":4}, "to": {"x":2,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 4, "player": "two", "from": {"x":2,"y":3}, "to": {"x":2,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 5, "player": "one", "from": {"x":2,"y":2}, "to": {"x":3,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 6, "player": "two", "from": {"x":3,"y":2}, "to": {"x":4,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 7, "player": "one", "from": {"x":4,"y":3}, "to": {"x":5,"y":2}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 8, "player": "two", "from": {"x":5,"y":2}, "to": {"x":5,"y":3}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 9, "player": "one", "from": {"x":5,"y":3}, "to": {"x":5,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 10, "player": "two", "from": {"x":5,"y":4}, "to": {"x":4,"y":4}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 11, "player": "one", "from": {"x":4,"y":4}, "to": {"x":5,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 12, "player": "two", "from": {"x":5,"y":5}, "to": {"x":4,"y":5}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 13, "player": "one", "from": {"x":4,"y":5}, "to": {"x":3,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 14, "player": "two", "from": {"x":3,"y":6}, "to": {"x":4,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 15, "player": "one", "from": {"x":4,"y":7}, "to": {"x":4,"y":6}, "extraTurn": true, "statusAfter": "inProgress"},
+    {"ply": 16, "player": "one", "from": {"x":4,"y":6}, "to": {"x":3,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 17, "player": "two", "from": {"x":3,"y":7}, "to": {"x":2,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 18, "player": "one", "from": {"x":2,"y":8}, "to": {"x":1,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 19, "player": "two", "from": {"x":1,"y":7}, "to": {"x":2,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 20, "player": "one", "from": {"x":2,"y":6}, "to": {"x":1,"y":6}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 21, "player": "two", "from": {"x":1,"y":6}, "to": {"x":2,"y":7}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 22, "player": "one", "from": {"x":2,"y":7}, "to": {"x":3,"y":7}, "extraTurn": true, "statusAfter": "inProgress"},
+    {"ply": 23, "player": "one", "from": {"x":3,"y":7}, "to": {"x":3,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 24, "player": "two", "from": {"x":3,"y":8}, "to": {"x":4,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 25, "player": "one", "from": {"x":4,"y":9}, "to": {"x":5,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 26, "player": "two", "from": {"x":5,"y":9}, "to": {"x":4,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 27, "player": "one", "from": {"x":4,"y":8}, "to": {"x":3,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 28, "player": "two", "from": {"x":3,"y":9}, "to": {"x":2,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 29, "player": "one", "from": {"x":2,"y":9}, "to": {"x":1,"y":10}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 30, "player": "two", "from": {"x":1,"y":10}, "to": {"x":0,"y":9}, "extraTurn": true, "statusAfter": "inProgress"},
+    {"ply": 31, "player": "two", "from": {"x":0,"y":9}, "to": {"x":1,"y":9}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 32, "player": "one", "from": {"x":1,"y":9}, "to": {"x":2,"y":8}, "extraTurn": true, "statusAfter": "inProgress"},
+    {"ply": 33, "player": "one", "from": {"x":2,"y":8}, "to": {"x":1,"y":8}, "extraTurn": false, "statusAfter": "inProgress"},
+    {"ply": 34, "player": "two", "from": {"x":1,"y":8}, "to": {"x":0,"y":9}, "extraTurn": true, "statusAfter": "wonByOne"}
   ]
 }
     </script>

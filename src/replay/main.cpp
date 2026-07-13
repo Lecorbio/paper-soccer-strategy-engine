@@ -95,7 +95,7 @@ void write_replay_json(std::ostream &out, const ExportConfig &config,
                        const ps::GameState &state,
                        const std::vector<ReplayMove> &moves, bool truncated) {
   out << "{\n";
-  out << "  \"schema\": \"papersoccer.replay.v1\",\n";
+  out << "  \"schema\": \"papersoccer.replay.v2\",\n";
   out << "  \"rules\": {\"width\": " << state.config.width
       << ", \"height\": " << state.config.height << "},\n";
   out << "  \"players\": {\n";
@@ -105,7 +105,7 @@ void write_replay_json(std::ostream &out, const ExportConfig &config,
       << bot_seed(config.base_seed, ps::Player::Two) << "}\n";
   out << "  },\n";
   out << "  \"start\": ";
-  write_point(out, ps::Point{state.config.width / 2, state.config.height / 2});
+  write_point(out, ps::Point{state.config.width / 2, state.config.height / 2 + 1});
   out << ",\n";
   out << "  \"status\": \"" << status_to_json(state.status) << "\",\n";
   out << "  \"winner\": ";

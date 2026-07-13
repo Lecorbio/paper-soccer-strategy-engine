@@ -69,20 +69,36 @@ bool same_state(const ps::GameState &lhs, const ps::GameState &rhs) {
 void initial_state_has_8_legal_moves_from_center() {
   const ps::GameState state = ps::make_initial_state();
   const auto moves = ps::legal_moves(state);
+  require(state.ball == ps::Point{4, 6}, "Initial ball should be at (4, 6).");
   require(moves.size() == 8, "Initial state should have exactly 8 legal moves.");
+}
+
+void legal_moves_never_use_negative_coordinates() {
+  const std::vector<ps::GameState> states{
+      ps::make_initial_state(),
+      make_clean_state_at(ps::Point{4, 1}, ps::Player::One),
+      make_clean_state_at(ps::Point{4, 11}, ps::Player::Two),
+  };
+
+  for (const ps::GameState &state : states) {
+    for (const ps::Move &move : ps::legal_moves(state)) {
+      require(move.to.x >= 0 && move.to.y >= 0,
+              "Legal move coordinates should never be negative.");
+    }
+  }
 }
 
 void reusing_segment_is_illegal_in_both_directions() {
   ps::GameState state = ps::make_initial_state();
-  state = ps::apply_move(state, ps::Move{{4, 4}});
+  state = ps::apply_move(state, ps::Move{{4, 5}});
 
   const auto moves = ps::legal_moves(state);
-  require(!contains_move(moves, ps::Point{4, 5}),
+  require(!contains_move(moves, ps::Point{4, 6}),
           "Reverse move on already used segment should be illegal.");
 
   bool threw = false;
   try {
-    (void)ps::apply_move(state, ps::Move{{4, 5}});
+    (void)ps::apply_move(state, ps::Move{{4, 6}});
   } catch (const std::invalid_argument &) {
     threw = true;
   }
@@ -90,55 +106,66 @@ void reusing_segment_is_illegal_in_both_directions() {
 }
 
 void movement_along_outer_boundary_is_illegal() {
-  ps::GameState state = make_clean_state_at(ps::Point{0, 5});
+  ps::GameState state = make_clean_state_at(ps::Point{0, 6});
   const auto moves = ps::legal_moves(state);
 
-  require(!contains_move(moves, ps::Point{0, 4}), "Left wall boundary segment must be illegal.");
-  require(!contains_move(moves, ps::Point{0, 6}), "Left wall boundary segment must be illegal.");
+  require(!contains_move(moves, ps::Point{0, 5}), "Left wall boundary segment must be illegal.");
+  require(!contains_move(moves, ps::Point{0, 7}), "Left wall boundary segment must be illegal.");
 }
 
 void reaching_visited_point_grants_extra_turn() {
   ps::GameState state = ps::make_initial_state();
-  state = ps::apply_move(state, ps::Move{{4, 4}});  // P1
-  state = ps::apply_move(state, ps::Move{{5, 4}});  // P2
-  state = ps::apply_move(state, ps::Move{{5, 5}});  // P1
+  state = ps::apply_move(state, ps::Move{{4, 5}});  // P1
+  state = ps::apply_move(state, ps::Move{{5, 5}});  // P2
+  state = ps::apply_move(state, ps::Move{{5, 6}});  // P1
 
   require(state.to_move == ps::Player::Two, "Expected Player 2 before the visited-point move.");
-  state = ps::apply_move(state, ps::Move{{4, 5}});  // P2 -> visited starting point
+  state = ps::apply_move(state, ps::Move{{4, 6}});  // P2 -> visited starting point
   require(state.to_move == ps::Player::Two,
           "Landing on previously visited point must grant an extra turn.");
 }
 
 void reaching_boundary_point_grants_extra_turn() {
-  ps::GameState state = make_clean_state_at(ps::Point{4, 1}, ps::Player::One);
-  state = ps::apply_move(state, ps::Move{{4, 0}});
+  ps::GameState state = make_clean_state_at(ps::Point{4, 2}, ps::Player::One);
+  state = ps::apply_move(state, ps::Move{{4, 1}});
   require(state.to_move == ps::Player::One,
           "Landing on boundary point must grant an extra turn.");
 }
 
 void goal_entry_sets_terminal_and_winner() {
-  ps::GameState state = make_clean_state_at(ps::Point{4, 0}, ps::Player::One);
-  require(contains_move(ps::legal_moves(state), ps::Point{4, -1}),
+  ps::GameState state = make_clean_state_at(ps::Point{4, 1}, ps::Player::One);
+  require(contains_move(ps::legal_moves(state), ps::Point{4, 0}),
           "North goal entry should be legal from north center mouth.");
 
-  state = ps::apply_move(state, ps::Move{{4, -1}});
+  state = ps::apply_move(state, ps::Move{{4, 0}});
   require(ps::is_terminal(state), "Entering the goal must end the game.");
   require(ps::winner(state).has_value() && ps::winner(state).value() == ps::Player::One,
           "Player 1 should win after entering north goal.");
 }
 
+void south_goal_entry_sets_terminal_and_winner() {
+  ps::GameState state = make_clean_state_at(ps::Point{4, 11}, ps::Player::Two);
+  require(contains_move(ps::legal_moves(state), ps::Point{4, 12}),
+          "South goal entry should be legal from south center mouth.");
+
+  state = ps::apply_move(state, ps::Move{{4, 12}});
+  require(ps::is_terminal(state), "Entering the south goal must end the game.");
+  require(ps::winner(state).has_value() && ps::winner(state).value() == ps::Player::Two,
+          "Player 2 should win after entering south goal.");
+}
+
 void no_legal_moves_on_turn_causes_loss() {
-  ps::GameState state = make_clean_state_at(ps::Point{4, 5}, ps::Player::One);
-  const ps::Point trap_center{4, 4};
+  ps::GameState state = make_clean_state_at(ps::Point{4, 6}, ps::Player::One);
+  const ps::Point trap_center{4, 5};
   const std::vector<ps::Point> blockers{
-      {3, 3}, {4, 3}, {5, 3}, {3, 4}, {5, 4}, {3, 5}, {5, 5},
+      {3, 4}, {4, 4}, {5, 4}, {3, 5}, {5, 5}, {3, 6}, {5, 6},
   };
 
   for (const ps::Point neighbor : blockers) {
     state.used_segments.insert(ps::Segment{trap_center, neighbor});
   }
 
-  state = ps::apply_move(state, ps::Move{{4, 4}});
+  state = ps::apply_move(state, ps::Move{{4, 5}});
   require(state.status == ps::Status::WonByOne,
           "If next player has zero legal moves at turn start, they must lose.");
   require(ps::winner(state).has_value() && ps::winner(state).value() == ps::Player::One,
@@ -146,32 +173,32 @@ void no_legal_moves_on_turn_causes_loss() {
 }
 
 void goal_move_is_legal_only_from_goal_mouth_points() {
-  ps::GameState not_mouth = make_clean_state_at(ps::Point{2, 0}, ps::Player::One);
-  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{3, -1}),
+  ps::GameState not_mouth = make_clean_state_at(ps::Point{2, 1}, ps::Player::One);
+  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{3, 0}),
           "North goal should not be reachable from non-mouth point.");
-  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{4, -1}),
+  require(!contains_move(ps::legal_moves(not_mouth), ps::Point{4, 0}),
           "North goal should not be reachable from non-mouth point.");
 
-  ps::GameState left_mouth = make_clean_state_at(ps::Point{3, 0}, ps::Player::One);
-  require(!contains_move(ps::legal_moves(left_mouth), ps::Point{3, -1}),
+  ps::GameState left_mouth = make_clean_state_at(ps::Point{3, 1}, ps::Player::One);
+  require(!contains_move(ps::legal_moves(left_mouth), ps::Point{3, 0}),
           "Left mouth point should not move straight onto the left goal post.");
-  require(contains_move(ps::legal_moves(left_mouth), ps::Point{4, -1}),
+  require(contains_move(ps::legal_moves(left_mouth), ps::Point{4, 0}),
           "Left mouth point should connect diagonally to center goal point.");
-  require(!contains_move(ps::legal_moves(left_mouth), ps::Point{5, -1}),
+  require(!contains_move(ps::legal_moves(left_mouth), ps::Point{5, 0}),
           "Left mouth point should not connect across two columns into the far goal point.");
 
-  ps::GameState center_mouth = make_clean_state_at(ps::Point{4, 0}, ps::Player::One);
-  require(contains_move(ps::legal_moves(center_mouth), ps::Point{3, -1}),
+  ps::GameState center_mouth = make_clean_state_at(ps::Point{4, 1}, ps::Player::One);
+  require(contains_move(ps::legal_moves(center_mouth), ps::Point{3, 0}),
           "Center mouth point should connect diagonally to left goal point.");
-  require(contains_move(ps::legal_moves(center_mouth), ps::Point{4, -1}),
+  require(contains_move(ps::legal_moves(center_mouth), ps::Point{4, 0}),
           "Center mouth point should connect to center goal point.");
-  require(contains_move(ps::legal_moves(center_mouth), ps::Point{5, -1}),
+  require(contains_move(ps::legal_moves(center_mouth), ps::Point{5, 0}),
           "Center mouth point should connect diagonally to right goal point.");
 
-  ps::GameState right_mouth = make_clean_state_at(ps::Point{5, 0}, ps::Player::One);
-  require(contains_move(ps::legal_moves(right_mouth), ps::Point{4, -1}),
+  ps::GameState right_mouth = make_clean_state_at(ps::Point{5, 1}, ps::Player::One);
+  require(contains_move(ps::legal_moves(right_mouth), ps::Point{4, 0}),
           "Right mouth point should connect diagonally to center goal point.");
-  require(!contains_move(ps::legal_moves(right_mouth), ps::Point{5, -1}),
+  require(!contains_move(ps::legal_moves(right_mouth), ps::Point{5, 0}),
           "Right mouth point should not move straight onto the right goal post.");
 }
 
@@ -200,9 +227,20 @@ void renderer_includes_ball_goals_and_walls() {
   require(rendered.find("!") != std::string::npos, "Renderer should show left/right walls.");
 }
 
+void renderer_uses_zero_based_row_labels() {
+  const std::string rendered = ps::render_ascii(ps::make_initial_state());
+  const std::size_t board_start = rendered.find("\n\n");
+
+  require(board_start != std::string::npos, "Renderer should separate metadata from the board.");
+  require(rendered.compare(board_start + 2, 4, "  0 ") == 0,
+          "The first rendered board row should be row 0.");
+  require(rendered.find("\n -1 ") == std::string::npos,
+          "Renderer should not include a negative row label.");
+}
+
 void renderer_shows_used_segments() {
   ps::GameState state = ps::make_initial_state();
-  state = ps::apply_move(state, ps::Move{{5, 5}});
+  state = ps::apply_move(state, ps::Move{{5, 6}});
   const std::string rendered = ps::render_ascii(state);
   require(rendered.find("-") != std::string::npos,
           "Renderer should include segment markers for used edges.");
@@ -219,17 +257,22 @@ int run_rules_tests() {
   const std::vector<TestCase> tests{
       {"initial_state_has_8_legal_moves_from_center",
        initial_state_has_8_legal_moves_from_center},
+      {"legal_moves_never_use_negative_coordinates",
+       legal_moves_never_use_negative_coordinates},
       {"reusing_segment_is_illegal_in_both_directions",
        reusing_segment_is_illegal_in_both_directions},
       {"movement_along_outer_boundary_is_illegal", movement_along_outer_boundary_is_illegal},
       {"reaching_visited_point_grants_extra_turn", reaching_visited_point_grants_extra_turn},
       {"reaching_boundary_point_grants_extra_turn", reaching_boundary_point_grants_extra_turn},
       {"goal_entry_sets_terminal_and_winner", goal_entry_sets_terminal_and_winner},
+      {"south_goal_entry_sets_terminal_and_winner",
+       south_goal_entry_sets_terminal_and_winner},
       {"no_legal_moves_on_turn_causes_loss", no_legal_moves_on_turn_causes_loss},
       {"goal_move_is_legal_only_from_goal_mouth_points",
        goal_move_is_legal_only_from_goal_mouth_points},
       {"apply_move_is_pure_on_invalid_move", apply_move_is_pure_on_invalid_move},
       {"renderer_includes_ball_goals_and_walls", renderer_includes_ball_goals_and_walls},
+      {"renderer_uses_zero_based_row_labels", renderer_uses_zero_based_row_labels},
       {"renderer_shows_used_segments", renderer_shows_used_segments},
   };
 

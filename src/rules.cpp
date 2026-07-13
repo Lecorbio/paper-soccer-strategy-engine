@@ -10,7 +10,7 @@ namespace papersoccer {
 GameState make_initial_state(const RulesConfig &config) {
   GameState state;
   state.config = config;
-  state.ball = Point{config.width / 2, config.height / 2};
+  state.ball = Point{config.width / 2, config.height / 2 + 1};
   state.to_move = Player::One;
   state.status = Status::InProgress;
   state.path = {state.ball};

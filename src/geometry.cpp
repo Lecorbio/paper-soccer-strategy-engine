@@ -7,6 +7,13 @@ namespace papersoccer {
 
 namespace {
 
+constexpr int kNorthGoalY = 0;
+constexpr int kFieldTopY = 1;
+
+int field_bottom_y(const RulesConfig &config) { return config.height + 1; }
+
+int south_goal_y(const RulesConfig &config) { return config.height + 2; }
+
 int center_x(const RulesConfig &config) { return config.width / 2; }
 
 int mouth_left_x(const RulesConfig &config) { return center_x(config) - 1; }
@@ -18,15 +25,16 @@ bool is_mouth_x(const RulesConfig &config, int x) {
 }
 
 bool is_north_goal(const RulesConfig &config, Point point) {
-  return is_mouth_x(config, point.x) && point.y == -1;
+  return is_mouth_x(config, point.x) && point.y == kNorthGoalY;
 }
 
 bool is_south_goal(const RulesConfig &config, Point point) {
-  return is_mouth_x(config, point.x) && point.y == config.height + 1;
+  return is_mouth_x(config, point.x) && point.y == south_goal_y(config);
 }
 
 bool is_goal_mouth_point(const RulesConfig &config, Point point) {
-  return is_mouth_x(config, point.x) && (point.y == 0 || point.y == config.height);
+  return is_mouth_x(config, point.x) &&
+         (point.y == kFieldTopY || point.y == field_bottom_y(config));
 }
 
 bool is_north_goal_post_segment(const RulesConfig &config, Segment segment) {
@@ -37,7 +45,8 @@ bool is_north_goal_post_segment(const RulesConfig &config, Segment segment) {
 
   return segment.a.x == segment.b.x &&
          (segment.a.x == mouth_left_x(config) || segment.a.x == mouth_right_x(config)) &&
-         ((segment.a.y == -1 && segment.b.y == 0) || (segment.a.y == 0 && segment.b.y == -1));
+         ((segment.a.y == kNorthGoalY && segment.b.y == kFieldTopY) ||
+          (segment.a.y == kFieldTopY && segment.b.y == kNorthGoalY));
 }
 
 bool is_south_goal_post_segment(const RulesConfig &config, Segment segment) {
@@ -48,15 +57,15 @@ bool is_south_goal_post_segment(const RulesConfig &config, Segment segment) {
 
   return segment.a.x == segment.b.x &&
          (segment.a.x == mouth_left_x(config) || segment.a.x == mouth_right_x(config)) &&
-         ((segment.a.y == config.height && segment.b.y == config.height + 1) ||
-          (segment.a.y == config.height + 1 && segment.b.y == config.height));
+         ((segment.a.y == field_bottom_y(config) && segment.b.y == south_goal_y(config)) ||
+          (segment.a.y == south_goal_y(config) && segment.b.y == field_bottom_y(config)));
 }
 
 }  // namespace
 
 bool is_regular_point(const RulesConfig &config, Point point) {
-  return point.x >= 0 && point.x <= config.width && point.y >= 0 &&
-         point.y <= config.height;
+  return point.x >= 0 && point.x <= config.width && point.y >= kFieldTopY &&
+         point.y <= field_bottom_y(config);
 }
 
 bool is_goal_point(const RulesConfig &config, Point point) {
@@ -67,8 +76,8 @@ bool is_boundary_point(const RulesConfig &config, Point point) {
   if (!is_regular_point(config, point)) {
     return false;
   }
-  return point.x == 0 || point.x == config.width || point.y == 0 ||
-         point.y == config.height;
+  return point.x == 0 || point.x == config.width || point.y == kFieldTopY ||
+         point.y == field_bottom_y(config);
 }
 
 bool is_neighbor(Point from, Point to) {
@@ -93,7 +102,8 @@ bool is_forbidden_boundary_segment(const RulesConfig &config, Segment segment) {
   const int dx = std::abs(segment.a.x - segment.b.x);
   const int dy = std::abs(segment.a.y - segment.b.y);
 
-  if (segment.a.y == segment.b.y && (segment.a.y == 0 || segment.a.y == config.height) &&
+  if (segment.a.y == segment.b.y &&
+      (segment.a.y == kFieldTopY || segment.a.y == field_bottom_y(config)) &&
       dx == 1 && dy == 0) {
     return true;
   }
@@ -125,17 +135,17 @@ std::vector<Point> neighbors(const RulesConfig &config, Point from, Player playe
   }
 
   if (is_goal_mouth_point(config, from)) {
-    if (player == Player::One && from.y == 0) {
+    if (player == Player::One && from.y == kFieldTopY) {
       for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
-        const Point goal_point{goal_x, -1};
+        const Point goal_point{goal_x, kNorthGoalY};
         if (is_neighbor(from, goal_point)) {
           result.push_back(goal_point);
         }
       }
     }
-    if (player == Player::Two && from.y == config.height) {
+    if (player == Player::Two && from.y == field_bottom_y(config)) {
       for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
-        const Point goal_point{goal_x, config.height + 1};
+        const Point goal_point{goal_x, south_goal_y(config)};
         if (is_neighbor(from, goal_point)) {
           result.push_back(goal_point);
         }
