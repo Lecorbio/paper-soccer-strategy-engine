@@ -145,6 +145,21 @@
     return replay.moves[currentPly - 1].to;
   }
 
+  function currentMoveStartIndex() {
+    if (currentPly === 0) {
+      return 0;
+    }
+
+    const player = replay.moves[currentPly - 1].player;
+    let startIndex = currentPly - 1;
+    while (startIndex > 0 &&
+           replay.moves[startIndex - 1].extraTurn &&
+           replay.moves[startIndex - 1].player === player) {
+      startIndex -= 1;
+    }
+    return startIndex;
+  }
+
   function updateText() {
     replayTitle.textContent = describePlayers();
 
@@ -235,22 +250,17 @@
     const shortSide = Math.min(width, height);
     const safeMargin = Math.max(24, shortSide * 0.045);
     const axisSpace = Math.max(36, Math.min(48, shortSide * 0.075));
-    const margins = {
-      top: safeMargin,
-      right: safeMargin,
-      bottom: safeMargin + axisSpace,
-      left: safeMargin + axisSpace,
-    };
-    const availableWidth = Math.max(1, width - margins.left - margins.right);
-    const availableHeight = Math.max(1, height - margins.top - margins.bottom);
+    const frameMargin = safeMargin + axisSpace / 2;
+    const availableWidth = Math.max(1, width - frameMargin * 2);
+    const availableHeight = Math.max(1, height - frameMargin * 2);
     const cell = Math.min(availableWidth / spanX, availableHeight / spanY);
     const boardWidth = cell * spanX;
     const boardHeight = cell * spanY;
-    const originX = margins.left + (availableWidth - boardWidth) / 2;
-    const originY = margins.top + (availableHeight - boardHeight) / 2;
+    const originX = (width - boardWidth) / 2;
+    const originY = (height - boardHeight) / 2;
 
     return {
-      axisGap: Math.max(28, axisSpace * 0.72),
+      axisGap: Math.max(24, axisSpace * 0.68),
       cell,
       point(point) {
         return {
@@ -409,16 +419,17 @@
   function drawPath(mapper) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    const highlightedFrom = currentMoveStartIndex();
     for (let i = 0; i < currentPly; i += 1) {
       const move = replay.moves[i];
       const from = mapper.point(move.from);
       const to = mapper.point(move.to);
-      const isCurrent = i === currentPly - 1;
+      const isCurrentMove = i >= highlightedFrom;
 
-      ctx.strokeStyle = isCurrent
+      ctx.strokeStyle = isCurrentMove
         ? "#ffd166"
         : (move.player === "two" ? "#153f66" : "#782525");
-      ctx.lineWidth = isCurrent
+      ctx.lineWidth = isCurrentMove
         ? Math.max(6, mapper.cell * 0.095)
         : Math.max(4, mapper.cell * 0.07);
       drawLine(from, to);
