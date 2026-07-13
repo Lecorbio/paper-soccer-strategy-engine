@@ -1,6 +1,7 @@
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,12 +15,14 @@ namespace ps = papersoccer;
 
 namespace {
 
-enum class ControllerKind { Human, RandomBot };
+enum class ControllerKind { Human, RandomBot, MctsBot };
 
 struct CliConfig {
   ControllerKind player_one{ControllerKind::Human};
   ControllerKind player_two{ControllerKind::Human};
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
+  std::uint64_t mcts_base_seed{ps::RandomBot::default_seed()};
+  std::uint32_t mcts_iterations{2000};
 };
 
 std::string player_to_string(ps::Player player) {
@@ -27,7 +30,15 @@ std::string player_to_string(ps::Player player) {
 }
 
 std::string controller_to_string(ControllerKind controller) {
-  return controller == ControllerKind::Human ? "Human" : "RandomBot";
+  switch (controller) {
+    case ControllerKind::Human:
+      return "Human";
+    case ControllerKind::RandomBot:
+      return "RandomBot";
+    case ControllerKind::MctsBot:
+      return "MctsBot";
+  }
+  return "Unknown";
 }
 
 std::string format_position(ps::Point point) {
@@ -78,6 +89,24 @@ bool parse_seed(const std::string &input, std::uint64_t &out_seed) {
   }
 }
 
+bool parse_iterations(const std::string &input, std::uint32_t &out_iterations) {
+  try {
+    if (input.empty() || input.front() == '-') {
+      return false;
+    }
+    std::size_t parsed_chars = 0;
+    const auto value = std::stoull(input, &parsed_chars);
+    if (parsed_chars != input.size() || value == 0 ||
+        value > std::numeric_limits<std::uint32_t>::max()) {
+      return false;
+    }
+    out_iterations = static_cast<std::uint32_t>(value);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 std::string prompt_line(const std::string &prompt) {
   std::cout << prompt;
   std::string input;
@@ -98,10 +127,10 @@ std::size_t prompt_choice(const std::string &prompt, std::size_t option_count) {
   }
 }
 
-std::uint64_t prompt_seed(std::uint64_t default_seed) {
+std::uint64_t prompt_seed(const std::string &label, std::uint64_t default_seed) {
   while (true) {
-    const std::string input = prompt_line(
-        "RandomBot base seed [" + std::to_string(default_seed) + "]: ");
+    const std::string input =
+        prompt_line(label + " [" + std::to_string(default_seed) + "]: ");
     if (input.empty()) {
       return default_seed;
     }
@@ -114,28 +143,83 @@ std::uint64_t prompt_seed(std::uint64_t default_seed) {
   }
 }
 
+std::uint32_t prompt_iterations(std::uint32_t default_iterations) {
+  while (true) {
+    const std::string input = prompt_line(
+        "MctsBot iterations per move [" + std::to_string(default_iterations) + "]: ");
+    if (input.empty()) {
+      return default_iterations;
+    }
+
+    std::uint32_t iterations = default_iterations;
+    if (parse_iterations(input, iterations)) {
+      return iterations;
+    }
+    std::cout << "Invalid iteration count. Enter an integer greater than zero.\n";
+  }
+}
+
 CliConfig prompt_config() {
   std::cout << "Select mode:\n";
   std::cout << "  [1] Human vs Human\n";
   std::cout << "  [2] Human vs RandomBot\n";
   std::cout << "  [3] RandomBot vs RandomBot\n";
+  std::cout << "  [4] Human vs MctsBot\n";
+  std::cout << "  [5] RandomBot vs MctsBot\n";
+  std::cout << "  [6] MctsBot vs MctsBot\n";
 
   CliConfig config;
-  const std::size_t mode = prompt_choice("Mode: ", 3);
+  const std::size_t mode = prompt_choice("Mode: ", 6);
   if (mode == 1) {
     return config;
   }
 
-  config.base_seed = prompt_seed(ps::RandomBot::default_seed());
-  if (mode == 2) {
-    const std::size_t side = prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
-    config.player_one = (side == 1) ? ControllerKind::Human : ControllerKind::RandomBot;
-    config.player_two = (side == 1) ? ControllerKind::RandomBot : ControllerKind::Human;
+  if (mode == 2 || mode == 3) {
+    config.base_seed =
+        prompt_seed("RandomBot base seed", ps::RandomBot::default_seed());
+    if (mode == 2) {
+      const std::size_t side =
+          prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::Human : ControllerKind::RandomBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::RandomBot : ControllerKind::Human;
+      return config;
+    }
+
+    config.player_one = ControllerKind::RandomBot;
+    config.player_two = ControllerKind::RandomBot;
     return config;
   }
 
-  config.player_one = ControllerKind::RandomBot;
-  config.player_two = ControllerKind::RandomBot;
+  if (mode == 5) {
+    config.base_seed =
+        prompt_seed("RandomBot base seed", ps::RandomBot::default_seed());
+  }
+  config.mcts_base_seed =
+      prompt_seed("MctsBot base seed", ps::RandomBot::default_seed());
+  config.mcts_iterations = prompt_iterations(2000);
+
+  if (mode == 4) {
+    const std::size_t side =
+        prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+    config.player_one = (side == 1) ? ControllerKind::Human : ControllerKind::MctsBot;
+    config.player_two = (side == 1) ? ControllerKind::MctsBot : ControllerKind::Human;
+    return config;
+  }
+
+  if (mode == 5) {
+    const std::size_t side =
+        prompt_choice("MctsBot plays as: [1] Player 1, [2] Player 2: ", 2);
+    config.player_one =
+        (side == 1) ? ControllerKind::MctsBot : ControllerKind::RandomBot;
+    config.player_two =
+        (side == 1) ? ControllerKind::RandomBot : ControllerKind::MctsBot;
+    return config;
+  }
+
+  config.player_one = ControllerKind::MctsBot;
+  config.player_two = ControllerKind::MctsBot;
   return config;
 }
 
@@ -145,6 +229,21 @@ ControllerKind controller_for_player(const CliConfig &config, ps::Player player)
 
 std::uint64_t bot_seed(std::uint64_t base_seed, ps::Player player) {
   return player == ps::Player::One ? base_seed : base_seed + 1;
+}
+
+std::unique_ptr<ps::Bot> make_bot(const CliConfig &config, ps::Player player) {
+  const ControllerKind controller = controller_for_player(config, player);
+  if (controller == ControllerKind::Human) {
+    return nullptr;
+  }
+  if (controller == ControllerKind::RandomBot) {
+    return std::make_unique<ps::RandomBot>(bot_seed(config.base_seed, player));
+  }
+
+  ps::MctsConfig mcts_config;
+  mcts_config.seed = bot_seed(config.mcts_base_seed, player);
+  mcts_config.iterations = config.mcts_iterations;
+  return std::make_unique<ps::MctsBot>(mcts_config);
 }
 
 ps::Bot *bot_for_player(const CliConfig &config, ps::Player player,
@@ -169,12 +268,8 @@ int main() {
 
   std::unique_ptr<ps::Bot> player_one_bot;
   std::unique_ptr<ps::Bot> player_two_bot;
-  if (config.player_one == ControllerKind::RandomBot) {
-    player_one_bot = std::make_unique<ps::RandomBot>(bot_seed(config.base_seed, ps::Player::One));
-  }
-  if (config.player_two == ControllerKind::RandomBot) {
-    player_two_bot = std::make_unique<ps::RandomBot>(bot_seed(config.base_seed, ps::Player::Two));
-  }
+  player_one_bot = make_bot(config, ps::Player::One);
+  player_two_bot = make_bot(config, ps::Player::Two);
 
   ps::GameState state = ps::make_initial_state();
   bool auto_print_board = true;
@@ -183,8 +278,14 @@ int main() {
   std::cout << "Type 'h' for help. Auto-print is ON.\n";
   std::cout << "Player 1: " << controller_to_string(config.player_one) << "\n";
   std::cout << "Player 2: " << controller_to_string(config.player_two) << "\n";
-  if (player_one_bot || player_two_bot) {
+  if (config.player_one == ControllerKind::RandomBot ||
+      config.player_two == ControllerKind::RandomBot) {
     std::cout << "RandomBot base seed: " << config.base_seed << "\n";
+  }
+  if (config.player_one == ControllerKind::MctsBot ||
+      config.player_two == ControllerKind::MctsBot) {
+    std::cout << "MctsBot base seed: " << config.mcts_base_seed << "\n";
+    std::cout << "MctsBot iterations per move: " << config.mcts_iterations << "\n";
   }
 
   while (!ps::is_terminal(state)) {
@@ -203,6 +304,13 @@ int main() {
       const ps::Move chosen_move = bot->choose_move(state);
       std::cout << "\n" << player_to_string(state.to_move) << " (" << bot->name()
                 << ") chooses -> " << format_position(chosen_move.to) << "\n";
+      if (const auto *mcts_bot = dynamic_cast<const ps::MctsBot *>(bot)) {
+        const ps::SearchStats stats = mcts_bot->last_search_stats();
+        std::cout << "MCTS stats: iterations=" << stats.iterations
+                  << ", nodes=" << stats.nodes
+                  << ", simulated plies=" << stats.simulated_plies
+                  << ", estimated root value=" << stats.root_value << "\n";
+      }
       state = ps::apply_move(state, chosen_move);
       continue;
     }

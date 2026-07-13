@@ -15,6 +15,7 @@ add_library(papersoccer_core
   src/debug.cpp
   src/geometry.cpp
   src/match.cpp
+  src/mcts.cpp
   src/rules.cpp
   src/web_game.cpp
 )
@@ -29,6 +30,7 @@ target_link_libraries(papersoccer_replay_export PRIVATE papersoccer_core)
 add_executable(papersoccer_tests
   tests/bot_test.cpp
   tests/match_test.cpp
+  tests/mcts_test.cpp
   tests/test_main.cpp
   tests/rules_test.cpp
   tests/web_game_session_test.cpp
