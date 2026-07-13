@@ -1,4 +1,4 @@
-(function () {
+(async function () {
   "use strict";
 
   const engine = globalThis.PaperSoccer;
@@ -6,19 +6,8 @@
     throw new Error("Paper soccer game engine did not load");
   }
 
-  const {
-    Player,
-    Status,
-    RandomBot,
-    applyMove,
-    grantsExtraTurn,
-    isTerminal,
-    legalMoves,
-    makeInitialState,
-    opponent,
-    samePoint,
-    winner,
-  } = engine;
+  const { Player, Status, samePoint } = engine;
+  const gameEngine = await engine.ready;
 
   const canvas = document.querySelector("#boardCanvas");
   const ctx = canvas.getContext("2d");
@@ -62,9 +51,8 @@
   let isPlaying = false;
   let speed = 1;
   let lastStepTime = 0;
-  let gameState = null;
+  let liveSnapshot = null;
   let humanPlayer = Player.One;
-  let randomBot = null;
   let botThinking = false;
   let botTimer = null;
   let gameError = "";
@@ -199,17 +187,39 @@
     botThinking = false;
   }
 
+  function liveState() {
+    return liveSnapshot?.state ?? null;
+  }
+
+  function liveLegalMoves() {
+    return liveSnapshot?.legalMoves ?? [];
+  }
+
+  function isLiveTerminal() {
+    return !liveSnapshot || liveState().status !== Status.InProgress;
+  }
+
+  function adoptLiveSnapshot(snapshot) {
+    liveSnapshot = snapshot;
+    humanPlayer = snapshot.humanPlayer;
+    replay = normalizeReplay(snapshot.replay);
+    currentPly = replay.moves.length;
+    lastLiveMove = replay.moves.at(-1) ?? null;
+    hoveredDestination = null;
+    plyRange.max = String(currentPly);
+    plyRange.value = String(currentPly);
+  }
+
   function saveLiveSession() {
-    if (mode !== MODE_PLAY || !gameState) {
+    if (mode !== MODE_PLAY || !liveSnapshot) {
       return;
     }
     clearBotTimer();
     liveSession = {
       replay: replay,
       currentPly: currentPly,
-      gameState: gameState,
+      snapshot: liveSnapshot,
       humanPlayer: humanPlayer,
-      randomBot: randomBot,
       gameError: gameError,
       lastLiveMove: lastLiveMove,
     };
@@ -224,8 +234,7 @@
     mode = MODE_REPLAY;
     replay = replaySession.replay;
     currentPly = replaySession.currentPly;
-    gameState = null;
-    randomBot = null;
+    liveSnapshot = null;
     gameError = "";
     hoveredDestination = null;
     lastLiveMove = null;
@@ -252,9 +261,8 @@
     mode = MODE_PLAY;
     replay = session.replay;
     currentPly = session.currentPly;
-    gameState = session.gameState;
+    liveSnapshot = session.snapshot;
     humanPlayer = session.humanPlayer;
-    randomBot = session.randomBot;
     gameError = session.gameError;
     lastLiveMove = session.lastLiveMove;
     hoveredDestination = null;
@@ -262,7 +270,7 @@
     plyRange.value = String(currentPly);
     renderInterface();
 
-    if (!gameError && !isTerminal(gameState) && gameState.toMove !== humanPlayer) {
+    if (!gameError && !isLiveTerminal() && liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
     }
   }
@@ -286,45 +294,25 @@
     mode = MODE_PLAY;
     liveSession = null;
     humanPlayer = sideSelect.value === Player.Two ? Player.Two : Player.One;
-    randomBot = new RandomBot(seed);
-    gameState = makeInitialState();
     hoveredDestination = null;
     lastLiveMove = null;
 
-    const botPlayer = opponent(humanPlayer);
-    replay = {
-      schema: "papersoccer.replay.v2",
-      rules: {
-        width: gameState.config.width,
-        height: gameState.config.height,
-      },
-      players: {
-        one: Player.One === humanPlayer
-          ? { kind: "Human" }
-          : { kind: "RandomBot", seed: seed.toString() },
-        two: Player.Two === humanPlayer
-          ? { kind: "Human" }
-          : { kind: "RandomBot", seed: seed.toString() },
-      },
-      start: { x: gameState.ball.x, y: gameState.ball.y },
-      status: Status.InProgress,
-      winner: null,
-      truncated: false,
-      moves: [],
-    };
-
-    currentPly = 0;
-    plyRange.max = "0";
+    try {
+      adoptLiveSnapshot(gameEngine.startGame(seed.toString(), humanPlayer));
+    } catch (error) {
+      liveSnapshot = null;
+      gameError = "The C++ game engine could not start: " + error.message;
+    }
     renderInterface();
 
-    if (gameState.toMove === botPlayer) {
+    if (!gameError && liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
     }
   }
 
   function canHumanMove() {
-    return mode === MODE_PLAY && gameState !== null && !gameError &&
-      !botThinking && !isTerminal(gameState) && gameState.toMove === humanPlayer;
+    return mode === MODE_PLAY && liveSnapshot !== null && !gameError &&
+      !botThinking && !isLiveTerminal() && liveState().toMove === humanPlayer;
   }
 
   function playHumanMove(move, keyboardActivated) {
@@ -332,59 +320,38 @@
       return;
     }
 
-    const legal = legalMoves(gameState).find(function (candidate) {
-      return samePoint(candidate.to, move.to);
+    const legal = liveLegalMoves().find(function (candidate) {
+      return candidate.id === move.id && samePoint(candidate.to, move.to);
     });
     if (!legal) {
       return;
     }
 
-    applyLiveMove(legal);
+    try {
+      adoptLiveSnapshot(
+        gameEngine.playHuman(
+          liveSnapshot.sessionId,
+          liveSnapshot.revision,
+          legal.id,
+        ),
+      );
+      continueLiveGame();
+    } catch (error) {
+      gameError = "Your move was not accepted: " + error.message;
+      renderInterface();
+    }
     if (keyboardActivated) {
       canvas.focus();
     }
   }
 
-  function applyLiveMove(move) {
-    if (!gameState || isTerminal(gameState)) {
-      return;
-    }
-
-    const player = gameState.toMove;
-    const from = { x: gameState.ball.x, y: gameState.ball.y };
-    const extraTurn = grantsExtraTurn(gameState, move.to);
-
-    try {
-      gameState = applyMove(gameState, move);
-    } catch (error) {
-      gameError = error.message;
+  function continueLiveGame() {
+    if (isLiveTerminal()) {
       renderInterface();
       return;
     }
 
-    const replayMove = {
-      ply: replay.moves.length + 1,
-      player: player,
-      from: from,
-      to: { x: move.to.x, y: move.to.y },
-      extraTurn: extraTurn,
-      statusAfter: gameState.status,
-    };
-    replay.moves.push(replayMove);
-    replay.status = gameState.status;
-    replay.winner = winner(gameState);
-    currentPly = replay.moves.length;
-    plyRange.max = String(currentPly);
-    plyRange.value = String(currentPly);
-    hoveredDestination = null;
-    lastLiveMove = replayMove;
-
-    if (isTerminal(gameState)) {
-      renderInterface();
-      return;
-    }
-
-    if (gameState.toMove !== humanPlayer) {
+    if (liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
       return;
     }
@@ -394,21 +361,30 @@
 
   function scheduleBotTurn() {
     clearBotTimer();
-    if (!gameState || isTerminal(gameState) || gameState.toMove === humanPlayer) {
+    if (!liveSnapshot || isLiveTerminal() || liveState().toMove === humanPlayer) {
       renderInterface();
       return;
     }
 
+    const expectedSessionId = liveSnapshot.sessionId;
+    const expectedRevision = liveSnapshot.revision;
     botThinking = true;
     renderInterface();
     botTimer = window.setTimeout(function () {
       botTimer = null;
       botThinking = false;
+      if (mode !== MODE_PLAY || !liveSnapshot ||
+          liveSnapshot.sessionId !== expectedSessionId ||
+          liveSnapshot.revision !== expectedRevision) {
+        return;
+      }
       try {
-        const move = randomBot.chooseMove(gameState);
-        applyLiveMove(move);
+        adoptLiveSnapshot(
+          gameEngine.playBot(expectedSessionId, expectedRevision),
+        );
+        continueLiveGame();
       } catch (error) {
-        gameError = "RandomBot could not choose a move: " + error.message;
+        gameError = "RandomBot could not move: " + error.message;
         renderInterface();
       }
     }, BOT_DELAY_MS);
@@ -424,8 +400,7 @@
     replay = normalized;
     replaySession = { replay: replay, currentPly: 0 };
     mode = MODE_REPLAY;
-    gameState = null;
-    randomBot = null;
+    liveSnapshot = null;
     gameError = "";
     hoveredDestination = null;
     lastLiveMove = null;
@@ -493,14 +468,14 @@
       statusLabel.textContent = "Game stopped";
       moveLabel.textContent = gameError;
       boardTurnBadge.textContent = "Game stopped";
-    } else if (isTerminal(gameState)) {
-      const humanWon = winner(gameState) === humanPlayer;
+    } else if (isLiveTerminal()) {
+      const humanWon = liveState().winner === humanPlayer;
       statusLabel.textContent = humanWon ? "You won!" : "RandomBot won";
       moveLabel.textContent = "Game over after " + replay.moves.length +
         (replay.moves.length === 1 ? " move." : " moves.") +
         " Start a new game to play again.";
       boardTurnBadge.textContent = humanWon ? "You won!" : "RandomBot won";
-    } else if (botThinking || gameState.toMove !== humanPlayer) {
+    } else if (botThinking || liveState().toMove !== humanPlayer) {
       const movesAgain = lastLiveMove?.player !== humanPlayer &&
         lastLiveMove?.extraTurn;
       statusLabel.textContent = movesAgain
@@ -511,7 +486,7 @@
         : "Choosing a move…";
       boardTurnBadge.textContent = movesAgain ? "Bot moves again" : "Bot is thinking";
     } else {
-      const legalCount = legalMoves(gameState).length;
+      const legalCount = liveLegalMoves().length;
       const movesAgain = lastLiveMove?.player === humanPlayer &&
         lastLiveMove?.extraTurn;
       statusLabel.textContent = movesAgain ? "Your turn again" : "Your turn";
@@ -524,7 +499,7 @@
       boardTurnBadge.textContent = movesAgain ? "Your turn again" : "Your turn";
     }
 
-    const legalCount = canHumanMove() ? legalMoves(gameState).length : 0;
+    const legalCount = canHumanMove() ? liveLegalMoves().length : 0;
     boardDescription.textContent = statusLabel.textContent + ". Ball at row " +
       currentBall().y + ", column " + currentBall().x + ". " +
       (legalCount > 0
@@ -615,7 +590,7 @@
       message.className = "empty-moves";
       if (gameError) {
         message.textContent = "Start a new game to continue.";
-      } else if (isTerminal(gameState)) {
+      } else if (isLiveTerminal()) {
         message.textContent = "The game is finished.";
       } else {
         message.textContent = "Waiting for RandomBot…";
@@ -624,15 +599,15 @@
       return;
     }
 
-    for (const move of legalMoves(gameState)) {
+    for (const move of liveLegalMoves()) {
       const button = document.createElement("button");
-      const extraTurn = grantsExtraTurn(gameState, move.to);
+      const extraTurn = move.extraTurn;
       button.type = "button";
       button.className = "move-choice" + (extraTurn ? " is-extra-turn" : "");
       button.textContent = formatPoint(move.to) + (extraTurn ? " ↻" : "");
       button.setAttribute(
         "aria-label",
-        destinationLabel(gameState.ball, move.to, extraTurn),
+        destinationLabel(liveState().ball, move.to, extraTurn),
       );
       button.dataset.point = pointId(move.to);
       button.addEventListener("mouseenter", function () {
@@ -940,11 +915,11 @@
       return;
     }
 
-    const from = mapper.point(gameState.ball);
+    const from = mapper.point(liveState().ball);
     ctx.save();
     ctx.lineCap = "round";
     ctx.setLineDash([5, 5]);
-    for (const move of legalMoves(gameState)) {
+    for (const move of liveLegalMoves()) {
       const hovered = hoveredDestination &&
         samePoint(hoveredDestination, move.to);
       ctx.strokeStyle = hovered
@@ -1014,13 +989,13 @@
 
     const mapper = makeMapper();
     const targetSize = Math.max(32, Math.min(44, mapper.cell * 0.78));
-    const moves = legalMoves(gameState).slice().sort(function (left, right) {
+    const moves = liveLegalMoves().slice().sort(function (left, right) {
       return left.to.y - right.to.y || left.to.x - right.to.x;
     });
 
     for (const move of moves) {
       const point = mapper.point(move.to);
-      const extraTurn = grantsExtraTurn(gameState, move.to);
+      const extraTurn = move.extraTurn;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "board-target" + (extraTurn ? " is-extra-turn" : "");
@@ -1029,7 +1004,7 @@
       button.style.setProperty("--target-size", targetSize + "px");
       button.setAttribute(
         "aria-label",
-        destinationLabel(gameState.ball, move.to, extraTurn),
+        destinationLabel(liveState().ball, move.to, extraTurn),
       );
       button.dataset.point = pointId(move.to);
       button.addEventListener("mouseenter", function () {
@@ -1106,7 +1081,7 @@
     let nearest = null;
     let nearestDistance = Infinity;
 
-    for (const move of legalMoves(gameState)) {
+    for (const move of liveLegalMoves()) {
       const target = mapper.point(move.to);
       const distance = Math.hypot(pointer.x - target.x, pointer.y - target.y);
       if (distance < nearestDistance) {
@@ -1282,4 +1257,24 @@
 
   startNewGame();
   window.requestAnimationFrame(tick);
-}());
+}()).catch(function (error) {
+  const status = document.querySelector("#statusLabel");
+  const detail = document.querySelector("#moveLabel");
+  const setupError = document.querySelector("#setupError");
+  const turnBadge = document.querySelector("#boardTurnBadge");
+  if (status) {
+    status.textContent = "Game engine unavailable";
+  }
+  if (detail) {
+    detail.textContent = "The compiled C++ engine could not load.";
+  }
+  if (setupError) {
+    setupError.textContent = error.message;
+  }
+  if (turnBadge) {
+    turnBadge.textContent = "Engine unavailable";
+  }
+  for (const control of document.querySelectorAll("button, input, select")) {
+    control.disabled = true;
+  }
+});

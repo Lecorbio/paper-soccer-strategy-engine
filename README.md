@@ -6,7 +6,7 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A terminal CLI for human and bot play (`papersoccer_cli`)
 - A seeded bot layer for automated play experiments
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
-- A static browser game and replay viewer (`web/index.html`)
+- A static browser game powered by the same C++ engine through WebAssembly
 - Dependency-free tests integrated with CTest (`papersoccer_tests`)
 
 The current version intentionally focuses on core game correctness so minimax/MCTS bots can be added on top without refactoring game state logic.
@@ -53,11 +53,12 @@ You can also run the test binary directly:
 ./build/papersoccer_tests
 ```
 
-When Node.js 18 or newer is available, CTest also runs the browser rules parity suite.
+When Node.js 18 or newer is available, CTest also instantiates the compiled WebAssembly
+module and tests the browser-to-C++ command boundary.
 It can be run directly with:
 
 ```bash
-node --test tests/web_game_test.mjs
+node --test tests/web_wasm_test.mjs
 ```
 
 ## Run CLI
@@ -112,6 +113,39 @@ The app starts in **Play vs bot** mode:
 Select **Watch replay** to inspect the built-in RandomBot game, or use **Open replay**
 to load another replay file. The app remains fully static and works without a server.
 
+The browser does not contain a second implementation of the game. C++ owns the live
+state, legal moves, rebounds, win detection, bot RNG, and replay history. The small
+JavaScript adapter sends versioned move commands to the compiled C++ WebAssembly module;
+the remaining JavaScript handles canvas drawing, controls, accessibility, and animation.
+
+### Rebuild the C++ WebAssembly module
+
+The generated single-file module is checked in, so playing the web game does not require
+a compiler or local server. It is currently pinned to Emscripten 6.0.2 for byte-reproducible
+builds. After changing C++ rules, bots, or the web-session layer, rebuild it with:
+
+```bash
+emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
+cmake --build build/wasm --target update_papersoccer_web
+```
+
+This regenerates `web/papersoccer-wasm.js`. Its WebAssembly bytes are embedded so opening
+`web/index.html` directly still works. The generated file is marked as generated for
+repository language statistics.
+
+To verify that the checked-in module exactly matches the C++ sources without updating it:
+
+```bash
+cmake --build build/wasm --target check_papersoccer_web
+```
+
+The versioned command/snapshot boundary is also the scaling seam. New C++ bots can use the
+same browser integration without porting their logic to JavaScript. A computationally
+expensive minimax or MCTS bot should eventually run the same module in a Web Worker so its
+search does not block canvas rendering; the UI-facing protocol does not need to change.
+Those bots may also need a deliberately larger fixed Emscripten memory budget. Memory growth
+is disabled because growable Wasm buffers are not compatible with every direct-file browser.
+
 Generate a new bot-vs-bot replay as JSON:
 
 ```bash
@@ -135,17 +169,26 @@ same geometry.
 - `include/papersoccer/types.hpp` - core types and hashing
 - `include/papersoccer/geometry.hpp` - geometry and adjacency helpers
 - `include/papersoccer/bot.hpp` - bot interface and seeded `RandomBot`
+- `include/papersoccer/match.hpp` - authoritative state plus played-move history
 - `include/papersoccer/rules.hpp` - game rules API
+- `include/papersoccer/web_game.hpp` - versioned browser-session command API
 - `src/bot.cpp` - bot implementation
 - `src/geometry.cpp` - geometry implementation
+- `src/match.cpp` - match orchestration and replay metadata
 - `src/rules.cpp` - state transitions and legal move logic
+- `src/web_game.cpp` - C++ browser-session snapshots and command validation
+- `src/web/wasm_bridge.cpp` - minimal C ABI compiled by Emscripten
 - `src/cli/main.cpp` - terminal game loop
 - `src/replay/main.cpp` - bot self-play JSON replay exporter
 - `web/index.html` - static browser game and replay shell
-- `web/game-engine.js` - browser rules engine and seeded `RandomBot`
+- `web/papersoccer-wasm.js` - generated single-file C++ WebAssembly module
+- `web/game-engine.js` - thin JavaScript client for the C++ module
 - `web/app.js` - browser play, canvas rendering, and replay controls
 - `web/styles.css` - game and replay styling
-- `tests/web_game_test.mjs` - C++/browser rules and bot parity checks
+- `tests/match_test.cpp` - match history and state ownership checks
+- `tests/replay_export_test.mjs` - replay seed precision check
+- `tests/web_game_session_test.cpp` - C++ web-session and stale-command checks
+- `tests/web_wasm_test.mjs` - real WebAssembly/browser-client integration checks
 - `tests/bot_test.cpp` - bot determinism and legality checks
 - `tests/test_main.cpp` - test entrypoint
 - `tests/rules_test.cpp` - rule correctness scenarios

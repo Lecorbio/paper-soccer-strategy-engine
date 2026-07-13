@@ -7,20 +7,12 @@
 #include <vector>
 
 #include "papersoccer/bot.hpp"
+#include "papersoccer/match.hpp"
 #include "papersoccer/rules.hpp"
 
 namespace ps = papersoccer;
 
 namespace {
-
-struct ReplayMove {
-  std::size_t ply{};
-  ps::Player player{ps::Player::One};
-  ps::Point from{};
-  ps::Point to{};
-  bool extra_turn{false};
-  ps::Status status_after{ps::Status::InProgress};
-};
 
 struct ExportConfig {
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
@@ -92,17 +84,18 @@ void write_point(std::ostream &out, ps::Point point) {
 }
 
 void write_replay_json(std::ostream &out, const ExportConfig &config,
-                       const ps::GameState &state,
-                       const std::vector<ReplayMove> &moves, bool truncated) {
+                       const ps::Match &match, bool truncated) {
+  const ps::GameState &state = match.state();
+  const std::vector<ps::PlayedMove> &moves = match.history();
   out << "{\n";
   out << "  \"schema\": \"papersoccer.replay.v2\",\n";
   out << "  \"rules\": {\"width\": " << state.config.width
       << ", \"height\": " << state.config.height << "},\n";
   out << "  \"players\": {\n";
-  out << "    \"one\": {\"kind\": \"RandomBot\", \"seed\": "
-      << bot_seed(config.base_seed, ps::Player::One) << "},\n";
-  out << "    \"two\": {\"kind\": \"RandomBot\", \"seed\": "
-      << bot_seed(config.base_seed, ps::Player::Two) << "}\n";
+  out << "    \"one\": {\"kind\": \"RandomBot\", \"seed\": \""
+      << bot_seed(config.base_seed, ps::Player::One) << "\"},\n";
+  out << "    \"two\": {\"kind\": \"RandomBot\", \"seed\": \""
+      << bot_seed(config.base_seed, ps::Player::Two) << "\"}\n";
   out << "  },\n";
   out << "  \"start\": ";
   write_point(out, ps::Point{state.config.width / 2, state.config.height / 2 + 1});
@@ -119,7 +112,7 @@ void write_replay_json(std::ostream &out, const ExportConfig &config,
   out << "  \"truncated\": " << (truncated ? "true" : "false") << ",\n";
   out << "  \"moves\": [\n";
   for (std::size_t i = 0; i < moves.size(); ++i) {
-    const ReplayMove &move = moves[i];
+    const ps::PlayedMove &move = moves[i];
     out << "    {\"ply\": " << move.ply << ", \"player\": \""
         << player_to_json(move.player) << "\", \"from\": ";
     write_point(out, move.from);
@@ -149,35 +142,21 @@ int main(int argc, char **argv) {
 
   ps::RandomBot player_one_bot(bot_seed(config.base_seed, ps::Player::One));
   ps::RandomBot player_two_bot(bot_seed(config.base_seed, ps::Player::Two));
-  ps::GameState state = ps::make_initial_state();
-  std::vector<ReplayMove> moves;
+  ps::Match match;
   bool truncated = false;
 
-  while (!ps::is_terminal(state)) {
-    if (moves.size() >= config.max_plies) {
+  while (!ps::is_terminal(match.state())) {
+    if (match.history().size() >= config.max_plies) {
       truncated = true;
       break;
     }
 
-    const std::vector<ps::Move> legal = ps::legal_moves(state);
-    if (legal.empty()) {
-      state.status =
-          (state.to_move == ps::Player::One) ? ps::Status::WonByTwo : ps::Status::WonByOne;
-      break;
-    }
-
-    const ps::Player player = state.to_move;
-    const ps::Point from = state.ball;
+    const ps::Player player = match.state().to_move;
     ps::Bot &bot = player == ps::Player::One ? static_cast<ps::Bot &>(player_one_bot)
                                              : static_cast<ps::Bot &>(player_two_bot);
-    const ps::Move chosen_move = bot.choose_move(state);
-    const bool extra_turn = ps::grants_extra_turn(state, chosen_move.to);
-
-    state = ps::apply_move(state, chosen_move);
-    moves.push_back(ReplayMove{moves.size() + 1, player, from, chosen_move.to, extra_turn,
-                               state.status});
+    (void)match.play(bot.choose_move(match.state()));
   }
 
-  write_replay_json(std::cout, config, state, moves, truncated);
+  write_replay_json(std::cout, config, match, truncated);
   return 0;
 }
