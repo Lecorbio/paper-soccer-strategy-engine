@@ -33,3 +33,20 @@ target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
 
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
+
+find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
+if(PAPERSOCCER_NODE_EXECUTABLE)
+  execute_process(
+    COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --version
+    OUTPUT_VARIABLE PAPERSOCCER_NODE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(PAPERSOCCER_NODE_VERSION MATCHES "^v([0-9]+)" AND
+     CMAKE_MATCH_1 GREATER_EQUAL 18)
+    add_test(
+      NAME papersoccer_web_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web_game_test.mjs
+    )
+  endif()
+endif()

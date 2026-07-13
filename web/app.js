@@ -1,13 +1,37 @@
-(() => {
+(function () {
   "use strict";
+
+  const engine = globalThis.PaperSoccer;
+  if (!engine) {
+    throw new Error("Paper soccer game engine did not load");
+  }
+
+  const {
+    Player,
+    Status,
+    RandomBot,
+    applyMove,
+    grantsExtraTurn,
+    isTerminal,
+    legalMoves,
+    makeInitialState,
+    opponent,
+    samePoint,
+    winner,
+  } = engine;
 
   const canvas = document.querySelector("#boardCanvas");
   const ctx = canvas.getContext("2d");
   const boardDescription = document.querySelector("#boardDescription");
+  const boardHeading = document.querySelector("#boardHeading");
+  const boardTargets = document.querySelector("#boardTargets");
+  const boardTurnBadge = document.querySelector("#boardTurnBadge");
   const replayTitle = document.querySelector("#replayTitle");
+  const controlPanel = document.querySelector(".control-panel");
   const plyLabel = document.querySelector("#plyLabel");
   const statusLabel = document.querySelector("#statusLabel");
   const moveLabel = document.querySelector("#moveLabel");
+  const moveListHeading = document.querySelector("#moveListHeading");
   const prevButton = document.querySelector("#prevButton");
   const playButton = document.querySelector("#playButton");
   const nextButton = document.querySelector("#nextButton");
@@ -15,12 +39,37 @@
   const speedSelect = document.querySelector("#speedSelect");
   const moveList = document.querySelector("#moveList");
   const fileInput = document.querySelector("#fileInput");
+  const playModeButton = document.querySelector("#playModeButton");
+  const replayModeButton = document.querySelector("#replayModeButton");
+  const gameSetup = document.querySelector("#gameSetup");
+  const sideSelect = document.querySelector("#sideSelect");
+  const seedInput = document.querySelector("#seedInput");
+  const setupError = document.querySelector("#setupError");
+  const moveChoicesSection = document.querySelector("#moveChoicesSection");
+  const moveChoices = document.querySelector("#moveChoices");
+  const replayControls = document.querySelector("#replayControls");
 
+  const MODE_PLAY = "play";
+  const MODE_REPLAY = "replay";
+  const BOT_DELAY_MS = 520;
+  const MAX_UINT64 = (1n << 64n) - 1n;
+
+  let mode = MODE_PLAY;
   let replay = normalizeReplay(readDefaultReplay());
+  let replaySession = { replay: replay, currentPly: 0 };
+  let liveSession = null;
   let currentPly = 0;
   let isPlaying = false;
   let speed = 1;
   let lastStepTime = 0;
+  let gameState = null;
+  let humanPlayer = Player.One;
+  let randomBot = null;
+  let botThinking = false;
+  let botTimer = null;
+  let gameError = "";
+  let hoveredDestination = null;
+  let lastLiveMove = null;
 
   function readDefaultReplay() {
     const raw = document.querySelector("#default-replay").textContent;
@@ -29,8 +78,9 @@
 
   function normalizeReplay(raw) {
     const sourceSchema = raw.schema ?? "papersoccer.replay.v1";
-    if (sourceSchema !== "papersoccer.replay.v1" && sourceSchema !== "papersoccer.replay.v2") {
-      throw new Error(`Unsupported replay schema: ${sourceSchema}`);
+    if (sourceSchema !== "papersoccer.replay.v1" &&
+        sourceSchema !== "papersoccer.replay.v2") {
+      throw new Error("Unsupported replay schema: " + sourceSchema);
     }
 
     const rules = raw.rules ?? {};
@@ -45,7 +95,7 @@
 
     let previousPoint = start;
     const moves = Array.isArray(raw.moves)
-      ? raw.moves.map((move, index) => {
+      ? raw.moves.map(function (move, index) {
         const normalized = normalizeMove(move, index, previousPoint, yOffset);
         previousPoint = normalized.to;
         return normalized;
@@ -54,13 +104,13 @@
 
     return {
       schema: "papersoccer.replay.v2",
-      rules: { width, height },
+      rules: { width: width, height: height },
       players: raw.players ?? {},
-      start,
-      status: raw.status ?? "inProgress",
+      start: start,
+      status: raw.status ?? Status.InProgress,
       winner: raw.winner ?? null,
       truncated: Boolean(raw.truncated),
-      moves,
+      moves: moves,
     };
   }
 
@@ -72,70 +122,333 @@
     const from = normalizePoint(move.from, previousPoint, yOffset);
     return {
       ply: index + 1,
-      player: move.player === "two" ? "two" : "one",
-      from,
+      player: move.player === Player.Two ? Player.Two : Player.One,
+      from: from,
       to: normalizePoint(move.to, from, yOffset),
       extraTurn: Boolean(move.extraTurn),
-      statusAfter: move.statusAfter ?? "inProgress",
+      statusAfter: move.statusAfter ?? Status.InProgress,
     };
   }
 
   function normalizePoint(point, fallback, yOffset) {
     const x = Number.isFinite(point?.x) ? point.x : fallback.x;
     const y = Number.isFinite(point?.y) ? point.y + yOffset : fallback.y;
-    return { x, y };
+    return { x: x, y: y };
   }
 
   function playerName(player) {
-    return player === "two" ? "Player 2" : "Player 1";
+    return player === Player.Two ? "Player 2" : "Player 1";
+  }
+
+  function relativePlayerName(player) {
+    if (mode !== MODE_PLAY) {
+      return playerName(player);
+    }
+    return player === humanPlayer ? "You" : "RandomBot";
   }
 
   function statusName(status) {
-    if (status === "wonByOne") {
+    if (status === Status.WonByOne) {
       return "Player 1 won";
     }
-    if (status === "wonByTwo") {
+    if (status === Status.WonByTwo) {
       return "Player 2 won";
     }
-    if (status === "inProgress") {
+    if (status === Status.InProgress) {
       return "In progress";
     }
     return String(status);
   }
 
   function formatPoint(point) {
-    return `r${point.y} c${point.x}`;
+    return "r" + point.y + " c" + point.x;
   }
 
   function describePlayers() {
-    return `${describePlayer(replay.players.one, "Player 1")} · ${describePlayer(
-      replay.players.two,
-      "Player 2",
-    )}`;
+    return describePlayer(replay.players.one, "Player 1") + " · " +
+      describePlayer(replay.players.two, "Player 2");
   }
 
   function describePlayer(player, label) {
     if (!player) {
       return label;
     }
-    const seed = Number.isFinite(player.seed) ? ` (seed ${player.seed})` : "";
-    return `${label}: ${player.kind ?? "Unknown"}${seed}`;
+    const hasSeed = player.seed !== undefined && player.seed !== null &&
+      String(player.seed).length > 0;
+    const seed = hasSeed ? " (seed " + String(player.seed) + ")" : "";
+    return label + ": " + (player.kind ?? "Unknown") + seed;
+  }
+
+  function parseSeed(input) {
+    const value = input.trim();
+    if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+      throw new Error("Enter a non-negative whole number for the seed.");
+    }
+    const seed = BigInt(value);
+    if (seed > MAX_UINT64) {
+      throw new Error("The seed must be at most 18446744073709551615.");
+    }
+    return seed;
+  }
+
+  function clearBotTimer() {
+    if (botTimer !== null) {
+      window.clearTimeout(botTimer);
+      botTimer = null;
+    }
+    botThinking = false;
+  }
+
+  function saveLiveSession() {
+    if (mode !== MODE_PLAY || !gameState) {
+      return;
+    }
+    clearBotTimer();
+    liveSession = {
+      replay: replay,
+      currentPly: currentPly,
+      gameState: gameState,
+      humanPlayer: humanPlayer,
+      randomBot: randomBot,
+      gameError: gameError,
+      lastLiveMove: lastLiveMove,
+    };
+  }
+
+  function showReplayMode() {
+    if (mode === MODE_REPLAY) {
+      return;
+    }
+
+    saveLiveSession();
+    mode = MODE_REPLAY;
+    replay = replaySession.replay;
+    currentPly = replaySession.currentPly;
+    gameState = null;
+    randomBot = null;
+    gameError = "";
+    hoveredDestination = null;
+    lastLiveMove = null;
+    isPlaying = false;
+    plyRange.max = String(replay.moves.length);
+    plyRange.value = String(currentPly);
+    renderInterface();
+  }
+
+  function showPlayMode() {
+    if (mode === MODE_PLAY) {
+      return;
+    }
+
+    replaySession = { replay: replay, currentPly: currentPly };
+    stopPlayback();
+    if (!liveSession) {
+      startNewGame();
+      return;
+    }
+
+    const session = liveSession;
+    liveSession = null;
+    mode = MODE_PLAY;
+    replay = session.replay;
+    currentPly = session.currentPly;
+    gameState = session.gameState;
+    humanPlayer = session.humanPlayer;
+    randomBot = session.randomBot;
+    gameError = session.gameError;
+    lastLiveMove = session.lastLiveMove;
+    hoveredDestination = null;
+    plyRange.max = String(replay.moves.length);
+    plyRange.value = String(currentPly);
+    renderInterface();
+
+    if (!gameError && !isTerminal(gameState) && gameState.toMove !== humanPlayer) {
+      scheduleBotTurn();
+    }
+  }
+
+  function startNewGame(event) {
+    event?.preventDefault();
+
+    let seed;
+    try {
+      seed = parseSeed(seedInput.value);
+    } catch (error) {
+      setupError.textContent = error.message;
+      seedInput.focus();
+      return;
+    }
+
+    clearBotTimer();
+    stopPlayback();
+    setupError.textContent = "";
+    gameError = "";
+    mode = MODE_PLAY;
+    liveSession = null;
+    humanPlayer = sideSelect.value === Player.Two ? Player.Two : Player.One;
+    randomBot = new RandomBot(seed);
+    gameState = makeInitialState();
+    hoveredDestination = null;
+    lastLiveMove = null;
+
+    const botPlayer = opponent(humanPlayer);
+    replay = {
+      schema: "papersoccer.replay.v2",
+      rules: {
+        width: gameState.config.width,
+        height: gameState.config.height,
+      },
+      players: {
+        one: Player.One === humanPlayer
+          ? { kind: "Human" }
+          : { kind: "RandomBot", seed: seed.toString() },
+        two: Player.Two === humanPlayer
+          ? { kind: "Human" }
+          : { kind: "RandomBot", seed: seed.toString() },
+      },
+      start: { x: gameState.ball.x, y: gameState.ball.y },
+      status: Status.InProgress,
+      winner: null,
+      truncated: false,
+      moves: [],
+    };
+
+    currentPly = 0;
+    plyRange.max = "0";
+    renderInterface();
+
+    if (gameState.toMove === botPlayer) {
+      scheduleBotTurn();
+    }
+  }
+
+  function canHumanMove() {
+    return mode === MODE_PLAY && gameState !== null && !gameError &&
+      !botThinking && !isTerminal(gameState) && gameState.toMove === humanPlayer;
+  }
+
+  function playHumanMove(move, keyboardActivated) {
+    if (!canHumanMove()) {
+      return;
+    }
+
+    const legal = legalMoves(gameState).find(function (candidate) {
+      return samePoint(candidate.to, move.to);
+    });
+    if (!legal) {
+      return;
+    }
+
+    applyLiveMove(legal);
+    if (keyboardActivated) {
+      canvas.focus();
+    }
+  }
+
+  function applyLiveMove(move) {
+    if (!gameState || isTerminal(gameState)) {
+      return;
+    }
+
+    const player = gameState.toMove;
+    const from = { x: gameState.ball.x, y: gameState.ball.y };
+    const extraTurn = grantsExtraTurn(gameState, move.to);
+
+    try {
+      gameState = applyMove(gameState, move);
+    } catch (error) {
+      gameError = error.message;
+      renderInterface();
+      return;
+    }
+
+    const replayMove = {
+      ply: replay.moves.length + 1,
+      player: player,
+      from: from,
+      to: { x: move.to.x, y: move.to.y },
+      extraTurn: extraTurn,
+      statusAfter: gameState.status,
+    };
+    replay.moves.push(replayMove);
+    replay.status = gameState.status;
+    replay.winner = winner(gameState);
+    currentPly = replay.moves.length;
+    plyRange.max = String(currentPly);
+    plyRange.value = String(currentPly);
+    hoveredDestination = null;
+    lastLiveMove = replayMove;
+
+    if (isTerminal(gameState)) {
+      renderInterface();
+      return;
+    }
+
+    if (gameState.toMove !== humanPlayer) {
+      scheduleBotTurn();
+      return;
+    }
+
+    renderInterface();
+  }
+
+  function scheduleBotTurn() {
+    clearBotTimer();
+    if (!gameState || isTerminal(gameState) || gameState.toMove === humanPlayer) {
+      renderInterface();
+      return;
+    }
+
+    botThinking = true;
+    renderInterface();
+    botTimer = window.setTimeout(function () {
+      botTimer = null;
+      botThinking = false;
+      try {
+        const move = randomBot.chooseMove(gameState);
+        applyLiveMove(move);
+      } catch (error) {
+        gameError = "RandomBot could not choose a move: " + error.message;
+        renderInterface();
+      }
+    }, BOT_DELAY_MS);
+  }
+
+  function loadReplay(raw) {
+    const normalized = normalizeReplay(raw);
+    if (mode === MODE_PLAY) {
+      saveLiveSession();
+    } else {
+      stopPlayback();
+    }
+    replay = normalized;
+    replaySession = { replay: replay, currentPly: 0 };
+    mode = MODE_REPLAY;
+    gameState = null;
+    randomBot = null;
+    gameError = "";
+    hoveredDestination = null;
+    lastLiveMove = null;
+    currentPly = 0;
+    stopPlayback();
+    plyRange.max = String(replay.moves.length);
+    setReplayPly(0);
   }
 
   function clampPly(ply) {
     return Math.max(0, Math.min(replay.moves.length, ply));
   }
 
-  function setPly(ply) {
+  function setReplayPly(ply) {
+    if (mode !== MODE_REPLAY) {
+      return;
+    }
     currentPly = clampPly(ply);
     plyRange.value = String(currentPly);
     if (currentPly >= replay.moves.length) {
       isPlaying = false;
     }
-    updateText();
-    updateControls();
-    updateMoveList();
-    drawBoard();
+    renderInterface();
   }
 
   function currentBall() {
@@ -161,52 +474,194 @@
   }
 
   function updateText() {
+    if (mode === MODE_PLAY) {
+      updatePlayText();
+    } else {
+      updateReplayText();
+    }
+  }
+
+  function updatePlayText() {
+    const attackDirection = humanPlayer === Player.One ? "top" : "bottom";
+    replayTitle.textContent = "You are " + playerName(humanPlayer) +
+      " · Attack the " + attackDirection + " goal";
+    plyLabel.textContent = replay.moves.length === 0
+      ? "New game"
+      : "Move " + replay.moves.length;
+
+    if (gameError) {
+      statusLabel.textContent = "Game stopped";
+      moveLabel.textContent = gameError;
+      boardTurnBadge.textContent = "Game stopped";
+    } else if (isTerminal(gameState)) {
+      const humanWon = winner(gameState) === humanPlayer;
+      statusLabel.textContent = humanWon ? "You won!" : "RandomBot won";
+      moveLabel.textContent = "Game over after " + replay.moves.length +
+        (replay.moves.length === 1 ? " move." : " moves.") +
+        " Start a new game to play again.";
+      boardTurnBadge.textContent = humanWon ? "You won!" : "RandomBot won";
+    } else if (botThinking || gameState.toMove !== humanPlayer) {
+      const movesAgain = lastLiveMove?.player !== humanPlayer &&
+        lastLiveMove?.extraTurn;
+      statusLabel.textContent = movesAgain
+        ? "RandomBot moves again"
+        : "RandomBot’s turn";
+      moveLabel.textContent = movesAgain
+        ? "It bounced off a boundary or visited point. Choosing another move…"
+        : "Choosing a move…";
+      boardTurnBadge.textContent = movesAgain ? "Bot moves again" : "Bot is thinking";
+    } else {
+      const legalCount = legalMoves(gameState).length;
+      const movesAgain = lastLiveMove?.player === humanPlayer &&
+        lastLiveMove?.extraTurn;
+      statusLabel.textContent = movesAgain ? "Your turn again" : "Your turn";
+      const choiceText = legalCount === 1
+        ? "Choose the highlighted point."
+        : "Choose one of " + legalCount + " highlighted points.";
+      moveLabel.textContent = (movesAgain
+        ? "You bounced off a boundary or visited point. "
+        : "") + choiceText + " You attack the " + attackDirection + " goal.";
+      boardTurnBadge.textContent = movesAgain ? "Your turn again" : "Your turn";
+    }
+
+    const legalCount = canHumanMove() ? legalMoves(gameState).length : 0;
+    boardDescription.textContent = statusLabel.textContent + ". Ball at row " +
+      currentBall().y + ", column " + currentBall().x + ". " +
+      (legalCount > 0
+        ? legalCount + " legal destinations are available as buttons on the board."
+        : "No move buttons are currently available.");
+  }
+
+  function updateReplayText() {
     replayTitle.textContent = describePlayers();
 
     if (currentPly === 0) {
-      plyLabel.textContent = `${replay.moves.length} moves`;
-      statusLabel.textContent = replay.moves.length === 0 && replay.status !== "inProgress"
+      plyLabel.textContent = replay.moves.length + " moves";
+      statusLabel.textContent = replay.moves.length === 0 &&
+        replay.status !== Status.InProgress
         ? statusName(replay.status)
         : "Ready to replay";
-      moveLabel.textContent = `Ball starts at ${formatPoint(replay.start)}`;
+      moveLabel.textContent = "Ball starts at " + formatPoint(replay.start);
     } else {
       const move = replay.moves[currentPly - 1];
       const atEnd = currentPly === replay.moves.length;
       const status = atEnd && !replay.truncated ? replay.status : move.statusAfter;
-      const isFinished = status !== "inProgress";
-      plyLabel.textContent = `Move ${currentPly} of ${replay.moves.length}`;
-      statusLabel.textContent = isFinished
+      const finished = status !== Status.InProgress;
+      plyLabel.textContent = "Move " + currentPly + " of " + replay.moves.length;
+      statusLabel.textContent = finished
         ? statusName(status)
-        : `${playerName(move.player)} moved`;
-      const extraTurn = move.extraTurn ? " · Extra turn" : "";
-      moveLabel.textContent = `${formatPoint(move.from)} → ${formatPoint(move.to)}${extraTurn}`;
+        : playerName(move.player) + " moved";
+      moveLabel.textContent = formatPoint(move.from) + " → " + formatPoint(move.to) +
+        (move.extraTurn ? " · Extra turn" : "");
 
       if (atEnd && replay.truncated) {
         statusLabel.textContent = "Replay ended early";
       }
     }
 
-    boardDescription.textContent = `${statusLabel.textContent}. Ball at ${formatPoint(
-      currentBall(),
-    )}. Coordinates use row then column.`;
+    boardDescription.textContent = statusLabel.textContent + ". Ball at row " +
+      currentBall().y + ", column " + currentBall().x +
+      ". Use the replay controls or move list to inspect the game.";
   }
 
-  function updateControls() {
+  function updateModeControls() {
+    const playingGame = mode === MODE_PLAY;
+    gameSetup.hidden = !playingGame;
+    moveChoicesSection.hidden = !playingGame;
+    replayControls.hidden = playingGame;
+    boardTargets.hidden = !playingGame;
+    boardTurnBadge.hidden = !playingGame;
+    playModeButton.setAttribute("aria-pressed", String(playingGame));
+    replayModeButton.setAttribute("aria-pressed", String(!playingGame));
+    playModeButton.classList.toggle("primary-control", playingGame);
+    replayModeButton.classList.toggle("primary-control", !playingGame);
+    moveListHeading.textContent = playingGame ? "Move history" : "Replay moves";
+    boardHeading.textContent = playingGame ? "Playable paper soccer board" : "Replay board";
+    controlPanel.setAttribute(
+      "aria-label",
+      playingGame ? "Game controls" : "Replay controls",
+    );
+    canvas.classList.toggle("is-playable", canHumanMove());
+  }
+
+  function updateReplayControls() {
+    if (mode !== MODE_REPLAY) {
+      return;
+    }
+
     const atStart = currentPly === 0;
     const atEnd = currentPly === replay.moves.length;
     const hasMoves = replay.moves.length > 0;
-
     prevButton.disabled = atStart;
     nextButton.disabled = atEnd;
     playButton.disabled = !hasMoves;
     playButton.textContent = isPlaying ? "Pause" : "Play";
     playButton.setAttribute("aria-pressed", String(isPlaying));
     plyRange.disabled = !hasMoves;
-    plyRange.setAttribute("aria-valuetext", `${currentPly} of ${replay.moves.length} moves`);
+    plyRange.setAttribute(
+      "aria-valuetext",
+      currentPly + " of " + replay.moves.length + " moves",
+    );
+  }
+
+  function updateMoveChoices() {
+    moveChoices.replaceChildren();
+    if (mode !== MODE_PLAY) {
+      return;
+    }
+
+    if (!canHumanMove()) {
+      const message = document.createElement("p");
+      message.className = "empty-moves";
+      if (gameError) {
+        message.textContent = "Start a new game to continue.";
+      } else if (isTerminal(gameState)) {
+        message.textContent = "The game is finished.";
+      } else {
+        message.textContent = "Waiting for RandomBot…";
+      }
+      moveChoices.append(message);
+      return;
+    }
+
+    for (const move of legalMoves(gameState)) {
+      const button = document.createElement("button");
+      const extraTurn = grantsExtraTurn(gameState, move.to);
+      button.type = "button";
+      button.className = "move-choice" + (extraTurn ? " is-extra-turn" : "");
+      button.textContent = formatPoint(move.to) + (extraTurn ? " ↻" : "");
+      button.setAttribute(
+        "aria-label",
+        destinationLabel(gameState.ball, move.to, extraTurn),
+      );
+      button.dataset.point = pointId(move.to);
+      button.addEventListener("mouseenter", function () {
+        setHoveredDestination(move.to);
+      });
+      button.addEventListener("mouseleave", clearHoveredDestination);
+      button.addEventListener("focus", function () {
+        setHoveredDestination(move.to);
+      });
+      button.addEventListener("blur", clearHoveredDestination);
+      button.addEventListener("click", function (event) {
+        playHumanMove(move, event.detail === 0);
+      });
+      moveChoices.append(button);
+    }
   }
 
   function updateMoveList() {
     moveList.replaceChildren();
+    if (replay.moves.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "empty-history";
+      empty.textContent = mode === MODE_PLAY
+        ? "Your moves and the bot’s moves will appear here."
+        : "This replay contains no moves.";
+      moveList.append(empty);
+      return;
+    }
+
     for (const move of replay.moves) {
       const row = document.createElement("button");
       row.type = "button";
@@ -215,16 +670,27 @@
         row.classList.add("is-active");
         row.setAttribute("aria-current", "step");
       }
-      row.addEventListener("click", () => setPly(move.ply));
+
+      if (mode === MODE_REPLAY) {
+        row.addEventListener("click", function () {
+          setReplayPly(move.ply);
+        });
+      } else {
+        row.disabled = true;
+        row.classList.add("is-static");
+      }
 
       const ply = document.createElement("span");
-      ply.textContent = `#${move.ply}`;
+      ply.textContent = "#" + move.ply;
 
       const detail = document.createElement("span");
       const player = document.createElement("span");
-      player.className = move.player === "two" ? "player-two" : "player-one";
-      player.textContent = playerName(move.player);
-      detail.append(player, ` ${formatPoint(move.from)} → ${formatPoint(move.to)}`);
+      player.className = move.player === Player.Two ? "player-two" : "player-one";
+      player.textContent = relativePlayerName(move.player);
+      detail.append(
+        player,
+        " " + formatPoint(move.from) + " → " + formatPoint(move.to),
+      );
 
       row.append(ply, detail);
       if (move.extraTurn) {
@@ -239,7 +705,19 @@
     }
 
     const active = moveList.querySelector(".is-active");
-    active?.scrollIntoView({ block: "nearest" });
+    if (active) {
+      keepMoveRowVisible(active);
+    }
+  }
+
+  function keepMoveRowVisible(row) {
+    const listBounds = moveList.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    if (rowBounds.top < listBounds.top) {
+      moveList.scrollTop -= listBounds.top - rowBounds.top;
+    } else if (rowBounds.bottom > listBounds.bottom) {
+      moveList.scrollTop += rowBounds.bottom - listBounds.bottom;
+    }
   }
 
   function makeMapper() {
@@ -261,8 +739,8 @@
 
     return {
       axisGap: Math.max(24, axisSpace * 0.68),
-      cell,
-      point(point) {
+      cell: cell,
+      point: function (point) {
         return {
           x: originX + point.x * cell,
           y: originY + point.y * cell,
@@ -299,8 +777,10 @@
     drawWalls(mapper);
     drawPath(mapper);
     drawPoints(mapper);
+    drawLegalMoveGuides(mapper);
     drawBall(mapper);
     drawCoordinates(mapper);
+    drawDirectionLabels(mapper);
   }
 
   function drawField(mapper) {
@@ -309,21 +789,28 @@
     const pad = mapper.cell * 0.34;
 
     ctx.fillStyle = "#4f8d4d";
-    roundRect(topLeft.x - pad, topLeft.y - pad, bottomRight.x - topLeft.x + pad * 2,
-      bottomRight.y - topLeft.y + pad * 2, 8);
+    roundRect(
+      topLeft.x - pad,
+      topLeft.y - pad,
+      bottomRight.x - topLeft.x + pad * 2,
+      bottomRight.y - topLeft.y + pad * 2,
+      8,
+    );
     ctx.fill();
 
     ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
     ctx.lineWidth = 1;
     for (let x = 0; x <= replay.rules.width; x += 1) {
-      const a = mapper.point({ x, y: 1 });
-      const b = mapper.point({ x, y: fieldBottomY() });
-      drawLine(a, b);
+      drawLine(
+        mapper.point({ x: x, y: 1 }),
+        mapper.point({ x: x, y: fieldBottomY() }),
+      );
     }
     for (let y = 1; y <= fieldBottomY(); y += 1) {
-      const a = mapper.point({ x: 0, y });
-      const b = mapper.point({ x: replay.rules.width, y });
-      drawLine(a, b);
+      drawLine(
+        mapper.point({ x: 0, y: y }),
+        mapper.point({ x: replay.rules.width, y: y }),
+      );
     }
   }
 
@@ -336,27 +823,31 @@
 
     for (let x = 0; x < replay.rules.width; x += 1) {
       if (!(x >= left && x < right)) {
-        drawSegment(mapper, { x, y: 1 }, { x: x + 1, y: 1 });
+        drawSegment(mapper, { x: x, y: 1 }, { x: x + 1, y: 1 });
         drawSegment(
           mapper,
-          { x, y: fieldBottomY() },
+          { x: x, y: fieldBottomY() },
           { x: x + 1, y: fieldBottomY() },
         );
       }
     }
 
     for (let y = 1; y < fieldBottomY(); y += 1) {
-      drawSegment(mapper, { x: 0, y }, { x: 0, y: y + 1 });
+      drawSegment(mapper, { x: 0, y: y }, { x: 0, y: y + 1 });
       drawSegment(
         mapper,
-        { x: replay.rules.width, y },
+        { x: replay.rules.width, y: y },
         { x: replay.rules.width, y: y + 1 },
       );
     }
 
     for (let x = left; x < right; x += 1) {
-      drawSegment(mapper, { x, y: 0 }, { x: x + 1, y: 0 });
-      drawSegment(mapper, { x, y: southGoalY() }, { x: x + 1, y: southGoalY() });
+      drawSegment(mapper, { x: x, y: 0 }, { x: x + 1, y: 0 });
+      drawSegment(
+        mapper,
+        { x: x, y: southGoalY() },
+        { x: x + 1, y: southGoalY() },
+      );
     }
     drawSegment(mapper, { x: left, y: 0 }, { x: left, y: 1 });
     drawSegment(mapper, { x: right, y: 0 }, { x: right, y: 1 });
@@ -376,10 +867,10 @@
     const radius = Math.max(3, mapper.cell * 0.055);
     for (let y = 1; y <= fieldBottomY(); y += 1) {
       for (let x = 0; x <= replay.rules.width; x += 1) {
-        const boundary = x === 0 || x === replay.rules.width || y === 1 ||
-          y === fieldBottomY();
+        const boundary = x === 0 || x === replay.rules.width ||
+          y === 1 || y === fieldBottomY();
         drawCircle(
-          mapper.point({ x, y }),
+          mapper.point({ x: x, y: y }),
           radius,
           boundary ? "#fff8dc" : "#e4ead3",
           "#355438",
@@ -391,8 +882,12 @@
     const left = Math.floor(replay.rules.width / 2) - 1;
     const right = Math.floor(replay.rules.width / 2) + 1;
     for (let x = left; x <= right; x += 1) {
-      drawGoalNode(mapper.point({ x, y: 0 }), "north", mapper.cell);
-      drawGoalNode(mapper.point({ x, y: southGoalY() }), "south", mapper.cell);
+      drawGoalNode(mapper.point({ x: x, y: 0 }), "north", mapper.cell);
+      drawGoalNode(
+        mapper.point({ x: x, y: southGoalY() }),
+        "south",
+        mapper.cell,
+      );
     }
   }
 
@@ -428,16 +923,39 @@
 
       ctx.strokeStyle = isCurrentMove
         ? "#ffd166"
-        : (move.player === "two" ? "#153f66" : "#782525");
+        : (move.player === Player.Two ? "#153f66" : "#782525");
       ctx.lineWidth = isCurrentMove
         ? Math.max(6, mapper.cell * 0.095)
         : Math.max(4, mapper.cell * 0.07);
       drawLine(from, to);
 
-      ctx.strokeStyle = move.player === "two" ? "#2067a6" : "#c93b3b";
+      ctx.strokeStyle = move.player === Player.Two ? "#2067a6" : "#c93b3b";
       ctx.lineWidth = Math.max(2, mapper.cell * 0.035);
       drawLine(from, to);
     }
+  }
+
+  function drawLegalMoveGuides(mapper) {
+    if (!canHumanMove()) {
+      return;
+    }
+
+    const from = mapper.point(gameState.ball);
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.setLineDash([5, 5]);
+    for (const move of legalMoves(gameState)) {
+      const hovered = hoveredDestination &&
+        samePoint(hoveredDestination, move.to);
+      ctx.strokeStyle = hovered
+        ? "rgba(255, 243, 201, 0.98)"
+        : "rgba(255, 243, 201, 0.55)";
+      ctx.lineWidth = hovered
+        ? Math.max(4, mapper.cell * 0.07)
+        : Math.max(2, mapper.cell * 0.04);
+      drawLine(from, mapper.point(move.to));
+    }
+    ctx.restore();
   }
 
   function drawBall(mapper) {
@@ -453,20 +971,151 @@
     const yAxisX = mapper.point({ x: 0, y: 0 }).x - mapper.axisGap;
 
     ctx.fillStyle = "rgba(255, 250, 230, 0.8)";
-    ctx.font = `600 ${fontSize}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.font = "600 " + fontSize + "px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
     for (let x = 0; x <= replay.rules.width; x += 1) {
-      const point = mapper.point({ x, y: southGoalY() });
+      const point = mapper.point({ x: x, y: southGoalY() });
       ctx.fillText(String(x), point.x, xAxisY);
     }
 
     ctx.textAlign = "right";
     for (let y = 0; y <= southGoalY(); y += 1) {
-      const point = mapper.point({ x: 0, y });
+      const point = mapper.point({ x: 0, y: y });
       ctx.fillText(String(y), yAxisX, point.y);
     }
+  }
+
+  function drawDirectionLabels(mapper) {
+    const center = Math.floor(replay.rules.width / 2);
+    const top = mapper.point({ x: center, y: 0 });
+    const bottom = mapper.point({ x: center, y: southGoalY() });
+    const offset = Math.max(18, mapper.cell * 0.42);
+    const fontSize = Math.max(10, Math.min(12, mapper.cell * 0.24));
+
+    ctx.fillStyle = "rgba(255, 248, 220, 0.88)";
+    ctx.font = "750 " + fontSize + "px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("P1 ATTACKS ↑", top.x, top.y - offset);
+    ctx.fillText("P2 ATTACKS ↓", bottom.x, bottom.y + offset);
+  }
+
+  function renderBoardTargets() {
+    const focusedPoint = document.activeElement instanceof HTMLElement &&
+      boardTargets.contains(document.activeElement)
+      ? document.activeElement.dataset.point
+      : null;
+    boardTargets.replaceChildren();
+    if (!canHumanMove()) {
+      return;
+    }
+
+    const mapper = makeMapper();
+    const targetSize = Math.max(32, Math.min(44, mapper.cell * 0.78));
+    const moves = legalMoves(gameState).slice().sort(function (left, right) {
+      return left.to.y - right.to.y || left.to.x - right.to.x;
+    });
+
+    for (const move of moves) {
+      const point = mapper.point(move.to);
+      const extraTurn = grantsExtraTurn(gameState, move.to);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "board-target" + (extraTurn ? " is-extra-turn" : "");
+      button.style.left = point.x + "px";
+      button.style.top = point.y + "px";
+      button.style.setProperty("--target-size", targetSize + "px");
+      button.setAttribute(
+        "aria-label",
+        destinationLabel(gameState.ball, move.to, extraTurn),
+      );
+      button.dataset.point = pointId(move.to);
+      button.addEventListener("mouseenter", function () {
+        setHoveredDestination(move.to);
+      });
+      button.addEventListener("mouseleave", clearHoveredDestination);
+      button.addEventListener("focus", function () {
+        setHoveredDestination(move.to);
+      });
+      button.addEventListener("blur", clearHoveredDestination);
+      button.addEventListener("click", function (event) {
+        playHumanMove(move, event.detail === 0);
+      });
+      boardTargets.append(button);
+    }
+
+    if (focusedPoint) {
+      const replacement = Array.from(boardTargets.children).find(function (element) {
+        return element.dataset.point === focusedPoint;
+      });
+      replacement?.focus({ preventScroll: true });
+    }
+  }
+
+  function destinationLabel(from, to, extraTurn) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const vertical = dy < 0 ? "north" : (dy > 0 ? "south" : "");
+    const horizontal = dx < 0 ? "west" : (dx > 0 ? "east" : "");
+    const direction = vertical + horizontal || "destination";
+    return "Move " + direction + " to row " + to.y + ", column " + to.x +
+      (extraTurn ? "; grants another move" : "");
+  }
+
+  function pointId(point) {
+    return point.x + "," + point.y;
+  }
+
+  function setHoveredDestination(point) {
+    if (hoveredDestination && samePoint(hoveredDestination, point)) {
+      return;
+    }
+    hoveredDestination = { x: point.x, y: point.y };
+    syncHoveredControls();
+    drawBoard();
+  }
+
+  function clearHoveredDestination() {
+    if (!hoveredDestination) {
+      return;
+    }
+    hoveredDestination = null;
+    syncHoveredControls();
+    drawBoard();
+  }
+
+  function syncHoveredControls() {
+    const hoveredId = hoveredDestination ? pointId(hoveredDestination) : "";
+    for (const element of document.querySelectorAll("[data-point]")) {
+      element.classList.toggle("is-hovered", element.dataset.point === hoveredId);
+    }
+  }
+
+  function nearestLegalMove(event) {
+    if (!canHumanMove()) {
+      return null;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const pointer = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    const mapper = makeMapper();
+    let nearest = null;
+    let nearestDistance = Infinity;
+
+    for (const move of legalMoves(gameState)) {
+      const target = mapper.point(move.to);
+      const distance = Math.hypot(pointer.x - target.x, pointer.y - target.y);
+      if (distance < nearestDistance) {
+        nearest = move;
+        nearestDistance = distance;
+      }
+    }
+
+    return nearestDistance <= Math.max(18, mapper.cell * 0.38) ? nearest : null;
   }
 
   function drawSegment(mapper, from, to) {
@@ -503,58 +1152,70 @@
   }
 
   function startPlayback() {
-    if (replay.moves.length === 0) {
+    if (mode !== MODE_REPLAY || replay.moves.length === 0) {
       return;
     }
     if (currentPly >= replay.moves.length) {
-      setPly(0);
+      setReplayPly(0);
     }
     isPlaying = true;
     lastStepTime = 0;
-    updateControls();
+    updateReplayControls();
   }
 
   function stopPlayback() {
     isPlaying = false;
-    updateControls();
+    updateReplayControls();
   }
 
   function tick(timestamp) {
-    if (isPlaying) {
+    if (mode === MODE_REPLAY && isPlaying) {
       const delay = 850 / speed;
       if (lastStepTime === 0) {
         lastStepTime = timestamp;
       }
       if (timestamp - lastStepTime >= delay) {
-        setPly(currentPly + 1);
+        setReplayPly(currentPly + 1);
         lastStepTime = timestamp;
       }
     }
     window.requestAnimationFrame(tick);
   }
 
-  function loadReplay(raw) {
-    replay = normalizeReplay(raw);
-    currentPly = 0;
-    stopPlayback();
-    plyRange.max = String(replay.moves.length);
-    setPly(0);
+  function renderInterface() {
+    updateModeControls();
+    updateText();
+    updateReplayControls();
+    updateMoveChoices();
+    updateMoveList();
+    drawBoard();
+    renderBoardTargets();
   }
 
-  prevButton.addEventListener("click", () => setPly(currentPly - 1));
-  playButton.addEventListener("click", () => {
+  prevButton.addEventListener("click", function () {
+    setReplayPly(currentPly - 1);
+  });
+  playButton.addEventListener("click", function () {
     if (isPlaying) {
       stopPlayback();
     } else {
       startPlayback();
     }
   });
-  nextButton.addEventListener("click", () => setPly(currentPly + 1));
-  plyRange.addEventListener("input", () => setPly(Number(plyRange.value)));
-  speedSelect.addEventListener("change", () => {
+  nextButton.addEventListener("click", function () {
+    setReplayPly(currentPly + 1);
+  });
+  plyRange.addEventListener("input", function () {
+    setReplayPly(Number(plyRange.value));
+  });
+  speedSelect.addEventListener("change", function () {
     speed = Number(speedSelect.value);
   });
-  fileInput.addEventListener("change", async () => {
+  gameSetup.addEventListener("submit", startNewGame);
+  playModeButton.addEventListener("click", showPlayMode);
+  replayModeButton.addEventListener("click", showReplayMode);
+
+  fileInput.addEventListener("change", async function () {
     const file = fileInput.files?.[0];
     if (!file) {
       return;
@@ -563,14 +1224,43 @@
       const raw = JSON.parse(await file.text());
       loadReplay(raw);
     } catch (error) {
-      window.alert(`Could not load replay: ${error.message}`);
+      window.alert("Could not load replay: " + error.message);
     } finally {
       fileInput.value = "";
     }
   });
 
-  window.addEventListener("resize", drawBoard);
-  document.addEventListener("keydown", (event) => {
+  canvas.addEventListener("click", function (event) {
+    const move = nearestLegalMove(event);
+    if (move) {
+      playHumanMove(move, false);
+    }
+  });
+  canvas.addEventListener("pointermove", function (event) {
+    const move = nearestLegalMove(event);
+    if (move) {
+      setHoveredDestination(move.to);
+    } else {
+      clearHoveredDestination();
+    }
+  });
+  canvas.addEventListener("pointerleave", clearHoveredDestination);
+
+  window.addEventListener("resize", function () {
+    drawBoard();
+    renderBoardTargets();
+  });
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(function () {
+      drawBoard();
+      renderBoardTargets();
+    }).observe(canvas);
+  }
+
+  document.addEventListener("keydown", function (event) {
+    if (mode !== MODE_REPLAY) {
+      return;
+    }
     const target = event.target;
     if (target instanceof Element &&
         target.closest("button, input, select, textarea, a, [contenteditable]")) {
@@ -578,11 +1268,11 @@
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      setPly(currentPly - 1);
+      setReplayPly(currentPly - 1);
     }
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      setPly(currentPly + 1);
+      setReplayPly(currentPly + 1);
     }
     if (event.key === " ") {
       event.preventDefault();
@@ -590,6 +1280,6 @@
     }
   });
 
-  loadReplay(replay);
+  startNewGame();
   window.requestAnimationFrame(tick);
-})();
+}());

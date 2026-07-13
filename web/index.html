@@ -3,9 +3,10 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Paper Soccer Replay Viewer</title>
+    <title>Paper Soccer</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
+    <script defer src="game-engine.js"></script>
     <script defer src="app.js"></script>
   </head>
   <body>
@@ -14,56 +15,101 @@
         <h1>Paper Soccer</h1>
         <p id="replayTitle">Replay Viewer</p>
       </div>
-      <label class="file-button">
-        Open replay
-        <input id="fileInput" type="file" accept="application/json,.json">
-      </label>
+      <div class="topbar-actions">
+        <div class="mode-switch" role="group" aria-label="Mode">
+          <button id="playModeButton" class="primary-control" type="button"
+            aria-pressed="true">Play vs bot</button>
+          <button id="replayModeButton" type="button" aria-pressed="false">Watch replay</button>
+        </div>
+        <label class="file-button">
+          Open replay
+          <input id="fileInput" type="file" accept="application/json,.json">
+        </label>
+      </div>
     </header>
 
     <main class="app-shell">
       <section class="board-panel" aria-labelledby="boardHeading">
-        <h2 id="boardHeading" class="visually-hidden">Replay board</h2>
+        <h2 id="boardHeading" class="visually-hidden">Paper soccer board</h2>
         <p id="boardDescription" class="visually-hidden">
-          Paper soccer replay board. Coordinates are shown as row, column. Use the replay controls
-          or move list to inspect the game.
+          Paper soccer board. Coordinates are shown as row, column.
         </p>
-        <canvas id="boardCanvas" role="img" aria-labelledby="boardHeading"
+        <canvas id="boardCanvas" role="img" tabindex="0" aria-labelledby="boardHeading"
           aria-describedby="boardDescription">
-          Paper soccer replay board. The move list contains a text version of the replay.
+          Paper soccer board. Move choices and history are also available beside the board.
         </canvas>
+        <div id="boardTargets" class="board-targets" role="group"
+          aria-label="Legal moves"></div>
+        <div id="boardTurnBadge" class="board-turn-badge" aria-hidden="true"></div>
       </section>
 
-      <aside class="control-panel" aria-label="Replay controls">
+      <aside class="control-panel" aria-label="Game controls">
+        <form id="gameSetup" class="game-setup">
+          <div class="setup-heading">
+            <div>
+              <p class="eyebrow">Play vs RandomBot</p>
+              <h2>New game</h2>
+            </div>
+            <button id="newGameButton" class="primary-control" type="submit">Start</button>
+          </div>
+
+          <label class="form-field" for="sideSelect">
+            <span>Your side</span>
+            <select id="sideSelect">
+              <option value="one" selected>Player 1 · attacks top</option>
+              <option value="two">Player 2 · attacks bottom</option>
+            </select>
+          </label>
+
+          <label class="form-field" for="seedInput">
+            <span>Bot seed</span>
+            <input id="seedInput" type="text" inputmode="numeric"
+              value="12345" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="setup-help">Player 1 moves first. Reuse a seed to repeat the bot.</p>
+          <p id="setupError" class="form-error" role="alert"></p>
+        </form>
+
         <div class="replay-summary" aria-live="polite" aria-atomic="true">
           <p id="plyLabel" class="summary-position">Move 0 of 0</p>
-          <h2 id="statusLabel" class="summary-title">Ready to replay</h2>
-          <p id="moveLabel" class="summary-detail">The ball is at its starting position.</p>
+          <h2 id="statusLabel" class="summary-title">Your turn</h2>
+          <p id="moveLabel" class="summary-detail">Click a highlighted point to move.</p>
         </div>
 
-        <div class="button-row" role="group" aria-label="Playback">
-          <button id="prevButton" type="button" disabled>Previous</button>
-          <button id="playButton" class="primary-control" type="button"
-            aria-pressed="false">Play</button>
-          <button id="nextButton" type="button">Next</button>
-        </div>
+        <section id="moveChoicesSection" class="move-choices-section" aria-labelledby="moveChoicesHeading">
+          <div class="move-choices-heading">
+            <h2 id="moveChoicesHeading">Choose a destination</h2>
+            <span>↻ extra turn</span>
+          </div>
+          <div id="moveChoices" class="move-choices"></div>
+        </section>
 
-        <label class="timeline-row">
-          <span>Replay position</span>
-          <input id="plyRange" type="range" min="0" max="0" value="0">
-        </label>
+        <div id="replayControls" hidden>
+          <div class="button-row" role="group" aria-label="Playback">
+            <button id="prevButton" type="button" disabled>Previous</button>
+            <button id="playButton" class="primary-control" type="button"
+              aria-pressed="false">Play</button>
+            <button id="nextButton" type="button">Next</button>
+          </div>
 
-        <div class="setting-row">
-          <label for="speedSelect">Playback speed</label>
-          <select id="speedSelect">
-            <option value="0.5">0.5x</option>
-            <option value="1" selected>1x</option>
-            <option value="2">2x</option>
-            <option value="4">4x</option>
-          </select>
+          <label class="timeline-row">
+            <span>Replay position</span>
+            <input id="plyRange" type="range" min="0" max="0" value="0">
+          </label>
+
+          <div class="setting-row">
+            <label for="speedSelect">Playback speed</label>
+            <select id="speedSelect">
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+          </div>
         </div>
 
         <section class="move-list-section" aria-label="Move list">
-          <h2>Moves</h2>
+          <h2 id="moveListHeading">Move history</h2>
           <div id="moveList" class="move-list"></div>
         </section>
       </aside>

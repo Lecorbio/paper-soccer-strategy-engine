@@ -6,7 +6,7 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A terminal CLI for human and bot play (`papersoccer_cli`)
 - A seeded bot layer for automated play experiments
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
-- A static browser replay viewer (`web/index.html`)
+- A static browser game and replay viewer (`web/index.html`)
 - Dependency-free tests integrated with CTest (`papersoccer_tests`)
 
 The current version intentionally focuses on core game correctness so minimax/MCTS bots can be added on top without refactoring game state logic.
@@ -53,6 +53,13 @@ You can also run the test binary directly:
 ./build/papersoccer_tests
 ```
 
+When Node.js 18 or newer is available, CTest also runs the browser rules parity suite.
+It can be run directly with:
+
+```bash
+node --test tests/web_game_test.mjs
+```
+
 ## Run CLI
 
 ```bash
@@ -85,15 +92,25 @@ the initial engine point `(4,6)` is displayed as `(6,4)`. Every coordinate is ze
 coordinate. The default height remains `10`, while the field boundary rows are `1` and `11`
 and the goal rows are `0` and `12`.
 
-## Run Web Replay Viewer
+## Run Web Game and Replay Viewer
 
-Open the static viewer directly:
+Open the static app directly:
 
 ```bash
 open web/index.html
 ```
 
-The viewer includes a built-in RandomBot replay, so it works without a server.
+The app starts in **Play vs bot** mode:
+
+1. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
+   move first and attack the bottom goal.
+2. Enter a bot seed. Reusing the same side, seed, and human moves reproduces the bot's
+   choices.
+3. Select **Start**, then click any highlighted destination on the board. Destinations
+   marked with `↻` grant another move.
+
+Select **Watch replay** to inspect the built-in RandomBot game, or use **Open replay**
+to load another replay file. The app remains fully static and works without a server.
 
 Generate a new bot-vs-bot replay as JSON:
 
@@ -124,9 +141,11 @@ same geometry.
 - `src/rules.cpp` - state transitions and legal move logic
 - `src/cli/main.cpp` - terminal game loop
 - `src/replay/main.cpp` - bot self-play JSON replay exporter
-- `web/index.html` - static web replay viewer
-- `web/app.js` - canvas rendering and replay controls
-- `web/styles.css` - viewer styling
+- `web/index.html` - static browser game and replay shell
+- `web/game-engine.js` - browser rules engine and seeded `RandomBot`
+- `web/app.js` - browser play, canvas rendering, and replay controls
+- `web/styles.css` - game and replay styling
+- `tests/web_game_test.mjs` - C++/browser rules and bot parity checks
 - `tests/bot_test.cpp` - bot determinism and legality checks
 - `tests/test_main.cpp` - test entrypoint
 - `tests/rules_test.cpp` - rule correctness scenarios

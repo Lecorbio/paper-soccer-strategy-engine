@@ -63,6 +63,18 @@ void random_bot_is_deterministic_for_same_seed_pair() {
   require(first == second, "The same seed pair should replay the same self-play game.");
 }
 
+void random_bot_matches_browser_parity_fixture() {
+  const std::vector<ps::Point> expected{
+      {4, 6}, {4, 5}, {3, 5}, {4, 4}, {3, 3}, {3, 2}, {4, 1}, {4, 2}, {5, 2},
+      {6, 3}, {6, 2}, {5, 2}, {5, 3}, {5, 4}, {4, 5}, {5, 5}, {5, 6}, {4, 6},
+      {3, 5}, {3, 4}, {2, 3}, {2, 4}, {1, 3}, {0, 3}, {1, 4}, {0, 5}, {1, 5},
+      {0, 4}, {1, 3}, {0, 2}, {1, 1}, {1, 2}, {0, 3},
+  };
+
+  require(play_random_game(17, 18) == expected,
+          "C++ and browser RandomBot fixtures must stay in sync.");
+}
+
 void random_bot_rejects_states_without_legal_moves() {
   ps::RandomBot bot(5);
   ps::GameState state = ps::make_initial_state();
@@ -90,6 +102,8 @@ int run_bot_tests() {
       {"random_bot_chooses_a_legal_move", random_bot_chooses_a_legal_move},
       {"random_bot_is_deterministic_for_same_seed_pair",
        random_bot_is_deterministic_for_same_seed_pair},
+      {"random_bot_matches_browser_parity_fixture",
+       random_bot_matches_browser_parity_fixture},
       {"random_bot_rejects_states_without_legal_moves",
        random_bot_rejects_states_without_legal_moves},
   };
