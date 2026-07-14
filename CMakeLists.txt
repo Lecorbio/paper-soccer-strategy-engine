@@ -28,6 +28,13 @@ target_link_libraries(papersoccer_cli PRIVATE papersoccer_core)
 add_executable(papersoccer_replay_export src/replay/main.cpp)
 target_link_libraries(papersoccer_replay_export PRIVATE papersoccer_core)
 
+add_library(papersoccer_arena_support src/arena.cpp)
+target_include_directories(papersoccer_arena_support PUBLIC include)
+target_link_libraries(papersoccer_arena_support PUBLIC papersoccer_core)
+
+add_executable(papersoccer_arena src/arena/main.cpp)
+target_link_libraries(papersoccer_arena PRIVATE papersoccer_arena_support)
+
 add_executable(papersoccer_tests
   tests/bot_test.cpp
   tests/match_test.cpp
@@ -37,9 +44,18 @@ add_executable(papersoccer_tests
   tests/web_game_session_test.cpp
 )
 target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
+target_include_directories(papersoccer_tests PRIVATE src)
 
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
+
+if(NOT EMSCRIPTEN)
+  add_executable(papersoccer_arena_smoke_test tests/arena_smoke_test.cpp)
+  target_link_libraries(papersoccer_arena_smoke_test
+    PRIVATE papersoccer_arena_support)
+  add_test(NAME papersoccer_arena_smoke_test
+           COMMAND papersoccer_arena_smoke_test)
+endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
 if(PAPERSOCCER_NODE_EXECUTABLE)
@@ -62,6 +78,13 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
                 PAPERSOCCER_REPLAY_EXPORTER=$<TARGET_FILE:papersoccer_replay_export>
                 ${PAPERSOCCER_NODE_EXECUTABLE} --test
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay_export_test.mjs
+      )
+      add_test(
+        NAME papersoccer_arena_cli_tests
+        COMMAND ${CMAKE_COMMAND} -E env
+                PAPERSOCCER_ARENA=$<TARGET_FILE:papersoccer_arena>
+                ${PAPERSOCCER_NODE_EXECUTABLE} --test
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/arena_cli_test.mjs
       )
     endif()
   endif()

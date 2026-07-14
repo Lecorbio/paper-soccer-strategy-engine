@@ -313,7 +313,20 @@ int main() {
         std::cout << "MCTS stats: iterations=" << stats.iterations
                   << ", nodes=" << stats.nodes
                   << ", simulated plies=" << stats.simulated_plies
-                  << ", estimated root value=" << stats.root_value << "\n";
+                  << ", root visits=" << stats.total_root_visits
+                  << ", reused visits=" << stats.reused_visits
+                  << ", max depth=" << stats.max_depth
+                  << ", proven nodes=" << stats.proven_nodes
+                  << ", rebuilds=" << stats.rebuild_count
+                  << ", estimated root value=" << stats.root_value;
+        if (stats.proven_winner.has_value()) {
+          std::cout << ", proven winner="
+                    << player_to_string(*stats.proven_winner);
+        }
+        if (stats.expansion_saturated) {
+          std::cout << ", tree saturated";
+        }
+        std::cout << "\n";
       }
       state = ps::apply_move(state, chosen_move);
       continue;

@@ -1,0 +1,264 @@
+#include <charconv>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
+
+#include "papersoccer/arena.hpp"
+
+namespace ps = papersoccer;
+namespace arena = papersoccer::arena;
+
+namespace {
+
+enum class Mode { Matches, Positions };
+
+struct CliConfig {
+  Mode mode{Mode::Matches};
+  ps::RulesConfig rules{};
+  arena::ArenaBotConfig candidate{arena::MatchesConfig{}.candidate};
+  arena::ArenaBotConfig reference{arena::MatchesConfig{}.reference};
+  std::uint64_t base_seed{ps::RandomBot::default_seed()};
+  std::size_t pairs{200};
+  std::size_t max_plies{512};
+  std::size_t bootstrap_samples{10000};
+  std::size_t positions{16};
+  std::size_t generation_plies{24};
+};
+
+void print_usage(std::ostream &out) {
+  out <<
+      "Usage:\n"
+      "  papersoccer_arena matches [options]\n"
+      "  papersoccer_arena positions [options]\n\n"
+      "Common options:\n"
+      "  --seed N                         Base seed (default: 828927513140)\n"
+      "  --width N --height N             Board dimensions (default: 8x10)\n"
+      "  --candidate-kind random|mcts     Candidate bot (default: mcts)\n"
+      "  --reference-kind random|mcts     Reference bot (default: mcts)\n"
+      "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
+      "  --reference-iterations N         MCTS iterations (default: 2000)\n"
+      "  --candidate-policy uniform|tactical\n"
+      "  --reference-policy uniform|tactical\n"
+      "  --candidate-reuse true|false     Reuse the candidate tree\n"
+      "  --reference-reuse true|false     Reuse the reference tree\n"
+      "  --candidate-max-nodes N          Candidate tree bound (minimum: 2)\n"
+      "  --reference-max-nodes N          Reference tree bound (minimum: 2)\n"
+      "  --candidate-exploration X        Candidate UCT exploration\n"
+      "  --reference-exploration X        Reference UCT exploration\n\n"
+      "Match options:\n"
+      "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
+      "  --max-plies N                    Per-game limit (default: 512)\n"
+      "  --bootstrap-samples N            Paired resamples (default: 10000)\n\n"
+      "Position options:\n"
+      "  --positions N                    Positions to measure (default: 16)\n"
+      "  --generation-plies N             Random plies per position (default: 24)\n"
+      "  -h, --help                       Show this help\n\n"
+      "Defaults compare tactical, reusing MCTS (candidate) with uniform,\n"
+      "non-reusing MCTS (reference). JSON is written to standard output.\n";
+}
+
+template <typename UInt>
+UInt parse_unsigned(std::string_view value, std::string_view option) {
+  static_assert(std::is_unsigned_v<UInt>);
+  if (value.empty() || value.front() == '-') {
+    throw std::invalid_argument(std::string(option) + " requires an unsigned integer");
+  }
+  UInt parsed{};
+  const char *first = value.data();
+  const char *last = value.data() + value.size();
+  const auto result = std::from_chars(first, last, parsed);
+  if (result.ec != std::errc{} || result.ptr != last) {
+    throw std::invalid_argument(std::string(option) + " requires an unsigned integer");
+  }
+  return parsed;
+}
+
+int parse_dimension(std::string_view value, std::string_view option) {
+  const unsigned int parsed = parse_unsigned<unsigned int>(value, option);
+  if (parsed > static_cast<unsigned int>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(std::string(option) + " is too large");
+  }
+  return static_cast<int>(parsed);
+}
+
+double parse_double(std::string_view value, std::string_view option) {
+  std::string owned(value);
+  std::size_t consumed = 0;
+  double parsed = 0.0;
+  try {
+    parsed = std::stod(owned, &consumed);
+  } catch (...) {
+    throw std::invalid_argument(std::string(option) + " requires a number");
+  }
+  if (consumed != owned.size() || !std::isfinite(parsed)) {
+    throw std::invalid_argument(std::string(option) + " requires a finite number");
+  }
+  return parsed;
+}
+
+bool parse_bool(std::string_view value, std::string_view option) {
+  if (value == "true" || value == "on" || value == "1") {
+    return true;
+  }
+  if (value == "false" || value == "off" || value == "0") {
+    return false;
+  }
+  throw std::invalid_argument(std::string(option) +
+                              " requires true or false");
+}
+
+ps::BotKind parse_kind(std::string_view value, std::string_view option) {
+  if (value == "random") {
+    return ps::BotKind::Random;
+  }
+  if (value == "mcts") {
+    return ps::BotKind::Mcts;
+  }
+  throw std::invalid_argument(std::string(option) + " requires random or mcts");
+}
+
+ps::MctsRolloutPolicy parse_policy(std::string_view value,
+                                   std::string_view option) {
+  if (value == "uniform") {
+    return ps::MctsRolloutPolicy::Uniform;
+  }
+  if (value == "tactical") {
+    return ps::MctsRolloutPolicy::Tactical;
+  }
+  throw std::invalid_argument(std::string(option) +
+                              " requires uniform or tactical");
+}
+
+void require_mode(Mode actual, Mode expected, std::string_view option) {
+  if (actual != expected) {
+    throw std::invalid_argument(std::string(option) + " is only valid in " +
+                                (expected == Mode::Matches ? "matches" : "positions") +
+                                " mode");
+  }
+}
+
+CliConfig parse_cli(int argc, char **argv) {
+  if (argc < 2) {
+    throw std::invalid_argument("missing mode");
+  }
+
+  CliConfig config;
+  const std::string_view mode(argv[1]);
+  if (mode == "matches") {
+    config.mode = Mode::Matches;
+  } else if (mode == "positions") {
+    config.mode = Mode::Positions;
+  } else {
+    throw std::invalid_argument("mode must be matches or positions");
+  }
+
+  for (int index = 2; index < argc; ++index) {
+    const std::string_view option(argv[index]);
+    auto value = [&]() -> std::string_view {
+      if (++index >= argc) {
+        throw std::invalid_argument(std::string(option) + " requires a value");
+      }
+      return argv[index];
+    };
+
+    if (option == "--seed") {
+      config.base_seed = parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--width") {
+      config.rules.width = parse_dimension(value(), option);
+    } else if (option == "--height") {
+      config.rules.height = parse_dimension(value(), option);
+    } else if (option == "--pairs") {
+      require_mode(config.mode, Mode::Matches, option);
+      config.pairs = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--max-plies") {
+      require_mode(config.mode, Mode::Matches, option);
+      config.max_plies = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--bootstrap-samples") {
+      require_mode(config.mode, Mode::Matches, option);
+      config.bootstrap_samples = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--positions") {
+      require_mode(config.mode, Mode::Positions, option);
+      config.positions = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--generation-plies") {
+      require_mode(config.mode, Mode::Positions, option);
+      config.generation_plies = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-kind") {
+      config.candidate.kind = parse_kind(value(), option);
+    } else if (option == "--reference-kind") {
+      config.reference.kind = parse_kind(value(), option);
+    } else if (option == "--candidate-iterations") {
+      config.candidate.iterations =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-iterations") {
+      config.reference.iterations =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--candidate-policy") {
+      config.candidate.rollout_policy = parse_policy(value(), option);
+    } else if (option == "--reference-policy") {
+      config.reference.rollout_policy = parse_policy(value(), option);
+    } else if (option == "--candidate-reuse") {
+      config.candidate.reuse_tree = parse_bool(value(), option);
+    } else if (option == "--reference-reuse") {
+      config.reference.reuse_tree = parse_bool(value(), option);
+    } else if (option == "--candidate-max-nodes") {
+      config.candidate.max_nodes = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--reference-max-nodes") {
+      config.reference.max_nodes = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-exploration") {
+      config.candidate.exploration = parse_double(value(), option);
+    } else if (option == "--reference-exploration") {
+      config.reference.exploration = parse_double(value(), option);
+    } else {
+      throw std::invalid_argument("unknown option: " + std::string(option));
+    }
+  }
+  return config;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view argument(argv[index]);
+    if (argument == "--help" || argument == "-h") {
+      print_usage(std::cout);
+      return 0;
+    }
+  }
+
+  try {
+    const CliConfig cli = parse_cli(argc, argv);
+    if (cli.mode == Mode::Matches) {
+      arena::MatchesConfig config;
+      config.rules = cli.rules;
+      config.candidate = cli.candidate;
+      config.reference = cli.reference;
+      config.base_seed = cli.base_seed;
+      config.seed_pairs = cli.pairs;
+      config.max_plies = cli.max_plies;
+      config.bootstrap_samples = cli.bootstrap_samples;
+      std::cout << arena::run_matches_json(config) << '\n';
+    } else {
+      arena::PositionsConfig config;
+      config.rules = cli.rules;
+      config.candidate = cli.candidate;
+      config.reference = cli.reference;
+      config.base_seed = cli.base_seed;
+      config.position_count = cli.positions;
+      config.generation_plies = cli.generation_plies;
+      std::cout << arena::run_positions_json(config) << '\n';
+    }
+    return 0;
+  } catch (const std::exception &error) {
+    std::cerr << "papersoccer_arena: " << error.what() << "\n\n";
+    print_usage(std::cerr);
+    return 2;
+  }
+}

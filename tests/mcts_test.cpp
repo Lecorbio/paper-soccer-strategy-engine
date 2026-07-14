@@ -1,12 +1,15 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "mcts_internal.hpp"
 #include "papersoccer/bot.hpp"
 #include "papersoccer/rules.hpp"
 
@@ -43,7 +46,14 @@ bool contains_point(std::initializer_list<ps::Point> points, ps::Point point) {
 bool same_stats(const ps::SearchStats &lhs, const ps::SearchStats &rhs) {
   return lhs.iterations == rhs.iterations && lhs.nodes == rhs.nodes &&
          lhs.simulated_plies == rhs.simulated_plies &&
-         lhs.root_value == rhs.root_value;
+         lhs.root_value == rhs.root_value &&
+         lhs.total_root_visits == rhs.total_root_visits &&
+         lhs.reused_visits == rhs.reused_visits &&
+         lhs.max_depth == rhs.max_depth &&
+         lhs.proven_nodes == rhs.proven_nodes &&
+         lhs.proven_winner == rhs.proven_winner &&
+         lhs.rebuild_count == rhs.rebuild_count &&
+         lhs.expansion_saturated == rhs.expansion_saturated;
 }
 
 ps::GameState make_clean_state_at(ps::Point point,
@@ -115,6 +125,47 @@ ps::GameState make_rebound_choice() {
   return state;
 }
 
+ps::GameState make_goal_blocking_choice(ps::Player player) {
+  const bool player_one = player == ps::Player::One;
+  const int branch_y = player_one ? 10 : 2;
+  const ps::Point root{4, branch_y};
+  const ps::Point safe{3, branch_y};
+  const ps::Point unsafe{4, player_one ? 11 : 1};
+  const ps::Point opponent_goal{4, player_one ? 12 : 0};
+  const ps::Point unsafe_escape{5, branch_y};
+  const ps::Point unsafe_finish{6, branch_y};
+  const ps::Point safe_step{2, branch_y};
+  const ps::Point safe_finish{1, branch_y};
+
+  ps::GameState state = make_clean_state_at(root, player);
+  block_edges_except(state, root, {safe, unsafe});
+  block_edges_except(state, unsafe,
+                     {root, opponent_goal, unsafe_escape});
+  block_edges_except(state, unsafe_escape, {unsafe, unsafe_finish});
+  block_edges_except(state, unsafe_finish, {unsafe_escape});
+  block_edges_except(state, safe, {root, safe_step});
+  block_edges_except(state, safe_step, {safe, safe_finish});
+  block_edges_except(state, safe_finish, {safe_step});
+  return state;
+}
+
+ps::GameState make_self_trap_choice() {
+  const ps::Point root{4, 5};
+  const ps::Point trap{3, 5};
+  const ps::Point safe{5, 5};
+  const ps::Point safe_step{6, 5};
+  const ps::Point safe_finish{7, 5};
+
+  ps::GameState state = make_clean_state_at(root, ps::Player::One);
+  state.visit_count[trap] = 1;
+  block_edges_except(state, root, {trap, safe});
+  block_edges_except(state, trap, {root});
+  block_edges_except(state, safe, {root, safe_step});
+  block_edges_except(state, safe_step, {safe, safe_finish});
+  block_edges_except(state, safe_finish, {safe_step});
+  return state;
+}
+
 ps::MctsConfig config_with(std::uint64_t seed, std::uint32_t iterations,
                            double exploration) {
   ps::MctsConfig config;
@@ -122,6 +173,87 @@ ps::MctsConfig config_with(std::uint64_t seed, std::uint32_t iterations,
   config.iterations = iterations;
   config.exploration = exploration;
   return config;
+}
+
+ps::MctsConfig reference_config(std::uint64_t seed,
+                                std::uint32_t iterations,
+                                double exploration = 1.4142135623730951) {
+  ps::MctsConfig config = config_with(seed, iterations, exploration);
+  config.rollout_policy = ps::MctsRolloutPolicy::Uniform;
+  config.reuse_tree = false;
+  config.max_nodes = 65536;
+  return config;
+}
+
+ps::MctsConfig tactical_config(std::uint64_t seed,
+                               std::uint32_t iterations,
+                               bool reuse_tree = false,
+                               std::size_t max_nodes = 65536) {
+  ps::MctsConfig config = config_with(seed, iterations, 1.0);
+  config.rollout_policy = ps::MctsRolloutPolicy::Tactical;
+  config.reuse_tree = reuse_tree;
+  config.max_nodes = max_nodes;
+  return config;
+}
+
+void require_compact_position_matches(const ps::GameState &state) {
+  auto topology =
+      std::make_shared<ps::detail::SearchTopology>(state.config);
+  ps::detail::SearchPosition compact(topology, state);
+  ps::detail::SearchPosition root_copy(topology, state);
+
+  require(compact.to_move() == state.to_move &&
+              compact.status() == state.status &&
+              compact.winner() == ps::winner(state),
+          "The compact position should preserve the public state metadata.");
+
+  std::array<std::uint8_t, ps::detail::kMaximumMoves> slots{};
+  const std::uint8_t slot_count = compact.legal_slots(slots);
+  const std::vector<ps::Move> public_moves = ps::legal_moves(state);
+  require(slot_count == public_moves.size(),
+          "Compact and public move generation should return the same count.");
+
+  for (std::size_t index = 0; index < public_moves.size(); ++index) {
+    require(compact.move_for_slot(slots[index]) == public_moves[index],
+            "Compact move generation should preserve public legal-move order.");
+
+    const std::size_t depth = compact.undo_depth();
+    compact.make_move(slots[index]);
+    const ps::GameState public_next =
+        ps::apply_move(state, public_moves[index]);
+    const ps::detail::SearchPosition compact_public_next(topology, public_next);
+    require(compact.same_compact_state(compact_public_next),
+            "Compact make_move should match the authoritative public successor.");
+    compact.unmake_to(depth);
+    require(compact.same_compact_state(root_copy),
+            "Compact unmake should exactly restore the root position.");
+  }
+}
+
+struct MctsGameTrace {
+  std::vector<ps::Point> path{};
+  std::vector<ps::SearchStats> searches{};
+};
+
+MctsGameTrace play_reusing_tactical_game() {
+  ps::MctsConfig player_one_config = tactical_config(149, 32, true, 4096);
+  ps::MctsConfig player_two_config = tactical_config(151, 32, true, 4096);
+  ps::MctsBot player_one(player_one_config);
+  ps::MctsBot player_two(player_two_config);
+  ps::GameState state = ps::make_initial_state();
+  MctsGameTrace trace;
+
+  for (std::size_t ply = 0; !ps::is_terminal(state); ++ply) {
+    require(ply < 512,
+            "A deterministic tactical self-play game should terminate.");
+    ps::MctsBot &bot = state.to_move == ps::Player::One
+                           ? player_one
+                           : player_two;
+    state = ps::apply_move(state, bot.choose_move(state));
+    trace.searches.push_back(bot.last_search_stats());
+  }
+  trace.path = state.path;
+  return trace;
 }
 
 void mcts_bot_chooses_a_legal_move_and_reports_its_name() {
@@ -133,6 +265,14 @@ void mcts_bot_chooses_a_legal_move_and_reports_its_name() {
   require(bot.name() == "MctsBot", "MctsBot should expose its stable public name.");
   require(contains_move(ps::legal_moves(state), move.to),
           "MctsBot must always return a legal move.");
+}
+
+void mcts_defaults_use_promoted_tactical_search() {
+  const ps::MctsConfig config;
+  require(config.rollout_policy == ps::MctsRolloutPolicy::Tactical &&
+              config.reuse_tree && config.max_nodes == 65536,
+          "The promoted MCTS defaults should use tactical rollouts, reuse, and "
+          "the fixed node bound.");
 }
 
 void identical_searches_produce_identical_moves_and_statistics() {
@@ -303,11 +443,286 @@ void invalid_mcts_configurations_are_rejected() {
             47, 1, std::numeric_limits<double>::quiet_NaN()));
       },
       "MctsBot should reject a NaN exploration constant.");
+  ps::MctsConfig too_few_nodes = config_with(47, 1, 1.0);
+  too_few_nodes.max_nodes = 1;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(too_few_nodes); },
+      "MctsBot should reject a tree bound smaller than two nodes.");
 
   const ps::GameState state = ps::make_initial_state();
   require_invalid_argument(
       [&] { (void)ps::MctsSearch(state, 47, -1.0); },
       "The incremental search API should reject invalid exploration constants too.");
+}
+
+void compact_search_position_matches_authoritative_rules() {
+  const ps::RulesConfig configurations[]{{}, {6, 8}, {10, 12}};
+  for (const ps::RulesConfig config : configurations) {
+    for (std::uint64_t seed = 1; seed <= 12; ++seed) {
+      ps::RandomBot bot(seed * 0x9e3779b97f4a7c15ULL);
+      ps::GameState state = ps::make_initial_state(config);
+      for (std::size_t ply = 0; ply < 512; ++ply) {
+        require_compact_position_matches(state);
+        if (ps::is_terminal(state)) {
+          break;
+        }
+        state = ps::apply_move(state, bot.choose_move(state));
+      }
+      require(ps::is_terminal(state),
+              "Seeded differential games should reach a terminal position.");
+    }
+  }
+}
+
+void uniform_non_reusing_search_preserves_reference_fixtures() {
+  {
+    const ps::GameState state = ps::make_initial_state();
+    ps::MctsBot bot(reference_config(123456789, 64));
+    require(bot.choose_move(state) == ps::Move{{3, 6}},
+            "The optimized uniform search should preserve the 64-iteration opening move.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations == 64 && stats.nodes == 65 &&
+                stats.simulated_plies == 3000 && stats.root_value == -0.125,
+            "The optimized uniform search should preserve its opening counters.");
+  }
+
+  {
+    const ps::GameState state = ps::make_initial_state();
+    ps::MctsBot bot(reference_config(0x123456789ABCDEF0ULL, 2000));
+    require(bot.choose_move(state) == ps::Move{{3, 5}},
+            "The optimized uniform search should preserve the 2,000-iteration opening move.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations == 2000 && stats.nodes == 2001 &&
+                stats.simulated_plies == 76582 && stats.root_value == 0.004,
+            "The optimized uniform search should preserve its long opening counters.");
+  }
+
+  {
+    ps::GameState state = ps::make_initial_state();
+    for (const ps::Point destination :
+         std::vector<ps::Point>{{4, 5}, {3, 5}, {4, 4}, {3, 3}}) {
+      state = ps::apply_move(state, ps::Move{destination});
+    }
+    ps::MctsBot bot(reference_config(777, 2000));
+    require(bot.choose_move(state) == ps::Move{{4, 2}},
+            "The optimized uniform search should preserve the midgame move.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations == 2000 && stats.nodes == 1894 &&
+                stats.simulated_plies == 63122 && stats.root_value == 0.164,
+            "The optimized uniform search should preserve its midgame counters.");
+  }
+}
+
+void uniform_non_reusing_game_preserves_reference_path() {
+  const std::vector<ps::Point> expected{
+      {4, 6}, {4, 7}, {3, 6}, {3, 7}, {4, 7}, {3, 8},
+      {2, 8}, {2, 9}, {1, 10}, {1, 11}, {0, 10}, {1, 9},
+      {2, 8}, {3, 7}, {2, 6}, {2, 7}, {3, 6}, {3, 5},
+      {3, 4}, {3, 3}, {2, 2}, {3, 1}, {4, 0},
+  };
+  ps::MctsBot player_one(reference_config(17, 64));
+  ps::RandomBot player_two(23);
+  ps::GameState state = ps::make_initial_state();
+  while (!ps::is_terminal(state)) {
+    ps::Bot &bot = state.to_move == ps::Player::One
+                       ? static_cast<ps::Bot &>(player_one)
+                       : static_cast<ps::Bot &>(player_two);
+    state = ps::apply_move(state, bot.choose_move(state));
+  }
+  require(state.path == expected,
+          "Uniform non-reusing play should preserve the complete reference match.");
+}
+
+void tactical_rollouts_block_immediate_goals_for_both_players() {
+  for (const ps::Player player : {ps::Player::One, ps::Player::Two}) {
+    const ps::GameState state = make_goal_blocking_choice(player);
+    const std::vector<ps::Move> moves = ps::legal_moves(state);
+    require(moves.size() == 2 && moves.front() == ps::Move{{3, state.ball.y}},
+            "The goal-blocking fixture should expose its safe move first.");
+
+    ps::MctsBot bot(tactical_config(101, 2));
+    require(bot.choose_move(state) == moves.front(),
+            "Tactical rollouts should reject a move that gives the opponent an immediate goal.");
+  }
+}
+
+void tactical_rollouts_avoid_terminal_self_traps() {
+  const ps::GameState state = make_self_trap_choice();
+  const std::vector<ps::Move> moves = ps::legal_moves(state);
+  require(moves.size() == 2 && moves.front() == ps::Move{{3, 5}},
+          "The self-trap fixture should expose the losing rebound first.");
+  require(ps::winner(ps::apply_move(state, moves.front())) == ps::Player::Two,
+          "The marked rebound should trap Player One immediately.");
+
+  ps::MctsBot bot(tactical_config(103, 1));
+  require(bot.choose_move(state) == ps::Move{{5, 5}},
+          "The solver should avoid a proven loss while a safe branch remains unexpanded.");
+}
+
+void immediate_traps_are_selected_without_sampling() {
+  const ps::Point root{4, 5};
+  const ps::Point trapping_move{3, 5};
+  const ps::Point alternative{5, 5};
+  ps::GameState state = make_clean_state_at(root, ps::Player::One);
+  block_edges_except(state, root, {trapping_move, alternative});
+  block_edges_except(state, trapping_move, {root});
+  block_edges_except(state, alternative, {root, ps::Point{6, 5}});
+
+  ps::MctsBot bot(tactical_config(107, 64));
+  require(bot.choose_move(state) == ps::Move{trapping_move},
+          "MCTS should immediately take a move that leaves the opponent blocked.");
+  require(bot.last_search_stats().iterations == 0 &&
+              bot.last_search_stats().proven_winner == ps::Player::One,
+          "An immediate trapping win should be proven without sampling.");
+}
+
+void tactical_solver_proves_forced_wins_and_losses() {
+  {
+    const ps::GameState state = make_player_two_choice(true);
+    ps::MctsBot bot(tactical_config(109, 64));
+    require(bot.choose_move(state) == ps::Move{{5, 5}},
+            "The tactical solver should choose Player Two's forced win.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations < 64 &&
+                stats.proven_winner == ps::Player::Two &&
+                stats.proven_nodes >= 3,
+            "The root should stop early once Player Two's win is proven.");
+  }
+
+  {
+    const ps::GameState state = make_player_two_choice(false);
+    ps::MctsBot bot(tactical_config(113, 64));
+    (void)bot.choose_move(state);
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations < 64 &&
+                stats.proven_winner == ps::Player::One,
+            "The tactical solver should prove when every Player Two branch loses.");
+  }
+  {
+    const ps::GameState state = make_rebound_choice();
+    ps::MctsBot bot(tactical_config(117, 64));
+    require(bot.choose_move(state) == ps::Move{{4, 5}},
+            "The solver should follow the forced rebound into Player One's "
+            "winning decision.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations < 64 &&
+                stats.proven_winner == ps::Player::One,
+            "A forced rebound line should propagate its proven winner without "
+            "alternating perspective.");
+  }
+}
+
+void mcts_bot_reuses_reachable_subtrees() {
+  ps::MctsConfig config = reference_config(127, 128);
+  config.reuse_tree = true;
+  ps::MctsBot bot(config);
+  ps::GameState state = ps::make_initial_state();
+
+  const ps::Move first = bot.choose_move(state);
+  const ps::SearchStats first_stats = bot.last_search_stats();
+  require(first_stats.iterations == 128 && first_stats.reused_visits == 0 &&
+              first_stats.total_root_visits == 128,
+          "The first call should build a new 128-iteration root.");
+
+  state = ps::apply_move(state, first);
+  const ps::Move second = bot.choose_move(state);
+  const ps::SearchStats second_stats = bot.last_search_stats();
+  require(contains_move(ps::legal_moves(state), second.to),
+          "A re-rooted search must still return a legal move.");
+  require(second_stats.iterations == 128 && second_stats.reused_visits > 0 &&
+              second_stats.total_root_visits ==
+                  second_stats.reused_visits + second_stats.iterations &&
+              second_stats.rebuild_count == 0,
+          "A reachable child should retain visits and add exactly the configured new work.");
+}
+
+void mcts_bot_rebuilds_when_the_played_branch_was_not_expanded() {
+  ps::MctsConfig config = reference_config(131, 1);
+  config.reuse_tree = true;
+  ps::MctsBot bot(config);
+  const ps::GameState root = ps::make_initial_state();
+  const ps::Move expanded = bot.choose_move(root);
+  const std::vector<ps::Move> moves = ps::legal_moves(root);
+  const auto different = std::find_if(
+      moves.begin(), moves.end(),
+      [&](const ps::Move move) { return move != expanded; });
+  require(different != moves.end(),
+          "The initial state should have an unexpanded alternative.");
+
+  const ps::GameState external = ps::apply_move(root, *different);
+  (void)bot.choose_move(external);
+  const ps::SearchStats stats = bot.last_search_stats();
+  require(stats.iterations == 1 && stats.reused_visits == 0 &&
+              stats.rebuild_count == 1,
+          "An unexpanded external move should trigger one deterministic rebuild.");
+}
+
+void mcts_bot_rebuilds_for_an_unrelated_state() {
+  ps::MctsConfig config = reference_config(139, 16);
+  config.reuse_tree = true;
+  ps::MctsBot bot(config);
+  (void)bot.choose_move(ps::make_initial_state());
+
+  const ps::GameState unrelated =
+      make_clean_state_at(ps::Point{4, 4}, ps::Player::Two);
+  const ps::Move move = bot.choose_move(unrelated);
+  const ps::SearchStats stats = bot.last_search_stats();
+  require(contains_move(ps::legal_moves(unrelated), move.to),
+          "A rebuilt search on an unrelated state should return a legal move.");
+  require(stats.iterations == 16 && stats.reused_visits == 0 &&
+              stats.rebuild_count == 1,
+          "An unrelated state should discard the old tree and count one rebuild.");
+}
+
+void reusing_tactical_games_are_fully_reproducible() {
+  const MctsGameTrace first = play_reusing_tactical_game();
+  const MctsGameTrace second = play_reusing_tactical_game();
+  require(first.path == second.path,
+          "Identical seeds should reproduce a complete tree-reusing game.");
+  require(first.searches.size() == second.searches.size(),
+          "Reproduced games should contain the same number of searches.");
+  for (std::size_t index = 0; index < first.searches.size(); ++index) {
+    require(same_stats(first.searches[index], second.searches[index]),
+            "Every deterministic search counter should reproduce across games.");
+  }
+}
+
+void copied_mcts_bots_preserve_live_search_state() {
+  ps::MctsConfig config = reference_config(157, 128);
+  config.reuse_tree = true;
+  ps::MctsBot original(config);
+  ps::GameState state = ps::make_initial_state();
+  state = ps::apply_move(state, original.choose_move(state));
+
+  ps::MctsBot copied(original);
+  ps::MctsBot assigned(reference_config(999, 1));
+  assigned = original;
+
+  const ps::Move original_move = original.choose_move(state);
+  const ps::SearchStats original_stats = original.last_search_stats();
+  const ps::Move copied_move = copied.choose_move(state);
+  const ps::Move assigned_move = assigned.choose_move(state);
+
+  require(copied_move == original_move && assigned_move == original_move,
+          "Copies of a live bot should preserve its retained tree and random stream.");
+  require(same_stats(copied.last_search_stats(), original_stats) &&
+              same_stats(assigned.last_search_stats(), original_stats),
+          "Copied bots should reproduce every deterministic search counter.");
+}
+
+void mcts_node_bound_saturates_without_stopping_iterations() {
+  ps::MctsConfig config = reference_config(137, 64);
+  config.max_nodes = 2;
+  ps::MctsBot bot(config);
+  const ps::GameState state = ps::make_initial_state();
+  const ps::Move move = bot.choose_move(state);
+  const ps::SearchStats stats = bot.last_search_stats();
+
+  require(contains_move(ps::legal_moves(state), move.to),
+          "A saturated tree should still return a legal move.");
+  require(stats.iterations == 64 && stats.nodes == 2 &&
+              stats.expansion_saturated,
+          "A full tree should finish all iterations without allocating past its bound.");
 }
 
 }  // namespace
@@ -321,6 +736,8 @@ int run_mcts_tests() {
   const std::vector<TestCase> tests{
       {"mcts_bot_chooses_a_legal_move_and_reports_its_name",
        mcts_bot_chooses_a_legal_move_and_reports_its_name},
+      {"mcts_defaults_use_promoted_tactical_search",
+       mcts_defaults_use_promoted_tactical_search},
       {"identical_searches_produce_identical_moves_and_statistics",
        identical_searches_produce_identical_moves_and_statistics},
       {"incremental_batches_match_one_complete_run",
@@ -340,6 +757,32 @@ int run_mcts_tests() {
        mcts_bot_rejects_blocked_nonterminal_states},
       {"invalid_mcts_configurations_are_rejected",
        invalid_mcts_configurations_are_rejected},
+      {"compact_search_position_matches_authoritative_rules",
+       compact_search_position_matches_authoritative_rules},
+      {"uniform_non_reusing_search_preserves_reference_fixtures",
+       uniform_non_reusing_search_preserves_reference_fixtures},
+      {"uniform_non_reusing_game_preserves_reference_path",
+       uniform_non_reusing_game_preserves_reference_path},
+      {"tactical_rollouts_block_immediate_goals_for_both_players",
+       tactical_rollouts_block_immediate_goals_for_both_players},
+      {"tactical_rollouts_avoid_terminal_self_traps",
+       tactical_rollouts_avoid_terminal_self_traps},
+      {"immediate_traps_are_selected_without_sampling",
+       immediate_traps_are_selected_without_sampling},
+      {"tactical_solver_proves_forced_wins_and_losses",
+       tactical_solver_proves_forced_wins_and_losses},
+      {"mcts_bot_reuses_reachable_subtrees",
+       mcts_bot_reuses_reachable_subtrees},
+      {"mcts_bot_rebuilds_when_the_played_branch_was_not_expanded",
+       mcts_bot_rebuilds_when_the_played_branch_was_not_expanded},
+      {"mcts_bot_rebuilds_for_an_unrelated_state",
+       mcts_bot_rebuilds_for_an_unrelated_state},
+      {"reusing_tactical_games_are_fully_reproducible",
+       reusing_tactical_games_are_fully_reproducible},
+      {"copied_mcts_bots_preserve_live_search_state",
+       copied_mcts_bots_preserve_live_search_state},
+      {"mcts_node_bound_saturates_without_stopping_iterations",
+       mcts_node_bound_saturates_without_stopping_iterations},
   };
 
   int failures = 0;

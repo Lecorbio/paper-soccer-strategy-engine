@@ -5,6 +5,7 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A pure rules engine (`papersoccer_core`)
 - A terminal CLI for human and bot play (`papersoccer_cli`)
 - Seeded `RandomBot` and Monte Carlo Tree Search (`MctsBot`) opponents
+- A native arena for paired strength matches and position throughput measurements
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
 - A static browser game powered by the same C++ engine through WebAssembly
 - Dependency-free tests integrated with CTest (`papersoccer_tests`)
@@ -48,7 +49,7 @@ One search iteration has four parts:
 1. **Selection:** follow promising moves already in the tree. MCTS uses UCT, which combines a
    move's average result with a bonus for moves that have received less attention.
 2. **Expansion:** add one previously unexplored legal move to the tree.
-3. **Simulation:** choose uniformly random legal moves until the rules engine reports a win.
+3. **Simulation:** use the configured rollout policy until the rules engine reports a win.
 4. **Backpropagation:** add that result to every tree node visited during the iteration.
 
 The UCT comparison is:
@@ -74,22 +75,48 @@ root move is chosen primarily by visit count, which is more stable than the temp
 used while searching. Visit ties are resolved by mean result from the root player's perspective
 and then by the engine's existing legal-move order.
 
+The default `Tactical` rollout policy takes immediate wins, follows forced moves without drawing
+an unnecessary random number, avoids terminal self-traps, and avoids handing the opponent an
+immediate win when a safe alternative exists. It also enables MCTS-Solver propagation: terminal
+winners are proven back through fully explored branches, proven losing children are avoided, and
+a search stops early when the root winner is proven. `Uniform` retains the original uniformly
+random rollout and selection behavior as a reproducible comparison policy.
+
+Search simulations use a compact internal board: vertices and edges are indexed, used edges and
+visited vertices are bitsets, adjacency is precomputed, and moves are made and unmade in place.
+The public `GameState` and rules functions remain the authoritative API for games and replays.
+
 ### Configuration and reproducibility
 
-`MctsConfig` defaults to a seed of `RandomBot::default_seed()`, `2,000` iterations per move,
-and the exploration value above. The iteration count must be positive, and exploration must
-be finite and non-negative.
+`MctsConfig` defaults to a seed of `RandomBot::default_seed()`, `2,000` new iterations per move,
+the exploration value above, tactical rollouts, tree reuse, and a 65,536-node tree bound. The
+iteration count must be positive, exploration must be finite and non-negative, and the node
+bound must be at least two.
 
-The search uses a fixed iteration budget rather than a time limit. Given the same game state,
-seed, iteration count, and exploration value, it produces the same move and statistics across
-runs on the same implementation. Fixed work also makes tests and comparisons independent of
-machine speed. Incremental searches preserve the same random sequence, so one call of 2,000
-iterations is equivalent to, for example, twenty calls of 100 iterations.
+The search uses a fixed iteration budget rather than a time limit. A complete match is
+reproducible from the same starting state, bot configurations, seeds, and played moves on the
+same implementation. Fixed work also makes tests and comparisons independent of machine speed.
+`MctsBot` re-roots its retained tree through moves that were explored previously, compacts away
+unreachable branches, and adds the configured amount of new work. It rebuilds deterministically
+when the supplied state is unrelated or the played branch was not expanded. At the node bound,
+iterations continue as rollouts without allocating more tree nodes.
+
+Standalone `MctsSearch` objects remain position-based and incremental. Incremental calls preserve
+the same random sequence, so one call of 2,000 iterations is equivalent to, for example, twenty
+calls of 100 iterations. The legacy seed/exploration constructor selects `Uniform`; pass a full
+`MctsConfig` to use tactical rollouts.
 
 The native API supports both a one-shot bot and an incremental search:
 
 ```cpp
-papersoccer::MctsBot bot({.seed = 12345, .iterations = 2000});
+papersoccer::MctsConfig config{
+    .seed = 12345,
+    .iterations = 2000,
+    .rollout_policy = papersoccer::MctsRolloutPolicy::Tactical,
+    .reuse_tree = true,
+    .max_nodes = 65536,
+};
+papersoccer::MctsBot bot(config);
 papersoccer::Move move = bot.choose_move(state);
 papersoccer::SearchStats stats = bot.last_search_stats();
 
@@ -99,9 +126,11 @@ search.run_iterations(100);
 papersoccer::Move incremental_move = search.best_move();
 ```
 
-`SearchStats` reports completed iterations, allocated tree nodes, rollout plies, and the root
-value estimate. `simulated_plies` counts rollout moves only, while `root_value` is always from
-Player 1's perspective.
+`SearchStats` reports completed iterations, allocated nodes, rollout plies, total and reused root
+visits, maximum tree depth, proven nodes and winner, rebuild count, node-bound saturation, and the
+root value estimate. `simulated_plies` counts rollout moves only, while `root_value` is always
+from Player 1's perspective. Timing is deliberately measured by the arena rather than stored in
+these deterministic statistics.
 
 ## Build
 
@@ -129,6 +158,55 @@ It can be run directly with:
 ```bash
 node --test tests/web_wasm_test.mjs
 ```
+
+## Measure Bot Performance
+
+The native arena compares fresh bot instances on deterministic seed pairs and swaps their colors
+for the second game in every pair. Its defaults compare tactical, tree-reusing MCTS against the
+uniform, non-reusing reference at the same 2,000-iteration budget:
+
+```bash
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release
+./build/release/papersoccer_arena positions --positions 16 > positions.json
+./build/release/papersoccer_arena matches --pairs 200 > matches.json
+```
+
+Both modes emit `papersoccer.arena.v1` JSON. Match reports contain per-game configurations,
+lossless string seeds, outcomes, plies, per-decision timings and search counters, color splits,
+throughput, and a deterministic pair-bootstrap 95% confidence interval. Position reports measure
+both bots on the same generated non-terminal states. Use `--help` for policy, reuse, iteration,
+node-bound, exploration, board, and sampling options.
+
+The tactical default passed its promotion gate on July 14, 2026: 389 wins and 11 losses over 200
+color-swapped seed pairs, with no illegal moves or truncations and a deterministic paired 95%
+bootstrap interval of 95.5% to 98.75%. On the same machine, median tactical decision latency was
+30.066 ms across the match and 50.073 ms on the native initial-position probe, below the previous
+171.558 ms default baseline. The optimized uniform reference took 3.03 ms natively and 3.353 ms
+in Wasm on the initial position, over 50 times the prior native and Wasm throughput. These
+machine-specific results are evidence for the checked-in default, not portable timing thresholds.
+
+The full promotion tournament is intentionally not part of CTest. CTest runs low-budget support
+and CLI smoke tests, parses both report modes as JSON, and verifies paired accounting without
+making normal tests depend on machine speed.
+
+For the equivalent Emscripten `positions` report, use the arena built with the pinned toolchain:
+
+```bash
+emcmake cmake -S . -B build/wasm-arena -DCMAKE_BUILD_TYPE=Release
+cmake --build build/wasm-arena --target papersoccer_arena
+node build/wasm-arena/papersoccer_arena.js positions --positions 16 > wasm-positions.json
+```
+
+The checked-in browser engine's default-path timing can also be probed with:
+
+```bash
+node benchmarks/wasm_mcts.mjs 2000 9
+```
+
+The promoted Wasm initial-position median was 57.700 ms on the gate machine, below its previous
+174.120 ms baseline. Use the Wasm arena report when policy configuration and completed MCTS
+counters need to match the native `positions` benchmark exactly.
 
 ## Run CLI
 
@@ -160,8 +238,8 @@ RandomBot base-seed prompt. When MCTS is selected, the CLI also asks for an MCTS
 a single iteration budget applied to every MCTS move; pressing Enter accepts the default of
 `2,000` iterations.
 Player 1 uses the relevant base seed and Player 2 uses `base_seed + 1`. After every MCTS move,
-the CLI prints the iteration count, tree-node count, rollout plies, and Player-1-oriented root
-value estimate.
+the CLI prints new iterations, tree size, rollout plies, total and reused root visits, maximum
+depth, proof/rebuild information, saturation, and the Player-1-oriented root value estimate.
 
 Rule examples above use the engine's `Point{x, y}` order. User-facing coordinates in the
 CLI and renderer are shown as `(row, column)`, which corresponds to `(y, x)`. For example,
@@ -254,11 +332,15 @@ same geometry.
 - `include/papersoccer/types.hpp` - core types and hashing
 - `include/papersoccer/geometry.hpp` - geometry and adjacency helpers
 - `include/papersoccer/bot.hpp` - bot interface, `RandomBot`, and native MCTS API
+- `include/papersoccer/arena.hpp` - paired-match and position-measurement API
 - `include/papersoccer/match.hpp` - authoritative state plus played-move history
 - `include/papersoccer/rules.hpp` - game rules API
 - `include/papersoccer/web_game.hpp` - versioned browser-session command API
 - `src/bot.cpp` - shared bot naming and factory implementation
 - `src/mcts.cpp` - Monte Carlo Tree Search implementation
+- `src/mcts_internal.hpp` - compact search-only topology and mutable position
+- `src/arena.cpp` - arena execution, statistics, and JSON reports
+- `src/arena/main.cpp` - native/Wasm arena command-line entrypoint
 - `src/random_bot.cpp` - seeded `RandomBot` implementation
 - `src/geometry.cpp` - geometry implementation
 - `src/match.cpp` - match orchestration and replay metadata
@@ -278,5 +360,8 @@ same geometry.
 - `tests/web_wasm_test.mjs` - real WebAssembly/browser-client integration checks
 - `tests/bot_test.cpp` - RandomBot determinism and legality checks
 - `tests/mcts_test.cpp` - MCTS determinism, legality, and strategy checks
+- `tests/arena_smoke_test.cpp` - paired arena and measurement report smoke tests
+- `tests/arena_cli_test.mjs` - arena CLI option-routing and JSON integration tests
+- `benchmarks/wasm_mcts.mjs` - initial-position WebAssembly timing probe
 - `tests/test_main.cpp` - test entrypoint
 - `tests/rules_test.cpp` - rule correctness scenarios
