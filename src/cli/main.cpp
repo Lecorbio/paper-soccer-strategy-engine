@@ -231,19 +231,23 @@ std::uint64_t bot_seed(std::uint64_t base_seed, ps::Player player) {
   return player == ps::Player::One ? base_seed : base_seed + 1;
 }
 
-std::unique_ptr<ps::Bot> make_bot(const CliConfig &config, ps::Player player) {
+std::unique_ptr<ps::Bot> make_player_bot(const CliConfig &config,
+                                         ps::Player player) {
   const ControllerKind controller = controller_for_player(config, player);
   if (controller == ControllerKind::Human) {
     return nullptr;
   }
-  if (controller == ControllerKind::RandomBot) {
-    return std::make_unique<ps::RandomBot>(bot_seed(config.base_seed, player));
-  }
 
-  ps::MctsConfig mcts_config;
-  mcts_config.seed = bot_seed(config.mcts_base_seed, player);
-  mcts_config.iterations = config.mcts_iterations;
-  return std::make_unique<ps::MctsBot>(mcts_config);
+  ps::BotConfig bot_config;
+  if (controller == ControllerKind::RandomBot) {
+    bot_config.kind = ps::BotKind::Random;
+    bot_config.seed = bot_seed(config.base_seed, player);
+  } else {
+    bot_config.kind = ps::BotKind::Mcts;
+    bot_config.seed = bot_seed(config.mcts_base_seed, player);
+    bot_config.mcts_iterations = config.mcts_iterations;
+  }
+  return ps::make_bot(bot_config);
 }
 
 ps::Bot *bot_for_player(const CliConfig &config, ps::Player player,
@@ -268,8 +272,8 @@ int main() {
 
   std::unique_ptr<ps::Bot> player_one_bot;
   std::unique_ptr<ps::Bot> player_two_bot;
-  player_one_bot = make_bot(config, ps::Player::One);
-  player_two_bot = make_bot(config, ps::Player::Two);
+  player_one_bot = make_player_bot(config, ps::Player::One);
+  player_two_bot = make_player_bot(config, ps::Player::Two);
 
   ps::GameState state = ps::make_initial_state();
   bool auto_print_board = true;

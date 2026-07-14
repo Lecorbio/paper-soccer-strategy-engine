@@ -16,6 +16,7 @@ add_library(papersoccer_core
   src/geometry.cpp
   src/match.cpp
   src/mcts.cpp
+  src/random_bot.cpp
   src/rules.cpp
   src/web_game.cpp
 )

@@ -257,8 +257,9 @@ same geometry.
 - `include/papersoccer/match.hpp` - authoritative state plus played-move history
 - `include/papersoccer/rules.hpp` - game rules API
 - `include/papersoccer/web_game.hpp` - versioned browser-session command API
-- `src/bot.cpp` - seeded `RandomBot` implementation
+- `src/bot.cpp` - shared bot naming and factory implementation
 - `src/mcts.cpp` - Monte Carlo Tree Search implementation
+- `src/random_bot.cpp` - seeded `RandomBot` implementation
 - `src/geometry.cpp` - geometry implementation
 - `src/match.cpp` - match orchestration and replay metadata
 - `src/rules.cpp` - state transitions and legal move logic
