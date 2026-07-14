@@ -347,9 +347,7 @@ select:disabled {
   padding: 7px 8px 8px;
 }
 
-.replay-player-card legend {
-  max-width: 100%;
-  padding: 0 4px;
+.replay-player-card-title {
   color: var(--ink);
   font-size: 0.75rem;
   font-weight: 720;

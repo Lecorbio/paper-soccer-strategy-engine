@@ -97,8 +97,11 @@
           </div>
 
           <div class="replay-player-grid">
-            <fieldset class="replay-player-card">
-              <legend>Player 1 · attacks top</legend>
+            <div class="replay-player-card" role="group"
+              aria-labelledby="replayOnePlayerLabel">
+              <p id="replayOnePlayerLabel" class="replay-player-card-title">
+                Player 1 · attacks top
+              </p>
 
               <label class="compact-form-field" for="replayOneBotSelect">
                 <span>Bot</span>
@@ -120,10 +123,13 @@
                 <input id="replayOneIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
               </label>
-            </fieldset>
+            </div>
 
-            <fieldset class="replay-player-card">
-              <legend>Player 2 · attacks bottom</legend>
+            <div class="replay-player-card" role="group"
+              aria-labelledby="replayTwoPlayerLabel">
+              <p id="replayTwoPlayerLabel" class="replay-player-card-title">
+                Player 2 · attacks bottom
+              </p>
 
               <label class="compact-form-field" for="replayTwoBotSelect">
                 <span>Bot</span>
@@ -145,7 +151,7 @@
                 <input id="replayTwoIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
               </label>
-            </fieldset>
+            </div>
           </div>
 
           <p id="replaySetupHelp" class="setup-help">
