@@ -76,8 +76,16 @@ bool is_boundary_point(const RulesConfig &config, Point point) {
   if (!is_regular_point(config, point)) {
     return false;
   }
-  return point.x == 0 || point.x == config.width || point.y == kFieldTopY ||
-         point.y == field_bottom_y(config);
+
+  if (point.x == 0 || point.x == config.width) {
+    return true;
+  }
+
+  const bool on_goal_line =
+      point.y == kFieldTopY || point.y == field_bottom_y(config);
+  const bool inside_goal_opening =
+      point.x > mouth_left_x(config) && point.x < mouth_right_x(config);
+  return on_goal_line && !inside_goal_opening;
 }
 
 bool is_neighbor(Point from, Point to) {

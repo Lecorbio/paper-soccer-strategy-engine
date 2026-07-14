@@ -65,10 +65,7 @@ void random_bot_is_deterministic_for_same_seed_pair() {
 
 void random_bot_matches_browser_parity_fixture() {
   const std::vector<ps::Point> expected{
-      {4, 6}, {4, 5}, {3, 5}, {4, 4}, {3, 3}, {3, 2}, {4, 1}, {4, 2}, {5, 2},
-      {6, 3}, {6, 2}, {5, 2}, {5, 3}, {5, 4}, {4, 5}, {5, 5}, {5, 6}, {4, 6},
-      {3, 5}, {3, 4}, {2, 3}, {2, 4}, {1, 3}, {0, 3}, {1, 4}, {0, 5}, {1, 5},
-      {0, 4}, {1, 3}, {0, 2}, {1, 1}, {1, 2}, {0, 3},
+      {4, 6}, {4, 5}, {3, 5}, {4, 4}, {3, 3}, {3, 2}, {4, 1}, {4, 0},
   };
 
   require(play_random_game(17, 18) == expected,

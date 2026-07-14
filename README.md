@@ -33,7 +33,7 @@ uses the existing `GameState` and rule APIs without replacing them with a separa
 - Entering opponent goal wins immediately
 - Extra turn when landing on:
   - Any previously visited point
-  - Any boundary point of the field rectangle
+  - Any wall boundary point; the open center of each goal mouth is excluded
 - If the player to move has zero legal moves at turn start, that player loses
 
 ## Monte Carlo Tree Search Bot

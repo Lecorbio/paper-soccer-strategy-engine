@@ -254,6 +254,35 @@ test("bot replay sessions preserve independent bot kinds and exact uint64 seeds"
   assert.deepEqual(snapshot.replay.moves, []);
 });
 
+test("the open center of a goal mouth does not grant an extra turn", () => {
+  const snapshot = finishBotReplay(
+    botConfig(BotKind.Random, "17"),
+    botConfig(BotKind.Random, "18"),
+    8,
+  );
+
+  assert.equal(snapshot.replay.truncated, false);
+  assert.equal(snapshot.replay.status, Status.WonByOne);
+  assert.deepEqual(snapshot.replay.moves.slice(-2), [
+    {
+      ply: 6,
+      player: Player.Two,
+      from: { x: 3, y: 2 },
+      to: { x: 4, y: 1 },
+      extraTurn: false,
+      statusAfter: Status.InProgress,
+    },
+    {
+      ply: 7,
+      player: Player.One,
+      from: { x: 4, y: 1 },
+      to: { x: 4, y: 0 },
+      extraTurn: false,
+      statusAfter: Status.WonByOne,
+    },
+  ]);
+});
+
 test("a bounded mixed-bot replay is deterministic for identical configurations", () => {
   const one = botConfig(BotKind.Mcts, "17");
   const two = botConfig(BotKind.Random, "23");

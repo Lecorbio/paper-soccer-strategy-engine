@@ -126,10 +126,22 @@ void reaching_visited_point_grants_extra_turn() {
 }
 
 void reaching_boundary_point_grants_extra_turn() {
-  ps::GameState state = make_clean_state_at(ps::Point{4, 2}, ps::Player::One);
-  state = ps::apply_move(state, ps::Move{{4, 1}});
+  ps::GameState state = make_clean_state_at(ps::Point{2, 2}, ps::Player::One);
+  state = ps::apply_move(state, ps::Move{{2, 1}});
   require(state.to_move == ps::Player::One,
           "Landing on boundary point must grant an extra turn.");
+}
+
+void reaching_middle_of_goal_mouth_does_not_grant_extra_turn() {
+  ps::GameState north = make_clean_state_at(ps::Point{4, 2}, ps::Player::One);
+  north = ps::apply_move(north, ps::Move{{4, 1}});
+  require(north.to_move == ps::Player::Two,
+          "The open center of the north goal mouth must not grant an extra turn.");
+
+  ps::GameState south = make_clean_state_at(ps::Point{4, 10}, ps::Player::Two);
+  south = ps::apply_move(south, ps::Move{{4, 11}});
+  require(south.to_move == ps::Player::One,
+          "The open center of the south goal mouth must not grant an extra turn.");
 }
 
 void goal_entry_sets_terminal_and_winner() {
@@ -264,6 +276,8 @@ int run_rules_tests() {
       {"movement_along_outer_boundary_is_illegal", movement_along_outer_boundary_is_illegal},
       {"reaching_visited_point_grants_extra_turn", reaching_visited_point_grants_extra_turn},
       {"reaching_boundary_point_grants_extra_turn", reaching_boundary_point_grants_extra_turn},
+      {"reaching_middle_of_goal_mouth_does_not_grant_extra_turn",
+       reaching_middle_of_goal_mouth_does_not_grant_extra_turn},
       {"goal_entry_sets_terminal_and_winner", goal_entry_sets_terminal_and_winner},
       {"south_goal_entry_sets_terminal_and_winner",
        south_goal_entry_sets_terminal_and_winner},

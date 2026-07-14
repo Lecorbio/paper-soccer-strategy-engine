@@ -1094,10 +1094,14 @@
 
   function drawPoints(mapper) {
     const radius = Math.max(3, mapper.cell * 0.055);
+    const left = Math.floor(replay.rules.width / 2) - 1;
+    const right = Math.floor(replay.rules.width / 2) + 1;
     for (let y = 1; y <= fieldBottomY(); y += 1) {
       for (let x = 0; x <= replay.rules.width; x += 1) {
+        const onGoalLine = y === 1 || y === fieldBottomY();
+        const insideGoalOpening = x > left && x < right;
         const boundary = x === 0 || x === replay.rules.width ||
-          y === 1 || y === fieldBottomY();
+          (onGoalLine && !insideGoalOpening);
         drawCircle(
           mapper.point({ x: x, y: y }),
           radius,
@@ -1108,8 +1112,6 @@
       }
     }
 
-    const left = Math.floor(replay.rules.width / 2) - 1;
-    const right = Math.floor(replay.rules.width / 2) + 1;
     for (let x = left; x <= right; x += 1) {
       drawGoalNode(mapper.point({ x: x, y: 0 }), "north", mapper.cell);
       drawGoalNode(
