@@ -5,6 +5,10 @@
   if (!engine) {
     throw new Error("Paper soccer game engine did not load");
   }
+  const support = globalThis.PaperSoccerWebSupport;
+  if (!support) {
+    throw new Error("Paper soccer web support did not load");
+  }
 
   const { BotKind, Player, Status, samePoint } = engine;
   const gameEngine = await engine.ready;
@@ -37,6 +41,19 @@
   const seedInput = document.querySelector("#seedInput");
   const botIterationsField = document.querySelector("#botIterationsField");
   const botIterationsInput = document.querySelector("#botIterationsInput");
+  const newGameButton = document.querySelector("#newGameButton");
+  const changeSettingsButton = document.querySelector("#changeSettingsButton");
+  const exportGameButton = document.querySelector("#exportGameButton");
+  const liveDiagnostics = document.querySelector("#liveDiagnostics");
+  const activeBotConfiguration = document.querySelector(
+    "#activeBotConfiguration",
+  );
+  const latestSearch = document.querySelector("#latestSearch");
+  const searchVisits = document.querySelector("#searchVisits");
+  const searchShape = document.querySelector("#searchShape");
+  const searchIndicators = document.querySelector("#searchIndicators");
+  const searchDetails = document.querySelector("#searchDetails");
+  const searchPending = document.querySelector("#searchPending");
   const setupError = document.querySelector("#setupError");
   const replaySetup = document.querySelector("#replaySetup");
   const generateReplayButton = document.querySelector("#generateReplayButton");
@@ -82,8 +99,7 @@
   let lastStepTime = 0;
   let liveSnapshot = null;
   let humanPlayer = Player.One;
-  let botThinking = false;
-  let botTimer = null;
+  const liveGame = support.createLiveGameLifecycle(window);
   let gameError = "";
   let hoveredDestination = null;
   let lastLiveMove = null;
@@ -101,6 +117,7 @@
   }
 
   function normalizeReplay(raw) {
+    raw = support.unwrapReplayDocument(raw);
     const sourceSchema = raw.schema ?? "papersoccer.replay.v1";
     if (sourceSchema !== "papersoccer.replay.v1" &&
         sourceSchema !== "papersoccer.replay.v2") {
@@ -204,7 +221,7 @@
       details.push("seed " + String(player.seed));
     }
     if (Number.isInteger(player.iterations) && player.iterations > 0) {
-      details.push(player.iterations + " iterations");
+      details.push(player.iterations + " new simulations per bot move");
     }
     const suffix = details.length > 0 ? " (" + details.join(", ") + ")" : "";
     return label + ": " + (player.kind ?? "Unknown") + suffix;
@@ -233,11 +250,12 @@
   function parseIterations(input) {
     const value = input.trim();
     if (!/^[1-9][0-9]*$/.test(value)) {
-      throw new Error("Enter a positive whole number for MCTS iterations.");
+      throw new Error("Enter a positive whole number for new simulations per bot move.");
     }
     const iterations = Number(value);
     if (!Number.isSafeInteger(iterations) || iterations > MAX_MCTS_ITERATIONS) {
-      throw new Error("MCTS iterations must be at most " + MAX_MCTS_ITERATIONS + ".");
+      throw new Error("New simulations per bot move must be at most " +
+        MAX_MCTS_ITERATIONS + ".");
     }
     return iterations;
   }
@@ -272,11 +290,7 @@
   }
 
   function clearBotTimer() {
-    if (botTimer !== null) {
-      window.clearTimeout(botTimer);
-      botTimer = null;
-    }
-    botThinking = false;
+    liveGame.cancelPendingBot();
   }
 
   function liveState() {
@@ -300,6 +314,9 @@
     hoveredDestination = null;
     plyRange.max = String(currentPly);
     plyRange.value = String(currentPly);
+    if (snapshot.state.status !== Status.InProgress) {
+      liveGame.finish();
+    }
   }
 
   function saveLiveSession() {
@@ -313,6 +330,7 @@
       snapshot: liveSnapshot,
       humanPlayer: humanPlayer,
       botConfig: activeBotConfig,
+      movesEnabled: liveGame.movesEnabled,
       gameError: gameError,
       lastLiveMove: lastLiveMove,
     };
@@ -358,6 +376,7 @@
     liveSnapshot = session.snapshot;
     humanPlayer = session.humanPlayer;
     activeBotConfig = session.botConfig;
+    liveGame.restore(session.movesEnabled);
     gameError = session.gameError;
     lastLiveMove = session.lastLiveMove;
     hoveredDestination = null;
@@ -365,7 +384,8 @@
     plyRange.value = String(currentPly);
     renderInterface();
 
-    if (!gameError && !isLiveTerminal() && liveState().toMove !== humanPlayer) {
+    if (liveGame.movesEnabled && !gameError && !isLiveTerminal() &&
+        liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
     }
   }
@@ -382,38 +402,75 @@
       return;
     }
 
-    clearBotTimer();
+    liveGame.changeSettings();
     stopPlayback();
     setupError.textContent = "";
     gameError = "";
     mode = MODE_PLAY;
     liveSession = null;
-    humanPlayer = sideSelect.value === Player.Two ? Player.Two : Player.One;
-    activeBotConfig = botConfig;
-    hoveredDestination = null;
-    lastLiveMove = null;
+    const selectedHuman = sideSelect.value === Player.Two
+      ? Player.Two
+      : Player.One;
 
     try {
       adoptLiveSnapshot(gameEngine.startGame(
         botConfig.seed,
-        humanPlayer,
+        selectedHuman,
         botConfig.kind,
         botConfig.iterations,
       ));
+      activeBotConfig = botConfig;
+      liveGame.start();
     } catch (error) {
-      liveSnapshot = null;
       gameError = "The C++ game engine could not start: " + error.message;
     }
     renderInterface();
 
-    if (!gameError && liveState().toMove !== humanPlayer) {
+    if (liveGame.movesEnabled && !gameError &&
+        liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
+    }
+  }
+
+  function changeSettings() {
+    if (!liveSnapshot || isLiveTerminal() || !liveGame.movesEnabled) {
+      return;
+    }
+    liveGame.changeSettings();
+    gameError = "";
+    hoveredDestination = null;
+    renderInterface();
+    botSelect.focus();
+  }
+
+  function exportHumanMatch() {
+    if (!liveSnapshot) {
+      return;
+    }
+
+    try {
+      const exported = gameEngine.humanMatch();
+      const contents = JSON.stringify(exported, null, 2) + "\n";
+      const blob = new Blob([contents], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = support.humanMatchFilename(exported.botConfiguration);
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 0);
+    } catch (error) {
+      window.alert("Could not export game: " + error.message);
     }
   }
 
   function canHumanMove() {
     return mode === MODE_PLAY && liveSnapshot !== null && !gameError &&
-      !botThinking && !isLiveTerminal() && liveState().toMove === humanPlayer;
+      liveGame.movesEnabled && !liveGame.botThinking && !isLiveTerminal() &&
+      liveState().toMove === humanPlayer;
   }
 
   function playHumanMove(move, keyboardActivated) {
@@ -462,19 +519,16 @@
 
   function scheduleBotTurn() {
     clearBotTimer();
-    if (!liveSnapshot || isLiveTerminal() || liveState().toMove === humanPlayer) {
+    if (!liveGame.movesEnabled || !liveSnapshot || isLiveTerminal() ||
+        liveState().toMove === humanPlayer) {
       renderInterface();
       return;
     }
 
     const expectedSessionId = liveSnapshot.sessionId;
     const expectedRevision = liveSnapshot.revision;
-    botThinking = true;
-    renderInterface();
-    botTimer = window.setTimeout(function () {
-      botTimer = null;
-      botThinking = false;
-      if (mode !== MODE_PLAY || !liveSnapshot ||
+    liveGame.scheduleBot(function () {
+      if (!liveGame.movesEnabled || mode !== MODE_PLAY || !liveSnapshot ||
           liveSnapshot.sessionId !== expectedSessionId ||
           liveSnapshot.revision !== expectedRevision) {
         return;
@@ -489,6 +543,7 @@
         renderInterface();
       }
     }, BOT_DELAY_MS);
+    renderInterface();
   }
 
   function syncReplayGenerationControls() {
@@ -672,6 +727,68 @@
     return startIndex;
   }
 
+  function formatCount(value) {
+    return Number(value).toLocaleString("en-US");
+  }
+
+  function formatDecisionTime(nanoseconds) {
+    const milliseconds = Number(nanoseconds) / 1_000_000;
+    if (milliseconds < 1) {
+      return "<1 ms";
+    }
+    if (milliseconds < 10) {
+      return milliseconds.toFixed(1) + " ms";
+    }
+    return Math.round(milliseconds).toLocaleString("en-US") + " ms";
+  }
+
+  function updateLiveDiagnostics() {
+    const diagnostics = liveSnapshot?.diagnostics;
+    const configuration = diagnostics?.botConfiguration;
+    liveDiagnostics.hidden = !liveSnapshot || !configuration;
+    if (liveDiagnostics.hidden) {
+      return;
+    }
+
+    const usesMcts = configuration.kind === "MctsBot";
+    activeBotConfiguration.textContent = configuration.kind + " · seed " +
+      configuration.seed + (usesMcts
+        ? " · " + formatCount(configuration.iterations) +
+          " new simulations per bot move"
+        : "") + " · You: " + playerName(liveSnapshot.humanPlayer);
+
+    const search = diagnostics.lastBotSearch;
+    latestSearch.hidden = !search;
+    searchPending.hidden = !usesMcts || Boolean(search);
+    if (!search) {
+      return;
+    }
+
+    searchVisits.textContent = "Latest completed · " +
+      formatCount(search.completedIterations) + " simulations · root visits " +
+      formatCount(search.totalRootVisits) + " · reused " +
+      formatCount(search.reusedVisits);
+    searchShape.textContent = formatCount(search.nodes) + " nodes · depth " +
+      formatCount(search.maxDepth) + " · " +
+      formatDecisionTime(search.decisionTimeNs);
+
+    const indicators = [];
+    if (search.provenWinner) {
+      indicators.push("Proven winner: " + playerName(search.provenWinner));
+    }
+    if (search.rebuildCount > 0) {
+      indicators.push("Tree rebuilds: " + formatCount(search.rebuildCount));
+    }
+    if (search.expansionSaturated) {
+      indicators.push("Expansion saturated");
+    }
+    searchIndicators.textContent = indicators.join(" · ");
+    searchDetails.textContent = "Move " + formatCount(search.ply) + " · " +
+      formatCount(search.simulatedPlies) + " rollout plies · " +
+      formatCount(search.provenNodes) + " proven nodes · root value " +
+      Number(search.rootValue).toFixed(4);
+  }
+
   function updateText() {
     if (mode === MODE_PLAY) {
       updatePlayText();
@@ -699,7 +816,12 @@
         (replay.moves.length === 1 ? " move." : " moves.") +
         " Start a new game to play again.";
       boardTurnBadge.textContent = humanWon ? "You won!" : activeBotName() + " won";
-    } else if (botThinking || liveState().toMove !== humanPlayer) {
+    } else if (!liveGame.movesEnabled) {
+      statusLabel.textContent = "Settings unlocked";
+      moveLabel.textContent = "This game is paused and remains available to export. " +
+        "Choose settings, then start a new game.";
+      boardTurnBadge.textContent = "Game paused";
+    } else if (liveGame.botThinking || liveState().toMove !== humanPlayer) {
       const movesAgain = lastLiveMove?.player !== humanPlayer &&
         lastLiveMove?.extraTurn;
       statusLabel.textContent = movesAgain
@@ -784,7 +906,28 @@
     controlPanel.classList.toggle("is-replay-mode", !playingGame);
     canvas.classList.toggle("is-playable", canHumanMove());
     syncBotSetupFields();
+    syncLiveGameControls();
     syncReplayGenerationControls();
+    updateLiveDiagnostics();
+  }
+
+  function syncLiveGameControls() {
+    const state = support.liveGameControlState({
+      hasGame: Boolean(liveSnapshot),
+      movesEnabled: liveGame.movesEnabled,
+      isTerminal: isLiveTerminal(),
+      usesMcts: botSelect.value === BotKind.Mcts,
+    });
+    support.syncConfigurationControls({
+      botSelect: botSelect,
+      sideSelect: sideSelect,
+      seedInput: seedInput,
+      budgetInput: botIterationsInput,
+      startButton: newGameButton,
+      changeSettingsButton: changeSettingsButton,
+      exportButton: exportGameButton,
+    }, state);
+    gameSetup.classList.toggle("is-configuration-locked", state.locked);
   }
 
   function syncBotSetupFields() {
@@ -834,6 +977,8 @@
         message.textContent = "Start a new game to continue.";
       } else if (isLiveTerminal()) {
         message.textContent = "The game is finished.";
+      } else if (!liveGame.movesEnabled) {
+        message.textContent = "Settings are unlocked. Start a new game to continue.";
       } else {
         message.textContent = "Waiting for " + activeBotName() + "…";
       }
@@ -1443,6 +1588,8 @@
     speed = Number(speedSelect.value);
   });
   gameSetup.addEventListener("submit", startNewGame);
+  changeSettingsButton.addEventListener("click", changeSettings);
+  exportGameButton.addEventListener("click", exportHumanMatch);
   replaySetup.addEventListener("submit", generateBotReplay);
   botSelect.addEventListener("change", syncBotSetupFields);
   replayOneBotSelect.addEventListener("change", syncBotSetupFields);

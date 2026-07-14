@@ -18,6 +18,7 @@ namespace {
 std::unique_ptr<ps::WebGameSession> session;
 std::unique_ptr<ps::WebBotReplaySession> bot_replay_session;
 std::string snapshot_cache;
+std::string human_match_cache;
 std::string bot_replay_snapshot_cache;
 std::string last_error;
 std::uint32_t next_session_id{1};
@@ -66,7 +67,7 @@ bool parse_bot_config(const char *seed_text, int kind_value,
     return false;
   }
   if (iterations == 0) {
-    last_error = "bot iterations must be greater than zero";
+    last_error = "new simulations per bot move must be greater than zero";
     return false;
   }
   config.mcts_iterations = iterations;
@@ -142,6 +143,7 @@ EMSCRIPTEN_KEEPALIVE int ps_start_game(const char *seed_text, int human_player,
   }
   session = std::move(replacement);
   snapshot_cache.clear();
+  human_match_cache.clear();
   last_error.clear();
   return 1;
 }
@@ -161,6 +163,7 @@ EMSCRIPTEN_KEEPALIVE int ps_play_human(std::uint32_t expected_session_id,
   }
 
   snapshot_cache.clear();
+  human_match_cache.clear();
   last_error.clear();
   return 1;
 }
@@ -178,6 +181,7 @@ EMSCRIPTEN_KEEPALIVE int ps_play_bot(std::uint32_t expected_session_id,
   }
 
   snapshot_cache.clear();
+  human_match_cache.clear();
   last_error.clear();
   return 1;
 }
@@ -236,6 +240,16 @@ EMSCRIPTEN_KEEPALIVE const char *ps_snapshot_json() {
 
   snapshot_cache = session->snapshot_json();
   return snapshot_cache.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE const char *ps_human_match_json() {
+  if (!session) {
+    last_error = "no live game has been started";
+    return nullptr;
+  }
+
+  human_match_cache = session->human_match_json();
+  return human_match_cache.c_str();
 }
 
 EMSCRIPTEN_KEEPALIVE const char *ps_bot_replay_snapshot_json() {

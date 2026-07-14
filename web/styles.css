@@ -305,6 +305,13 @@ select:disabled {
   gap: 12px;
 }
 
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .eyebrow {
   color: var(--muted);
   font-size: 0.76rem;
@@ -330,6 +337,14 @@ select:disabled {
   color: var(--muted);
   font-size: 0.88rem;
   font-weight: 650;
+}
+
+.game-setup.is-configuration-locked > .form-field {
+  opacity: 0.72;
+}
+
+.form-field > span {
+  line-height: 1.25;
 }
 
 .replay-player-grid {
@@ -406,6 +421,82 @@ select:disabled {
 .form-error:empty,
 .generation-status:empty {
   display: none;
+}
+
+.live-diagnostics {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+  border: 1px solid #b7ae98;
+  border-radius: 7px;
+  background: #ede7d6;
+  padding: 10px;
+}
+
+.live-diagnostics-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.live-diagnostics-heading h2 {
+  margin-top: 2px;
+}
+
+.live-diagnostics-heading button {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.active-bot-configuration {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.latest-search {
+  display: grid;
+  gap: 3px;
+  border-top: 1px solid #cfc5af;
+  padding-top: 6px;
+  color: #414a52;
+  font-size: 0.79rem;
+  line-height: 1.35;
+}
+
+.latest-search details {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.latest-search summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.latest-search details p {
+  margin-top: 4px;
+}
+
+.search-indicators {
+  color: #7b4e00;
+  font-weight: 700;
+}
+
+.search-indicators:empty {
+  display: none;
+}
+
+.search-pending {
+  border-top: 1px solid #cfc5af;
+  padding-top: 6px;
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.35;
 }
 
 .replay-summary {

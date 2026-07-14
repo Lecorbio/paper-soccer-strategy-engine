@@ -32,6 +32,7 @@ test("browser client exposes the compiled C++ session instead of JavaScript rule
   assert.equal(typeof gameEngine.startGame, "function");
   assert.equal(typeof gameEngine.playHuman, "function");
   assert.equal(typeof gameEngine.playBot, "function");
+  assert.equal(typeof gameEngine.humanMatch, "function");
   assert.equal(typeof gameEngine.startBotReplay, "function");
   assert.equal(typeof gameEngine.playBotReplay, "function");
   assert.equal(typeof gameEngine.botReplaySnapshot, "function");
@@ -70,6 +71,15 @@ test("C++ snapshot contains the initial position, legal moves, and exact uint64 
     "18446744073709551615",
   );
   assert.equal(snapshot.replay.players.two.kind, "RandomBot");
+  assert.deepEqual(snapshot.diagnostics, {
+    schema: "papersoccer.bot-search-diagnostics.v1",
+    botConfiguration: {
+      kind: "RandomBot",
+      seed: "18446744073709551615",
+    },
+    lastBotSearch: null,
+    botSearches: [],
+  });
 });
 
 test("human commands advance the authoritative C++ state and replay", () => {
@@ -132,6 +142,25 @@ test("the browser bot move is selected by the compiled C++ RandomBot", () => {
     extraTurn: false,
     statusAfter: Status.InProgress,
   });
+  assert.equal(afterBot.diagnostics.lastBotSearch, null);
+  assert.deepEqual(afterBot.diagnostics.botSearches, []);
+});
+
+test("a 10,000-search budget reaches the authoritative live configuration", () => {
+  const snapshot = gameEngine.startGame(
+    "18446744073709551615",
+    Player.One,
+    BotKind.Mcts,
+    10000,
+  );
+
+  assert.deepEqual(snapshot.diagnostics.botConfiguration, {
+    kind: "MctsBot",
+    seed: "18446744073709551615",
+    iterations: 10000,
+  });
+  assert.equal(snapshot.diagnostics.lastBotSearch, null);
+  assert.deepEqual(snapshot.diagnostics.botSearches, []);
 });
 
 test("live games expose the selected deterministic MctsBot configuration", () => {
@@ -148,6 +177,42 @@ test("live games expose the selected deterministic MctsBot configuration", () =>
   });
 
   const firstMove = gameEngine.playBot(first.sessionId, first.revision);
+  const search = firstMove.diagnostics.lastBotSearch;
+  assert.equal(firstMove.diagnostics.schema,
+    "papersoccer.bot-search-diagnostics.v1");
+  assert.equal(search.ply, 1);
+  assert.equal(search.player, Player.One);
+  assert.deepEqual(search.chosenMove, {
+    from: { x: 4, y: 6 },
+    to: firstMove.replay.moves[0].to,
+  });
+  assert.equal(search.requestedIterations, 8);
+  assert.ok(search.completedIterations <= search.requestedIterations);
+  assert.equal(typeof search.decisionTimeNs, "number");
+  assert.equal(typeof search.nodes, "number");
+  assert.equal(typeof search.simulatedPlies, "number");
+  assert.equal(typeof search.totalRootVisits, "number");
+  assert.equal(typeof search.reusedVisits, "number");
+  assert.equal(typeof search.maxDepth, "number");
+  assert.equal(typeof search.provenNodes, "number");
+  assert.ok(search.provenWinner === null ||
+    search.provenWinner === Player.One || search.provenWinner === Player.Two);
+  assert.equal(typeof search.rebuildCount, "number");
+  assert.equal(typeof search.expansionSaturated, "boolean");
+  assert.equal(typeof search.rootValue, "number");
+  assert.deepEqual(firstMove.diagnostics.botSearches, [search]);
+  assert.deepEqual(gameEngine.snapshot(), firstMove);
+
+  const exported = gameEngine.humanMatch();
+  assert.equal(exported.schema, "papersoccer.human-match.v1");
+  assert.deepEqual(exported.replay, firstMove.replay);
+  assert.deepEqual(exported.botConfiguration, {
+    kind: "MctsBot",
+    seed: "18446744073709551615",
+    iterations: 8,
+  });
+  assert.deepEqual(exported.botSearches, [search]);
+
   const second = gameEngine.startGame(
     "18446744073709551615",
     Player.Two,
@@ -157,7 +222,9 @@ test("live games expose the selected deterministic MctsBot configuration", () =>
   const secondMove = gameEngine.playBot(second.sessionId, second.revision);
 
   assert.equal(firstMove.replay.moves.length, 1);
-  assert.deepEqual(firstMove.replay.moves, secondMove.replay.moves);
+  assert.deepEqual(firstMove.replay, secondMove.replay);
+  const replayJson = JSON.stringify(firstMove.replay);
+  assert.doesNotMatch(replayJson, /decisionTimeNs|botSearches|diagnostics/);
 });
 
 test("live MctsBot games default to 2000 iterations", () => {
@@ -341,7 +408,7 @@ test("invalid replay configurations do not replace either active session", () =>
       botConfig(BotKind.Mcts, "79"),
       2,
     ),
-    /Player 1 bot iterations must be an integer between 1 and 4294967295/,
+    /Player 1 new simulations per bot move must be an integer between 1 and 4294967295/,
   );
   assert.throws(
     () => gameEngine.startBotReplay(
@@ -353,7 +420,7 @@ test("invalid replay configurations do not replace either active session", () =>
   );
   assert.throws(
     () => gameEngine.startGame("97", Player.One, BotKind.Mcts, 1.5),
-    /Bot iterations must be an integer between 1 and 4294967295/,
+    /New simulations per bot move must be an integer between 1 and 4294967295/,
   );
 
   assert.deepEqual(gameEngine.snapshot(), live);

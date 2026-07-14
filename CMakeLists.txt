@@ -45,6 +45,10 @@ add_executable(papersoccer_tests
 )
 target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
 target_include_directories(papersoccer_tests PRIVATE src)
+if(EMSCRIPTEN)
+  target_compile_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+  target_link_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+endif()
 
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
@@ -70,6 +74,11 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       NAME papersoccer_web_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web_wasm_test.mjs
+    )
+    add_test(
+      NAME papersoccer_web_app_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web_app_support_test.mjs
     )
     if(NOT EMSCRIPTEN)
       add_test(

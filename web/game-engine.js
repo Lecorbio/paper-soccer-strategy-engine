@@ -55,7 +55,7 @@
       botKindValue(config.kind),
       unsignedInteger(
         config.iterations ?? DEFAULT_BOT_ITERATIONS,
-        label + " bot iterations",
+        label + " new simulations per bot move",
         false,
       ),
     ];
@@ -106,6 +106,14 @@
       );
     }
 
+    function humanMatch() {
+      return readSnapshot(
+        "ps_human_match_json",
+        "papersoccer.human-match.v1",
+        "human-match",
+      );
+    }
+
     function runCommand(name, argumentTypes, argumentsList, snapshotReader) {
       const succeeded = call(name, "number", argumentTypes, argumentsList);
       if (!succeeded) {
@@ -125,7 +133,7 @@
         const kindValue = botKindValue(botKind);
         const iterationValue = unsignedInteger(
           iterations,
-          "Bot iterations",
+          "New simulations per bot move",
           false,
         );
         return runCommand(
@@ -151,6 +159,7 @@
           snapshot,
         );
       },
+      humanMatch: humanMatch,
       startBotReplay: function (oneConfig, twoConfig, maxPlies = 512) {
         const one = botConfigArguments(oneConfig, "Player 1");
         const two = botConfigArguments(twoConfig, "Player 2");

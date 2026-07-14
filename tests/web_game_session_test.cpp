@@ -56,6 +56,16 @@ void snapshot_is_a_complete_versioned_view_of_the_cpp_session() {
           "The replay should serialize the full uint64 bot seed as a decimal string.");
   require(snapshot.find("\"moves\":[]") != std::string::npos,
           "A new session should embed an empty replay history.");
+  require(snapshot.find("\"diagnostics\":{\"schema\":"
+                        "\"papersoccer.bot-search-diagnostics.v1\"") !=
+              std::string::npos,
+          "The snapshot should expose a separately versioned diagnostics section.");
+  require(snapshot.find("\"botConfiguration\":{\"kind\":\"RandomBot\","
+                        "\"seed\":\"18446744073709551615\"}") !=
+              std::string::npos &&
+              snapshot.find("\"lastBotSearch\":null,\"botSearches\":[]") !=
+                  std::string::npos,
+          "RandomBot should preserve its active config without fabricating MCTS stats.");
 }
 
 void successful_human_move_advances_revision_and_replay() {
@@ -128,6 +138,117 @@ void configured_bot_kind_is_used_and_serialized() {
   const ps::WebGameCommandResult result = session.play_bot(0);
   require(result.ok() && result.move.has_value() && result.move->to == expected.to,
           "The live web session should move with the configured MctsBot.");
+
+  require(session.bot_searches().size() == 1,
+          "Each successful MCTS decision should append one search diagnostic.");
+  const ps::WebBotSearchDiagnostic &search = session.bot_searches().front();
+  require(search.ply == result.move->ply &&
+              search.player == result.move->player &&
+              search.from == result.move->from &&
+              search.chosen_move.to == result.move->to &&
+              search.requested_iterations == config.mcts_iterations &&
+              search.stats.iterations <= search.requested_iterations,
+          "The search diagnostic should identify the played decision and its work budget.");
+
+  const std::string after = session.snapshot_json();
+  require(after.find("\"lastBotSearch\":{\"ply\":1,\"player\":\"one\"") !=
+              std::string::npos &&
+              after.find("\"requestedIterations\":8") != std::string::npos &&
+              after.find("\"completedIterations\":" +
+                         std::to_string(search.stats.iterations)) !=
+                  std::string::npos &&
+              after.find("\"decisionTimeNs\":") != std::string::npos &&
+              after.find("\"nodes\":") != std::string::npos &&
+              after.find("\"simulatedPlies\":") != std::string::npos &&
+              after.find("\"totalRootVisits\":") != std::string::npos &&
+              after.find("\"reusedVisits\":") != std::string::npos &&
+              after.find("\"maxDepth\":") != std::string::npos &&
+              after.find("\"provenNodes\":") != std::string::npos &&
+              after.find("\"provenWinner\":") != std::string::npos &&
+              after.find("\"rebuildCount\":") != std::string::npos &&
+              after.find("\"expansionSaturated\":") != std::string::npos &&
+              after.find("\"rootValue\":") != std::string::npos,
+          "The web snapshot should serialize every requested MCTS counter and timing field.");
+}
+
+void proven_root_can_complete_fewer_iterations_than_requested() {
+  const ps::BotConfig config{ps::BotKind::Mcts, 47, 64};
+  ps::WebGameSession session(ps::Player::Two, config, ps::RulesConfig{8, 1});
+
+  const ps::WebGameCommandResult result = session.play_bot(0);
+
+  require(result.ok() && session.bot_searches().size() == 1,
+          "The immediate-goal fixture should produce one recorded MCTS decision.");
+  const ps::WebBotSearchDiagnostic &search = session.bot_searches().front();
+  require(search.requested_iterations == 64 &&
+              search.stats.iterations < search.requested_iterations &&
+              search.stats.proven_winner == ps::Player::One,
+          "A proven root should be allowed to stop before its requested work budget.");
+}
+
+void rebound_bot_turns_record_separate_searches() {
+  const ps::BotConfig config{ps::BotKind::Mcts, 1, 1};
+  ps::WebGameSession session(ps::Player::One, config);
+
+  require(session.play_human(0, 0).ok(),
+          "The first fixture human move should succeed.");
+  require(session.play_bot(1).ok(),
+          "The first fixture bot move should succeed.");
+  require(session.play_human(2, 0).ok(),
+          "The second fixture human move should succeed.");
+  const ps::WebGameCommandResult rebound = session.play_bot(3);
+  require(rebound.ok() && rebound.move->extra_turn,
+          "The fixture's second bot decision should grant a rebound turn.");
+  const ps::WebGameCommandResult follow_up = session.play_bot(4);
+
+  require(follow_up.ok() && session.bot_searches().size() == 3,
+          "A bot rebound should be followed by a separately recorded search.");
+  const ps::WebBotSearchDiagnostic &first_rebound = session.bot_searches()[1];
+  const ps::WebBotSearchDiagnostic &second_rebound = session.bot_searches()[2];
+  require(first_rebound.ply == 4 && second_rebound.ply == 5 &&
+              first_rebound.player == ps::Player::Two &&
+              second_rebound.player == ps::Player::Two,
+          "Consecutive rebound decisions should retain distinct plies for the same player.");
+
+  const std::string first_snapshot = session.snapshot_json();
+  const std::string second_snapshot = session.snapshot_json();
+  const std::size_t history_start = first_snapshot.find("\"botSearches\":[");
+  const std::size_t first = first_snapshot.find("\"ply\":2", history_start);
+  const std::size_t second = first_snapshot.find("\"ply\":4", first + 1);
+  const std::size_t third = first_snapshot.find("\"ply\":5", second + 1);
+  require(first_snapshot == second_snapshot &&
+              first_snapshot.find("\"lastBotSearch\":{\"ply\":5") !=
+                  std::string::npos &&
+              history_start != std::string::npos && first < second &&
+              second < third,
+          "Snapshot reads should retain ordered rebound-search history and its latest entry.");
+}
+
+void diagnostics_survive_snapshot_reads_and_export_losslessly() {
+  const ps::BotConfig config{
+      ps::BotKind::Mcts,
+      std::numeric_limits<std::uint64_t>::max(),
+      8,
+  };
+  ps::WebGameSession session(ps::Player::Two, config);
+  require(session.play_bot(0).ok(),
+          "The export fixture should record an initial bot decision.");
+
+  const std::string first_snapshot = session.snapshot_json();
+  const std::string second_snapshot = session.snapshot_json();
+  require(first_snapshot == second_snapshot && session.bot_searches().size() == 1,
+          "Ordinary snapshot reads should preserve the complete stored history.");
+
+  const std::string exported = session.human_match_json();
+  require(exported.find("{\"schema\":\"papersoccer.human-match.v1\","
+                        "\"replay\":{\"schema\":\"papersoccer.replay.v2\"") ==
+              0 &&
+              exported.find("\"botConfiguration\":{\"kind\":\"MctsBot\","
+                            "\"seed\":\"18446744073709551615\","
+                            "\"iterations\":8}") != std::string::npos &&
+              exported.find("\"botSearches\":[{\"ply\":1") !=
+                  std::string::npos,
+          "Human-match export should wrap the standard replay, lossless config, and history.");
 }
 
 void bot_factory_rejects_unknown_kinds() {
@@ -398,6 +519,12 @@ int run_web_game_session_tests() {
        player_two_snapshot_assigns_the_bot_to_player_one},
       {"configured_bot_kind_is_used_and_serialized",
        configured_bot_kind_is_used_and_serialized},
+      {"proven_root_can_complete_fewer_iterations_than_requested",
+       proven_root_can_complete_fewer_iterations_than_requested},
+      {"rebound_bot_turns_record_separate_searches",
+       rebound_bot_turns_record_separate_searches},
+      {"diagnostics_survive_snapshot_reads_and_export_losslessly",
+       diagnostics_survive_snapshot_reads_and_export_losslessly},
       {"bot_factory_rejects_unknown_kinds", bot_factory_rejects_unknown_kinds},
       {"stale_revision_is_rejected_without_advancing_the_bot_rng",
        stale_revision_is_rejected_without_advancing_the_bot_rng},

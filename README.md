@@ -262,13 +262,19 @@ The app starts in **Play vs bot** mode:
 1. Choose `RandomBot` or `MctsBot` as the opponent.
 2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
    move first and attack the bottom goal.
-3. Enter the opponent seed. MCTS games also expose the fixed iteration budget used for
-   each move. Reusing the same settings and human moves reproduces the bot's choices.
+3. Enter the opponent seed. MCTS games also expose the fixed number of new simulations per
+   bot move. Reusing the same settings and human moves reproduces the bot's choices.
 4. Select **Start**, then click any highlighted destination on the board. Destinations
    marked with `↻` grant another move.
 
+Once a game starts, its opponent, side, seed, and simulation budget are locked. The active
+configuration remains visible beside the latest MCTS search counters. Select **Change settings**
+to stop the current game without discarding it, or **Export game** to save a
+`papersoccer.human-match.v1` document containing the standard replay and every recorded bot
+search. Exported human matches can be opened through the normal replay loader.
+
 Select **Watch replay** to inspect the built-in game or generate a new bot-vs-bot match.
-Player 1 and Player 2 each have an independent bot, seed, and MCTS iteration setting.
+Player 1 and Player 2 each have an independent bot, seed, and new-simulation setting.
 Generation advances one move at a time so the controls can update between searches, stops after
 512 moves if the game has not finished, reports progress during longer matches, and opens the
 result directly in the replay viewer.
@@ -352,12 +358,14 @@ same geometry.
 - `web/index.html` - static browser game and replay shell
 - `web/papersoccer-wasm.js` - generated single-file C++ WebAssembly module
 - `web/game-engine.js` - thin JavaScript client for the C++ module
+- `web/app-support.js` - replay-wrapper, timer, and live-configuration helpers
 - `web/app.js` - browser play, canvas rendering, and replay controls
 - `web/styles.css` - game and replay styling
 - `tests/match_test.cpp` - match history and state ownership checks
 - `tests/replay_export_test.mjs` - replay seed precision check
 - `tests/web_game_session_test.cpp` - C++ web-session and stale-command checks
 - `tests/web_wasm_test.mjs` - real WebAssembly/browser-client integration checks
+- `tests/web_app_support_test.mjs` - browser configuration, timer, and wrapper checks
 - `tests/bot_test.cpp` - RandomBot determinism and legality checks
 - `tests/mcts_test.cpp` - MCTS determinism, legality, and strategy checks
 - `tests/arena_smoke_test.cpp` - paired arena and measurement report smoke tests

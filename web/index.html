@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css">
     <script defer src="papersoccer-wasm.js"></script>
     <script defer src="game-engine.js"></script>
+    <script defer src="app-support.js"></script>
     <script defer src="app.js"></script>
   </head>
   <body>
@@ -51,7 +52,10 @@
               <p id="playSetupEyebrow" class="eyebrow">Play vs RandomBot</p>
               <h2>New game</h2>
             </div>
-            <button id="newGameButton" class="primary-control" type="submit">Start</button>
+            <div class="setup-actions">
+              <button id="newGameButton" class="primary-control" type="submit">Start</button>
+              <button id="changeSettingsButton" type="button" hidden>Change settings</button>
+            </div>
           </div>
 
           <label class="form-field" for="botSelect">
@@ -77,13 +81,37 @@
           </label>
 
           <label id="botIterationsField" class="form-field" for="botIterationsInput" hidden>
-            <span>Iterations</span>
+            <span>New simulations per bot move</span>
             <input id="botIterationsInput" type="number" min="1" max="10000" step="1"
               value="2000" inputmode="numeric" autocomplete="off" disabled>
           </label>
 
           <p class="setup-help">Player 1 moves first. Reuse the same settings to repeat the bot.</p>
           <p id="setupError" class="form-error" role="alert" aria-atomic="true"></p>
+
+          <section id="liveDiagnostics" class="live-diagnostics" aria-labelledby="activeGameHeading"
+            hidden>
+            <div class="live-diagnostics-heading">
+              <div>
+                <p class="eyebrow">Active game</p>
+                <h2 id="activeGameHeading">Fixed bot configuration</h2>
+              </div>
+              <button id="exportGameButton" type="button">Export game</button>
+            </div>
+            <p id="activeBotConfiguration" class="active-bot-configuration"></p>
+            <div id="latestSearch" class="latest-search" hidden>
+              <p id="searchVisits"></p>
+              <p id="searchShape"></p>
+              <p id="searchIndicators" class="search-indicators"></p>
+              <details>
+                <summary>Search details</summary>
+                <p id="searchDetails"></p>
+              </details>
+            </div>
+            <p id="searchPending" class="search-pending" hidden>
+              Search details will appear after the bot moves.
+            </p>
+          </section>
         </form>
 
         <form id="replaySetup" class="game-setup replay-setup"
@@ -119,7 +147,7 @@
 
               <label id="replayOneIterationsField" class="compact-form-field"
                 for="replayOneIterationsInput" hidden>
-                <span>Iterations</span>
+                <span>New simulations per bot move</span>
                 <input id="replayOneIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
               </label>
@@ -147,7 +175,7 @@
 
               <label id="replayTwoIterationsField" class="compact-form-field"
                 for="replayTwoIterationsInput" hidden>
-                <span>Iterations</span>
+                <span>New simulations per bot move</span>
                 <input id="replayTwoIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
               </label>

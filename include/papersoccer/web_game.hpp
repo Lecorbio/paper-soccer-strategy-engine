@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "papersoccer/bot.hpp"
 #include "papersoccer/match.hpp"
@@ -36,6 +37,16 @@ struct WebGameCommandResult {
   bool ok() const noexcept { return !error.has_value(); }
 };
 
+struct WebBotSearchDiagnostic {
+  std::size_t ply{};
+  Player player{Player::One};
+  Point from{};
+  Move chosen_move{};
+  std::uint32_t requested_iterations{};
+  std::uint64_t decision_time_ns{};
+  SearchStats stats{};
+};
+
 class WebGameSession {
  public:
   WebGameSession(Player human_player, BotConfig bot_config,
@@ -50,8 +61,10 @@ class WebGameSession {
   std::uint64_t bot_seed() const noexcept;
   std::uint32_t session_id() const noexcept;
   std::uint64_t revision() const noexcept;
+  const std::vector<WebBotSearchDiagnostic> &bot_searches() const noexcept;
 
   std::string snapshot_json() const;
+  std::string human_match_json() const;
 
   WebGameCommandResult play_human(std::uint64_t expected_revision,
                                   std::size_t move_id);
@@ -69,6 +82,7 @@ class WebGameSession {
   std::unique_ptr<Bot> bot_;
   std::uint32_t session_id_;
   std::uint64_t revision_{0};
+  std::vector<WebBotSearchDiagnostic> bot_searches_{};
 };
 
 class WebBotReplaySession {

@@ -1,5 +1,7 @@
 #include "papersoccer/web_game.hpp"
 
+#include <chrono>
+#include <iomanip>
 #include <locale>
 #include <optional>
 #include <sstream>
@@ -13,6 +15,8 @@
 namespace papersoccer {
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 std::string_view player_to_json(Player player) noexcept {
   return player == Player::One ? "one" : "two";
@@ -52,6 +56,13 @@ void write_bot(std::ostream &out, const BotConfig &config) {
   out << '}';
 }
 
+std::uint64_t elapsed_nanoseconds(Clock::time_point start,
+                                  Clock::time_point end) noexcept {
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+  return elapsed <= 0 ? 0 : static_cast<std::uint64_t>(elapsed);
+}
+
 void write_player(std::ostream &out, Player player, Player human_player,
                   const BotConfig &bot_config) {
   if (player == human_player) {
@@ -69,6 +80,63 @@ void write_played_move(std::ostream &out, const PlayedMove &move) {
   write_point(out, move.to);
   out << ",\"extraTurn\":" << (move.extra_turn ? "true" : "false")
       << ",\"statusAfter\":\"" << status_to_json(move.status_after) << "\"}";
+}
+
+void write_bot_search(std::ostream &out,
+                      const WebBotSearchDiagnostic &search) {
+  out << "{\"ply\":" << search.ply << ",\"player\":\""
+      << player_to_json(search.player) << "\",\"chosenMove\":{\"from\":";
+  write_point(out, search.from);
+  out << ",\"to\":";
+  write_point(out, search.chosen_move.to);
+  out << "},\"requestedIterations\":" << search.requested_iterations
+      << ",\"completedIterations\":" << search.stats.iterations
+      << ",\"decisionTimeNs\":" << search.decision_time_ns
+      << ",\"nodes\":" << search.stats.nodes
+      << ",\"simulatedPlies\":" << search.stats.simulated_plies
+      << ",\"totalRootVisits\":" << search.stats.total_root_visits
+      << ",\"reusedVisits\":" << search.stats.reused_visits
+      << ",\"maxDepth\":" << search.stats.max_depth
+      << ",\"provenNodes\":" << search.stats.proven_nodes
+      << ",\"provenWinner\":";
+  if (search.stats.proven_winner.has_value()) {
+    out << '"' << player_to_json(*search.stats.proven_winner) << '"';
+  } else {
+    out << "null";
+  }
+  out << ",\"rebuildCount\":" << search.stats.rebuild_count
+      << ",\"expansionSaturated\":"
+      << (search.stats.expansion_saturated ? "true" : "false")
+      << ",\"rootValue\":" << search.stats.root_value << '}';
+}
+
+void write_bot_searches(std::ostream &out,
+                        const std::vector<WebBotSearchDiagnostic> &searches) {
+  out << '[';
+  for (std::size_t i = 0; i < searches.size(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    write_bot_search(out, searches[i]);
+  }
+  out << ']';
+}
+
+void write_diagnostics(
+    std::ostream &out, const BotConfig &bot_config,
+    const std::vector<WebBotSearchDiagnostic> &bot_searches) {
+  out << "{\"schema\":\"papersoccer.bot-search-diagnostics.v1\","
+         "\"botConfiguration\":";
+  write_bot(out, bot_config);
+  out << ",\"lastBotSearch\":";
+  if (bot_searches.empty()) {
+    out << "null";
+  } else {
+    write_bot_search(out, bot_searches.back());
+  }
+  out << ",\"botSearches\":";
+  write_bot_searches(out, bot_searches);
+  out << '}';
 }
 
 template <typename PlayerWriter>
@@ -156,12 +224,18 @@ std::uint32_t WebGameSession::session_id() const noexcept { return session_id_; 
 
 std::uint64_t WebGameSession::revision() const noexcept { return revision_; }
 
+const std::vector<WebBotSearchDiagnostic> &WebGameSession::bot_searches() const
+    noexcept {
+  return bot_searches_;
+}
+
 std::string WebGameSession::snapshot_json() const {
   const GameState &state = match_.state();
   const std::vector<Move> legal = match_.legal_moves();
 
   std::ostringstream out;
   out.imbue(std::locale::classic());
+  out << std::setprecision(17);
   out << "{\"schema\":\"papersoccer.web-session.v1\",\"sessionId\":" << session_id_
       << ",\"revision\":" << revision_
       << ",\"humanPlayer\":\"" << player_to_json(human_player_) << "\",\"state\":{"
@@ -187,6 +261,25 @@ std::string WebGameSession::snapshot_json() const {
                [this](std::ostream &replay_out, Player player) {
                  write_player(replay_out, player, human_player_, bot_config_);
                });
+  out << ",\"diagnostics\":";
+  write_diagnostics(out, bot_config_, bot_searches_);
+  out << '}';
+  return out.str();
+}
+
+std::string WebGameSession::human_match_json() const {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::setprecision(17);
+  out << "{\"schema\":\"papersoccer.human-match.v1\",\"replay\":";
+  write_replay(out, match_.state(), match_.history(), false,
+               [this](std::ostream &replay_out, Player player) {
+                 write_player(replay_out, player, human_player_, bot_config_);
+               });
+  out << ",\"botConfiguration\":";
+  write_bot(out, bot_config_);
+  out << ",\"botSearches\":";
+  write_bot_searches(out, bot_searches_);
   out << '}';
   return out.str();
 }
@@ -220,8 +313,26 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
                    "the bot cannot move because the game has no legal moves");
   }
 
+  const Point from = match_.state().ball;
+  const auto start = Clock::now();
   const Move chosen = bot_->choose_move(match_.state());
+  const auto end = Clock::now();
+  std::optional<SearchStats> search_stats;
+  if (const auto *mcts = dynamic_cast<const MctsBot *>(bot_.get())) {
+    search_stats = mcts->last_search_stats();
+  }
   const PlayedMove played = match_.play(chosen);
+  if (search_stats.has_value()) {
+    bot_searches_.push_back(WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        bot_config_.mcts_iterations,
+        elapsed_nanoseconds(start, end),
+        *search_stats,
+    });
+  }
   ++revision_;
   return success(played);
 }
