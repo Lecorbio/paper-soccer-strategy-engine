@@ -348,6 +348,7 @@ select:disabled {
 }
 
 .replay-player-card-title {
+  min-block-size: 2.5em;
   color: var(--ink);
   font-size: 0.75rem;
   font-weight: 720;
@@ -698,6 +699,10 @@ input[type="range"] {
 @media (max-width: 380px) {
   .replay-player-grid {
     grid-template-columns: 1fr;
+  }
+
+  .replay-player-card-title {
+    min-block-size: auto;
   }
 }
 
