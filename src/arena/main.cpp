@@ -46,6 +46,12 @@ void print_usage(std::ostream &out) {
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
       "  --candidate-policy uniform|tactical\n"
       "  --reference-policy uniform|tactical\n"
+      "  --candidate-leaf-policy rollout-only|tactical-quiescence\n"
+      "  --reference-leaf-policy rollout-only|tactical-quiescence\n"
+      "  --candidate-quiescence-max-depth N\n"
+      "  --reference-quiescence-max-depth N\n"
+      "  --candidate-quiescence-max-nodes N\n"
+      "  --reference-quiescence-max-nodes N\n"
       "  --candidate-reuse true|false     Reuse the candidate tree\n"
       "  --reference-reuse true|false     Reuse the reference tree\n"
       "  --candidate-max-nodes N          Candidate tree bound (minimum: 2)\n"
@@ -60,8 +66,9 @@ void print_usage(std::ostream &out) {
       "  --positions N                    Positions to measure (default: 16)\n"
       "  --generation-plies N             Random plies per position (default: 24)\n"
       "  -h, --help                       Show this help\n\n"
-      "Defaults compare tactical, reusing MCTS (candidate) with uniform,\n"
-      "non-reusing MCTS (reference). JSON is written to standard output.\n";
+      "Defaults compare tactical quiescence MCTS (candidate) with tactical\n"
+      "rollout-only MCTS (reference); both reuse their trees. JSON is written\n"
+      "to standard output.\n";
 }
 
 template <typename UInt>
@@ -136,6 +143,19 @@ ps::MctsRolloutPolicy parse_policy(std::string_view value,
                               " requires uniform or tactical");
 }
 
+ps::MctsLeafPolicy parse_leaf_policy(std::string_view value,
+                                     std::string_view option) {
+  if (value == "rollout-only") {
+    return ps::MctsLeafPolicy::RolloutOnly;
+  }
+  if (value == "tactical-quiescence") {
+    return ps::MctsLeafPolicy::TacticalQuiescence;
+  }
+  throw std::invalid_argument(
+      std::string(option) +
+      " requires rollout-only or tactical-quiescence");
+}
+
 void require_mode(Mode actual, Mode expected, std::string_view option) {
   if (actual != expected) {
     throw std::invalid_argument(std::string(option) + " is only valid in " +
@@ -203,6 +223,22 @@ CliConfig parse_cli(int argc, char **argv) {
       config.candidate.rollout_policy = parse_policy(value(), option);
     } else if (option == "--reference-policy") {
       config.reference.rollout_policy = parse_policy(value(), option);
+    } else if (option == "--candidate-leaf-policy") {
+      config.candidate.leaf_policy = parse_leaf_policy(value(), option);
+    } else if (option == "--reference-leaf-policy") {
+      config.reference.leaf_policy = parse_leaf_policy(value(), option);
+    } else if (option == "--candidate-quiescence-max-depth") {
+      config.candidate.quiescence_max_depth =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-quiescence-max-depth") {
+      config.reference.quiescence_max_depth =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--candidate-quiescence-max-nodes") {
+      config.candidate.quiescence_max_nodes =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-quiescence-max-nodes") {
+      config.reference.quiescence_max_nodes =
+          parse_unsigned<std::uint32_t>(value(), option);
     } else if (option == "--candidate-reuse") {
       config.candidate.reuse_tree = parse_bool(value(), option);
     } else if (option == "--reference-reuse") {

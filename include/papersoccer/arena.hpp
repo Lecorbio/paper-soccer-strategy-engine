@@ -16,16 +16,23 @@ struct ArenaBotConfig {
   MctsRolloutPolicy rollout_policy{MctsRolloutPolicy::Uniform};
   bool reuse_tree{true};
   std::size_t max_nodes{65536};
+  MctsLeafPolicy leaf_policy{MctsLeafPolicy::RolloutOnly};
+  std::uint32_t quiescence_max_depth{
+      MctsConfig::default_quiescence_max_depth};
+  std::uint32_t quiescence_max_nodes{
+      MctsConfig::default_quiescence_max_nodes};
 };
 
 struct MatchesConfig {
   RulesConfig rules{};
   ArenaBotConfig candidate{
       BotKind::Mcts, 2000, 1.4142135623730951,
-      MctsRolloutPolicy::Tactical, true, 65536};
+      MctsRolloutPolicy::Tactical, true, 65536,
+      MctsLeafPolicy::TacticalQuiescence};
   ArenaBotConfig reference{
       BotKind::Mcts, 2000, 1.4142135623730951,
-      MctsRolloutPolicy::Uniform, false, 65536};
+      MctsRolloutPolicy::Tactical, true, 65536,
+      MctsLeafPolicy::RolloutOnly};
   std::uint64_t base_seed{RandomBot::default_seed()};
   std::size_t seed_pairs{200};
   std::size_t max_plies{512};
@@ -36,10 +43,12 @@ struct PositionsConfig {
   RulesConfig rules{};
   ArenaBotConfig candidate{
       BotKind::Mcts, 2000, 1.4142135623730951,
-      MctsRolloutPolicy::Tactical, true, 65536};
+      MctsRolloutPolicy::Tactical, true, 65536,
+      MctsLeafPolicy::TacticalQuiescence};
   ArenaBotConfig reference{
       BotKind::Mcts, 2000, 1.4142135623730951,
-      MctsRolloutPolicy::Uniform, false, 65536};
+      MctsRolloutPolicy::Tactical, true, 65536,
+      MctsLeafPolicy::RolloutOnly};
   std::uint64_t base_seed{RandomBot::default_seed()};
   std::size_t position_count{16};
   std::size_t generation_plies{24};

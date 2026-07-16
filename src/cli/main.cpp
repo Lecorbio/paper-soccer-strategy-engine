@@ -317,6 +317,15 @@ int main() {
                   << ", reused visits=" << stats.reused_visits
                   << ", max depth=" << stats.max_depth
                   << ", proven nodes=" << stats.proven_nodes
+                  << ", tactical probes=" << stats.tactical_probes
+                  << ", tactical nodes=" << stats.tactical_nodes
+                  << ", tactical solved positions="
+                  << stats.tactical_solved_positions
+                  << ", tactical depth cutoffs="
+                  << stats.tactical_depth_cutoffs
+                  << ", tactical node cutoffs="
+                  << stats.tactical_node_cutoffs
+                  << ", max tactical depth=" << stats.max_tactical_depth
                   << ", rebuilds=" << stats.rebuild_count
                   << ", estimated root value=" << stats.root_value;
         if (stats.proven_winner.has_value()) {

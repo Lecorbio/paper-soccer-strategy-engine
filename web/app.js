@@ -783,10 +783,20 @@
       indicators.push("Expansion saturated");
     }
     searchIndicators.textContent = indicators.join(" · ");
-    searchDetails.textContent = "Move " + formatCount(search.ply) + " · " +
+    let details = "Move " + formatCount(search.ply) + " · " +
       formatCount(search.simulatedPlies) + " rollout plies · " +
       formatCount(search.provenNodes) + " proven nodes · root value " +
       Number(search.rootValue).toFixed(4);
+    if (search.tacticalProbes > 0 || search.tacticalDepthCutoffs > 0 ||
+        search.tacticalNodeCutoffs > 0) {
+      details += " · tactical: " + formatCount(search.tacticalProbes) +
+        " probes, " + formatCount(search.tacticalSolvedPositions) +
+        " solved, " + formatCount(search.tacticalNodes) + " nodes, depth " +
+        formatCount(search.maxTacticalDepth) + ", cutoffs " +
+        formatCount(search.tacticalDepthCutoffs) + " depth / " +
+        formatCount(search.tacticalNodeCutoffs) + " node";
+    }
+    searchDetails.textContent = details;
   }
 
   function updateText() {

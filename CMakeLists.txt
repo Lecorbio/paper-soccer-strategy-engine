@@ -18,6 +18,7 @@ add_library(papersoccer_core
   src/mcts.cpp
   src/random_bot.cpp
   src/rules.cpp
+  src/tactical_search.cpp
   src/web_game.cpp
 )
 target_include_directories(papersoccer_core PUBLIC include)

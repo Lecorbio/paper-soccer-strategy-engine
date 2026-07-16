@@ -17,6 +17,12 @@ test("matches mode emits parseable paired JSON", () => {
     "--bootstrap-samples", "32",
     "--candidate-iterations", "2",
     "--reference-iterations", "2",
+    "--candidate-leaf-policy", "tactical-quiescence",
+    "--candidate-quiescence-max-depth", "3",
+    "--candidate-quiescence-max-nodes", "17",
+    "--reference-leaf-policy", "rollout-only",
+    "--reference-quiescence-max-depth", "4",
+    "--reference-quiescence-max-nodes", "18",
   ]);
 
   assert.equal(report.schema, "papersoccer.arena.v1");
@@ -26,6 +32,46 @@ test("matches mode emits parseable paired JSON", () => {
   assert.equal(report.games[1].player_one.bot, "reference");
   assert.equal(report.summary.illegal_moves, 0);
   assert.equal(report.summary.pair_scores.length, 1);
+  assert.equal(report.configuration.candidate.rollout_policy, "tactical");
+  assert.equal(report.configuration.candidate.leaf_policy,
+    "tactical_quiescence");
+  assert.equal(report.configuration.candidate.quiescence_max_depth, 3);
+  assert.equal(report.configuration.candidate.quiescence_max_nodes, 17);
+  assert.equal(report.configuration.reference.rollout_policy, "tactical");
+  assert.equal(report.configuration.reference.leaf_policy, "rollout_only");
+  assert.equal(report.configuration.reference.quiescence_max_depth, 4);
+  assert.equal(report.configuration.reference.quiescence_max_nodes, 18);
+  assert.equal(typeof report.games[0].decisions[0].mcts.tacticalProbes,
+    "undefined");
+  assert.equal(typeof report.games[0].decisions[0].mcts.tactical_probes,
+    "number");
+  assert.equal(typeof report.summary.candidate.mcts.tactical_solved_positions,
+    "number");
+  assert.equal(typeof report.summary.candidate.mcts.tactical_solution_rate,
+    "number");
+  assert.equal(typeof report.summary.candidate.mcts.max_tactical_depth,
+    "number");
+
+  const candidateSearches = report.games.flatMap((game) => game.decisions)
+    .filter((decision) => decision.bot === "candidate")
+    .map((decision) => decision.mcts);
+  for (const counter of [
+    "tactical_probes",
+    "tactical_nodes",
+    "tactical_solved_positions",
+    "tactical_depth_cutoffs",
+    "tactical_node_cutoffs",
+  ]) {
+    const expected = candidateSearches.reduce(
+      (sum, search) => sum + search[counter],
+      0,
+    );
+    assert.equal(report.summary.candidate.mcts[counter], expected);
+  }
+  assert.equal(report.summary.candidate.mcts.max_tactical_depth,
+    Math.max(...candidateSearches.map((search) => search.max_tactical_depth)));
+  assert.equal(report.summary.reference.mcts.tactical_probes, 0);
+  assert.equal(report.summary.reference.mcts.tactical_solution_rate, 0);
 });
 
 test("positions mode evaluates both bots on parseable shared positions", () => {
@@ -59,4 +105,37 @@ test("mode-specific options are rejected outside their mode", () => {
   });
   assert.notEqual(matches.status, 0);
   assert.match(matches.stderr, /--positions is only valid in positions mode/);
+});
+
+test("invalid tactical arena settings are rejected", () => {
+  const zeroDepth = spawnSync(arena, [
+    "matches",
+    "--candidate-quiescence-max-depth", "0",
+  ], { encoding: "utf8" });
+  assert.notEqual(zeroDepth.status, 0);
+  assert.match(zeroDepth.stderr, /quiescence max depth must be between/);
+
+  const excessiveNodes = spawnSync(arena, [
+    "positions",
+    "--candidate-quiescence-max-nodes", "1000001",
+  ], { encoding: "utf8" });
+  assert.notEqual(excessiveNodes.status, 0);
+  assert.match(excessiveNodes.stderr, /quiescence max nodes must be between/);
+
+  const incompatiblePolicy = spawnSync(arena, [
+    "positions",
+    "--candidate-policy", "uniform",
+    "--candidate-leaf-policy", "tactical-quiescence",
+  ], { encoding: "utf8" });
+  assert.notEqual(incompatiblePolicy.status, 0);
+  assert.match(incompatiblePolicy.stderr,
+    /tactical quiescence requires the tactical rollout policy/);
+
+  const unknownLeafPolicy = spawnSync(arena, [
+    "positions",
+    "--candidate-leaf-policy", "unknown",
+  ], { encoding: "utf8" });
+  assert.notEqual(unknownLeafPolicy.status, 0);
+  assert.match(unknownLeafPolicy.stderr,
+    /requires rollout-only or tactical-quiescence/);
 });

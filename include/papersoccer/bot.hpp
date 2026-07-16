@@ -51,13 +51,26 @@ enum class MctsRolloutPolicy {
   Tactical,
 };
 
+enum class MctsLeafPolicy {
+  RolloutOnly,
+  TacticalQuiescence,
+};
+
 struct MctsConfig {
+  static constexpr std::uint32_t default_quiescence_max_depth{8};
+  static constexpr std::uint32_t default_quiescence_max_nodes{256};
+  static constexpr std::uint32_t maximum_quiescence_max_depth{64};
+  static constexpr std::uint32_t maximum_quiescence_max_nodes{1'000'000};
+
   std::uint64_t seed{RandomBot::default_seed()};
   std::uint32_t iterations{2000};
   double exploration{1.4142135623730951};
   MctsRolloutPolicy rollout_policy{MctsRolloutPolicy::Tactical};
   bool reuse_tree{true};
   std::size_t max_nodes{65536};
+  MctsLeafPolicy leaf_policy{MctsLeafPolicy::RolloutOnly};
+  std::uint32_t quiescence_max_depth{default_quiescence_max_depth};
+  std::uint32_t quiescence_max_nodes{default_quiescence_max_nodes};
 };
 
 struct SearchStats {
@@ -72,6 +85,12 @@ struct SearchStats {
   std::optional<Player> proven_winner{};
   std::uint64_t rebuild_count{};
   bool expansion_saturated{};
+  std::uint64_t tactical_probes{};
+  std::uint64_t tactical_nodes{};
+  std::uint64_t tactical_solved_positions{};
+  std::uint64_t tactical_depth_cutoffs{};
+  std::uint64_t tactical_node_cutoffs{};
+  std::uint32_t max_tactical_depth{};
 };
 
 class MctsSearch {

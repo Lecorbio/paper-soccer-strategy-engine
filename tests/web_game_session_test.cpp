@@ -165,6 +165,15 @@ void configured_bot_kind_is_used_and_serialized() {
               after.find("\"maxDepth\":") != std::string::npos &&
               after.find("\"provenNodes\":") != std::string::npos &&
               after.find("\"provenWinner\":") != std::string::npos &&
+              after.find("\"tacticalProbes\":") != std::string::npos &&
+              after.find("\"tacticalNodes\":") != std::string::npos &&
+              after.find("\"tacticalSolvedPositions\":") !=
+                  std::string::npos &&
+              after.find("\"tacticalDepthCutoffs\":") !=
+                  std::string::npos &&
+              after.find("\"tacticalNodeCutoffs\":") !=
+                  std::string::npos &&
+              after.find("\"maxTacticalDepth\":") != std::string::npos &&
               after.find("\"rebuildCount\":") != std::string::npos &&
               after.find("\"expansionSaturated\":") != std::string::npos &&
               after.find("\"rootValue\":") != std::string::npos,
@@ -247,6 +256,10 @@ void diagnostics_survive_snapshot_reads_and_export_losslessly() {
                             "\"seed\":\"18446744073709551615\","
                             "\"iterations\":8}") != std::string::npos &&
               exported.find("\"botSearches\":[{\"ply\":1") !=
+                  std::string::npos &&
+              exported.find("\"tacticalProbes\":0") !=
+                  std::string::npos &&
+              exported.find("\"maxTacticalDepth\":0") !=
                   std::string::npos,
           "Human-match export should wrap the standard replay, lossless config, and history.");
 }

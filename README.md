@@ -49,7 +49,8 @@ One search iteration has four parts:
 1. **Selection:** follow promising moves already in the tree. MCTS uses UCT, which combines a
    move's average result with a bonus for moves that have received less attention.
 2. **Expansion:** add one previously unexplored legal move to the tree.
-3. **Simulation:** use the configured rollout policy until the rules engine reports a win.
+3. **Frontier evaluation:** optionally try the bounded tactical proof search, then use the
+   configured rollout policy until the rules engine reports a win if no winner was proven.
 4. **Backpropagation:** add that result to every tree node visited during the iteration.
 
 The UCT comparison is:
@@ -82,6 +83,32 @@ winners are proven back through fully explored branches, proven losing children 
 a search stops early when the root winner is proven. `Uniform` retains the original uniformly
 random rollout and selection behavior as a reproducible comparison policy.
 
+The leaf policy is a separate setting. `MctsLeafPolicy::RolloutOnly` remains the engine and
+website default, preserving the current Tactical rollout-only bot exactly. The arena keeps that
+bot as its frozen reference. `MctsLeafPolicy::TacticalQuiescence` is an experimental opt-in that
+runs a bounded adversarial proof probe at each non-terminal MCTS frontier before falling back to
+the unchanged Tactical rollout. Tactical quiescence requires the `Tactical` rollout policy. The
+probe is deterministic, consumes no rollout random numbers, and its work does not replace any of
+the configured new MCTS iterations.
+
+The probe extends only tactically noisy positions. Noise includes immediate goals and terminal
+traps, a single legal move, a same-player rebound, a move that leaves one forced legal reply, and
+defensive or escape contexts identified by one-ply reply lookahead. In that lookahead, an
+opponent direct tactic is an immediate terminal goal or trap, an already forced single move, or a
+move that creates one forced reply; an otherwise unconstrained opponent rebound alone does not
+trigger the defensive extension. Once a position is noisy, every legal move is searched in the
+authoritative rules order so that a quiet escape is never omitted. Rebounds use the compact
+position's actual `to_move` value at every level; search depth alone never changes player
+perspective.
+
+Proof results are absolute winners: Player 1, Player 2, or Unknown. At a position belonging to a
+player, one child proven for that player is enough to prove a win. A loss is proven only when
+every legal move is proven for the opponent. A quiet position, a depth or node cutoff, or any
+unresolved legal alternative therefore returns Unknown and can never create a false proof. The
+compact position is made and unmade exactly around every probe. A proven frontier supplies the
+exact terminal reward and participates in the existing solver propagation; an Unknown frontier
+continues with the existing Tactical rollout.
+
 Search simulations use a compact internal board: vertices and edges are indexed, used edges and
 visited vertices are bitsets, adjacency is precomputed, and moves are made and unmade in place.
 The public `GameState` and rules functions remain the authoritative API for games and replays.
@@ -89,9 +116,11 @@ The public `GameState` and rules functions remain the authoritative API for game
 ### Configuration and reproducibility
 
 `MctsConfig` defaults to a seed of `RandomBot::default_seed()`, `2,000` new iterations per move,
-the exploration value above, tactical rollouts, tree reuse, and a 65,536-node tree bound. The
-iteration count must be positive, exploration must be finite and non-negative, and the node
-bound must be at least two.
+the exploration value above, tactical rollouts, tree reuse, a 65,536-node tree bound, and the
+`RolloutOnly` leaf policy. The experimental quiescence limits default to depth `8` and `256`
+searched tactical nodes per probe. Both limits must be positive; depth is capped at `64` and the
+node budget at `1,000,000`. The iteration count must be positive, exploration must be finite and
+non-negative, and the MCTS tree bound must be at least two.
 
 The search uses a fixed iteration budget rather than a time limit. A complete match is
 reproducible from the same starting state, bot configurations, seeds, and played moves on the
@@ -104,7 +133,7 @@ iterations continue as rollouts without allocating more tree nodes.
 Standalone `MctsSearch` objects remain position-based and incremental. Incremental calls preserve
 the same random sequence, so one call of 2,000 iterations is equivalent to, for example, twenty
 calls of 100 iterations. The legacy seed/exploration constructor selects `Uniform`; pass a full
-`MctsConfig` to use tactical rollouts.
+`MctsConfig` to use tactical rollouts or experimental quiescence.
 
 The native API supports both a one-shot bot and an incremental search:
 
@@ -115,6 +144,9 @@ papersoccer::MctsConfig config{
     .rollout_policy = papersoccer::MctsRolloutPolicy::Tactical,
     .reuse_tree = true,
     .max_nodes = 65536,
+    .leaf_policy = papersoccer::MctsLeafPolicy::TacticalQuiescence,
+    .quiescence_max_depth = 8,
+    .quiescence_max_nodes = 256,
 };
 papersoccer::MctsBot bot(config);
 papersoccer::Move move = bot.choose_move(state);
@@ -129,8 +161,11 @@ papersoccer::Move incremental_move = search.best_move();
 `SearchStats` reports completed iterations, allocated nodes, rollout plies, total and reused root
 visits, maximum tree depth, proven nodes and winner, rebuild count, node-bound saturation, and the
 root value estimate. `simulated_plies` counts rollout moves only, while `root_value` is always
-from Player 1's perspective. Timing is deliberately measured by the arena rather than stored in
-these deterministic statistics.
+from Player 1's perspective. Tactical work is reported separately as `tactical_probes`,
+`tactical_nodes`, `tactical_solved_positions`, `tactical_depth_cutoffs`,
+`tactical_node_cutoffs`, and `max_tactical_depth`. These are deterministic counters; timing is
+deliberately measured by the arena rather than stored in `SearchStats`. Arena summaries also
+derive `tactical_solution_rate` from solved positions divided by probes.
 
 ## Build
 
@@ -162,29 +197,115 @@ node --test tests/web_wasm_test.mjs
 ## Measure Bot Performance
 
 The native arena compares fresh bot instances on deterministic seed pairs and swaps their colors
-for the second game in every pair. Its defaults compare tactical, tree-reusing MCTS against the
-uniform, non-reusing reference at the same 2,000-iteration budget:
+for the second game in every pair. Its defaults compare the experimental Tactical +
+TacticalQuiescence candidate with the frozen Tactical + RolloutOnly reference. Both reuse their
+trees and use the same 2,000-iteration budget, exploration value, and MCTS node bound:
 
 ```bash
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release
 ./build/release/papersoccer_arena positions --positions 16 > positions.json
-./build/release/papersoccer_arena matches --pairs 200 > matches.json
+./build/release/papersoccer_arena matches --pairs 20 > quiescence-equal-iterations-20-pairs.json
 ```
 
 Both modes emit `papersoccer.arena.v1` JSON. Match reports contain per-game configurations,
 lossless string seeds, outcomes, plies, per-decision timings and search counters, color splits,
 throughput, and a deterministic pair-bootstrap 95% confidence interval. Position reports measure
 both bots on the same generated non-terminal states. Use `--help` for policy, reuse, iteration,
-node-bound, exploration, board, and sampling options.
+node-bound, exploration, board, and sampling options. Quiescence is controlled independently for
+the two entrants with:
 
-The tactical default passed its promotion gate on July 14, 2026: 389 wins and 11 losses over 200
-color-swapped seed pairs, with no illegal moves or truncations and a deterministic paired 95%
-bootstrap interval of 95.5% to 98.75%. On the same machine, median tactical decision latency was
-30.066 ms across the match and 50.073 ms on the native initial-position probe, below the previous
-171.558 ms default baseline. The optimized uniform reference took 3.03 ms natively and 3.353 ms
-in Wasm on the initial position, over 50 times the prior native and Wasm throughput. These
-machine-specific results are evidence for the checked-in default, not portable timing thresholds.
+- `--candidate-leaf-policy` and `--reference-leaf-policy`, accepting `rollout-only` or
+  `tactical-quiescence`.
+- `--candidate-quiescence-max-depth` and `--reference-quiescence-max-depth`.
+- `--candidate-quiescence-max-nodes` and `--reference-quiescence-max-nodes`.
+
+An explicit equal-iteration preliminary comparison can be reproduced with:
+
+```bash
+./build/release/papersoccer_arena matches \
+  --pairs 20 \
+  --seed 828927513140 \
+  --candidate-policy tactical \
+  --candidate-leaf-policy tactical-quiescence \
+  --candidate-quiescence-max-depth 8 \
+  --candidate-quiescence-max-nodes 256 \
+  --candidate-reuse true \
+  --candidate-iterations 2000 \
+  --reference-policy tactical \
+  --reference-leaf-policy rollout-only \
+  --reference-reuse true \
+  --reference-iterations 2000 \
+  > quiescence-equal-iterations-20-pairs.json
+```
+
+If that result is positive and operationally healthy, change `--pairs 20` to `--pairs 200` for
+the full 400-game comparison. Equal iteration counts do not imply equal latency: every candidate
+iteration can do additional bounded tactical work. First compare the entrants' `median_ns` and
+`p95_ns` on shared positions, then repeat the match with a measured candidate iteration budget
+whose median is reasonably close to the reference (`1,250` on the evaluation machine):
+
+```bash
+./build/release/papersoccer_arena positions \
+  --positions 32 \
+  --candidate-iterations 2000 \
+  --reference-iterations 2000 \
+  > quiescence-latency-tuning.json
+
+./build/release/papersoccer_arena matches \
+  --pairs 20 \
+  --candidate-iterations 1250 \
+  --reference-iterations 2000 \
+  > quiescence-latency-matched-20-pairs.json
+```
+
+Larger tactical depth and node limits can prove longer combinations, but add work to every noisy
+frontier. A successful proof may compensate by skipping a rollout and solving retained tree
+nodes; an Unknown probe adds overhead before the normal rollout. Report both equal-iteration and
+approximately equal-latency results rather than treating either one alone as decisive.
+
+### Experimental quiescence evaluation — July 16, 2026
+
+The staged evaluation keeps TacticalQuiescence experimental. Timings below are
+machine-specific; deterministic records, counters, and confidence intervals can be reproduced
+with the commands above.
+
+| Evaluation | Result |
+| --- | --- |
+| Correctness gate | Passed: Release, ASan/UBSan, browser/Wasm, compact-rule parity, restoration, cutoff, proof-soundness, reproducibility, and native/Wasm arena smoke tests; zero illegal moves or unexpected truncations |
+| 20-pair equal-iteration record | 19 wins, 21 losses at 2,000 vs 2,000 iterations; 47.5% score; paired 95% interval 37.5%-57.5% |
+| Equal-iteration fixed work | Candidate 4,093,635 completed iterations, 3,947,878 probes, 65,477 solved positions (1.659%); reference 4,342,896 completed iterations and zero probes |
+| Equal-iteration operations | Maximum cumulative rebuild count 7 candidate / 5 reference; zero saturated searches, illegal moves, or truncations |
+| Native match median/p95 | Candidate 36.757/66.853 ms; reference 22.683/45.968 ms |
+| Native shared-position median/p95 | Candidate 49.862/61.204 ms; reference 33.049/36.004 ms |
+| Wasm shared-position median/p95 | Candidate 56.088/71.932 ms; reference 37.384/41.799 ms; deterministic counters matched native exactly |
+| 20-pair latency-matched record | 11 wins, 29 losses at 1,250 vs 2,000 iterations; 27.5% score; paired 95% interval 12.5%-42.5% |
+| Latency-matched work and timing | Candidate 2,433,972 iterations, 2,341,396 probes, 42,004 solved (1.794%), median/p95 23.459/43.570 ms; reference 4,004,291 iterations, median/p95 23.608/47.535 ms; rebuild maximum 10/6 and zero saturation |
+| Full 200-pair/400-game comparison | Not run: the equal-iteration preliminary result did not favor quiescence, so the strength gate failed |
+
+The probe solved real frontier positions and stayed operationally healthy, but its low solution
+rate did not offset its extra work. Reducing iterations to match latency made the candidate much
+weaker. These results are not evidence for promotion; `RolloutOnly` remains the engine and
+website default.
+
+The tactical regression fixture derived from arena pair 103 preserves a real escape: before the
+critical move, Player 2 at `(6,2)` has five legal defenses, and `(5,3)` is the only one the bounded
+forcing search does not refute. The frozen Tactical bot chose `(7,3)` and allowed a same-player
+rebound attack to reach goal. The probe must keep the root Unknown because of the surviving
+escape, while proving representative tempting alternatives losing. This fixture came from the
+arena baseline; no `papersoccer.human-match.v1` export was supplied or committed for this work.
+
+TacticalQuiescence remains experimental unless its correctness fixtures pass, supplied human
+exploit fixtures improve without regression, the full paired arena result has a 95% lower bound
+above 50%, native and Wasm latency remain acceptable, and truncation, rebuild, and saturation
+rates remain healthy. Even if those gates pass, the website default should remain RolloutOnly
+unless human-game evidence is strong enough to justify promotion.
+
+For historical context, the current Tactical RolloutOnly baseline was promoted on July 14, 2026
+after a 389-11 result over 200 color-swapped seed pairs against the older Uniform, non-reusing
+reference, with no illegal moves or truncations and a 95.5% to 98.75% paired bootstrap interval.
+Those measurements established the frozen reference; they are not evidence for experimental
+quiescence.
 
 The full promotion tournament is intentionally not part of CTest. CTest runs low-budget support
 and CLI smoke tests, parses both report modes as JSON, and verifies paired accounting without
@@ -195,7 +316,9 @@ For the equivalent Emscripten `positions` report, use the arena built with the p
 ```bash
 emcmake cmake -S . -B build/wasm-arena -DCMAKE_BUILD_TYPE=Release
 cmake --build build/wasm-arena --target papersoccer_arena
-node build/wasm-arena/papersoccer_arena.js positions --positions 16 > wasm-positions.json
+node build/wasm-arena/papersoccer_arena.js positions --positions 32 > wasm-positions.json
+node build/wasm-arena/papersoccer_arena.js matches --pairs 20 \
+  > wasm-quiescence-equal-iterations-20-pairs.json
 ```
 
 The checked-in browser engine's default-path timing can also be probed with:
@@ -204,9 +327,10 @@ The checked-in browser engine's default-path timing can also be probed with:
 node benchmarks/wasm_mcts.mjs 2000 9
 ```
 
-The promoted Wasm initial-position median was 57.700 ms on the gate machine, below its previous
-174.120 ms baseline. Use the Wasm arena report when policy configuration and completed MCTS
-counters need to match the native `positions` benchmark exactly.
+The historical Tactical RolloutOnly Wasm initial-position median was 57.700 ms on the gate
+machine, below its previous 174.120 ms baseline. These figures do not measure quiescence. Use the
+Wasm arena report when policy configuration and completed MCTS and tactical counters need to
+match the native `positions` benchmark exactly.
 
 ## Run CLI
 
@@ -239,7 +363,8 @@ a single iteration budget applied to every MCTS move; pressing Enter accepts the
 `2,000` iterations.
 Player 1 uses the relevant base seed and Player 2 uses `base_seed + 1`. After every MCTS move,
 the CLI prints new iterations, tree size, rollout plies, total and reused root visits, maximum
-depth, proof/rebuild information, saturation, and the Player-1-oriented root value estimate.
+depth, tactical probe work, proof/rebuild information, saturation, and the Player-1-oriented root
+value estimate.
 
 Rule examples above use the engine's `Point{x, y}` order. User-facing coordinates in the
 CLI and renderer are shown as `(row, column)`, which corresponds to `(y, x)`. For example,

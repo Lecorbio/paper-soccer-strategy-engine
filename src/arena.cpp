@@ -137,6 +137,12 @@ struct MctsSummary {
   std::uint32_t max_depth{};
   std::uint64_t proven_nodes_sum{};
   std::size_t proven_searches{};
+  std::uint64_t tactical_probes{};
+  std::uint64_t tactical_nodes{};
+  std::uint64_t tactical_solved_positions{};
+  std::uint64_t tactical_depth_cutoffs{};
+  std::uint64_t tactical_node_cutoffs{};
+  std::uint32_t max_tactical_depth{};
   std::uint64_t rebuild_count_max{};
   std::size_t expansion_saturated_searches{};
 };
@@ -172,6 +178,11 @@ std::string_view policy_name(MctsRolloutPolicy policy) noexcept {
   return policy == MctsRolloutPolicy::Uniform ? "uniform" : "tactical";
 }
 
+std::string_view leaf_policy_name(MctsLeafPolicy policy) noexcept {
+  return policy == MctsLeafPolicy::RolloutOnly ? "rollout_only"
+                                               : "tactical_quiescence";
+}
+
 std::string_view kind_name(BotKind kind) noexcept {
   return kind == BotKind::Random ? "random" : "mcts";
 }
@@ -184,6 +195,10 @@ void validate_rules(const RulesConfig &rules) {
 
 void validate_bot_config(const ArenaBotConfig &config) {
   if (config.kind == BotKind::Mcts) {
+    if (config.leaf_policy != MctsLeafPolicy::RolloutOnly &&
+        config.leaf_policy != MctsLeafPolicy::TacticalQuiescence) {
+      throw std::invalid_argument("arena MCTS leaf policy is unknown");
+    }
     if (config.iterations == 0) {
       throw std::invalid_argument("arena MCTS iterations must be greater than zero");
     }
@@ -193,6 +208,25 @@ void validate_bot_config(const ArenaBotConfig &config) {
     }
     if (config.max_nodes < 2) {
       throw std::invalid_argument("arena MCTS max nodes must be at least 2");
+    }
+    if (config.quiescence_max_depth == 0 ||
+        config.quiescence_max_depth >
+            MctsConfig::maximum_quiescence_max_depth) {
+      throw std::invalid_argument(
+          "arena MCTS quiescence max depth must be between 1 and " +
+          std::to_string(MctsConfig::maximum_quiescence_max_depth));
+    }
+    if (config.quiescence_max_nodes == 0 ||
+        config.quiescence_max_nodes >
+            MctsConfig::maximum_quiescence_max_nodes) {
+      throw std::invalid_argument(
+          "arena MCTS quiescence max nodes must be between 1 and " +
+          std::to_string(MctsConfig::maximum_quiescence_max_nodes));
+    }
+    if (config.leaf_policy == MctsLeafPolicy::TacticalQuiescence &&
+        config.rollout_policy != MctsRolloutPolicy::Tactical) {
+      throw std::invalid_argument(
+          "arena tactical quiescence requires the tactical rollout policy");
     }
   }
 }
@@ -217,6 +251,9 @@ std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
   mcts.rollout_policy = config.rollout_policy;
   mcts.reuse_tree = config.reuse_tree;
   mcts.max_nodes = config.max_nodes;
+  mcts.leaf_policy = config.leaf_policy;
+  mcts.quiescence_max_depth = config.quiescence_max_depth;
+  mcts.quiescence_max_nodes = config.quiescence_max_nodes;
   return std::make_unique<MctsBot>(mcts);
 }
 
@@ -399,6 +436,13 @@ MctsSummary summarize_mcts(
     summary.max_depth = std::max(summary.max_depth, stats.max_depth);
     summary.proven_nodes_sum += stats.proven_nodes;
     summary.proven_searches += stats.proven_winner.has_value() ? 1U : 0U;
+    summary.tactical_probes += stats.tactical_probes;
+    summary.tactical_nodes += stats.tactical_nodes;
+    summary.tactical_solved_positions += stats.tactical_solved_positions;
+    summary.tactical_depth_cutoffs += stats.tactical_depth_cutoffs;
+    summary.tactical_node_cutoffs += stats.tactical_node_cutoffs;
+    summary.max_tactical_depth =
+        std::max(summary.max_tactical_depth, stats.max_tactical_depth);
     summary.rebuild_count_max =
         std::max(summary.rebuild_count_max, stats.rebuild_count);
     summary.expansion_saturated_searches += stats.expansion_saturated ? 1U : 0U;
@@ -553,6 +597,10 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
     out << ",\"iterations\":" << config.iterations
         << ",\"exploration\":" << config.exploration << ",\"rollout_policy\":";
     write_string(out, policy_name(config.rollout_policy));
+    out << ",\"leaf_policy\":";
+    write_string(out, leaf_policy_name(config.leaf_policy));
+    out << ",\"quiescence_max_depth\":" << config.quiescence_max_depth
+        << ",\"quiescence_max_nodes\":" << config.quiescence_max_nodes;
     out << ",\"reuse_tree\":";
     write_bool(out, config.reuse_tree);
     out << ",\"max_nodes\":" << config.max_nodes;
@@ -574,7 +622,14 @@ void write_stats(std::ostream &out, const SearchStats &stats) {
   } else {
     out << "null";
   }
-  out << ",\"rebuild_count\":" << stats.rebuild_count
+  out << ",\"tactical_probes\":" << stats.tactical_probes
+      << ",\"tactical_nodes\":" << stats.tactical_nodes
+      << ",\"tactical_solved_positions\":"
+      << stats.tactical_solved_positions
+      << ",\"tactical_depth_cutoffs\":" << stats.tactical_depth_cutoffs
+      << ",\"tactical_node_cutoffs\":" << stats.tactical_node_cutoffs
+      << ",\"max_tactical_depth\":" << stats.max_tactical_depth
+      << ",\"rebuild_count\":" << stats.rebuild_count
       << ",\"expansion_saturated\":";
   write_bool(out, stats.expansion_saturated);
   out << '}';
@@ -632,6 +687,11 @@ void write_timing(std::ostream &out, const TimingSummary &summary) {
 }
 
 void write_mcts_summary(std::ostream &out, const MctsSummary &summary) {
+  const double tactical_solution_rate =
+      summary.tactical_probes == 0
+          ? 0.0
+          : static_cast<double>(summary.tactical_solved_positions) /
+                static_cast<double>(summary.tactical_probes);
   out << "{\"searches\":" << summary.searches
       << ",\"iterations\":" << summary.iterations
       << ",\"nodes_sum\":" << summary.nodes_sum
@@ -641,6 +701,14 @@ void write_mcts_summary(std::ostream &out, const MctsSummary &summary) {
       << ",\"max_depth\":" << summary.max_depth
       << ",\"proven_nodes_sum\":" << summary.proven_nodes_sum
       << ",\"proven_searches\":" << summary.proven_searches
+      << ",\"tactical_probes\":" << summary.tactical_probes
+      << ",\"tactical_nodes\":" << summary.tactical_nodes
+      << ",\"tactical_solved_positions\":"
+      << summary.tactical_solved_positions
+      << ",\"tactical_solution_rate\":" << tactical_solution_rate
+      << ",\"tactical_depth_cutoffs\":" << summary.tactical_depth_cutoffs
+      << ",\"tactical_node_cutoffs\":" << summary.tactical_node_cutoffs
+      << ",\"max_tactical_depth\":" << summary.max_tactical_depth
       << ",\"rebuild_count_max\":" << summary.rebuild_count_max
       << ",\"expansion_saturated_searches\":"
       << summary.expansion_saturated_searches << '}';

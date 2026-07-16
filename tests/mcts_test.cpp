@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,7 +54,21 @@ bool same_stats(const ps::SearchStats &lhs, const ps::SearchStats &rhs) {
          lhs.proven_nodes == rhs.proven_nodes &&
          lhs.proven_winner == rhs.proven_winner &&
          lhs.rebuild_count == rhs.rebuild_count &&
-         lhs.expansion_saturated == rhs.expansion_saturated;
+         lhs.expansion_saturated == rhs.expansion_saturated &&
+         lhs.tactical_probes == rhs.tactical_probes &&
+         lhs.tactical_nodes == rhs.tactical_nodes &&
+         lhs.tactical_solved_positions == rhs.tactical_solved_positions &&
+         lhs.tactical_depth_cutoffs == rhs.tactical_depth_cutoffs &&
+         lhs.tactical_node_cutoffs == rhs.tactical_node_cutoffs &&
+         lhs.max_tactical_depth == rhs.max_tactical_depth;
+}
+
+bool has_no_tactical_probe_work(const ps::SearchStats &stats) {
+  return stats.tactical_probes == 0 && stats.tactical_nodes == 0 &&
+         stats.tactical_solved_positions == 0 &&
+         stats.tactical_depth_cutoffs == 0 &&
+         stats.tactical_node_cutoffs == 0 &&
+         stats.max_tactical_depth == 0;
 }
 
 ps::GameState make_clean_state_at(ps::Point point,
@@ -166,6 +181,126 @@ ps::GameState make_self_trap_choice() {
   return state;
 }
 
+ps::GameState make_forced_rebound_goal(ps::Player player) {
+  const bool player_one = player == ps::Player::One;
+  const ps::Point root{4, player_one ? 3 : 9};
+  const ps::Point first_rebound{4, player_one ? 2 : 10};
+  const ps::Point second_rebound{4, player_one ? 1 : 11};
+  const ps::Point goal{4, player_one ? 0 : 12};
+
+  ps::GameState state = make_clean_state_at(root, player);
+  state.visit_count[first_rebound] = 1;
+  state.visit_count[second_rebound] = 1;
+  block_edges_except(state, root, {first_rebound});
+  block_edges_except(state, first_rebound, {root, second_rebound});
+  block_edges_except(state, second_rebound, {first_rebound, goal});
+  return state;
+}
+
+ps::GameState make_rebound_goal_choice() {
+  const ps::Point root{4, 3};
+  const ps::Point winning_rebound{4, 2};
+  const ps::Point second_rebound{4, 1};
+  const ps::Point goal{4, 0};
+  const ps::Point quiet_alternative{5, 3};
+
+  ps::GameState state = make_clean_state_at(root, ps::Player::One);
+  state.visit_count[winning_rebound] = 1;
+  state.visit_count[second_rebound] = 1;
+  block_edges_except(state, root, {winning_rebound, quiet_alternative});
+  block_edges_except(state, winning_rebound, {root, second_rebound});
+  block_edges_except(state, second_rebound, {winning_rebound, goal});
+  return state;
+}
+
+ps::GameState make_delayed_trap(ps::Player player) {
+  const bool player_one = player == ps::Player::One;
+  const ps::Point root{4, player_one ? 5 : 7};
+  const ps::Point rebound{4, player_one ? 4 : 8};
+  const ps::Point trapped_reply{4, player_one ? 3 : 9};
+
+  ps::GameState state = make_clean_state_at(root, player);
+  state.visit_count[rebound] = 1;
+  block_edges_except(state, root, {rebound});
+  block_edges_except(state, rebound, {root, trapped_reply});
+  block_edges_except(state, trapped_reply, {rebound});
+  return state;
+}
+
+ps::GameState make_every_reply_loses(ps::Player losing_player) {
+  const bool player_two_loses = losing_player == ps::Player::Two;
+  const ps::Point root{4, player_two_loses ? 3 : 9};
+  const ps::Point left{3, player_two_loses ? 2 : 10};
+  const ps::Point right{5, player_two_loses ? 2 : 10};
+  const ps::Point rebound{4, player_two_loses ? 1 : 11};
+  const ps::Point goal{4, player_two_loses ? 0 : 12};
+
+  ps::GameState state = make_clean_state_at(root, losing_player);
+  state.visit_count[rebound] = 1;
+  block_edges_except(state, root, {left, right});
+  block_edges_except(state, left, {root, rebound});
+  block_edges_except(state, right, {root, rebound});
+  block_edges_except(state, rebound, {left, right, goal});
+  return state;
+}
+
+ps::GameState make_rebound_attack_with_one_escape() {
+  const ps::Point root{4, 5};
+  const ps::Point attacking_rebound{4, 4};
+  const ps::Point defense{4, 3};
+  const ps::Point losing_left{3, 2};
+  const ps::Point losing_center{4, 2};
+  const ps::Point safe_rebound{5, 3};
+  const ps::Point safe_second_rebound{6, 3};
+  const ps::Point safe_exit{7, 4};
+  const ps::Point goal_rebound{4, 1};
+  const ps::Point goal{4, 0};
+
+  ps::GameState state = make_clean_state_at(root, ps::Player::One);
+  state.visit_count[attacking_rebound] = 1;
+  state.visit_count[safe_rebound] = 1;
+  state.visit_count[safe_second_rebound] = 1;
+  state.visit_count[goal_rebound] = 1;
+  block_edges_except(state, root, {attacking_rebound});
+  block_edges_except(state, attacking_rebound, {root, defense});
+  block_edges_except(state, defense,
+                     {attacking_rebound, losing_left, losing_center,
+                      safe_rebound});
+  block_edges_except(state, losing_left, {defense, goal_rebound});
+  block_edges_except(state, losing_center, {defense, goal_rebound});
+  block_edges_except(state, goal_rebound,
+                     {losing_left, losing_center, goal});
+  block_edges_except(state, safe_rebound,
+                     {defense, safe_second_rebound});
+  block_edges_except(state, safe_second_rebound,
+                     {safe_rebound, safe_exit});
+  return state;
+}
+
+ps::GameState state_after_path(std::initializer_list<ps::Point> path) {
+  ps::GameState state = ps::make_initial_state();
+  for (const ps::Point point : path) {
+    state = ps::apply_move(state, ps::Move{point});
+  }
+  return state;
+}
+
+ps::detail::TacticalProbeResult probe_state(
+    const ps::GameState &state, std::uint32_t max_depth = 8,
+    std::uint32_t max_nodes = 256) {
+  auto topology =
+      std::make_shared<ps::detail::SearchTopology>(state.config);
+  ps::detail::SearchPosition position(topology, state);
+  const ps::detail::SearchPosition original(position);
+  const std::size_t original_depth = position.undo_depth();
+  const ps::detail::TacticalProbeResult result =
+      ps::detail::run_tactical_probe(position, max_depth, max_nodes);
+  require(position.undo_depth() == original_depth &&
+              position.same_compact_state(original),
+          "A tactical probe must restore the exact compact position.");
+  return result;
+}
+
 ps::MctsConfig config_with(std::uint64_t seed, std::uint32_t iterations,
                            double exploration) {
   ps::MctsConfig config;
@@ -193,6 +328,16 @@ ps::MctsConfig tactical_config(std::uint64_t seed,
   config.rollout_policy = ps::MctsRolloutPolicy::Tactical;
   config.reuse_tree = reuse_tree;
   config.max_nodes = max_nodes;
+  return config;
+}
+
+ps::MctsConfig quiescence_config(std::uint64_t seed,
+                                 std::uint32_t iterations,
+                                 bool reuse_tree = false,
+                                 std::size_t max_nodes = 65536) {
+  ps::MctsConfig config =
+      tactical_config(seed, iterations, reuse_tree, max_nodes);
+  config.leaf_policy = ps::MctsLeafPolicy::TacticalQuiescence;
   return config;
 }
 
@@ -235,9 +380,12 @@ struct MctsGameTrace {
   std::vector<ps::SearchStats> searches{};
 };
 
-MctsGameTrace play_reusing_tactical_game() {
+MctsGameTrace play_reusing_tactical_game(
+    ps::MctsLeafPolicy leaf_policy = ps::MctsLeafPolicy::RolloutOnly) {
   ps::MctsConfig player_one_config = tactical_config(149, 32, true, 4096);
   ps::MctsConfig player_two_config = tactical_config(151, 32, true, 4096);
+  player_one_config.leaf_policy = leaf_policy;
+  player_two_config.leaf_policy = leaf_policy;
   ps::MctsBot player_one(player_one_config);
   ps::MctsBot player_two(player_two_config);
   ps::GameState state = ps::make_initial_state();
@@ -270,9 +418,12 @@ void mcts_bot_chooses_a_legal_move_and_reports_its_name() {
 void mcts_defaults_use_promoted_tactical_search() {
   const ps::MctsConfig config;
   require(config.rollout_policy == ps::MctsRolloutPolicy::Tactical &&
-              config.reuse_tree && config.max_nodes == 65536,
+              config.reuse_tree && config.max_nodes == 65536 &&
+              config.leaf_policy == ps::MctsLeafPolicy::RolloutOnly &&
+              config.quiescence_max_depth == 8 &&
+              config.quiescence_max_nodes == 256,
           "The promoted MCTS defaults should use tactical rollouts, reuse, and "
-          "the fixed node bound.");
+          "the fixed node bound while keeping quiescence experimental.");
 }
 
 void identical_searches_produce_identical_moves_and_statistics() {
@@ -449,6 +600,40 @@ void invalid_mcts_configurations_are_rejected() {
       [&] { (void)ps::MctsBot(too_few_nodes); },
       "MctsBot should reject a tree bound smaller than two nodes.");
 
+  ps::MctsConfig zero_quiescence_depth = config_with(47, 1, 1.0);
+  zero_quiescence_depth.quiescence_max_depth = 0;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(zero_quiescence_depth); },
+      "MctsBot should reject a zero quiescence depth even while disabled.");
+  ps::MctsConfig excessive_quiescence_depth = config_with(47, 1, 1.0);
+  excessive_quiescence_depth.quiescence_max_depth =
+      ps::MctsConfig::maximum_quiescence_max_depth + 1U;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(excessive_quiescence_depth); },
+      "MctsBot should reject an excessive quiescence depth.");
+  ps::MctsConfig zero_quiescence_nodes = config_with(47, 1, 1.0);
+  zero_quiescence_nodes.quiescence_max_nodes = 0;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(zero_quiescence_nodes); },
+      "MctsBot should reject a zero quiescence node budget even while disabled.");
+  ps::MctsConfig excessive_quiescence_nodes = config_with(47, 1, 1.0);
+  excessive_quiescence_nodes.quiescence_max_nodes =
+      ps::MctsConfig::maximum_quiescence_max_nodes + 1U;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(excessive_quiescence_nodes); },
+      "MctsBot should reject an excessive quiescence node budget.");
+  ps::MctsConfig uniform_quiescence = reference_config(47, 1);
+  uniform_quiescence.leaf_policy =
+      ps::MctsLeafPolicy::TacticalQuiescence;
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(uniform_quiescence); },
+      "Tactical quiescence should require the Tactical fallback rollout.");
+  ps::MctsConfig unknown_leaf_policy = config_with(47, 1, 1.0);
+  unknown_leaf_policy.leaf_policy = static_cast<ps::MctsLeafPolicy>(99);
+  require_invalid_argument(
+      [&] { (void)ps::MctsBot(unknown_leaf_policy); },
+      "MctsBot should reject an unknown leaf policy.");
+
   const ps::GameState state = ps::make_initial_state();
   require_invalid_argument(
       [&] { (void)ps::MctsSearch(state, 47, -1.0); },
@@ -472,6 +657,230 @@ void compact_search_position_matches_authoritative_rules() {
               "Seeded differential games should reach a terminal position.");
     }
   }
+}
+
+void tactical_probe_proves_multi_rebound_goals_for_both_players() {
+  for (const ps::Player player : {ps::Player::One, ps::Player::Two}) {
+    ps::GameState state = make_forced_rebound_goal(player);
+    for (int rebound = 0; rebound < 2; ++rebound) {
+      const std::vector<ps::Move> moves = ps::legal_moves(state);
+      require(moves.size() == 1,
+              "The rebound-goal fixture should remain forced.");
+      state = ps::apply_move(state, moves.front());
+      require(!ps::is_terminal(state) && state.to_move == player,
+              "Consecutive rebounds must retain the actual player to move.");
+    }
+
+    const ps::detail::TacticalProbeResult result =
+        probe_state(make_forced_rebound_goal(player));
+    require(result.proven_winner == player &&
+                result.proving_move ==
+                    ps::legal_moves(make_forced_rebound_goal(player)).front() &&
+                result.stats.nodes == 4 &&
+                result.stats.max_depth == 3 &&
+                !result.stats.depth_cutoff && !result.stats.node_cutoff,
+            "The probe should prove a three-move same-player rebound goal.");
+  }
+}
+
+void tactical_probe_handles_immediate_and_delayed_traps() {
+  for (const ps::Player player : {ps::Player::One, ps::Player::Two}) {
+    const ps::Point root{4, player == ps::Player::One ? 5 : 7};
+    const ps::Point trap{3, root.y};
+    ps::GameState immediate = make_clean_state_at(root, player);
+    block_edges_except(immediate, root, {trap});
+    block_edges_except(immediate, trap, {root});
+    require(ps::winner(ps::apply_move(immediate, ps::Move{trap})) == player,
+            "The immediate trap should block the opponent after one move.");
+    require(probe_state(immediate).proven_winner == player,
+            "The probe should prove an immediate terminal trap.");
+
+    const ps::GameState delayed = make_delayed_trap(player);
+    const ps::GameState after_rebound =
+        ps::apply_move(delayed, ps::legal_moves(delayed).front());
+    require(!ps::is_terminal(after_rebound) &&
+                after_rebound.to_move == player,
+            "The delayed trap should first require a same-player rebound.");
+    require(probe_state(delayed).proven_winner == player,
+            "The probe should prove the delayed trapping sequence.");
+  }
+}
+
+void tactical_probe_proves_a_loss_only_after_every_reply_loses() {
+  for (const ps::Player losing_player : {ps::Player::One, ps::Player::Two}) {
+    const ps::GameState state = make_every_reply_loses(losing_player);
+    require(ps::legal_moves(state).size() == 2,
+            "The all-replies-lose fixture should expose two defenses.");
+    for (const ps::Move move : ps::legal_moves(state)) {
+      const ps::GameState child = ps::apply_move(state, move);
+      const auto child_result = probe_state(child);
+      require(child_result.proven_winner == ps::opponent(losing_player),
+              "Every individual defense should retain the opponent's win.");
+    }
+    require(probe_state(state).proven_winner == ps::opponent(losing_player),
+            "A loss should be proven after all authoritative replies lose.");
+  }
+}
+
+void tactical_probe_keeps_a_rebound_attack_unknown_when_one_escape_survives() {
+  const ps::GameState attack = make_rebound_attack_with_one_escape();
+  const ps::detail::TacticalProbeResult attack_result = probe_state(attack);
+  require(!attack_result.proven_winner.has_value(),
+          "A tempting rebound attack must remain unknown when the defender can escape.");
+
+  ps::GameState defense = attack;
+  for (int move = 0; move < 2; ++move) {
+    const std::vector<ps::Move> forced = ps::legal_moves(defense);
+    require(forced.size() == 1,
+            "The attack prefix should contain two forced moves.");
+    defense = ps::apply_move(defense, forced.front());
+  }
+  require(defense.to_move == ps::Player::Two &&
+              ps::legal_moves(defense).size() == 3,
+          "The defender should face three replies after the rebound combination.");
+
+  for (const ps::Move reply : ps::legal_moves(defense)) {
+    const ps::GameState child = ps::apply_move(defense, reply);
+    const ps::detail::TacticalProbeResult child_result = probe_state(child);
+    if (reply == ps::Move{{5, 3}}) {
+      ps::GameState escaped = child;
+      require(escaped.to_move == ps::Player::Two &&
+                  ps::legal_moves(escaped).size() == 1,
+              "The safe defense should begin with a forced Player Two rebound.");
+      escaped = ps::apply_move(escaped, ps::legal_moves(escaped).front());
+      require(escaped.to_move == ps::Player::Two &&
+                  ps::legal_moves(escaped).size() == 1,
+              "The forced defense should preserve Player Two across two levels.");
+      escaped = ps::apply_move(escaped, ps::legal_moves(escaped).front());
+      require(!ps::is_terminal(escaped) &&
+                  escaped.to_move == ps::Player::One,
+              "The defensive rebound chain should escape into a quiet position.");
+      require(!child_result.proven_winner.has_value(),
+              "The multi-rebound defensive escape should reach a quiet unknown state.");
+    } else {
+      require(child_result.proven_winner == ps::Player::One,
+              "Each tempting alternative should lose to the forced goal sequence.");
+    }
+  }
+
+  require(!probe_state(defense).proven_winner.has_value(),
+          "One surviving defense must prevent a false attacker proof.");
+}
+
+void tactical_probe_preserves_the_escape_from_an_arena_failure() {
+  // Minimized from the frozen arena report's pair 103 loss: Tactical chose
+  // (7,3), while (5,3) was the only defense not refuted by the forcing search.
+  const ps::GameState state = state_after_path({
+      {5, 5}, {6, 5}, {7, 4}, {6, 4}, {5, 3}, {5, 4}, {4, 3}, {5, 3},
+      {4, 4}, {4, 3}, {3, 2}, {2, 3}, {1, 2}, {2, 1}, {3, 2}, {3, 1},
+      {2, 2}, {3, 2}, {4, 1}, {5, 1}, {6, 2}, {6, 1}, {5, 2}, {6, 2},
+  });
+  const std::vector<ps::Move> moves = ps::legal_moves(state);
+  const std::vector<ps::Move> expected{
+      {{5, 3}}, {{6, 3}}, {{7, 1}}, {{7, 2}}, {{7, 3}},
+  };
+  require(state.ball == ps::Point{6, 2} &&
+              state.to_move == ps::Player::Two && moves == expected,
+          "The arena regression should retain its five defenses in legal order.");
+
+  require(!probe_state(state, 8, 2048).proven_winner.has_value(),
+          "The surviving arena defense must keep the root result Unknown.");
+  require(!probe_state(ps::apply_move(state, moves[0]), 8, 2048)
+               .proven_winner.has_value(),
+          "The (5,3) escape should remain unrefuted.");
+  require(probe_state(ps::apply_move(state, moves[1]), 8, 2048)
+              .proven_winner == ps::Player::One &&
+              probe_state(ps::apply_move(state, moves[2]), 8, 2048)
+                      .proven_winner == ps::Player::One,
+          "The probe should refute representative losing alternatives.");
+}
+
+void tactical_probe_cutoffs_are_unknown_and_restore_the_position() {
+  const ps::GameState forcing = make_forced_rebound_goal(ps::Player::One);
+  const ps::detail::TacticalProbeResult depth_limited =
+      probe_state(forcing, 2, 256);
+  require(!depth_limited.proven_winner.has_value() &&
+              depth_limited.stats.depth_cutoff &&
+              !depth_limited.stats.node_cutoff &&
+              depth_limited.stats.max_depth == 2,
+          "A nonterminal depth boundary should return Unknown.");
+
+  const ps::detail::TacticalProbeResult node_limited =
+      probe_state(forcing, 8, 2);
+  require(!node_limited.proven_winner.has_value() &&
+              node_limited.stats.node_cutoff &&
+              node_limited.stats.nodes == 2,
+          "Exhausting the tactical node budget should return Unknown without overshoot.");
+
+  const ps::detail::TacticalProbeResult quiet =
+      probe_state(ps::make_initial_state());
+  require(!quiet.proven_winner.has_value() && quiet.stats.nodes == 1 &&
+              !quiet.stats.depth_cutoff && !quiet.stats.node_cutoff,
+          "A quiet position should return Unknown without reporting a cutoff.");
+}
+
+void quiescence_proofs_propagate_from_the_mcts_frontier() {
+  const ps::GameState state = make_forced_rebound_goal(ps::Player::One);
+  ps::MctsBot bot(quiescence_config(173, 64));
+
+  require(bot.choose_move(state) == ps::legal_moves(state).front(),
+          "The integrated search should follow the forced rebound.");
+  const ps::SearchStats stats = bot.last_search_stats();
+  require(stats.iterations == 1 && stats.proven_winner == ps::Player::One &&
+              stats.proven_nodes >= 2 && stats.simulated_plies == 0 &&
+              stats.tactical_probes == 1 &&
+              stats.tactical_solved_positions == 1 &&
+              stats.tactical_nodes == 3 && stats.max_tactical_depth == 2,
+          "A frontier proof should supply the exact reward, mark the node, and stop the root.");
+}
+
+void a_quiescence_proven_root_retains_its_proving_move() {
+  const ps::GameState state = make_rebound_goal_choice();
+  const ps::Move winning_move{{4, 2}};
+  bool exercised_saturated_root = false;
+
+  for (std::uint64_t seed = 1; seed <= 64; ++seed) {
+    ps::MctsConfig config = quiescence_config(seed, 2, false, 2);
+    ps::MctsBot bot(config);
+    const ps::Move chosen = bot.choose_move(state);
+    const ps::SearchStats stats = bot.last_search_stats();
+    if (!stats.expansion_saturated) {
+      continue;
+    }
+    exercised_saturated_root = true;
+    require(stats.proven_winner == ps::Player::One &&
+                chosen == winning_move,
+            "A saturated root must choose the move identified by its tactical proof.");
+    break;
+  }
+
+  require(exercised_saturated_root,
+          "The principal-move fixture should exercise a saturated proven root.");
+}
+
+void unknown_quiescence_probes_do_not_consume_rollout_rng() {
+  const ps::GameState state = ps::make_initial_state();
+  ps::MctsConfig rollout_config = tactical_config(179, 1);
+  ps::MctsConfig probe_config = rollout_config;
+  probe_config.leaf_policy = ps::MctsLeafPolicy::TacticalQuiescence;
+  ps::MctsBot rollout_only(rollout_config);
+  ps::MctsBot with_probe(probe_config);
+
+  const ps::Move rollout_move = rollout_only.choose_move(state);
+  const ps::Move probe_move = with_probe.choose_move(state);
+  const ps::SearchStats rollout_stats = rollout_only.last_search_stats();
+  const ps::SearchStats probe_stats = with_probe.last_search_stats();
+  require(probe_move == rollout_move &&
+              probe_stats.iterations == rollout_stats.iterations &&
+              probe_stats.nodes == rollout_stats.nodes &&
+              probe_stats.simulated_plies == rollout_stats.simulated_plies &&
+              probe_stats.root_value == rollout_stats.root_value &&
+              probe_stats.total_root_visits == rollout_stats.total_root_visits,
+          "An unknown probe should leave the existing Tactical rollout RNG stream unchanged.");
+  require(probe_stats.tactical_probes == 1 &&
+              probe_stats.tactical_solved_positions == 0 &&
+              has_no_tactical_probe_work(rollout_stats),
+          "Probe work should be counted separately and remain zero when disabled.");
 }
 
 void uniform_non_reusing_search_preserves_reference_fixtures() {
@@ -531,6 +940,39 @@ void uniform_non_reusing_game_preserves_reference_path() {
   }
   require(state.path == expected,
           "Uniform non-reusing play should preserve the complete reference match.");
+}
+
+void tactical_rollout_only_preserves_frozen_reference_fixtures() {
+  {
+    const ps::GameState state = ps::make_initial_state();
+    ps::MctsBot bot(tactical_config(101, 64));
+    require(bot.choose_move(state) == ps::Move{{4, 5}},
+            "Tactical RolloutOnly should preserve its frozen opening move.");
+    const ps::SearchStats stats = bot.last_search_stats();
+    require(stats.iterations == 64 && stats.nodes == 65 &&
+                stats.simulated_plies == 4438 && stats.root_value == 0.0 &&
+                stats.total_root_visits == 64 && stats.reused_visits == 0 &&
+                stats.max_depth == 3 && stats.proven_nodes == 0 &&
+                !stats.proven_winner.has_value() && stats.rebuild_count == 0 &&
+                !stats.expansion_saturated && has_no_tactical_probe_work(stats),
+            "Disabling the probe should preserve every frozen Tactical counter.");
+  }
+
+  const std::vector<ps::Point> expected{
+      {4, 6}, {5, 5}, {6, 4}, {6, 5}, {6, 6}, {7, 5}, {6, 4},
+      {7, 3}, {6, 3}, {7, 2}, {7, 1}, {6, 2}, {6, 3}, {5, 4},
+      {4, 3}, {3, 4}, {4, 5}, {4, 6}, {4, 7}, {3, 7}, {4, 6},
+      {5, 7}, {4, 7}, {5, 6}, {6, 7}, {6, 6}, {5, 6}, {6, 5},
+      {5, 4}, {5, 3}, {6, 4}, {7, 4}, {7, 3}, {6, 2}, {5, 1},
+      {4, 0},
+  };
+  const MctsGameTrace trace = play_reusing_tactical_game();
+  require(trace.path == expected,
+          "Tactical RolloutOnly should preserve its complete frozen game.");
+  for (const ps::SearchStats &stats : trace.searches) {
+    require(has_no_tactical_probe_work(stats),
+            "The frozen reference game must perform no tactical probe work.");
+  }
 }
 
 void tactical_rollouts_block_immediate_goals_for_both_players() {
@@ -687,6 +1129,25 @@ void reusing_tactical_games_are_fully_reproducible() {
   }
 }
 
+void reusing_quiescence_games_are_fully_reproducible() {
+  const MctsGameTrace first = play_reusing_tactical_game(
+      ps::MctsLeafPolicy::TacticalQuiescence);
+  const MctsGameTrace second = play_reusing_tactical_game(
+      ps::MctsLeafPolicy::TacticalQuiescence);
+  require(first.path == second.path &&
+              first.searches.size() == second.searches.size(),
+          "Identical quiescence seeds should reproduce a complete game.");
+  bool observed_probe = false;
+  for (std::size_t index = 0; index < first.searches.size(); ++index) {
+    require(same_stats(first.searches[index], second.searches[index]),
+            "Every deterministic quiescence counter should reproduce.");
+    observed_probe =
+        observed_probe || first.searches[index].tactical_probes != 0;
+  }
+  require(observed_probe,
+          "The reproducibility game should exercise the tactical probe.");
+}
+
 void copied_mcts_bots_preserve_live_search_state() {
   ps::MctsConfig config = reference_config(157, 128);
   config.reuse_tree = true;
@@ -759,10 +1220,30 @@ int run_mcts_tests() {
        invalid_mcts_configurations_are_rejected},
       {"compact_search_position_matches_authoritative_rules",
        compact_search_position_matches_authoritative_rules},
+      {"tactical_probe_proves_multi_rebound_goals_for_both_players",
+       tactical_probe_proves_multi_rebound_goals_for_both_players},
+      {"tactical_probe_handles_immediate_and_delayed_traps",
+       tactical_probe_handles_immediate_and_delayed_traps},
+      {"tactical_probe_proves_a_loss_only_after_every_reply_loses",
+       tactical_probe_proves_a_loss_only_after_every_reply_loses},
+      {"tactical_probe_keeps_a_rebound_attack_unknown_when_one_escape_survives",
+       tactical_probe_keeps_a_rebound_attack_unknown_when_one_escape_survives},
+      {"tactical_probe_preserves_the_escape_from_an_arena_failure",
+       tactical_probe_preserves_the_escape_from_an_arena_failure},
+      {"tactical_probe_cutoffs_are_unknown_and_restore_the_position",
+       tactical_probe_cutoffs_are_unknown_and_restore_the_position},
+      {"quiescence_proofs_propagate_from_the_mcts_frontier",
+       quiescence_proofs_propagate_from_the_mcts_frontier},
+      {"a_quiescence_proven_root_retains_its_proving_move",
+       a_quiescence_proven_root_retains_its_proving_move},
+      {"unknown_quiescence_probes_do_not_consume_rollout_rng",
+       unknown_quiescence_probes_do_not_consume_rollout_rng},
       {"uniform_non_reusing_search_preserves_reference_fixtures",
        uniform_non_reusing_search_preserves_reference_fixtures},
       {"uniform_non_reusing_game_preserves_reference_path",
        uniform_non_reusing_game_preserves_reference_path},
+      {"tactical_rollout_only_preserves_frozen_reference_fixtures",
+       tactical_rollout_only_preserves_frozen_reference_fixtures},
       {"tactical_rollouts_block_immediate_goals_for_both_players",
        tactical_rollouts_block_immediate_goals_for_both_players},
       {"tactical_rollouts_avoid_terminal_self_traps",
@@ -779,6 +1260,8 @@ int run_mcts_tests() {
        mcts_bot_rebuilds_for_an_unrelated_state},
       {"reusing_tactical_games_are_fully_reproducible",
        reusing_tactical_games_are_fully_reproducible},
+      {"reusing_quiescence_games_are_fully_reproducible",
+       reusing_quiescence_games_are_fully_reproducible},
       {"copied_mcts_bots_preserve_live_search_state",
        copied_mcts_bots_preserve_live_search_state},
       {"mcts_node_bound_saturates_without_stopping_iterations",

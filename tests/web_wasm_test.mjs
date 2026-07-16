@@ -197,6 +197,18 @@ test("live games expose the selected deterministic MctsBot configuration", () =>
   assert.equal(typeof search.provenNodes, "number");
   assert.ok(search.provenWinner === null ||
     search.provenWinner === Player.One || search.provenWinner === Player.Two);
+  assert.equal(typeof search.tacticalProbes, "number");
+  assert.equal(typeof search.tacticalNodes, "number");
+  assert.equal(typeof search.tacticalSolvedPositions, "number");
+  assert.equal(typeof search.tacticalDepthCutoffs, "number");
+  assert.equal(typeof search.tacticalNodeCutoffs, "number");
+  assert.equal(typeof search.maxTacticalDepth, "number");
+  assert.equal(search.tacticalProbes, 0);
+  assert.equal(search.tacticalNodes, 0);
+  assert.equal(search.tacticalSolvedPositions, 0);
+  assert.equal(search.tacticalDepthCutoffs, 0);
+  assert.equal(search.tacticalNodeCutoffs, 0);
+  assert.equal(search.maxTacticalDepth, 0);
   assert.equal(typeof search.rebuildCount, "number");
   assert.equal(typeof search.expansionSaturated, "boolean");
   assert.equal(typeof search.rootValue, "number");

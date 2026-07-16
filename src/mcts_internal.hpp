@@ -346,4 +346,21 @@ class SearchPosition {
   std::vector<Undo> undo_stack_{};
 };
 
+struct TacticalProbeStats {
+  std::uint64_t nodes{};
+  std::uint32_t max_depth{};
+  bool depth_cutoff{};
+  bool node_cutoff{};
+};
+
+struct TacticalProbeResult {
+  std::optional<Player> proven_winner{};
+  std::optional<Move> proving_move{};
+  TacticalProbeStats stats{};
+};
+
+TacticalProbeResult run_tactical_probe(SearchPosition &position,
+                                        std::uint32_t max_depth,
+                                        std::uint32_t max_nodes);
+
 }  // namespace papersoccer::detail

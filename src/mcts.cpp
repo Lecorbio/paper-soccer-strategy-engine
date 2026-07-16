@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,32 @@ void validate_exploration(double exploration) {
 void validate_max_nodes(std::size_t max_nodes) {
   if (max_nodes < 2) {
     throw std::invalid_argument("MCTS maximum node count must be at least two");
+  }
+}
+
+void validate_quiescence(const MctsConfig &config) {
+  if (config.leaf_policy != MctsLeafPolicy::RolloutOnly &&
+      config.leaf_policy != MctsLeafPolicy::TacticalQuiescence) {
+    throw std::invalid_argument("unknown MCTS leaf policy");
+  }
+  if (config.quiescence_max_depth == 0 ||
+      config.quiescence_max_depth >
+          MctsConfig::maximum_quiescence_max_depth) {
+    throw std::invalid_argument(
+        "MCTS quiescence depth must be between one and " +
+        std::to_string(MctsConfig::maximum_quiescence_max_depth));
+  }
+  if (config.quiescence_max_nodes == 0 ||
+      config.quiescence_max_nodes >
+          MctsConfig::maximum_quiescence_max_nodes) {
+    throw std::invalid_argument(
+        "MCTS quiescence node budget must be between one and " +
+        std::to_string(MctsConfig::maximum_quiescence_max_nodes));
+  }
+  if (config.leaf_policy == MctsLeafPolicy::TacticalQuiescence &&
+      config.rollout_policy != MctsRolloutPolicy::Tactical) {
+    throw std::invalid_argument(
+        "MCTS tactical quiescence requires tactical rollouts");
   }
 }
 
@@ -59,11 +86,14 @@ class MctsSearch::Impl {
         topology_(std::make_shared<detail::SearchTopology>(root.config)),
         position_(topology_, root), random_state_(config.seed),
         exploration_(config.exploration), policy_(config.rollout_policy),
-        max_nodes_(config.max_nodes),
+        max_nodes_(config.max_nodes), leaf_policy_(config.leaf_policy),
+        quiescence_max_depth_(config.quiescence_max_depth),
+        quiescence_max_nodes_(config.quiescence_max_nodes),
         node_reserve_hint_(std::min(
             config.max_nodes, static_cast<std::size_t>(config.iterations) + 1U)) {
     validate_exploration(exploration_);
     validate_max_nodes(max_nodes_);
+    validate_quiescence(config);
     initialize_root();
   }
 
@@ -89,6 +119,10 @@ class MctsSearch::Impl {
     }
 
     const Node &root = nodes_.front();
+    if (solver_enabled() && root.proven_winner == root.player &&
+        root.proving_move.has_value()) {
+      return *root.proving_move;
+    }
     if (solver_enabled()) {
       for (std::uint8_t move_index = 0; move_index < root_move_count_;
            ++move_index) {
@@ -184,6 +218,12 @@ class MctsSearch::Impl {
     result.proven_winner = root.proven_winner;
     result.rebuild_count = rebuild_count_;
     result.expansion_saturated = expansion_saturated_;
+    result.tactical_probes = tactical_probes_;
+    result.tactical_nodes = tactical_nodes_;
+    result.tactical_solved_positions = tactical_solved_positions_;
+    result.tactical_depth_cutoffs = tactical_depth_cutoffs_;
+    result.tactical_node_cutoffs = tactical_node_cutoffs_;
+    result.max_tactical_depth = max_tactical_depth_;
     return result;
   }
 
@@ -253,6 +293,12 @@ class MctsSearch::Impl {
     max_depth_ = 0;
     expansion_saturated_ = false;
     reused_visits_ = nodes_.front().visits;
+    tactical_probes_ = 0;
+    tactical_nodes_ = 0;
+    tactical_solved_positions_ = 0;
+    tactical_depth_cutoffs_ = 0;
+    tactical_node_cutoffs_ = 0;
+    max_tactical_depth_ = 0;
     return true;
   }
 
@@ -269,6 +315,7 @@ class MctsSearch::Impl {
     std::uint64_t visits{};
     double player_one_reward{};
     std::optional<Player> proven_winner{};
+    std::optional<Move> proving_move{};
     Player player{Player::One};
     std::uint8_t incoming_slot{};
     std::uint8_t child_count{};
@@ -287,6 +334,9 @@ class MctsSearch::Impl {
   double exploration_{};
   MctsRolloutPolicy policy_{MctsRolloutPolicy::Uniform};
   std::size_t max_nodes_{};
+  MctsLeafPolicy leaf_policy_{MctsLeafPolicy::RolloutOnly};
+  std::uint32_t quiescence_max_depth_{};
+  std::uint32_t quiescence_max_nodes_{};
   std::size_t node_reserve_hint_{};
   std::uint32_t iterations_{};
   std::uint64_t simulated_plies_{};
@@ -294,6 +344,12 @@ class MctsSearch::Impl {
   std::uint64_t rebuild_count_{};
   std::uint32_t max_depth_{};
   bool expansion_saturated_{};
+  std::uint64_t tactical_probes_{};
+  std::uint64_t tactical_nodes_{};
+  std::uint64_t tactical_solved_positions_{};
+  std::uint64_t tactical_depth_cutoffs_{};
+  std::uint64_t tactical_node_cutoffs_{};
+  std::uint32_t max_tactical_depth_{};
   std::vector<std::size_t> visited_nodes_{};
 
   bool solver_enabled() const noexcept {
@@ -550,6 +606,7 @@ class MctsSearch::Impl {
           nodes_[node.children[i]].proven_winner;
       if (child_winner.has_value() && *child_winner == node.player) {
         node.proven_winner = node.player;
+        node.proving_move = nodes_[node.children[i]].incoming_move;
         return;
       }
     }
@@ -594,12 +651,42 @@ class MctsSearch::Impl {
         ++tree_depth;
       }
 
-      while (!position_.is_terminal()) {
-        position_.make_move(choose_rollout_move());
-        ++simulated_plies_;
+      std::optional<Player> winning_player = position_.winner();
+      if (!winning_player.has_value() &&
+          leaf_policy_ == MctsLeafPolicy::TacticalQuiescence) {
+        if (nodes_[node_index].proven_winner.has_value()) {
+          winning_player = nodes_[node_index].proven_winner;
+        } else {
+          ++tactical_probes_;
+          const detail::TacticalProbeResult probe = detail::run_tactical_probe(
+              position_, quiescence_max_depth_, quiescence_max_nodes_);
+          tactical_nodes_ += probe.stats.nodes;
+          tactical_depth_cutoffs_ += probe.stats.depth_cutoff ? 1U : 0U;
+          tactical_node_cutoffs_ += probe.stats.node_cutoff ? 1U : 0U;
+          max_tactical_depth_ =
+              std::max(max_tactical_depth_, probe.stats.max_depth);
+          if (probe.proven_winner.has_value()) {
+            if (*probe.proven_winner == nodes_[node_index].player &&
+                !probe.proving_move.has_value()) {
+              throw std::logic_error(
+                  "tactical winning proof did not identify its proving move");
+            }
+            ++tactical_solved_positions_;
+            nodes_[node_index].proven_winner = probe.proven_winner;
+            nodes_[node_index].proving_move = probe.proving_move;
+            winning_player = probe.proven_winner;
+          }
+        }
       }
 
-      const std::optional<Player> winning_player = position_.winner();
+      if (!winning_player.has_value()) {
+        while (!position_.is_terminal()) {
+          position_.make_move(choose_rollout_move());
+          ++simulated_plies_;
+        }
+        winning_player = position_.winner();
+      }
+
       if (!winning_player.has_value()) {
         throw std::logic_error("MCTS rollout ended without a winner");
       }
@@ -712,6 +799,7 @@ MctsBot::MctsBot(MctsConfig config) : config_(config) {
   }
   validate_exploration(config_.exploration);
   validate_max_nodes(config_.max_nodes);
+  validate_quiescence(config_);
 }
 
 MctsBot::MctsBot(const MctsBot &other)

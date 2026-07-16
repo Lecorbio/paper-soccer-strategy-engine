@@ -104,7 +104,15 @@ void write_bot_search(std::ostream &out,
   } else {
     out << "null";
   }
-  out << ",\"rebuildCount\":" << search.stats.rebuild_count
+  out << ",\"tacticalProbes\":" << search.stats.tactical_probes
+      << ",\"tacticalNodes\":" << search.stats.tactical_nodes
+      << ",\"tacticalSolvedPositions\":"
+      << search.stats.tactical_solved_positions
+      << ",\"tacticalDepthCutoffs\":"
+      << search.stats.tactical_depth_cutoffs
+      << ",\"tacticalNodeCutoffs\":" << search.stats.tactical_node_cutoffs
+      << ",\"maxTacticalDepth\":" << search.stats.max_tactical_depth
+      << ",\"rebuildCount\":" << search.stats.rebuild_count
       << ",\"expansionSaturated\":"
       << (search.stats.expansion_saturated ? "true" : "false")
       << ",\"rootValue\":" << search.stats.root_value << '}';
