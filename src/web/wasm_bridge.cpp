@@ -53,24 +53,38 @@ bool parse_bot_kind(int input, ps::BotKind &kind) noexcept {
     kind = ps::BotKind::Mcts;
     return true;
   }
+  if (input == 2) {
+    kind = ps::BotKind::AlphaBeta;
+    return true;
+  }
   return false;
 }
 
 bool parse_bot_config(const char *seed_text, int kind_value,
-                      std::uint32_t iterations, ps::BotConfig &config) {
+                      std::uint32_t search_setting, ps::BotConfig &config) {
   if (seed_text == nullptr || !parse_seed(seed_text, config.seed)) {
     last_error = "the bot seed must be an unsigned 64-bit decimal integer";
     return false;
   }
   if (!parse_bot_kind(kind_value, config.kind)) {
-    last_error = "the bot kind must be 0 (RandomBot) or 1 (MctsBot)";
+    last_error =
+        "the bot kind must be 0 (RandomBot), 1 (MctsBot), or 2 (AlphaBetaBot)";
     return false;
   }
-  if (iterations == 0) {
-    last_error = "new simulations per bot move must be greater than zero";
-    return false;
+  if (config.kind == ps::BotKind::AlphaBeta) {
+    if (search_setting == 0 ||
+        search_setting > ps::AlphaBetaConfig::maximum_turn_depth) {
+      last_error = "AlphaBetaBot depth must be between 1 and 64";
+      return false;
+    }
+    config.alpha_beta_depth = search_setting;
+  } else {
+    if (search_setting == 0) {
+      last_error = "new simulations per bot move must be greater than zero";
+      return false;
+    }
+    config.mcts_iterations = search_setting;
   }
-  config.mcts_iterations = iterations;
   return true;
 }
 
@@ -121,9 +135,10 @@ bool validate_bot_replay_session(std::uint32_t expected_session_id) {
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE int ps_start_game(const char *seed_text, int human_player,
-                                      int bot_kind, std::uint32_t iterations) {
+                                      int bot_kind,
+                                      std::uint32_t search_setting) {
   ps::BotConfig bot_config;
-  if (!parse_bot_config(seed_text, bot_kind, iterations, bot_config)) {
+  if (!parse_bot_config(seed_text, bot_kind, search_setting, bot_config)) {
     return 0;
   }
   if (human_player != 1 && human_player != 2) {
@@ -187,15 +202,15 @@ EMSCRIPTEN_KEEPALIVE int ps_play_bot(std::uint32_t expected_session_id,
 }
 
 EMSCRIPTEN_KEEPALIVE int ps_start_bot_replay(
-    const char *one_seed, int one_kind, std::uint32_t one_iterations,
-    const char *two_seed, int two_kind, std::uint32_t two_iterations,
+    const char *one_seed, int one_kind, std::uint32_t one_search_setting,
+    const char *two_seed, int two_kind, std::uint32_t two_search_setting,
     std::uint32_t max_plies) {
   ps::BotConfig player_one;
-  if (!parse_bot_config(one_seed, one_kind, one_iterations, player_one)) {
+  if (!parse_bot_config(one_seed, one_kind, one_search_setting, player_one)) {
     return 0;
   }
   ps::BotConfig player_two;
-  if (!parse_bot_config(two_seed, two_kind, two_iterations, player_two)) {
+  if (!parse_bot_config(two_seed, two_kind, two_search_setting, player_two)) {
     return 0;
   }
 

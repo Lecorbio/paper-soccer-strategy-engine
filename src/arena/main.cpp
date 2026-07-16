@@ -40,8 +40,10 @@ void print_usage(std::ostream &out) {
       "Common options:\n"
       "  --seed N                         Base seed (default: 828927513140)\n"
       "  --width N --height N             Board dimensions (default: 8x10)\n"
-      "  --candidate-kind random|mcts     Candidate bot (default: mcts)\n"
-      "  --reference-kind random|mcts     Reference bot (default: mcts)\n"
+      "  --candidate-kind random|mcts|alpha-beta\n"
+      "                                     Candidate bot (default: mcts)\n"
+      "  --reference-kind random|mcts|alpha-beta\n"
+      "                                     Reference bot (default: mcts)\n"
       "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
       "  --candidate-policy uniform|tactical\n"
@@ -57,7 +59,21 @@ void print_usage(std::ostream &out) {
       "  --candidate-max-nodes N          Candidate tree bound (minimum: 2)\n"
       "  --reference-max-nodes N          Reference tree bound (minimum: 2)\n"
       "  --candidate-exploration X        Candidate UCT exploration\n"
-      "  --reference-exploration X        Reference UCT exploration\n\n"
+      "  --reference-exploration X        Reference UCT exploration\n"
+      "  --candidate-alpha-beta-depth N   Candidate possession-handoff depth\n"
+      "  --reference-alpha-beta-depth N   Reference possession-handoff depth\n"
+      "  --candidate-alpha-beta-max-nodes N\n"
+      "                                     Candidate alpha-beta node budget\n"
+      "  --reference-alpha-beta-max-nodes N\n"
+      "                                     Reference alpha-beta node budget\n"
+      "  --candidate-alpha-beta-table-entries N\n"
+      "                                     Candidate transposition entries\n"
+      "  --reference-alpha-beta-table-entries N\n"
+      "                                     Reference transposition entries\n"
+      "  --candidate-alpha-beta-max-search-plies N\n"
+      "                                     Candidate soft physical horizon\n"
+      "  --reference-alpha-beta-max-search-plies N\n"
+      "                                     Reference soft physical horizon\n\n"
       "Match options:\n"
       "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
       "  --max-plies N                    Per-game limit (default: 512)\n"
@@ -128,7 +144,11 @@ ps::BotKind parse_kind(std::string_view value, std::string_view option) {
   if (value == "mcts") {
     return ps::BotKind::Mcts;
   }
-  throw std::invalid_argument(std::string(option) + " requires random or mcts");
+  if (value == "alpha-beta") {
+    return ps::BotKind::AlphaBeta;
+  }
+  throw std::invalid_argument(std::string(option) +
+                              " requires random, mcts, or alpha-beta");
 }
 
 ps::MctsRolloutPolicy parse_policy(std::string_view value,
@@ -251,6 +271,30 @@ CliConfig parse_cli(int argc, char **argv) {
       config.candidate.exploration = parse_double(value(), option);
     } else if (option == "--reference-exploration") {
       config.reference.exploration = parse_double(value(), option);
+    } else if (option == "--candidate-alpha-beta-depth") {
+      config.candidate.alpha_beta_depth =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-alpha-beta-depth") {
+      config.reference.alpha_beta_depth =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--candidate-alpha-beta-max-nodes") {
+      config.candidate.alpha_beta_max_nodes =
+          parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--reference-alpha-beta-max-nodes") {
+      config.reference.alpha_beta_max_nodes =
+          parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--candidate-alpha-beta-table-entries") {
+      config.candidate.alpha_beta_transposition_table_entries =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--reference-alpha-beta-table-entries") {
+      config.reference.alpha_beta_transposition_table_entries =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-alpha-beta-max-search-plies") {
+      config.candidate.alpha_beta_max_search_plies =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-alpha-beta-max-search-plies") {
+      config.reference.alpha_beta_max_search_plies =
+          parse_unsigned<std::uint32_t>(value(), option);
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }

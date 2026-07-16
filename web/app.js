@@ -41,6 +41,8 @@
   const seedInput = document.querySelector("#seedInput");
   const botIterationsField = document.querySelector("#botIterationsField");
   const botIterationsInput = document.querySelector("#botIterationsInput");
+  const botDepthField = document.querySelector("#botDepthField");
+  const botDepthInput = document.querySelector("#botDepthInput");
   const newGameButton = document.querySelector("#newGameButton");
   const changeSettingsButton = document.querySelector("#changeSettingsButton");
   const exportGameButton = document.querySelector("#exportGameButton");
@@ -65,6 +67,8 @@
   const replayOneIterationsInput = document.querySelector(
     "#replayOneIterationsInput",
   );
+  const replayOneDepthField = document.querySelector("#replayOneDepthField");
+  const replayOneDepthInput = document.querySelector("#replayOneDepthInput");
   const replayTwoBotSelect = document.querySelector("#replayTwoBotSelect");
   const replayTwoSeedInput = document.querySelector("#replayTwoSeedInput");
   const replayTwoIterationsField = document.querySelector(
@@ -73,6 +77,8 @@
   const replayTwoIterationsInput = document.querySelector(
     "#replayTwoIterationsInput",
   );
+  const replayTwoDepthField = document.querySelector("#replayTwoDepthField");
+  const replayTwoDepthInput = document.querySelector("#replayTwoDepthInput");
   const replaySetupError = document.querySelector("#replaySetupError");
   const replayGenerationStatus = document.querySelector(
     "#replayGenerationStatus",
@@ -86,6 +92,8 @@
   const BOT_DELAY_MS = 520;
   const DEFAULT_MCTS_ITERATIONS = 2000;
   const MAX_MCTS_ITERATIONS = 10000;
+  const DEFAULT_ALPHA_BETA_DEPTH = 6;
+  const MAX_ALPHA_BETA_DEPTH = 64;
   const MAX_REPLAY_PLIES = 512;
   const MAX_UINT64 = (1n << 64n) - 1n;
 
@@ -107,6 +115,7 @@
     kind: BotKind.Random,
     seed: "12345",
     iterations: DEFAULT_MCTS_ITERATIONS,
+    depth: DEFAULT_ALPHA_BETA_DEPTH,
   };
   let replayGenerationId = 0;
   let isGeneratingReplay = false;
@@ -223,12 +232,24 @@
     if (Number.isInteger(player.iterations) && player.iterations > 0) {
       details.push(player.iterations + " new simulations per bot move");
     }
+    if (Number.isInteger(player.depth) && player.depth > 0) {
+      details.push("possession-handoff depth " + player.depth);
+    }
     const suffix = details.length > 0 ? " (" + details.join(", ") + ")" : "";
     return label + ": " + (player.kind ?? "Unknown") + suffix;
   }
 
   function botDisplayName(kind) {
-    return kind === BotKind.Mcts ? "MctsBot" : "RandomBot";
+    if (kind === BotKind.Random) {
+      return "RandomBot";
+    }
+    if (kind === BotKind.Mcts) {
+      return "MctsBot";
+    }
+    if (kind === BotKind.AlphaBeta) {
+      return "AlphaBetaBot";
+    }
+    return "UnknownBot";
   }
 
   function activeBotName() {
@@ -260,10 +281,29 @@
     return iterations;
   }
 
-  function readBotConfig(kindSelect, botSeedInput, iterationsInput) {
-    const kind = kindSelect.value === BotKind.Mcts
-      ? BotKind.Mcts
-      : BotKind.Random;
+  function parseDepth(input) {
+    const value = input.trim();
+    if (!/^[1-9][0-9]*$/.test(value)) {
+      throw new Error("Enter a positive whole number for AlphaBetaBot depth.");
+    }
+    const depth = Number(value);
+    if (!Number.isSafeInteger(depth) || depth > MAX_ALPHA_BETA_DEPTH) {
+      throw new Error("AlphaBetaBot depth must be at most " +
+        MAX_ALPHA_BETA_DEPTH + ".");
+    }
+    return depth;
+  }
+
+  function selectedBotKind(value) {
+    if (value === BotKind.Random || value === BotKind.Mcts ||
+        value === BotKind.AlphaBeta) {
+      return value;
+    }
+    throw new Error("Unsupported bot kind: " + String(value));
+  }
+
+  function readBotConfig(kindSelect, botSeedInput, iterationsInput, depthInput) {
+    const kind = selectedBotKind(kindSelect.value);
     let seed;
     try {
       seed = parseSeed(botSeedInput.value);
@@ -282,11 +322,26 @@
       }
     }
 
+    let depth = DEFAULT_ALPHA_BETA_DEPTH;
+    if (kind === BotKind.AlphaBeta) {
+      try {
+        depth = parseDepth(depthInput.value);
+      } catch (error) {
+        error.input = depthInput;
+        throw error;
+      }
+    }
+
     return {
       kind: kind,
       seed: seed.toString(),
       iterations: iterations,
+      depth: depth,
     };
+  }
+
+  function botSearchSetting(config) {
+    return config.kind === BotKind.AlphaBeta ? config.depth : config.iterations;
   }
 
   function clearBotTimer() {
@@ -395,7 +450,12 @@
 
     let botConfig;
     try {
-      botConfig = readBotConfig(botSelect, seedInput, botIterationsInput);
+      botConfig = readBotConfig(
+        botSelect,
+        seedInput,
+        botIterationsInput,
+        botDepthInput,
+      );
     } catch (error) {
       setupError.textContent = error.message;
       error.input?.focus();
@@ -417,7 +477,7 @@
         botConfig.seed,
         selectedHuman,
         botConfig.kind,
-        botConfig.iterations,
+        botSearchSetting(botConfig),
       ));
       activeBotConfig = botConfig;
       liveGame.start();
@@ -552,7 +612,9 @@
     }
     for (const control of replaySetup.elements) {
       if (control !== replayOneIterationsInput &&
-          control !== replayTwoIterationsInput) {
+          control !== replayTwoIterationsInput &&
+          control !== replayOneDepthInput &&
+          control !== replayTwoDepthInput) {
         control.disabled = isGeneratingReplay;
       }
     }
@@ -560,6 +622,10 @@
       replayOneBotSelect.value !== BotKind.Mcts;
     replayTwoIterationsInput.disabled = isGeneratingReplay ||
       replayTwoBotSelect.value !== BotKind.Mcts;
+    replayOneDepthInput.disabled = isGeneratingReplay ||
+      replayOneBotSelect.value !== BotKind.AlphaBeta;
+    replayTwoDepthInput.disabled = isGeneratingReplay ||
+      replayTwoBotSelect.value !== BotKind.AlphaBeta;
     generateReplayButton.textContent = isGeneratingReplay
       ? "Generating…"
       : "Generate";
@@ -596,11 +662,13 @@
         replayOneBotSelect,
         replayOneSeedInput,
         replayOneIterationsInput,
+        replayOneDepthInput,
       );
       playerTwo = readBotConfig(
         replayTwoBotSelect,
         replayTwoSeedInput,
         replayTwoIterationsInput,
+        replayTwoDepthInput,
       );
     } catch (error) {
       replaySetupError.textContent = error.message;
@@ -751,11 +819,15 @@
     }
 
     const usesMcts = configuration.kind === "MctsBot";
+    const usesAlphaBeta = configuration.kind === "AlphaBetaBot";
     activeBotConfiguration.textContent = configuration.kind + " · seed " +
       configuration.seed + (usesMcts
         ? " · " + formatCount(configuration.iterations) +
           " new simulations per bot move"
-        : "") + " · You: " + playerName(liveSnapshot.humanPlayer);
+        : usesAlphaBeta
+          ? " · depth " + formatCount(configuration.depth) +
+            " possession handoffs"
+          : "") + " · You: " + playerName(liveSnapshot.humanPlayer);
 
     const search = diagnostics.lastBotSearch;
     latestSearch.hidden = !search;
@@ -927,12 +999,14 @@
       movesEnabled: liveGame.movesEnabled,
       isTerminal: isLiveTerminal(),
       usesMcts: botSelect.value === BotKind.Mcts,
+      usesAlphaBeta: botSelect.value === BotKind.AlphaBeta,
     });
     support.syncConfigurationControls({
       botSelect: botSelect,
       sideSelect: sideSelect,
       seedInput: seedInput,
       budgetInput: botIterationsInput,
+      depthInput: botDepthInput,
       startButton: newGameButton,
       changeSettingsButton: changeSettingsButton,
       exportButton: exportGameButton,
@@ -942,16 +1016,27 @@
 
   function syncBotSetupFields() {
     const playUsesMcts = botSelect.value === BotKind.Mcts;
+    const playUsesAlphaBeta = botSelect.value === BotKind.AlphaBeta;
     botIterationsField.hidden = !playUsesMcts;
     botIterationsInput.disabled = !playUsesMcts;
+    botDepthField.hidden = !playUsesAlphaBeta;
+    botDepthInput.disabled = !playUsesAlphaBeta;
     playSetupEyebrow.textContent = "Play vs " + botDisplayName(botSelect.value);
 
     const playerOneUsesMcts = replayOneBotSelect.value === BotKind.Mcts;
     const playerTwoUsesMcts = replayTwoBotSelect.value === BotKind.Mcts;
+    const playerOneUsesAlphaBeta =
+      replayOneBotSelect.value === BotKind.AlphaBeta;
+    const playerTwoUsesAlphaBeta =
+      replayTwoBotSelect.value === BotKind.AlphaBeta;
     replayOneIterationsField.hidden = !playerOneUsesMcts;
     replayTwoIterationsField.hidden = !playerTwoUsesMcts;
     replayOneIterationsInput.disabled = isGeneratingReplay || !playerOneUsesMcts;
     replayTwoIterationsInput.disabled = isGeneratingReplay || !playerTwoUsesMcts;
+    replayOneDepthField.hidden = !playerOneUsesAlphaBeta;
+    replayTwoDepthField.hidden = !playerTwoUsesAlphaBeta;
+    replayOneDepthInput.disabled = isGeneratingReplay || !playerOneUsesAlphaBeta;
+    replayTwoDepthInput.disabled = isGeneratingReplay || !playerTwoUsesAlphaBeta;
   }
 
   function updateReplayControls() {

@@ -11,6 +11,7 @@ function controls() {
     sideSelect: {},
     seedInput: {},
     budgetInput: {},
+    depthInput: {},
     startButton: {},
     changeSettingsButton: {},
     exportButton: {},
@@ -52,6 +53,15 @@ test("human-match filenames describe the bot, lossless seed, and budget", () => 
     support.humanMatchFilename({ kind: "RandomBot", seed: "17" }),
     "papersoccer-human-match-RandomBot-seed-17-no-search.json",
   );
+  assert.equal(
+    support.humanMatchFilename({
+      kind: "AlphaBetaBot",
+      seed: "23",
+      depth: 6,
+    }),
+    "papersoccer-human-match-AlphaBetaBot-seed-23-" +
+    "handoff-depth-6.json",
+  );
 });
 
 test("successful games lock every configuration control", () => {
@@ -66,6 +76,7 @@ test("successful games lock every configuration control", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: false,
     usesMcts: true,
+    usesAlphaBeta: false,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -75,6 +86,7 @@ test("successful games lock every configuration control", () => {
   assert.equal(elements.sideSelect.disabled, true);
   assert.equal(elements.seedInput.disabled, true);
   assert.equal(elements.budgetInput.disabled, true);
+  assert.equal(elements.depthInput.disabled, true);
   assert.equal(elements.startButton.hidden, true);
   assert.equal(elements.changeSettingsButton.hidden, false);
   assert.equal(elements.exportButton.hidden, false);
@@ -93,6 +105,7 @@ test("changing settings unlocks controls while retaining export access", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: false,
     usesMcts: true,
+    usesAlphaBeta: false,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -102,10 +115,27 @@ test("changing settings unlocks controls while retaining export access", () => {
   assert.equal(elements.sideSelect.disabled, false);
   assert.equal(elements.seedInput.disabled, false);
   assert.equal(elements.budgetInput.disabled, false);
+  assert.equal(elements.depthInput.disabled, true);
   assert.equal(elements.startButton.hidden, false);
   assert.equal(elements.startButton.textContent, "Start new game");
   assert.equal(elements.changeSettingsButton.hidden, true);
   assert.equal(elements.exportButton.hidden, false);
+});
+
+test("AlphaBeta settings enable only the possession-handoff depth control", () => {
+  const elements = controls();
+  const state = support.liveGameControlState({
+    hasGame: false,
+    movesEnabled: false,
+    isTerminal: false,
+    usesMcts: false,
+    usesAlphaBeta: true,
+  });
+
+  support.syncConfigurationControls(elements, state);
+
+  assert.equal(elements.budgetInput.disabled, true);
+  assert.equal(elements.depthInput.disabled, false);
 });
 
 test("terminal games unlock controls and offer a new game", () => {
@@ -121,6 +151,7 @@ test("terminal games unlock controls and offer a new game", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: true,
     usesMcts: true,
+    usesAlphaBeta: false,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -130,6 +161,7 @@ test("terminal games unlock controls and offer a new game", () => {
   assert.equal(elements.sideSelect.disabled, false);
   assert.equal(elements.seedInput.disabled, false);
   assert.equal(elements.budgetInput.disabled, false);
+  assert.equal(elements.depthInput.disabled, true);
   assert.equal(elements.startButton.textContent, "Start new game");
   assert.equal(elements.changeSettingsButton.hidden, true);
   assert.equal(elements.exportButton.hidden, false);

@@ -11,6 +11,8 @@ std::string_view bot_kind_name(BotKind kind) noexcept {
       return "RandomBot";
     case BotKind::Mcts:
       return "MctsBot";
+    case BotKind::AlphaBeta:
+      return "AlphaBetaBot";
   }
   return "UnknownBot";
 }
@@ -24,6 +26,16 @@ std::unique_ptr<Bot> make_bot(const BotConfig &config) {
       mcts_config.seed = config.seed;
       mcts_config.iterations = config.mcts_iterations;
       return std::make_unique<MctsBot>(mcts_config);
+    }
+    case BotKind::AlphaBeta: {
+      AlphaBetaConfig alpha_beta_config;
+      alpha_beta_config.max_turn_depth = config.alpha_beta_depth;
+      alpha_beta_config.max_nodes = config.alpha_beta_max_nodes;
+      alpha_beta_config.transposition_table_entries =
+          config.alpha_beta_transposition_table_entries;
+      alpha_beta_config.max_search_plies =
+          config.alpha_beta_max_search_plies;
+      return std::make_unique<AlphaBetaBot>(alpha_beta_config);
     }
   }
   throw std::invalid_argument("unknown bot kind");

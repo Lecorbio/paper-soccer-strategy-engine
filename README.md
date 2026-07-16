@@ -4,7 +4,8 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 
 - A pure rules engine (`papersoccer_core`)
 - A terminal CLI for human and bot play (`papersoccer_cli`)
-- Seeded `RandomBot` and Monte Carlo Tree Search (`MctsBot`) opponents
+- Seeded `RandomBot`, Monte Carlo Tree Search (`MctsBot`), and deterministic
+  alpha-beta (`AlphaBetaBot`) opponents
 - A native arena for paired strength matches and position throughput measurements
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
 - A static browser game powered by the same C++ engine through WebAssembly
@@ -36,6 +37,97 @@ uses the existing `GameState` and rule APIs without replacing them with a separa
   - Any previously visited point
   - Any wall boundary point; the open center of each goal mouth is excluded
 - If the player to move has zero legal moves at turn start, that player loses
+
+## Alpha-Beta Bot
+
+`AlphaBetaBot` is a deterministic adversarial-search opponent. It complements MCTS: instead of
+estimating moves from sampled games, it enumerates a bounded game tree and assumes that both
+players choose their strongest reply. Alpha-beta pruning skips branches that cannot change the
+root decision, while a transposition table reuses positions reached through different move
+orders.
+
+Paper soccer cannot use a conventional "one edge equals one turn" depth rule. A rebound leaves
+the same player on move, so the search keeps the same maximizing or minimizing perspective and
+does not consume a turn-depth unit until possession actually changes. Within the configured
+physical-ply horizon, a depth-one search therefore follows same-player rebound combinations
+through a goal, trap, or handoff.
+Terminal scores are exact and Player-1-oriented: a Player 1 win is near `+1,000,000`, a Player 2
+win is near `-1,000,000`, and the physical move count rewards faster wins and delayed losses.
+
+Non-terminal leaves use a transparent hand-written evaluator. Positive values favor Player 1;
+negative values favor Player 2. Its initial feature weights are:
+
+| Feature | Weight | Meaning |
+| --- | ---: | --- |
+| Direct goal available | 50,000 | Strongly prefer a goal on the current turn |
+| Unused-edge goal-distance difference | 120 | Compare each side's shortest remaining route to goal |
+| Vertical ball progress | 80 | Reward moving toward Player 1's goal and penalize the reverse |
+| Possession-preserving choices | 35 | Value available rebound or boundary continuations |
+| Legal mobility | 20 | Value options for the player currently in possession |
+| Forward choices | 10 | Reward legal moves aimed toward that player's goal |
+| Center alignment | 6 | Prefer useful central access for the player in possession |
+| Tempo | 15 | Give a small value to retaining the move |
+
+The goal-distance feature runs breadth-first search over currently unused edges. The combined
+heuristic is clamped to `[-100,000, 100,000]`, leaving a wide, unambiguous band between heuristic
+positions and proven wins. These weights are a readable starting point, not trained constants;
+the arena is the intended place to measure and tune them.
+
+Search uses iterative deepening, so every completed shallower result remains usable if the next
+depth reaches the fixed node budget. The default configuration searches up to six possession
+handoffs, visits at most 100,000 nodes across the complete decision, stores 65,536 compact
+transposition entries, and applies a soft horizon after ten physical edges. At that horizon the
+search evaluates positions with multiple choices, but continues a forced single-move line as far
+as the absolute 512-edge recursion guard. This bounds unusually large same-turn rebound trees,
+still proves long forced combinations, and covers the nine-edge forcing sequence found in the
+human replay regression. If even depth one cannot finish, the bot returns a deterministic legal
+move ordered by immediate outcomes, rebounds, progress, center access, and child mobility.
+
+The compact search position maintains a two-word incremental key over used edges, visited
+vertices, ball location, side to move, and game status. A table entry stores its searched depth,
+score bound, and best move. The same make/unmake position is shared with MCTS's tactical search,
+while the public rules engine remains authoritative.
+
+Native usage:
+
+```cpp
+papersoccer::AlphaBetaConfig config{
+    .max_turn_depth = 6,
+    .max_nodes = 100'000,
+    .transposition_table_entries = 65'536,
+    .max_search_plies = 10,
+};
+papersoccer::AlphaBetaBot bot(config);
+papersoccer::Move move = bot.choose_move(state);
+const papersoccer::AlphaBetaSearchStats &stats = bot.last_search_stats();
+```
+
+`AlphaBetaSearchStats` reports attempted and completed depth, visited and evaluated nodes,
+terminal nodes, alpha-beta cutoffs, transposition probes/hits/cutoffs/stores, physical-horizon
+cutoffs, maximum physical ply, the root score, whether the budget interrupted the final
+iteration, a principal variation, and the searched root alternatives. Each root alternative is
+tagged `Exact`, `Lower`, or `Upper`, because a branch eliminated by the narrowed root window may
+produce a bound rather than an exact value. The selected root score is exact for the last
+completed bounded depth.
+
+### Initial smoke evaluation — July 16, 2026
+
+With the defaults above, an eight-position shared-state check and a ten-pair color-swapped match
+against Tactical `MctsBot` at 2,000 iterations produced:
+
+| Check | Alpha-beta | MCTS reference |
+| --- | ---: | ---: |
+| Shared-position median decision time | 3.457 ms | 56.075 ms |
+| Shared-position p95 decision time | 41.954 ms | 63.333 ms |
+| Match median decision time | 2.460 ms | 41.978 ms |
+| Match p95 decision time | 7.043 ms | 77.758 ms |
+| Ten-pair record | 13 wins / 7 losses | 7 wins / 13 losses |
+
+There were no illegal moves, truncations, or alpha-beta node-budget exhaustions. The paired 95%
+bootstrap interval was wide at 40%-90%, so the 65% score is promising smoke evidence, not a
+strength conclusion. A larger fixed-seed tournament and evaluator ablations are still required
+before choosing a default opponent or tuning the weights around this result. Timings are
+machine-specific.
 
 ## Monte Carlo Tree Search Bot
 
@@ -220,6 +312,33 @@ the two entrants with:
 - `--candidate-quiescence-max-depth` and `--reference-quiescence-max-depth`.
 - `--candidate-quiescence-max-nodes` and `--reference-quiescence-max-nodes`.
 
+The same arena can compare alpha-beta with the frozen MCTS reference:
+
+```bash
+./build/release/papersoccer_arena positions \
+  --positions 32 \
+  --candidate-kind alpha-beta \
+  --candidate-alpha-beta-depth 6 \
+  --candidate-alpha-beta-max-nodes 100000 \
+  --reference-kind mcts \
+  --reference-iterations 2000 \
+  > alpha-beta-positions.json
+
+./build/release/papersoccer_arena matches \
+  --pairs 200 \
+  --candidate-kind alpha-beta \
+  --candidate-alpha-beta-depth 6 \
+  --candidate-alpha-beta-max-nodes 100000 \
+  --reference-kind mcts \
+  --reference-iterations 2000 \
+  > alpha-beta-vs-mcts.json
+```
+
+Alpha-beta reports keep their diagnostics separate from MCTS: completed/attempted depth, node
+and leaf counts, terminal nodes, pruning and transposition counters, physical-horizon cutoffs,
+root scores and bounds, principal variations, and budget exhaustion. Arena timing summaries
+also include median nodes per second for either search family.
+
 An explicit equal-iteration preliminary comparison can be reproduced with:
 
 ```bash
@@ -355,16 +474,22 @@ On startup, the CLI lets you choose:
 4. Human vs `MctsBot` (choose the human side)
 5. Seeded `RandomBot` vs `MctsBot` (choose the MCTS side)
 6. `MctsBot` vs `MctsBot`
+7. Human vs `AlphaBetaBot` (choose the human side)
+8. Seeded `RandomBot` vs `AlphaBetaBot` (choose the alpha-beta side)
+9. `MctsBot` vs `AlphaBetaBot` (choose the alpha-beta side)
+10. `AlphaBetaBot` vs `AlphaBetaBot`
 
-The original three modes and their prompts remain unchanged. Modes involving two different
-controller types ask which side uses which controller. RandomBot modes retain the existing
-RandomBot base-seed prompt. When MCTS is selected, the CLI also asks for an MCTS base seed and
-a single iteration budget applied to every MCTS move; pressing Enter accepts the default of
-`2,000` iterations.
+Modes involving two different controller types ask which side uses which controller. RandomBot
+modes include a RandomBot base-seed prompt. When MCTS is selected, the CLI also asks for an MCTS
+base seed and a single iteration budget applied to every MCTS move; pressing Enter accepts the
+default of `2,000` iterations. Alpha-beta modes ask for a possession-handoff depth and node
+budget, defaulting to `6` and `100,000` respectively; alpha-beta itself uses no random seed.
 Player 1 uses the relevant base seed and Player 2 uses `base_seed + 1`. After every MCTS move,
 the CLI prints new iterations, tree size, rollout plies, total and reused root visits, maximum
 depth, tactical probe work, proof/rebuild information, saturation, and the Player-1-oriented root
-value estimate.
+value estimate. After every alpha-beta move, it prints completed/attempted depth, nodes, leaf and
+terminal counts, cutoffs, transposition hits, physical-horizon cutoffs, maximum physical ply,
+root score, principal-variation length, and whether the node budget was reached.
 
 Rule examples above use the engine's `Point{x, y}` order. User-facing coordinates in the
 CLI and renderer are shown as `(row, column)`, which corresponds to `(y, x)`. For example,
@@ -384,22 +509,25 @@ open web/index.html
 
 The app starts in **Play vs bot** mode:
 
-1. Choose `RandomBot` or `MctsBot` as the opponent.
+1. Choose `RandomBot`, `MctsBot`, or `AlphaBetaBot` as the opponent.
 2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
    move first and attack the bottom goal.
 3. Enter the opponent seed. MCTS games also expose the fixed number of new simulations per
-   bot move. Reusing the same settings and human moves reproduces the bot's choices.
+   bot move; alpha-beta games expose possession-handoff depth. Alpha-beta is deterministic and
+   ignores the seed when choosing moves, although the shared replay metadata still records it.
+   Reusing the same settings and human moves reproduces the bot's choices.
 4. Select **Start**, then click any highlighted destination on the board. Destinations
    marked with `↻` grant another move.
 
-Once a game starts, its opponent, side, seed, and simulation budget are locked. The active
-configuration remains visible beside the latest MCTS search counters. Select **Change settings**
-to stop the current game without discarding it, or **Export game** to save a
-`papersoccer.human-match.v1` document containing the standard replay and every recorded bot
-search. Exported human matches can be opened through the normal replay loader.
+Once a game starts, its opponent, side, seed, and search setting are locked. The active
+configuration remains visible beside the latest MCTS search counters when MCTS is selected.
+Select **Change settings** to stop the current game without discarding it, or **Export game** to
+save a `papersoccer.human-match.v1` document containing the standard replay and every recorded
+bot search. Exported human matches can be opened through the normal replay loader.
 
 Select **Watch replay** to inspect the built-in game or generate a new bot-vs-bot match.
-Player 1 and Player 2 each have an independent bot, seed, and new-simulation setting.
+Player 1 and Player 2 each have an independent bot and seed, plus an MCTS simulation setting or
+alpha-beta handoff-depth setting when applicable.
 Generation advances one move at a time so the controls can update between searches, stops after
 512 moves if the game has not finished, reports progress during longer matches, and opens the
 result directly in the replay viewer.
@@ -462,12 +590,13 @@ same geometry.
 
 - `include/papersoccer/types.hpp` - core types and hashing
 - `include/papersoccer/geometry.hpp` - geometry and adjacency helpers
-- `include/papersoccer/bot.hpp` - bot interface, `RandomBot`, and native MCTS API
+- `include/papersoccer/bot.hpp` - bot interface plus Random, MCTS, and alpha-beta APIs
 - `include/papersoccer/arena.hpp` - paired-match and position-measurement API
 - `include/papersoccer/match.hpp` - authoritative state plus played-move history
 - `include/papersoccer/rules.hpp` - game rules API
 - `include/papersoccer/web_game.hpp` - versioned browser-session command API
 - `src/bot.cpp` - shared bot naming and factory implementation
+- `src/alpha_beta.cpp` - rebound-aware alpha-beta search and static evaluator
 - `src/mcts.cpp` - Monte Carlo Tree Search implementation
 - `src/mcts_internal.hpp` - compact search-only topology and mutable position
 - `src/arena.cpp` - arena execution, statistics, and JSON reports
@@ -492,6 +621,7 @@ same geometry.
 - `tests/web_wasm_test.mjs` - real WebAssembly/browser-client integration checks
 - `tests/web_app_support_test.mjs` - browser configuration, timer, and wrapper checks
 - `tests/bot_test.cpp` - RandomBot determinism and legality checks
+- `tests/alpha_beta_test.cpp` - alpha-beta correctness and replay-regression checks
 - `tests/mcts_test.cpp` - MCTS determinism, legality, and strategy checks
 - `tests/arena_smoke_test.cpp` - paired arena and measurement report smoke tests
 - `tests/arena_cli_test.mjs` - arena CLI option-routing and JSON integration tests

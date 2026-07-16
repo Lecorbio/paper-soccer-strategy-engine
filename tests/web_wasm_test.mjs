@@ -29,6 +29,7 @@ test("browser client exposes the compiled C++ session instead of JavaScript rule
   assert.equal(Status.InProgress, "inProgress");
   assert.equal(BotKind.Random, "random");
   assert.equal(BotKind.Mcts, "mcts");
+  assert.equal(BotKind.AlphaBeta, "alphaBeta");
   assert.equal(typeof gameEngine.startGame, "function");
   assert.equal(typeof gameEngine.playHuman, "function");
   assert.equal(typeof gameEngine.playBot, "function");
@@ -249,6 +250,42 @@ test("live MctsBot games default to 2000 iterations", () => {
   });
 });
 
+test("live games expose and run the selected AlphaBetaBot depth", () => {
+  const initial = gameEngine.startGame(
+    "23",
+    Player.Two,
+    BotKind.AlphaBeta,
+    1,
+  );
+
+  assert.deepEqual(initial.replay.players.one, {
+    kind: "AlphaBetaBot",
+    seed: "23",
+    depth: 1,
+  });
+  assert.deepEqual(initial.diagnostics.botConfiguration, {
+    kind: "AlphaBetaBot",
+    seed: "23",
+    depth: 1,
+  });
+
+  const moved = gameEngine.playBot(initial.sessionId, initial.revision);
+  assert.equal(moved.revision, 1);
+  assert.equal(moved.replay.moves.length, 1);
+  assert.equal(moved.diagnostics.lastBotSearch, null);
+  assert.deepEqual(moved.diagnostics.botSearches, []);
+});
+
+test("live AlphaBetaBot games default to depth 6", () => {
+  const snapshot = gameEngine.startGame(
+    "29",
+    Player.One,
+    BotKind.AlphaBeta,
+  );
+
+  assert.equal(snapshot.replay.players.two.depth, 6);
+});
+
 test("invalid seeds are rejected by C++ without replacing the live game", () => {
   const initial = gameEngine.startGame("23", Player.One);
 
@@ -331,6 +368,21 @@ test("bot replay sessions preserve independent bot kinds and exact uint64 seeds"
   });
   assert.equal(snapshot.replay.truncated, true);
   assert.deepEqual(snapshot.replay.moves, []);
+});
+
+test("bot replay sessions preserve AlphaBetaBot depth", () => {
+  const snapshot = gameEngine.startBotReplay(
+    { kind: BotKind.AlphaBeta, seed: "101", depth: 2 },
+    botConfig(BotKind.Random, "103"),
+    0,
+  );
+
+  assert.deepEqual(snapshot.replay.players.one, {
+    kind: "AlphaBetaBot",
+    seed: "101",
+    depth: 2,
+  });
+  assert.equal(snapshot.done, true);
 });
 
 test("the open center of a goal mouth does not grant an extra turn", () => {
@@ -433,6 +485,10 @@ test("invalid replay configurations do not replace either active session", () =>
   assert.throws(
     () => gameEngine.startGame("97", Player.One, BotKind.Mcts, 1.5),
     /New simulations per bot move must be an integer between 1 and 4294967295/,
+  );
+  assert.throws(
+    () => gameEngine.startGame("101", Player.One, BotKind.AlphaBeta, 65),
+    /AlphaBetaBot depth must be an integer between 1 and 64/,
   );
 
   assert.deepEqual(gameEngine.snapshot(), live);

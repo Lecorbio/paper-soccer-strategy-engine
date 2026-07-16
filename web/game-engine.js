@@ -15,9 +15,12 @@
   const BotKind = Object.freeze({
     Random: "random",
     Mcts: "mcts",
+    AlphaBeta: "alphaBeta",
   });
 
   const DEFAULT_BOT_ITERATIONS = 2000;
+  const DEFAULT_ALPHA_BETA_DEPTH = 6;
+  const MAX_ALPHA_BETA_DEPTH = 64;
   const MAX_UINT32 = 0xffffffff;
 
   function samePoint(left, right) {
@@ -31,15 +34,18 @@
     if (kind === BotKind.Mcts) {
       return 1;
     }
+    if (kind === BotKind.AlphaBeta) {
+      return 2;
+    }
     throw new Error("Unsupported bot kind: " + String(kind));
   }
 
-  function unsignedInteger(value, label, allowZero) {
+  function unsignedInteger(value, label, allowZero, maximum = MAX_UINT32) {
     const number = Number(value);
     const minimum = allowZero ? 0 : 1;
-    if (!Number.isInteger(number) || number < minimum || number > MAX_UINT32) {
+    if (!Number.isInteger(number) || number < minimum || number > maximum) {
       throw new Error(
-        label + " must be an integer between " + minimum + " and " + MAX_UINT32 + ".",
+        label + " must be an integer between " + minimum + " and " + maximum + ".",
       );
     }
     return number;
@@ -50,15 +56,21 @@
       throw new Error(label + " bot configuration is required.");
     }
 
-    return [
-      String(config.seed),
-      botKindValue(config.kind),
-      unsignedInteger(
+    const kindValue = botKindValue(config.kind);
+    const searchSetting = config.kind === BotKind.AlphaBeta
+      ? unsignedInteger(
+        config.depth ?? DEFAULT_ALPHA_BETA_DEPTH,
+        label + " AlphaBetaBot depth",
+        false,
+        MAX_ALPHA_BETA_DEPTH,
+      )
+      : unsignedInteger(
         config.iterations ?? DEFAULT_BOT_ITERATIONS,
         label + " new simulations per bot move",
         false,
-      ),
-    ];
+      );
+
+    return [String(config.seed), kindValue, searchSetting];
   }
 
   function createClient(module) {
@@ -127,19 +139,26 @@
         seed,
         humanPlayer,
         botKind = BotKind.Random,
-        iterations = DEFAULT_BOT_ITERATIONS,
+        searchSetting,
       ) {
         const humanValue = humanPlayer === Player.Two ? 2 : 1;
         const kindValue = botKindValue(botKind);
-        const iterationValue = unsignedInteger(
-          iterations,
-          "New simulations per bot move",
-          false,
-        );
+        const settingValue = botKind === BotKind.AlphaBeta
+          ? unsignedInteger(
+            searchSetting ?? DEFAULT_ALPHA_BETA_DEPTH,
+            "AlphaBetaBot depth",
+            false,
+            MAX_ALPHA_BETA_DEPTH,
+          )
+          : unsignedInteger(
+            searchSetting ?? DEFAULT_BOT_ITERATIONS,
+            "New simulations per bot move",
+            false,
+          );
         return runCommand(
           "ps_start_game",
           ["string", "number", "number", "number"],
-          [String(seed), humanValue, kindValue, iterationValue],
+          [String(seed), humanValue, kindValue, settingValue],
           snapshot,
         );
       },

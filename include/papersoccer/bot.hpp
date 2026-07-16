@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "papersoccer/types.hpp"
 
@@ -13,6 +14,7 @@ namespace papersoccer {
 enum class BotKind {
   Random,
   Mcts,
+  AlphaBeta,
 };
 
 std::string_view bot_kind_name(BotKind kind) noexcept;
@@ -40,10 +42,69 @@ class RandomBot final : public Bot {
   std::uint64_t next_random() noexcept;
 };
 
+struct AlphaBetaConfig {
+  static constexpr std::uint32_t maximum_turn_depth{64};
+  static constexpr std::uint32_t maximum_search_plies{512};
+
+  std::uint32_t max_turn_depth{6};
+  std::uint64_t max_nodes{100'000};
+  std::size_t transposition_table_entries{65'536};
+  std::uint32_t max_search_plies{10};
+};
+
+enum class AlphaBetaScoreBound {
+  Exact,
+  Lower,
+  Upper,
+};
+
+struct AlphaBetaRootMove {
+  Move move{};
+  int score{};
+  AlphaBetaScoreBound bound{AlphaBetaScoreBound::Exact};
+};
+
+struct AlphaBetaSearchStats {
+  std::uint32_t completed_turn_depth{};
+  std::uint32_t attempted_turn_depth{};
+  std::uint64_t nodes{};
+  std::uint64_t leaf_evaluations{};
+  std::uint64_t terminal_nodes{};
+  std::uint64_t cutoffs{};
+  std::uint64_t transposition_probes{};
+  std::uint64_t transposition_hits{};
+  std::uint64_t transposition_cutoffs{};
+  std::uint64_t transposition_stores{};
+  std::uint64_t physical_ply_cutoffs{};
+  std::uint32_t max_physical_ply{};
+  int root_score{};
+  bool budget_exhausted{};
+  std::vector<Move> principal_variation{};
+  std::vector<AlphaBetaRootMove> root_moves{};
+};
+
+class AlphaBetaBot final : public Bot {
+ public:
+  explicit AlphaBetaBot(AlphaBetaConfig config = {});
+
+  std::string_view name() const noexcept override;
+  Move choose_move(const GameState &state) override;
+  const AlphaBetaConfig &config() const noexcept;
+  const AlphaBetaSearchStats &last_search_stats() const noexcept;
+
+ private:
+  AlphaBetaConfig config_;
+  AlphaBetaSearchStats last_search_stats_{};
+};
+
 struct BotConfig {
   BotKind kind{BotKind::Random};
   std::uint64_t seed{RandomBot::default_seed()};
   std::uint32_t mcts_iterations{2000};
+  std::uint32_t alpha_beta_depth{6};
+  std::uint64_t alpha_beta_max_nodes{100'000};
+  std::size_t alpha_beta_transposition_table_entries{65'536};
+  std::uint32_t alpha_beta_max_search_plies{10};
 };
 
 enum class MctsRolloutPolicy {

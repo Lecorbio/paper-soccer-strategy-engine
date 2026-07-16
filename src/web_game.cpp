@@ -52,6 +52,8 @@ void write_bot(std::ostream &out, const BotConfig &config) {
       << config.seed << '"';
   if (config.kind == BotKind::Mcts) {
     out << ",\"iterations\":" << config.mcts_iterations;
+  } else if (config.kind == BotKind::AlphaBeta) {
+    out << ",\"depth\":" << config.alpha_beta_depth;
   }
   out << '}';
 }

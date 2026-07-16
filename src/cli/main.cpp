@@ -15,7 +15,7 @@ namespace ps = papersoccer;
 
 namespace {
 
-enum class ControllerKind { Human, RandomBot, MctsBot };
+enum class ControllerKind { Human, RandomBot, MctsBot, AlphaBetaBot };
 
 struct CliConfig {
   ControllerKind player_one{ControllerKind::Human};
@@ -23,6 +23,8 @@ struct CliConfig {
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
   std::uint64_t mcts_base_seed{ps::RandomBot::default_seed()};
   std::uint32_t mcts_iterations{2000};
+  std::uint32_t alpha_beta_depth{6};
+  std::uint64_t alpha_beta_max_nodes{100'000};
 };
 
 std::string player_to_string(ps::Player player) {
@@ -37,6 +39,8 @@ std::string controller_to_string(ControllerKind controller) {
       return "RandomBot";
     case ControllerKind::MctsBot:
       return "MctsBot";
+    case ControllerKind::AlphaBetaBot:
+      return "AlphaBetaBot";
   }
   return "Unknown";
 }
@@ -107,6 +111,35 @@ bool parse_iterations(const std::string &input, std::uint32_t &out_iterations) {
   }
 }
 
+bool parse_alpha_beta_depth(const std::string &input,
+                            std::uint32_t &out_depth) {
+  std::uint32_t depth = 0;
+  if (!parse_iterations(input, depth) ||
+      depth > ps::AlphaBetaConfig::maximum_turn_depth) {
+    return false;
+  }
+  out_depth = depth;
+  return true;
+}
+
+bool parse_node_budget(const std::string &input,
+                       std::uint64_t &out_node_budget) {
+  try {
+    if (input.empty() || input.front() == '-') {
+      return false;
+    }
+    std::size_t parsed_chars = 0;
+    const auto value = std::stoull(input, &parsed_chars);
+    if (parsed_chars != input.size() || value == 0) {
+      return false;
+    }
+    out_node_budget = static_cast<std::uint64_t>(value);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 std::string prompt_line(const std::string &prompt) {
   std::cout << prompt;
   std::string input;
@@ -159,6 +192,44 @@ std::uint32_t prompt_iterations(std::uint32_t default_iterations) {
   }
 }
 
+std::uint32_t prompt_alpha_beta_depth(std::uint32_t default_depth) {
+  while (true) {
+    const std::string input = prompt_line(
+        "AlphaBetaBot turn depth [" + std::to_string(default_depth) + "]: ");
+    if (input.empty()) {
+      return default_depth;
+    }
+
+    std::uint32_t depth = default_depth;
+    if (parse_alpha_beta_depth(input, depth)) {
+      return depth;
+    }
+    std::cout << "Invalid depth. Enter an integer between 1 and "
+              << ps::AlphaBetaConfig::maximum_turn_depth << ".\n";
+  }
+}
+
+std::uint64_t prompt_alpha_beta_max_nodes(std::uint64_t default_max_nodes) {
+  while (true) {
+    const std::string input = prompt_line(
+        "AlphaBetaBot node budget per move [" +
+        std::to_string(default_max_nodes) + "]: ");
+    if (input.empty()) {
+      return default_max_nodes;
+    }
+
+    std::uint64_t max_nodes = default_max_nodes;
+    if (parse_node_budget(input, max_nodes)) {
+      return max_nodes;
+    }
+    std::cout << "Invalid node budget. Enter an integer greater than zero.\n";
+  }
+}
+
+bool uses_controller(const CliConfig &config, ControllerKind controller) {
+  return config.player_one == controller || config.player_two == controller;
+}
+
 CliConfig prompt_config() {
   std::cout << "Select mode:\n";
   std::cout << "  [1] Human vs Human\n";
@@ -167,59 +238,99 @@ CliConfig prompt_config() {
   std::cout << "  [4] Human vs MctsBot\n";
   std::cout << "  [5] RandomBot vs MctsBot\n";
   std::cout << "  [6] MctsBot vs MctsBot\n";
+  std::cout << "  [7] Human vs AlphaBetaBot\n";
+  std::cout << "  [8] RandomBot vs AlphaBetaBot\n";
+  std::cout << "  [9] MctsBot vs AlphaBetaBot\n";
+  std::cout << "  [10] AlphaBetaBot vs AlphaBetaBot\n";
 
   CliConfig config;
-  const std::size_t mode = prompt_choice("Mode: ", 6);
-  if (mode == 1) {
-    return config;
-  }
-
-  if (mode == 2 || mode == 3) {
-    config.base_seed =
-        prompt_seed("RandomBot base seed", ps::RandomBot::default_seed());
-    if (mode == 2) {
+  const std::size_t mode = prompt_choice("Mode: ", 10);
+  switch (mode) {
+    case 1:
+      break;
+    case 2: {
       const std::size_t side =
           prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
       config.player_one =
           (side == 1) ? ControllerKind::Human : ControllerKind::RandomBot;
       config.player_two =
           (side == 1) ? ControllerKind::RandomBot : ControllerKind::Human;
-      return config;
+      break;
     }
-
-    config.player_one = ControllerKind::RandomBot;
-    config.player_two = ControllerKind::RandomBot;
-    return config;
+    case 3:
+      config.player_one = ControllerKind::RandomBot;
+      config.player_two = ControllerKind::RandomBot;
+      break;
+    case 4: {
+      const std::size_t side =
+          prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::Human : ControllerKind::MctsBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::MctsBot : ControllerKind::Human;
+      break;
+    }
+    case 5: {
+      const std::size_t side =
+          prompt_choice("MctsBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::MctsBot : ControllerKind::RandomBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::RandomBot : ControllerKind::MctsBot;
+      break;
+    }
+    case 6:
+      config.player_one = ControllerKind::MctsBot;
+      config.player_two = ControllerKind::MctsBot;
+      break;
+    case 7: {
+      const std::size_t side =
+          prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::Human : ControllerKind::AlphaBetaBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::AlphaBetaBot : ControllerKind::Human;
+      break;
+    }
+    case 8: {
+      const std::size_t side = prompt_choice(
+          "AlphaBetaBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one = (side == 1) ? ControllerKind::AlphaBetaBot
+                                      : ControllerKind::RandomBot;
+      config.player_two = (side == 1) ? ControllerKind::RandomBot
+                                      : ControllerKind::AlphaBetaBot;
+      break;
+    }
+    case 9: {
+      const std::size_t side = prompt_choice(
+          "AlphaBetaBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one = (side == 1) ? ControllerKind::AlphaBetaBot
+                                      : ControllerKind::MctsBot;
+      config.player_two = (side == 1) ? ControllerKind::MctsBot
+                                      : ControllerKind::AlphaBetaBot;
+      break;
+    }
+    case 10:
+      config.player_one = ControllerKind::AlphaBetaBot;
+      config.player_two = ControllerKind::AlphaBetaBot;
+      break;
+    default:
+      throw std::logic_error("unsupported CLI mode");
   }
 
-  if (mode == 5) {
+  if (uses_controller(config, ControllerKind::RandomBot)) {
     config.base_seed =
         prompt_seed("RandomBot base seed", ps::RandomBot::default_seed());
   }
-  config.mcts_base_seed =
-      prompt_seed("MctsBot base seed", ps::RandomBot::default_seed());
-  config.mcts_iterations = prompt_iterations(2000);
-
-  if (mode == 4) {
-    const std::size_t side =
-        prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
-    config.player_one = (side == 1) ? ControllerKind::Human : ControllerKind::MctsBot;
-    config.player_two = (side == 1) ? ControllerKind::MctsBot : ControllerKind::Human;
-    return config;
+  if (uses_controller(config, ControllerKind::MctsBot)) {
+    config.mcts_base_seed =
+        prompt_seed("MctsBot base seed", ps::RandomBot::default_seed());
+    config.mcts_iterations = prompt_iterations(2000);
   }
-
-  if (mode == 5) {
-    const std::size_t side =
-        prompt_choice("MctsBot plays as: [1] Player 1, [2] Player 2: ", 2);
-    config.player_one =
-        (side == 1) ? ControllerKind::MctsBot : ControllerKind::RandomBot;
-    config.player_two =
-        (side == 1) ? ControllerKind::RandomBot : ControllerKind::MctsBot;
-    return config;
+  if (uses_controller(config, ControllerKind::AlphaBetaBot)) {
+    config.alpha_beta_depth = prompt_alpha_beta_depth(6);
+    config.alpha_beta_max_nodes = prompt_alpha_beta_max_nodes(100'000);
   }
-
-  config.player_one = ControllerKind::MctsBot;
-  config.player_two = ControllerKind::MctsBot;
   return config;
 }
 
@@ -239,13 +350,23 @@ std::unique_ptr<ps::Bot> make_player_bot(const CliConfig &config,
   }
 
   ps::BotConfig bot_config;
-  if (controller == ControllerKind::RandomBot) {
-    bot_config.kind = ps::BotKind::Random;
-    bot_config.seed = bot_seed(config.base_seed, player);
-  } else {
-    bot_config.kind = ps::BotKind::Mcts;
-    bot_config.seed = bot_seed(config.mcts_base_seed, player);
-    bot_config.mcts_iterations = config.mcts_iterations;
+  switch (controller) {
+    case ControllerKind::Human:
+      throw std::logic_error("human controller cannot create a bot");
+    case ControllerKind::RandomBot:
+      bot_config.kind = ps::BotKind::Random;
+      bot_config.seed = bot_seed(config.base_seed, player);
+      break;
+    case ControllerKind::MctsBot:
+      bot_config.kind = ps::BotKind::Mcts;
+      bot_config.seed = bot_seed(config.mcts_base_seed, player);
+      bot_config.mcts_iterations = config.mcts_iterations;
+      break;
+    case ControllerKind::AlphaBetaBot:
+      bot_config.kind = ps::BotKind::AlphaBeta;
+      bot_config.alpha_beta_depth = config.alpha_beta_depth;
+      bot_config.alpha_beta_max_nodes = config.alpha_beta_max_nodes;
+      break;
   }
   return ps::make_bot(bot_config);
 }
@@ -291,6 +412,12 @@ int main() {
     std::cout << "MctsBot base seed: " << config.mcts_base_seed << "\n";
     std::cout << "MctsBot iterations per move: " << config.mcts_iterations << "\n";
   }
+  if (config.player_one == ControllerKind::AlphaBetaBot ||
+      config.player_two == ControllerKind::AlphaBetaBot) {
+    std::cout << "AlphaBetaBot turn depth: " << config.alpha_beta_depth << "\n";
+    std::cout << "AlphaBetaBot node budget per move: "
+              << config.alpha_beta_max_nodes << "\n";
+  }
 
   while (!ps::is_terminal(state)) {
     auto moves = ps::legal_moves(state);
@@ -334,6 +461,27 @@ int main() {
         }
         if (stats.expansion_saturated) {
           std::cout << ", tree saturated";
+        }
+        std::cout << "\n";
+      } else if (const auto *alpha_beta_bot =
+                     dynamic_cast<const ps::AlphaBetaBot *>(bot)) {
+        const ps::AlphaBetaSearchStats &stats =
+            alpha_beta_bot->last_search_stats();
+        std::cout << "Alpha-beta stats: depth="
+                  << stats.completed_turn_depth << "/"
+                  << stats.attempted_turn_depth << ", nodes=" << stats.nodes
+                  << ", evaluations=" << stats.leaf_evaluations
+                  << ", terminal nodes=" << stats.terminal_nodes
+                  << ", cutoffs=" << stats.cutoffs << ", TT hits="
+                  << stats.transposition_hits << "/"
+                  << stats.transposition_probes
+                  << ", max physical ply=" << stats.max_physical_ply
+                  << ", physical-ply cutoffs="
+                  << stats.physical_ply_cutoffs
+                  << ", root score=" << stats.root_score
+                  << ", PV plies=" << stats.principal_variation.size();
+        if (stats.budget_exhausted) {
+          std::cout << ", node budget reached";
         }
         std::cout << "\n";
       }

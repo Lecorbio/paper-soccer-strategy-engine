@@ -22,6 +22,34 @@ inline constexpr bool same_rules_config(const RulesConfig &lhs,
   return lhs.width == rhs.width && lhs.height == rhs.height;
 }
 
+struct PositionKey {
+  std::uint64_t first{};
+  std::uint64_t second{};
+
+  constexpr bool operator==(const PositionKey &) const noexcept = default;
+};
+
+inline constexpr std::uint64_t mix_position_key(std::uint64_t value) noexcept {
+  value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+  value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+  return value ^ (value >> 31U);
+}
+
+inline constexpr PositionKey position_key_component(std::uint64_t category,
+                                                     std::uint64_t index) noexcept {
+  const std::uint64_t tagged = (category << 56U) ^ index;
+  return PositionKey{
+      mix_position_key(tagged ^ 0x243f6a8885a308d3ULL),
+      mix_position_key(tagged ^ 0x13198a2e03707344ULL),
+  };
+}
+
+inline constexpr void xor_position_key(PositionKey &target,
+                                       PositionKey value) noexcept {
+  target.first ^= value.first;
+  target.second ^= value.second;
+}
+
 class CompactBitset {
  public:
   CompactBitset() = default;
@@ -64,7 +92,7 @@ class SearchTopology {
 
   explicit SearchTopology(RulesConfig config) : config_(config) {
     if (config.width < 1 || config.height < 1) {
-      throw std::invalid_argument("MCTS requires positive board dimensions");
+      throw std::invalid_argument("search requires positive board dimensions");
     }
 
     const std::size_t regular_vertex_count =
@@ -161,7 +189,7 @@ class SearchTopology {
       }
       const auto destination_index = find_vertex(destination);
       if (!destination_index.has_value()) {
-        throw std::logic_error("MCTS topology is missing a legal destination");
+        throw std::logic_error("search topology is missing a legal destination");
       }
       if (result.count >= kMaximumMoves) {
         throw std::logic_error("paper soccer vertex has more than eight moves");
@@ -191,11 +219,11 @@ class SearchPosition {
         visited_vertices_(topology_->vertex_count()), to_move_(state.to_move),
         status_(state.status) {
     if (!same_rules_config(topology_->config(), state.config)) {
-      throw std::invalid_argument("MCTS topology does not match game state");
+      throw std::invalid_argument("search topology does not match game state");
     }
     const auto ball = topology_->find_vertex(state.ball);
     if (!ball.has_value()) {
-      throw std::invalid_argument("MCTS game state ball is outside the board");
+      throw std::invalid_argument("search game state ball is outside the board");
     }
     ball_ = *ball;
 
@@ -203,6 +231,7 @@ class SearchPosition {
       const auto edge = topology_->find_edge(segment);
       if (edge.has_value()) {
         used_edges_.set(*edge);
+        xor_position_key(position_key_, position_key_component(1, *edge));
       }
     }
     for (const auto &[point, visits] : state.visit_count) {
@@ -212,18 +241,36 @@ class SearchPosition {
       const auto vertex = topology_->find_vertex(point);
       if (vertex.has_value()) {
         visited_vertices_.set(*vertex);
+        xor_position_key(position_key_, position_key_component(2, *vertex));
       }
     }
+    add_dynamic_key();
     undo_stack_.reserve(topology_->edge_count());
   }
 
   const std::shared_ptr<const SearchTopology> &topology() const noexcept {
     return topology_;
   }
+  Point ball() const noexcept { return topology_->point(ball_); }
+  VertexIndex ball_vertex() const noexcept { return ball_; }
   Player to_move() const noexcept { return to_move_; }
   Status status() const noexcept { return status_; }
   bool is_terminal() const noexcept { return status_ != Status::InProgress; }
   std::size_t undo_depth() const noexcept { return undo_stack_.size(); }
+  PositionKey position_key() const noexcept { return position_key_; }
+
+  bool edge_used(EdgeIndex edge) const noexcept { return used_edges_.test(edge); }
+  bool vertex_visited(VertexIndex vertex) const noexcept {
+    return visited_vertices_.test(vertex);
+  }
+
+  bool grants_extra_turn(std::uint8_t slot) const noexcept {
+    const SearchTopology::Arc &arc =
+        topology_->adjacency(ball_, to_move_).arcs[slot];
+    return is_boundary_point(topology_->config(),
+                             topology_->point(arc.destination)) ||
+           visited_vertices_.test(arc.destination);
+  }
 
   std::optional<Player> winner() const noexcept {
     if (status_ == Status::WonByOne) {
@@ -270,25 +317,32 @@ class SearchPosition {
 
   void make_move(std::uint8_t slot) {
     if (is_terminal()) {
-      throw std::invalid_argument("cannot move a terminal MCTS position");
+      throw std::invalid_argument("cannot move a terminal search position");
     }
     const SearchTopology::Adjacency &adjacency =
         topology_->adjacency(ball_, to_move_);
     if (slot >= adjacency.count || used_edges_.test(adjacency.arcs[slot].edge)) {
-      throw std::invalid_argument("illegal compact MCTS move");
+      throw std::invalid_argument("illegal compact search move");
     }
 
     const SearchTopology::Arc arc = adjacency.arcs[slot];
     const bool destination_was_visited = visited_vertices_.test(arc.destination);
     undo_stack_.push_back(
         Undo{ball_, arc.edge, to_move_, status_, destination_was_visited});
+    remove_dynamic_key();
     used_edges_.set(arc.edge);
+    xor_position_key(position_key_, position_key_component(1, arc.edge));
     visited_vertices_.set(arc.destination);
+    if (!destination_was_visited) {
+      xor_position_key(position_key_,
+                       position_key_component(2, arc.destination));
+    }
     ball_ = arc.destination;
 
     const Point destination = topology_->point(ball_);
     if (is_goal_point(topology_->config(), destination)) {
       status_ = to_move_ == Player::One ? Status::WonByOne : Status::WonByTwo;
+      add_dynamic_key();
       return;
     }
 
@@ -304,23 +358,28 @@ class SearchPosition {
     if (legal_slots(slots) == 0) {
       status_ = to_move_ == Player::One ? Status::WonByTwo : Status::WonByOne;
     }
+    add_dynamic_key();
   }
 
   void unmake_move() {
     if (undo_stack_.empty()) {
-      throw std::logic_error("cannot unmake the compact MCTS root");
+      throw std::logic_error("cannot unmake the compact search root");
     }
     const Undo undo = undo_stack_.back();
     undo_stack_.pop_back();
 
     const VertexIndex destination = ball_;
+    remove_dynamic_key();
     ball_ = undo.previous_ball;
     to_move_ = undo.previous_player;
     status_ = undo.previous_status;
     used_edges_.reset(undo.edge);
+    xor_position_key(position_key_, position_key_component(1, undo.edge));
     if (!undo.destination_was_visited) {
       visited_vertices_.reset(destination);
+      xor_position_key(position_key_, position_key_component(2, destination));
     }
+    add_dynamic_key();
   }
 
   void unmake_to(std::size_t depth) {
@@ -344,6 +403,17 @@ class SearchPosition {
   Player to_move_{Player::One};
   Status status_{Status::InProgress};
   std::vector<Undo> undo_stack_{};
+  PositionKey position_key_{};
+
+  void add_dynamic_key() noexcept {
+    xor_position_key(position_key_, position_key_component(3, ball_));
+    xor_position_key(position_key_,
+                     position_key_component(4, static_cast<std::uint64_t>(to_move_)));
+    xor_position_key(position_key_,
+                     position_key_component(5, static_cast<std::uint64_t>(status_)));
+  }
+
+  void remove_dynamic_key() noexcept { add_dynamic_key(); }
 };
 
 struct TacticalProbeStats {

@@ -93,6 +93,48 @@ test("positions mode evaluates both bots on parseable shared positions", () => {
   assert.equal(report.summary.illegal_moves, 0);
 });
 
+test("alpha-beta arena settings reach the bot and its diagnostics", () => {
+  const report = runJson([
+    "positions",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-depth", "1",
+    "--candidate-alpha-beta-max-nodes", "128",
+    "--candidate-alpha-beta-table-entries", "0",
+    "--candidate-alpha-beta-max-search-plies", "7",
+    "--reference-kind", "random",
+  ]);
+
+  assert.deepEqual(report.configuration.candidate, {
+    kind: "alpha-beta",
+    max_turn_depth: 1,
+    max_nodes: 128,
+    transposition_table_entries: 0,
+    max_search_plies: 7,
+  });
+  assert.deepEqual(report.configuration.reference, { kind: "random" });
+
+  const candidate = report.positions[0].evaluations[0];
+  assert.equal(candidate.bot, "candidate");
+  assert.equal(candidate.mcts, null);
+  assert.equal(typeof candidate.alpha_beta.nodes, "number");
+  assert.equal(typeof candidate.alpha_beta.physical_ply_cutoffs, "number");
+  assert.ok(candidate.alpha_beta.nodes <= 128);
+  assert.ok(Array.isArray(candidate.alpha_beta.principal_variation));
+  assert.ok(Array.isArray(candidate.alpha_beta.root_moves));
+
+  assert.equal(report.summary.candidate.alpha_beta.searches, 1);
+  assert.equal(report.summary.candidate.alpha_beta.nodes_sum,
+    candidate.alpha_beta.nodes);
+  assert.equal(report.summary.candidate.alpha_beta.physical_ply_cutoffs_sum,
+    candidate.alpha_beta.physical_ply_cutoffs);
+  assert.equal(report.summary.candidate.mcts.searches, 0);
+  assert.equal(report.summary.reference.alpha_beta.searches, 0);
+  assert.equal(typeof report.summary.candidate.timing.median_nodes_per_second,
+    "number");
+});
+
 test("mode-specific options are rejected outside their mode", () => {
   const positions = spawnSync(arena, ["positions", "--pairs", "1"], {
     encoding: "utf8",
@@ -138,4 +180,48 @@ test("invalid tactical arena settings are rejected", () => {
   assert.notEqual(unknownLeafPolicy.status, 0);
   assert.match(unknownLeafPolicy.stderr,
     /requires rollout-only or tactical-quiescence/);
+});
+
+test("invalid alpha-beta arena settings are rejected", () => {
+  const zeroDepth = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-depth", "0",
+  ], { encoding: "utf8" });
+  assert.notEqual(zeroDepth.status, 0);
+  assert.match(zeroDepth.stderr, /alpha-beta depth must be between/);
+
+  const excessiveDepth = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-depth", "65",
+  ], { encoding: "utf8" });
+  assert.notEqual(excessiveDepth.status, 0);
+  assert.match(excessiveDepth.stderr, /alpha-beta depth must be between/);
+
+  const zeroNodes = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-max-nodes", "0",
+  ], { encoding: "utf8" });
+  assert.notEqual(zeroNodes.status, 0);
+  assert.match(zeroNodes.stderr,
+    /alpha-beta max nodes must be greater than zero/);
+
+  const zeroSearchPlies = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-max-search-plies", "0",
+  ], { encoding: "utf8" });
+  assert.notEqual(zeroSearchPlies.status, 0);
+  assert.match(zeroSearchPlies.stderr,
+    /alpha-beta max search plies must be between/);
+
+  const unknownKind = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "minimax",
+  ], { encoding: "utf8" });
+  assert.notEqual(unknownKind.status, 0);
+  assert.match(unknownKind.stderr,
+    /requires random, mcts, or alpha-beta/);
 });

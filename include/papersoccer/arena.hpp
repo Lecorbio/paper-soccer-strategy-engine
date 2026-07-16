@@ -21,6 +21,10 @@ struct ArenaBotConfig {
       MctsConfig::default_quiescence_max_depth};
   std::uint32_t quiescence_max_nodes{
       MctsConfig::default_quiescence_max_nodes};
+  std::uint32_t alpha_beta_depth{6};
+  std::uint64_t alpha_beta_max_nodes{100'000};
+  std::size_t alpha_beta_transposition_table_entries{65'536};
+  std::uint32_t alpha_beta_max_search_plies{10};
 };
 
 struct MatchesConfig {

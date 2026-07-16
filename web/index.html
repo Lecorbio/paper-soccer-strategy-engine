@@ -63,6 +63,7 @@
             <select id="botSelect">
               <option value="random" selected>RandomBot</option>
               <option value="mcts">MctsBot</option>
+              <option value="alphaBeta">AlphaBetaBot</option>
             </select>
           </label>
 
@@ -84,6 +85,12 @@
             <span>New simulations per bot move</span>
             <input id="botIterationsInput" type="number" min="1" max="10000" step="1"
               value="2000" inputmode="numeric" autocomplete="off" disabled>
+          </label>
+
+          <label id="botDepthField" class="form-field" for="botDepthInput" hidden>
+            <span>Possession-handoff depth</span>
+            <input id="botDepthInput" type="number" min="1" max="64" step="1"
+              value="6" inputmode="numeric" autocomplete="off" disabled>
           </label>
 
           <p class="setup-help">Player 1 moves first. Reuse the same settings to repeat the bot.</p>
@@ -136,6 +143,7 @@
                 <select id="replayOneBotSelect">
                   <option value="random" selected>RandomBot</option>
                   <option value="mcts">MctsBot</option>
+                  <option value="alphaBeta">AlphaBetaBot</option>
                 </select>
               </label>
 
@@ -151,6 +159,13 @@
                 <input id="replayOneIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
               </label>
+
+              <label id="replayOneDepthField" class="compact-form-field"
+                for="replayOneDepthInput" hidden>
+                <span>Possession-handoff depth</span>
+                <input id="replayOneDepthInput" type="number" min="1" max="64" step="1"
+                  value="6" inputmode="numeric" autocomplete="off" disabled>
+              </label>
             </div>
 
             <div class="replay-player-card" role="group"
@@ -164,6 +179,7 @@
                 <select id="replayTwoBotSelect">
                   <option value="random" selected>RandomBot</option>
                   <option value="mcts">MctsBot</option>
+                  <option value="alphaBeta">AlphaBetaBot</option>
                 </select>
               </label>
 
@@ -178,6 +194,13 @@
                 <span>New simulations per bot move</span>
                 <input id="replayTwoIterationsInput" type="number" min="1" max="10000" step="1"
                   value="2000" inputmode="numeric" autocomplete="off" disabled>
+              </label>
+
+              <label id="replayTwoDepthField" class="compact-form-field"
+                for="replayTwoDepthInput" hidden>
+                <span>Possession-handoff depth</span>
+                <input id="replayTwoDepthInput" type="number" min="1" max="64" step="1"
+                  value="6" inputmode="numeric" autocomplete="off" disabled>
               </label>
             </div>
           </div>

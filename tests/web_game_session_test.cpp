@@ -120,7 +120,8 @@ void configured_bot_kind_is_used_and_serialized() {
   const ps::Move expected = control->choose_move(session.match().state());
 
   require(ps::bot_kind_name(ps::BotKind::Random) == "RandomBot" &&
-              ps::bot_kind_name(ps::BotKind::Mcts) == "MctsBot",
+              ps::bot_kind_name(ps::BotKind::Mcts) == "MctsBot" &&
+              ps::bot_kind_name(ps::BotKind::AlphaBeta) == "AlphaBetaBot",
           "Bot kinds should expose stable replay names.");
   require(session.bot_config().kind == ps::BotKind::Mcts &&
               session.bot_config().seed == config.seed &&
@@ -178,6 +179,39 @@ void configured_bot_kind_is_used_and_serialized() {
               after.find("\"expansionSaturated\":") != std::string::npos &&
               after.find("\"rootValue\":") != std::string::npos,
           "The web snapshot should serialize every requested MCTS counter and timing field.");
+}
+
+void configured_alpha_beta_bot_is_used_and_serialized() {
+  ps::BotConfig config;
+  config.kind = ps::BotKind::AlphaBeta;
+  config.seed = std::numeric_limits<std::uint64_t>::max();
+  config.alpha_beta_depth = 1;
+  config.alpha_beta_max_nodes = 1'000;
+
+  ps::WebGameSession session(ps::Player::Two, config, ps::RulesConfig{8, 1}, 47);
+  std::unique_ptr<ps::Bot> control = ps::make_bot(config);
+  const ps::Move expected = control->choose_move(session.match().state());
+
+  require(session.bot_config().kind == ps::BotKind::AlphaBeta &&
+              session.bot_config().seed == config.seed &&
+              session.bot_config().alpha_beta_depth == 1,
+          "The web session should retain the selected AlphaBetaBot depth.");
+
+  const std::string before = session.snapshot_json();
+  require(before.find("\"one\":{\"kind\":\"AlphaBetaBot\",\"seed\":"
+                      "\"18446744073709551615\",\"depth\":1}") !=
+              std::string::npos,
+          "The replay should serialize AlphaBetaBot kind, exact seed, and depth.");
+  require(before.find("\"botConfiguration\":{\"kind\":\"AlphaBetaBot\","
+                      "\"seed\":\"18446744073709551615\",\"depth\":1}") !=
+              std::string::npos,
+          "Diagnostics metadata should retain the active AlphaBetaBot configuration.");
+
+  const ps::WebGameCommandResult result = session.play_bot(0);
+  require(result.ok() && result.move.has_value() && result.move->to == expected.to,
+          "The live web session should move with the configured AlphaBetaBot.");
+  require(session.bot_searches().empty(),
+          "Alpha-beta decisions should not be mislabeled as MCTS diagnostics.");
 }
 
 void proven_root_can_complete_fewer_iterations_than_requested() {
@@ -532,6 +566,8 @@ int run_web_game_session_tests() {
        player_two_snapshot_assigns_the_bot_to_player_one},
       {"configured_bot_kind_is_used_and_serialized",
        configured_bot_kind_is_used_and_serialized},
+      {"configured_alpha_beta_bot_is_used_and_serialized",
+       configured_alpha_beta_bot_is_used_and_serialized},
       {"proven_root_can_complete_fewer_iterations_than_requested",
        proven_root_can_complete_fewer_iterations_than_requested},
       {"rebound_bot_turns_record_separate_searches",

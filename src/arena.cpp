@@ -75,6 +75,7 @@ struct DecisionReport {
   Move move{};
   std::uint64_t elapsed_ns{};
   std::optional<SearchStats> stats{};
+  std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
 };
 
 struct GameReport {
@@ -95,6 +96,7 @@ struct PositionEvaluation {
   Move move{};
   std::uint64_t elapsed_ns{};
   std::optional<SearchStats> stats{};
+  std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
 };
 
 struct PositionReport {
@@ -125,6 +127,7 @@ struct TimingSummary {
   std::uint64_t max_ns{};
   double median_iterations_per_second{};
   double median_simulated_plies_per_second{};
+  double median_nodes_per_second{};
 };
 
 struct MctsSummary {
@@ -145,6 +148,23 @@ struct MctsSummary {
   std::uint32_t max_tactical_depth{};
   std::uint64_t rebuild_count_max{};
   std::size_t expansion_saturated_searches{};
+};
+
+struct AlphaBetaSummary {
+  std::size_t searches{};
+  std::uint64_t nodes_sum{};
+  std::uint64_t leaf_evaluations_sum{};
+  std::uint64_t terminal_nodes_sum{};
+  std::uint64_t cutoffs_sum{};
+  std::uint64_t transposition_probes_sum{};
+  std::uint64_t transposition_hits_sum{};
+  std::uint64_t transposition_cutoffs_sum{};
+  std::uint64_t transposition_stores_sum{};
+  std::uint64_t physical_ply_cutoffs_sum{};
+  std::uint32_t max_completed_turn_depth{};
+  std::uint32_t max_attempted_turn_depth{};
+  std::uint32_t max_physical_ply{};
+  std::size_t budget_exhausted_searches{};
 };
 
 struct BootstrapInterval {
@@ -184,7 +204,27 @@ std::string_view leaf_policy_name(MctsLeafPolicy policy) noexcept {
 }
 
 std::string_view kind_name(BotKind kind) noexcept {
-  return kind == BotKind::Random ? "random" : "mcts";
+  switch (kind) {
+    case BotKind::Random:
+      return "random";
+    case BotKind::Mcts:
+      return "mcts";
+    case BotKind::AlphaBeta:
+      return "alpha-beta";
+  }
+  return "unknown";
+}
+
+std::string_view alpha_beta_bound_name(AlphaBetaScoreBound bound) noexcept {
+  switch (bound) {
+    case AlphaBetaScoreBound::Exact:
+      return "exact";
+    case AlphaBetaScoreBound::Lower:
+      return "lower";
+    case AlphaBetaScoreBound::Upper:
+      return "upper";
+  }
+  return "unknown";
 }
 
 void validate_rules(const RulesConfig &rules) {
@@ -194,41 +234,66 @@ void validate_rules(const RulesConfig &rules) {
 }
 
 void validate_bot_config(const ArenaBotConfig &config) {
-  if (config.kind == BotKind::Mcts) {
-    if (config.leaf_policy != MctsLeafPolicy::RolloutOnly &&
-        config.leaf_policy != MctsLeafPolicy::TacticalQuiescence) {
-      throw std::invalid_argument("arena MCTS leaf policy is unknown");
-    }
-    if (config.iterations == 0) {
-      throw std::invalid_argument("arena MCTS iterations must be greater than zero");
-    }
-    if (!std::isfinite(config.exploration) || config.exploration < 0.0) {
-      throw std::invalid_argument(
-          "arena MCTS exploration must be finite and non-negative");
-    }
-    if (config.max_nodes < 2) {
-      throw std::invalid_argument("arena MCTS max nodes must be at least 2");
-    }
-    if (config.quiescence_max_depth == 0 ||
-        config.quiescence_max_depth >
-            MctsConfig::maximum_quiescence_max_depth) {
-      throw std::invalid_argument(
-          "arena MCTS quiescence max depth must be between 1 and " +
-          std::to_string(MctsConfig::maximum_quiescence_max_depth));
-    }
-    if (config.quiescence_max_nodes == 0 ||
-        config.quiescence_max_nodes >
-            MctsConfig::maximum_quiescence_max_nodes) {
-      throw std::invalid_argument(
-          "arena MCTS quiescence max nodes must be between 1 and " +
-          std::to_string(MctsConfig::maximum_quiescence_max_nodes));
-    }
-    if (config.leaf_policy == MctsLeafPolicy::TacticalQuiescence &&
-        config.rollout_policy != MctsRolloutPolicy::Tactical) {
-      throw std::invalid_argument(
-          "arena tactical quiescence requires the tactical rollout policy");
-    }
+  switch (config.kind) {
+    case BotKind::Random:
+      return;
+    case BotKind::Mcts:
+      if (config.leaf_policy != MctsLeafPolicy::RolloutOnly &&
+          config.leaf_policy != MctsLeafPolicy::TacticalQuiescence) {
+        throw std::invalid_argument("arena MCTS leaf policy is unknown");
+      }
+      if (config.iterations == 0) {
+        throw std::invalid_argument(
+            "arena MCTS iterations must be greater than zero");
+      }
+      if (!std::isfinite(config.exploration) || config.exploration < 0.0) {
+        throw std::invalid_argument(
+            "arena MCTS exploration must be finite and non-negative");
+      }
+      if (config.max_nodes < 2) {
+        throw std::invalid_argument("arena MCTS max nodes must be at least 2");
+      }
+      if (config.quiescence_max_depth == 0 ||
+          config.quiescence_max_depth >
+              MctsConfig::maximum_quiescence_max_depth) {
+        throw std::invalid_argument(
+            "arena MCTS quiescence max depth must be between 1 and " +
+            std::to_string(MctsConfig::maximum_quiescence_max_depth));
+      }
+      if (config.quiescence_max_nodes == 0 ||
+          config.quiescence_max_nodes >
+              MctsConfig::maximum_quiescence_max_nodes) {
+        throw std::invalid_argument(
+            "arena MCTS quiescence max nodes must be between 1 and " +
+            std::to_string(MctsConfig::maximum_quiescence_max_nodes));
+      }
+      if (config.leaf_policy == MctsLeafPolicy::TacticalQuiescence &&
+          config.rollout_policy != MctsRolloutPolicy::Tactical) {
+        throw std::invalid_argument(
+            "arena tactical quiescence requires the tactical rollout policy");
+      }
+      return;
+    case BotKind::AlphaBeta:
+      if (config.alpha_beta_depth == 0 ||
+          config.alpha_beta_depth > AlphaBetaConfig::maximum_turn_depth) {
+        throw std::invalid_argument(
+            "arena alpha-beta depth must be between 1 and " +
+            std::to_string(AlphaBetaConfig::maximum_turn_depth));
+      }
+      if (config.alpha_beta_max_nodes == 0) {
+        throw std::invalid_argument(
+            "arena alpha-beta max nodes must be greater than zero");
+      }
+      if (config.alpha_beta_max_search_plies == 0 ||
+          config.alpha_beta_max_search_plies >
+              AlphaBetaConfig::maximum_search_plies) {
+        throw std::invalid_argument(
+            "arena alpha-beta max search plies must be between 1 and " +
+            std::to_string(AlphaBetaConfig::maximum_search_plies));
+      }
+      return;
   }
+  throw std::invalid_argument("arena bot kind is unknown");
 }
 
 void validate_common(const RulesConfig &rules, const ArenaBotConfig &candidate,
@@ -240,21 +305,33 @@ void validate_common(const RulesConfig &rules, const ArenaBotConfig &candidate,
 
 std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
                                     std::uint64_t seed) {
-  if (config.kind == BotKind::Random) {
-    return std::make_unique<RandomBot>(seed);
+  switch (config.kind) {
+    case BotKind::Random:
+      return std::make_unique<RandomBot>(seed);
+    case BotKind::Mcts: {
+      MctsConfig mcts;
+      mcts.seed = seed;
+      mcts.iterations = config.iterations;
+      mcts.exploration = config.exploration;
+      mcts.rollout_policy = config.rollout_policy;
+      mcts.reuse_tree = config.reuse_tree;
+      mcts.max_nodes = config.max_nodes;
+      mcts.leaf_policy = config.leaf_policy;
+      mcts.quiescence_max_depth = config.quiescence_max_depth;
+      mcts.quiescence_max_nodes = config.quiescence_max_nodes;
+      return std::make_unique<MctsBot>(mcts);
+    }
+    case BotKind::AlphaBeta: {
+      AlphaBetaConfig alpha_beta;
+      alpha_beta.max_turn_depth = config.alpha_beta_depth;
+      alpha_beta.max_nodes = config.alpha_beta_max_nodes;
+      alpha_beta.transposition_table_entries =
+          config.alpha_beta_transposition_table_entries;
+      alpha_beta.max_search_plies = config.alpha_beta_max_search_plies;
+      return std::make_unique<AlphaBetaBot>(alpha_beta);
+    }
   }
-
-  MctsConfig mcts;
-  mcts.seed = seed;
-  mcts.iterations = config.iterations;
-  mcts.exploration = config.exploration;
-  mcts.rollout_policy = config.rollout_policy;
-  mcts.reuse_tree = config.reuse_tree;
-  mcts.max_nodes = config.max_nodes;
-  mcts.leaf_policy = config.leaf_policy;
-  mcts.quiescence_max_depth = config.quiescence_max_depth;
-  mcts.quiescence_max_nodes = config.quiescence_max_nodes;
-  return std::make_unique<MctsBot>(mcts);
+  throw std::invalid_argument("arena bot kind is unknown");
 }
 
 std::optional<SearchStats> search_stats(Bot &bot) {
@@ -263,6 +340,14 @@ std::optional<SearchStats> search_stats(Bot &bot) {
     return std::nullopt;
   }
   return mcts->last_search_stats();
+}
+
+std::optional<AlphaBetaSearchStats> alpha_beta_search_stats(Bot &bot) {
+  auto *alpha_beta = dynamic_cast<AlphaBetaBot *>(&bot);
+  if (alpha_beta == nullptr) {
+    return std::nullopt;
+  }
+  return alpha_beta->last_search_stats();
 }
 
 bool contains_move(const std::vector<Move> &moves, Move move) {
@@ -288,8 +373,14 @@ DecisionReport choose_and_measure(Bot &bot, Entrant entrant, std::size_t ply,
                            " bot returned an illegal move at ply " +
                            std::to_string(ply));
   }
-  return DecisionReport{ply, entrant, state.to_move, from, move,
-                        elapsed_nanoseconds(start, end), search_stats(bot)};
+  return DecisionReport{ply,
+                        entrant,
+                        state.to_move,
+                        from,
+                        move,
+                        elapsed_nanoseconds(start, end),
+                        search_stats(bot),
+                        alpha_beta_search_stats(bot)};
 }
 
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
@@ -350,8 +441,12 @@ PositionEvaluation evaluate_position(const ArenaBotConfig &config, Entrant entra
                                      const GameState &state) {
   std::unique_ptr<Bot> bot = make_arena_bot(config, seed);
   DecisionReport decision = choose_and_measure(*bot, entrant, 1, state);
-  return PositionEvaluation{entrant, seed, decision.move, decision.elapsed_ns,
-                            decision.stats};
+  return PositionEvaluation{entrant,
+                            seed,
+                            decision.move,
+                            decision.elapsed_ns,
+                            decision.stats,
+                            decision.alpha_beta_stats};
 }
 
 std::uint64_t median_unsigned(std::vector<std::uint64_t> values) {
@@ -391,9 +486,11 @@ TimingSummary summarize_timing(
   std::vector<std::uint64_t> elapsed;
   std::vector<double> throughput;
   std::vector<double> rollout_throughput;
+  std::vector<double> node_throughput;
   elapsed.reserve(decisions.size());
   throughput.reserve(decisions.size());
   rollout_throughput.reserve(decisions.size());
+  node_throughput.reserve(decisions.size());
   for (const DecisionReport *decision : decisions) {
     elapsed.push_back(decision->elapsed_ns);
     summary.total_ns += decision->elapsed_ns;
@@ -403,6 +500,14 @@ TimingSummary summarize_timing(
           static_cast<double>(decision->elapsed_ns));
       rollout_throughput.push_back(
           static_cast<double>(decision->stats->simulated_plies) *
+          1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
+      node_throughput.push_back(
+          static_cast<double>(decision->stats->nodes) * 1'000'000'000.0 /
+          static_cast<double>(decision->elapsed_ns));
+    } else if (decision->alpha_beta_stats.has_value() &&
+               decision->elapsed_ns > 0) {
+      node_throughput.push_back(
+          static_cast<double>(decision->alpha_beta_stats->nodes) *
           1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
     }
   }
@@ -416,6 +521,7 @@ TimingSummary summarize_timing(
   summary.median_iterations_per_second = median_double(std::move(throughput));
   summary.median_simulated_plies_per_second =
       median_double(std::move(rollout_throughput));
+  summary.median_nodes_per_second = median_double(std::move(node_throughput));
   return summary;
 }
 
@@ -446,6 +552,35 @@ MctsSummary summarize_mcts(
     summary.rebuild_count_max =
         std::max(summary.rebuild_count_max, stats.rebuild_count);
     summary.expansion_saturated_searches += stats.expansion_saturated ? 1U : 0U;
+  }
+  return summary;
+}
+
+AlphaBetaSummary summarize_alpha_beta(
+    const std::vector<const DecisionReport *> &decisions) {
+  AlphaBetaSummary summary;
+  for (const DecisionReport *decision : decisions) {
+    if (!decision->alpha_beta_stats.has_value()) {
+      continue;
+    }
+    const AlphaBetaSearchStats &stats = *decision->alpha_beta_stats;
+    ++summary.searches;
+    summary.nodes_sum += stats.nodes;
+    summary.leaf_evaluations_sum += stats.leaf_evaluations;
+    summary.terminal_nodes_sum += stats.terminal_nodes;
+    summary.cutoffs_sum += stats.cutoffs;
+    summary.transposition_probes_sum += stats.transposition_probes;
+    summary.transposition_hits_sum += stats.transposition_hits;
+    summary.transposition_cutoffs_sum += stats.transposition_cutoffs;
+    summary.transposition_stores_sum += stats.transposition_stores;
+    summary.physical_ply_cutoffs_sum += stats.physical_ply_cutoffs;
+    summary.max_completed_turn_depth = std::max(
+        summary.max_completed_turn_depth, stats.completed_turn_depth);
+    summary.max_attempted_turn_depth = std::max(
+        summary.max_attempted_turn_depth, stats.attempted_turn_depth);
+    summary.max_physical_ply =
+        std::max(summary.max_physical_ply, stats.max_physical_ply);
+    summary.budget_exhausted_searches += stats.budget_exhausted ? 1U : 0U;
   }
   return summary;
 }
@@ -494,7 +629,7 @@ std::vector<const DecisionReport *> decisions_for(
         entrant == Entrant::Candidate ? position.candidate : position.reference;
     storage.push_back(DecisionReport{
         1, entrant, position.state.to_move, position.state.ball, evaluation.move,
-        evaluation.elapsed_ns, evaluation.stats});
+        evaluation.elapsed_ns, evaluation.stats, evaluation.alpha_beta_stats});
   }
   std::vector<const DecisionReport *> result;
   result.reserve(storage.size());
@@ -593,17 +728,30 @@ void write_point(std::ostream &out, Point point) {
 void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
   out << "{\"kind\":";
   write_string(out, kind_name(config.kind));
-  if (config.kind == BotKind::Mcts) {
-    out << ",\"iterations\":" << config.iterations
-        << ",\"exploration\":" << config.exploration << ",\"rollout_policy\":";
-    write_string(out, policy_name(config.rollout_policy));
-    out << ",\"leaf_policy\":";
-    write_string(out, leaf_policy_name(config.leaf_policy));
-    out << ",\"quiescence_max_depth\":" << config.quiescence_max_depth
-        << ",\"quiescence_max_nodes\":" << config.quiescence_max_nodes;
-    out << ",\"reuse_tree\":";
-    write_bool(out, config.reuse_tree);
-    out << ",\"max_nodes\":" << config.max_nodes;
+  switch (config.kind) {
+    case BotKind::Random:
+      break;
+    case BotKind::Mcts:
+      out << ",\"iterations\":" << config.iterations
+          << ",\"exploration\":" << config.exploration
+          << ",\"rollout_policy\":";
+      write_string(out, policy_name(config.rollout_policy));
+      out << ",\"leaf_policy\":";
+      write_string(out, leaf_policy_name(config.leaf_policy));
+      out << ",\"quiescence_max_depth\":" << config.quiescence_max_depth
+          << ",\"quiescence_max_nodes\":" << config.quiescence_max_nodes;
+      out << ",\"reuse_tree\":";
+      write_bool(out, config.reuse_tree);
+      out << ",\"max_nodes\":" << config.max_nodes;
+      break;
+    case BotKind::AlphaBeta:
+      out << ",\"max_turn_depth\":" << config.alpha_beta_depth
+          << ",\"max_nodes\":" << config.alpha_beta_max_nodes
+          << ",\"transposition_table_entries\":"
+          << config.alpha_beta_transposition_table_entries
+          << ",\"max_search_plies\":"
+          << config.alpha_beta_max_search_plies;
+      break;
   }
   out << '}';
 }
@@ -635,6 +783,46 @@ void write_stats(std::ostream &out, const SearchStats &stats) {
   out << '}';
 }
 
+void write_alpha_beta_stats(std::ostream &out,
+                            const AlphaBetaSearchStats &stats) {
+  out << "{\"completed_turn_depth\":" << stats.completed_turn_depth
+      << ",\"attempted_turn_depth\":" << stats.attempted_turn_depth
+      << ",\"nodes\":" << stats.nodes
+      << ",\"leaf_evaluations\":" << stats.leaf_evaluations
+      << ",\"terminal_nodes\":" << stats.terminal_nodes
+      << ",\"cutoffs\":" << stats.cutoffs
+      << ",\"transposition_probes\":" << stats.transposition_probes
+      << ",\"transposition_hits\":" << stats.transposition_hits
+      << ",\"transposition_cutoffs\":" << stats.transposition_cutoffs
+      << ",\"transposition_stores\":" << stats.transposition_stores
+      << ",\"physical_ply_cutoffs\":" << stats.physical_ply_cutoffs
+      << ",\"max_physical_ply\":" << stats.max_physical_ply
+      << ",\"root_score\":" << stats.root_score
+      << ",\"budget_exhausted\":";
+  write_bool(out, stats.budget_exhausted);
+  out << ",\"principal_variation\":[";
+  for (std::size_t index = 0; index < stats.principal_variation.size();
+       ++index) {
+    if (index != 0) {
+      out << ',';
+    }
+    write_point(out, stats.principal_variation[index].to);
+  }
+  out << "],\"root_moves\":[";
+  for (std::size_t index = 0; index < stats.root_moves.size(); ++index) {
+    if (index != 0) {
+      out << ',';
+    }
+    out << "{\"move\":";
+    write_point(out, stats.root_moves[index].move.to);
+    out << ",\"score\":" << stats.root_moves[index].score
+        << ",\"bound\":";
+    write_string(out, alpha_beta_bound_name(stats.root_moves[index].bound));
+    out << '}';
+  }
+  out << "]}";
+}
+
 void write_participant(std::ostream &out, const Participant &participant) {
   out << "{\"bot\":";
   write_string(out, entrant_name(participant.entrant));
@@ -657,6 +845,12 @@ void write_decision(std::ostream &out, const DecisionReport &decision) {
   out << ",\"elapsed_ns\":" << decision.elapsed_ns << ",\"legal\":true,\"mcts\":";
   if (decision.stats.has_value()) {
     write_stats(out, *decision.stats);
+  } else {
+    out << "null";
+  }
+  out << ",\"alpha_beta\":";
+  if (decision.alpha_beta_stats.has_value()) {
+    write_alpha_beta_stats(out, *decision.alpha_beta_stats);
   } else {
     out << "null";
   }
@@ -683,7 +877,9 @@ void write_timing(std::ostream &out, const TimingSummary &summary) {
       << ",\"median_iterations_per_second\":"
       << summary.median_iterations_per_second
       << ",\"median_simulated_plies_per_second\":"
-      << summary.median_simulated_plies_per_second << '}';
+      << summary.median_simulated_plies_per_second
+      << ",\"median_nodes_per_second\":" << summary.median_nodes_per_second
+      << '}';
 }
 
 void write_mcts_summary(std::ostream &out, const MctsSummary &summary) {
@@ -714,6 +910,37 @@ void write_mcts_summary(std::ostream &out, const MctsSummary &summary) {
       << summary.expansion_saturated_searches << '}';
 }
 
+void write_alpha_beta_summary(std::ostream &out,
+                              const AlphaBetaSummary &summary) {
+  const double transposition_hit_rate =
+      summary.transposition_probes_sum == 0
+          ? 0.0
+          : static_cast<double>(summary.transposition_hits_sum) /
+                static_cast<double>(summary.transposition_probes_sum);
+  out << "{\"searches\":" << summary.searches
+      << ",\"nodes_sum\":" << summary.nodes_sum
+      << ",\"leaf_evaluations_sum\":" << summary.leaf_evaluations_sum
+      << ",\"terminal_nodes_sum\":" << summary.terminal_nodes_sum
+      << ",\"cutoffs_sum\":" << summary.cutoffs_sum
+      << ",\"transposition_probes_sum\":"
+      << summary.transposition_probes_sum
+      << ",\"transposition_hits_sum\":" << summary.transposition_hits_sum
+      << ",\"transposition_hit_rate\":" << transposition_hit_rate
+      << ",\"transposition_cutoffs_sum\":"
+      << summary.transposition_cutoffs_sum
+      << ",\"transposition_stores_sum\":"
+      << summary.transposition_stores_sum
+      << ",\"physical_ply_cutoffs_sum\":"
+      << summary.physical_ply_cutoffs_sum
+      << ",\"max_completed_turn_depth\":"
+      << summary.max_completed_turn_depth
+      << ",\"max_attempted_turn_depth\":"
+      << summary.max_attempted_turn_depth
+      << ",\"max_physical_ply\":" << summary.max_physical_ply
+      << ",\"budget_exhausted_searches\":"
+      << summary.budget_exhausted_searches << '}';
+}
+
 void write_entrant_summary(std::ostream &out, Entrant entrant,
                            const std::vector<GameReport> &games) {
   const std::vector<const DecisionReport *> decisions = decisions_for(games, entrant);
@@ -727,6 +954,8 @@ void write_entrant_summary(std::ostream &out, Entrant entrant,
   write_timing(out, summarize_timing(decisions));
   out << ",\"mcts\":";
   write_mcts_summary(out, summarize_mcts(decisions));
+  out << ",\"alpha_beta\":";
+  write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
   out << '}';
 }
 
@@ -739,6 +968,8 @@ void write_position_entrant_summary(std::ostream &out, Entrant entrant,
   write_timing(out, summarize_timing(decisions));
   out << ",\"mcts\":";
   write_mcts_summary(out, summarize_mcts(decisions));
+  out << ",\"alpha_beta\":";
+  write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
   out << '}';
 }
 
@@ -956,6 +1187,12 @@ std::string run_positions_json(const PositionsConfig &config) {
           << ",\"legal\":true,\"mcts\":";
       if (evaluation.stats.has_value()) {
         write_stats(out, *evaluation.stats);
+      } else {
+        out << "null";
+      }
+      out << ",\"alpha_beta\":";
+      if (evaluation.alpha_beta_stats.has_value()) {
+        write_alpha_beta_stats(out, *evaluation.alpha_beta_stats);
       } else {
         out << "null";
       }

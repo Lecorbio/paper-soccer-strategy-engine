@@ -127,6 +127,40 @@ void positions_report_measures_both_bots_on_shared_positions() {
                    "position report should summarize rollout throughput");
 }
 
+void alpha_beta_is_configured_measured_and_summarized() {
+  arena::PositionsConfig config;
+  config.position_count = 1;
+  config.generation_plies = 0;
+  config.candidate.kind = papersoccer::BotKind::AlphaBeta;
+  config.candidate.alpha_beta_depth = 1;
+  config.candidate.alpha_beta_max_nodes = 128;
+  config.candidate.alpha_beta_transposition_table_entries = 0;
+  config.candidate.alpha_beta_max_search_plies = 7;
+  config.reference.kind = papersoccer::BotKind::Random;
+
+  const std::string json = arena::run_positions_json(config);
+  require_contains(
+      json,
+      "\"candidate\":{\"kind\":\"alpha-beta\",\"max_turn_depth\":1,"
+      "\"max_nodes\":128,\"transposition_table_entries\":0,"
+      "\"max_search_plies\":7}",
+      "position report should retain the alpha-beta search limits");
+  require_contains(json, "\"mcts\":null,\"alpha_beta\":{"
+                         "\"completed_turn_depth\":",
+                   "alpha-beta evaluations should expose search diagnostics");
+  require_contains(json, "\"principal_variation\":[",
+                   "alpha-beta diagnostics should expose their principal variation");
+  require_contains(json, "\"physical_ply_cutoffs\":",
+                   "alpha-beta diagnostics should expose physical-ply cutoffs");
+  require_contains(json, "\"physical_ply_cutoffs_sum\":",
+                   "alpha-beta summaries should aggregate physical-ply cutoffs");
+  require_contains(json, "\"alpha_beta\":{\"searches\":1,"
+                         "\"nodes_sum\":",
+                   "alpha-beta decisions should be summarized independently");
+  require_contains(json, "\"median_nodes_per_second\":",
+                   "arena timing should report comparable node throughput");
+}
+
 void invalid_tactical_limits_and_policy_are_rejected() {
   arena::MatchesConfig invalid_depth;
   invalid_depth.candidate.quiescence_max_depth = 0;
@@ -149,13 +183,52 @@ void invalid_tactical_limits_and_policy_are_rejected() {
       "arena should require tactical rollouts for tactical quiescence");
 }
 
+void invalid_alpha_beta_settings_and_unknown_kinds_are_rejected() {
+  arena::PositionsConfig zero_depth;
+  zero_depth.candidate.kind = papersoccer::BotKind::AlphaBeta;
+  zero_depth.candidate.alpha_beta_depth = 0;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(zero_depth); },
+      "arena should reject a zero alpha-beta depth");
+
+  arena::PositionsConfig excessive_depth;
+  excessive_depth.candidate.kind = papersoccer::BotKind::AlphaBeta;
+  excessive_depth.candidate.alpha_beta_depth =
+      papersoccer::AlphaBetaConfig::maximum_turn_depth + 1U;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(excessive_depth); },
+      "arena should reject an excessive alpha-beta depth");
+
+  arena::PositionsConfig zero_nodes;
+  zero_nodes.candidate.kind = papersoccer::BotKind::AlphaBeta;
+  zero_nodes.candidate.alpha_beta_max_nodes = 0;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(zero_nodes); },
+      "arena should reject a zero alpha-beta node budget");
+
+  arena::PositionsConfig zero_search_plies;
+  zero_search_plies.candidate.kind = papersoccer::BotKind::AlphaBeta;
+  zero_search_plies.candidate.alpha_beta_max_search_plies = 0;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(zero_search_plies); },
+      "arena should reject a zero alpha-beta physical horizon");
+
+  arena::PositionsConfig unknown_kind;
+  unknown_kind.candidate.kind = static_cast<papersoccer::BotKind>(99);
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(unknown_kind); },
+      "arena should reject unknown bot kinds instead of treating them as MCTS");
+}
+
 }  // namespace
 
 int main() {
   try {
     matches_report_has_paired_games_and_measurements();
     positions_report_measures_both_bots_on_shared_positions();
+    alpha_beta_is_configured_measured_and_summarized();
     invalid_tactical_limits_and_policy_are_rejected();
+    invalid_alpha_beta_settings_and_unknown_kinds_are_rejected();
     std::cout << "[PASS] arena smoke test\n";
     return 0;
   } catch (const std::exception &error) {

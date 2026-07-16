@@ -21,6 +21,7 @@
       hasGame: hasGame,
       locked: locked,
       usesMcts: Boolean(options.usesMcts),
+      usesAlphaBeta: Boolean(options.usesAlphaBeta),
       primaryLabel: hasGame ? "Start new game" : "Start",
     };
   }
@@ -30,6 +31,9 @@
     elements.sideSelect.disabled = state.locked;
     elements.seedInput.disabled = state.locked;
     elements.budgetInput.disabled = state.locked || !state.usesMcts;
+    if (elements.depthInput) {
+      elements.depthInput.disabled = state.locked || !state.usesAlphaBeta;
+    }
     elements.startButton.hidden = state.locked;
     elements.startButton.textContent = state.primaryLabel;
     elements.changeSettingsButton.hidden = !state.locked;
@@ -118,9 +122,14 @@
   function humanMatchFilename(configuration) {
     const kind = safeFilenamePart(configuration?.kind ?? "bot");
     const seed = safeFilenamePart(configuration?.seed ?? "unknown");
-    const suffix = Number.isInteger(configuration?.iterations)
-      ? String(configuration.iterations) + "-new-simulations-per-move"
-      : "no-search";
+    let suffix = "no-search";
+    if (configuration?.kind === "MctsBot" &&
+        Number.isInteger(configuration.iterations)) {
+      suffix = String(configuration.iterations) + "-new-simulations-per-move";
+    } else if (configuration?.kind === "AlphaBetaBot" &&
+               Number.isInteger(configuration.depth)) {
+      suffix = "handoff-depth-" + String(configuration.depth);
+    }
     return "papersoccer-human-match-" + kind + "-seed-" + seed +
       "-" + suffix + ".json";
   }

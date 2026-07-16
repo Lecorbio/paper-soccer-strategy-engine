@@ -11,6 +11,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_library(papersoccer_core
+  src/alpha_beta.cpp
   src/bot.cpp
   src/debug.cpp
   src/geometry.cpp
@@ -37,6 +38,7 @@ add_executable(papersoccer_arena src/arena/main.cpp)
 target_link_libraries(papersoccer_arena PRIVATE papersoccer_arena_support)
 
 add_executable(papersoccer_tests
+  tests/alpha_beta_test.cpp
   tests/bot_test.cpp
   tests/match_test.cpp
   tests/mcts_test.cpp
