@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const compiledModule = await import("../web/papersoccer-wasm.js");
+const compiledModule = await import("../../web/papersoccer-wasm.js");
 globalThis.createPaperSoccerModule = compiledModule.default;
-await import("../web/game-engine.js");
+await import("../../web/game-engine.js");
 
 const { BotKind, Player, Status, ready } = globalThis.PaperSoccer;
 const gameEngine = await ready;

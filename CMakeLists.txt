@@ -11,16 +11,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_library(papersoccer_core
-  src/alpha_beta.cpp
-  src/bot.cpp
-  src/debug.cpp
-  src/geometry.cpp
-  src/match.cpp
-  src/mcts.cpp
-  src/random_bot.cpp
-  src/rules.cpp
-  src/tactical_search.cpp
-  src/web_game.cpp
+  src/bots/alpha_beta.cpp
+  src/bots/bot.cpp
+  src/bots/mcts.cpp
+  src/bots/random_bot.cpp
+  src/bots/tactical_search.cpp
+  src/core/debug.cpp
+  src/core/geometry.cpp
+  src/core/match.cpp
+  src/core/rules.cpp
+  src/web/web_game.cpp
 )
 target_include_directories(papersoccer_core PUBLIC include)
 
@@ -30,7 +30,10 @@ target_link_libraries(papersoccer_cli PRIVATE papersoccer_core)
 add_executable(papersoccer_replay_export src/replay/main.cpp)
 target_link_libraries(papersoccer_replay_export PRIVATE papersoccer_core)
 
-add_library(papersoccer_arena_support src/arena.cpp)
+add_library(papersoccer_arena_support
+  src/arena/report.cpp
+  src/arena/runner.cpp
+)
 target_include_directories(papersoccer_arena_support PUBLIC include)
 target_link_libraries(papersoccer_arena_support PUBLIC papersoccer_core)
 
@@ -38,16 +41,16 @@ add_executable(papersoccer_arena src/arena/main.cpp)
 target_link_libraries(papersoccer_arena PRIVATE papersoccer_arena_support)
 
 add_executable(papersoccer_tests
-  tests/alpha_beta_test.cpp
-  tests/bot_test.cpp
-  tests/match_test.cpp
-  tests/mcts_test.cpp
+  tests/bots/alpha_beta_test.cpp
+  tests/bots/mcts_test.cpp
+  tests/bots/random_bot_test.cpp
+  tests/core/match_test.cpp
+  tests/core/rules_test.cpp
   tests/test_main.cpp
-  tests/rules_test.cpp
-  tests/web_game_session_test.cpp
+  tests/web/web_game_session_test.cpp
 )
 target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
-target_include_directories(papersoccer_tests PRIVATE src)
+target_include_directories(papersoccer_tests PRIVATE src/bots)
 if(EMSCRIPTEN)
   target_compile_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
   target_link_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
@@ -57,7 +60,8 @@ enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
 if(NOT EMSCRIPTEN)
-  add_executable(papersoccer_arena_smoke_test tests/arena_smoke_test.cpp)
+  add_executable(papersoccer_arena_smoke_test
+    tests/arena/arena_smoke_test.cpp)
   target_link_libraries(papersoccer_arena_smoke_test
     PRIVATE papersoccer_arena_support)
   add_test(NAME papersoccer_arena_smoke_test
@@ -76,12 +80,12 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
     add_test(
       NAME papersoccer_web_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
-              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web_wasm_test.mjs
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_wasm_test.mjs
     )
     add_test(
       NAME papersoccer_web_app_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
-              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web_app_support_test.mjs
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_app_support_test.mjs
     )
     if(NOT EMSCRIPTEN)
       add_test(
@@ -96,7 +100,7 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND} -E env
                 PAPERSOCCER_ARENA=$<TARGET_FILE:papersoccer_arena>
                 ${PAPERSOCCER_NODE_EXECUTABLE} --test
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/arena_cli_test.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/arena/arena_cli_test.mjs
       )
     endif()
   endif()

@@ -283,7 +283,7 @@ module and tests the browser-to-C++ command boundary.
 It can be run directly with:
 
 ```bash
-node --test tests/web_wasm_test.mjs
+node --test tests/web/web_wasm_test.mjs
 ```
 
 ## Measure Bot Performance
@@ -588,43 +588,53 @@ same geometry.
 
 ## Project Layout
 
-- `include/papersoccer/types.hpp` - core types and hashing
-- `include/papersoccer/geometry.hpp` - geometry and adjacency helpers
-- `include/papersoccer/bot.hpp` - bot interface plus Random, MCTS, and alpha-beta APIs
-- `include/papersoccer/arena.hpp` - paired-match and position-measurement API
-- `include/papersoccer/match.hpp` - authoritative state plus played-move history
-- `include/papersoccer/rules.hpp` - game rules API
-- `include/papersoccer/web_game.hpp` - versioned browser-session command API
-- `src/bot.cpp` - shared bot naming and factory implementation
-- `src/alpha_beta.cpp` - rebound-aware alpha-beta search and static evaluator
-- `src/mcts.cpp` - Monte Carlo Tree Search implementation
-- `src/mcts_internal.hpp` - compact search-only topology and mutable position
-- `src/arena.cpp` - arena execution, statistics, and JSON reports
-- `src/arena/main.cpp` - native/Wasm arena command-line entrypoint
-- `src/random_bot.cpp` - seeded `RandomBot` implementation
-- `src/geometry.cpp` - geometry implementation
-- `src/match.cpp` - match orchestration and replay metadata
-- `src/rules.cpp` - state transitions and legal move logic
-- `src/web_game.cpp` - C++ browser-session snapshots and command validation
-- `src/web/wasm_bridge.cpp` - minimal C ABI compiled by Emscripten
-- `src/cli/main.cpp` - terminal game loop
-- `src/replay/main.cpp` - bot self-play JSON replay exporter
-- `web/index.html` - static browser game and replay shell
-- `web/papersoccer-wasm.js` - generated single-file C++ WebAssembly module
-- `web/game-engine.js` - thin JavaScript client for the C++ module
-- `web/app-support.js` - replay-wrapper, timer, and live-configuration helpers
-- `web/app.js` - browser play, canvas rendering, and replay controls
-- `web/styles.css` - game and replay styling
-- `tests/match_test.cpp` - match history and state ownership checks
-- `tests/replay_export_test.mjs` - replay seed precision check
-- `tests/web_game_session_test.cpp` - C++ web-session and stale-command checks
-- `tests/web_wasm_test.mjs` - real WebAssembly/browser-client integration checks
-- `tests/web_app_support_test.mjs` - browser configuration, timer, and wrapper checks
-- `tests/bot_test.cpp` - RandomBot determinism and legality checks
-- `tests/alpha_beta_test.cpp` - alpha-beta correctness and replay-regression checks
-- `tests/mcts_test.cpp` - MCTS determinism, legality, and strategy checks
-- `tests/arena_smoke_test.cpp` - paired arena and measurement report smoke tests
-- `tests/arena_cli_test.mjs` - arena CLI option-routing and JSON integration tests
-- `benchmarks/wasm_mcts.mjs` - initial-position WebAssembly timing probe
-- `tests/test_main.cpp` - test entrypoint
-- `tests/rules_test.cpp` - rule correctness scenarios
+Public C++ includes remain stable under `include/papersoccer`; implementation and tests are
+grouped by responsibility:
+
+```text
+.
+├── include/papersoccer/        Public C++ API
+│   ├── arena.hpp               Arena configuration and report entrypoints
+│   ├── bot.hpp                 Bot interface and search configurations
+│   ├── debug.hpp               Text rendering API
+│   ├── geometry.hpp            Board geometry helpers
+│   ├── match.hpp               Stateful match and move history
+│   ├── rules.hpp               Legal moves and state transitions
+│   ├── types.hpp               Shared game types and hashing
+│   └── web_game.hpp            Versioned browser-session API
+├── src/
+│   ├── core/                   Rules, geometry, matches, and debug rendering
+│   ├── bots/                   Random, MCTS, alpha-beta, and tactical search
+│   │   └── mcts_internal.hpp   Private compact search position/topology
+│   ├── arena/
+│   │   ├── main.cpp            Native/Wasm command-line entrypoint
+│   │   ├── runner.cpp          Match execution and statistical summaries
+│   │   ├── report.cpp          Stable JSON report serialization
+│   │   └── internal.hpp        Private data shared by runner and reporter
+│   ├── cli/main.cpp            Interactive terminal game
+│   ├── replay/main.cpp         Seeded replay exporter
+│   └── web/
+│       ├── web_game.cpp        C++ browser sessions and snapshots
+│       └── wasm_bridge.cpp     Minimal Emscripten C ABI
+├── web/
+│   ├── index.html              Static application shell
+│   ├── game-engine.js          Client for the compiled C++ session API
+│   ├── app-support.js          Timers, configuration, and replay helpers
+│   ├── app.js                  Application/session and control orchestration
+│   ├── board-view.js           Canvas rendering and board interaction
+│   ├── styles.css              Game and replay presentation
+│   └── papersoccer-wasm.js     Generated single-file WebAssembly module
+├── tests/
+│   ├── core/                   Rules and match behavior
+│   ├── bots/                   Random, MCTS, and alpha-beta behavior
+│   ├── arena/                  Arena API smoke and CLI integration tests
+│   ├── web/                    C++ session, Wasm, and web-support tests
+│   ├── replay_export_test.mjs  Replay exporter integration test
+│   └── test_main.cpp           Native test entrypoint
+├── benchmarks/wasm_mcts.mjs    WebAssembly MCTS timing probe
+└── CMakeLists.txt              Build targets and complete test registration
+```
+
+The frontends (`cli`, `replay`, `arena`, and `web`) depend on the same public API and core
+library. Browser rules and bots remain authoritative in C++; the JavaScript layer only manages
+sessions, presentation, and input.
