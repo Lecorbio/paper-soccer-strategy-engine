@@ -225,32 +225,46 @@ DecisionReport choose_and_measure(Bot &bot, Entrant entrant, std::size_t ply,
 
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
                      Participant player_one, Participant player_two,
-                     const RulesConfig &rules, std::size_t max_plies) {
+                     const GameState &initial_state, std::size_t max_plies) {
+  if (initial_state.path.empty()) {
+    throw std::invalid_argument("arena initial state path must not be empty");
+  }
+  if (is_terminal(initial_state)) {
+    throw std::invalid_argument("arena initial state must be non-terminal");
+  }
+  const std::size_t initial_plies = initial_state.path.size() - 1;
+  if (initial_plies >= max_plies) {
+    throw std::invalid_argument(
+        "arena initial state must precede the max ply limit");
+  }
+
   GameReport report;
   report.pair_index = pair_index;
   report.game_in_pair = game_in_pair;
   report.player_one = player_one;
   report.player_two = player_two;
-  report.decisions.reserve(std::min<std::size_t>(max_plies, 512));
+  report.decisions.reserve(
+      std::min<std::size_t>(max_plies - initial_plies, 512));
 
   std::unique_ptr<Bot> player_one_bot =
       make_arena_bot(player_one.config, player_one.seed);
   std::unique_ptr<Bot> player_two_bot =
       make_arena_bot(player_two.config, player_two.seed);
-  GameState state = make_initial_state(rules);
+  GameState state = initial_state;
 
-  while (!is_terminal(state) && report.decisions.size() < max_plies) {
+  while (!is_terminal(state) &&
+         initial_plies + report.decisions.size() < max_plies) {
     const bool one_to_move = state.to_move == Player::One;
     Bot &bot = one_to_move ? *player_one_bot : *player_two_bot;
     const Entrant entrant = one_to_move ? player_one.entrant : player_two.entrant;
     DecisionReport decision = choose_and_measure(
-        bot, entrant, report.decisions.size() + 1, state);
+        bot, entrant, initial_plies + report.decisions.size() + 1, state);
     state = apply_move(state, decision.move);
     report.decisions.push_back(std::move(decision));
   }
 
   report.status = state.status;
-  report.plies = report.decisions.size();
+  report.plies = initial_plies + report.decisions.size();
   report.truncated = !is_terminal(state);
   if (!report.truncated) {
     const std::optional<Player> winning_player = winner(state);
@@ -261,6 +275,25 @@ GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
         *winning_player == Player::One ? player_one.entrant : player_two.entrant;
   }
   return report;
+}
+
+OpeningReport generate_opening(std::size_t pair_index,
+                               const RulesConfig &rules,
+                               std::uint64_t pair_seed,
+                               std::size_t opening_plies) {
+  SplitMix64 attempt_seeds{pair_seed};
+  for (std::size_t attempt = 0; attempt < kMaxPositionGenerationAttempts;
+       ++attempt) {
+    const std::uint64_t generation_seed = attempt_seeds.next();
+    GameState state = generate_position(rules, generation_seed, opening_plies);
+    const std::size_t actual_plies = state.path.empty() ? 0 : state.path.size() - 1;
+    if (!is_terminal(state) && actual_plies == opening_plies) {
+      return OpeningReport{pair_index, generation_seed, attempt + 1,
+                           std::move(state)};
+    }
+  }
+  throw std::runtime_error(
+      "could not generate a non-terminal arena opening at the requested ply");
 }
 
 GameState generate_position(const RulesConfig &rules, std::uint64_t seed,

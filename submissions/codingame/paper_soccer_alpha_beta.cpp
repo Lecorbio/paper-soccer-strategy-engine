@@ -185,7 +185,7 @@ struct AlphaBetaConfig {
   std::uint32_t max_turn_depth{6};
   std::uint64_t max_nodes{100'000};
   std::size_t transposition_table_entries{65'536};
-  std::uint32_t max_search_plies{10};
+  std::uint32_t max_search_plies{12};
   std::uint32_t max_time_ms{0};
 };
 
@@ -241,7 +241,7 @@ struct BotConfig {
   std::uint32_t alpha_beta_depth{6};
   std::uint64_t alpha_beta_max_nodes{100'000};
   std::size_t alpha_beta_transposition_table_entries{65'536};
-  std::uint32_t alpha_beta_max_search_plies{10};
+  std::uint32_t alpha_beta_max_search_plies{12};
 };
 
 enum class MctsRolloutPolicy {

@@ -80,6 +80,18 @@ ps::GameState state_after_path(const std::vector<ps::Point> &path) {
   return state;
 }
 
+ps::GameState state_after_random_plies(std::uint64_t seed,
+                                       std::size_t plies) {
+  ps::GameState state = ps::make_initial_state();
+  ps::RandomBot generator(seed);
+  for (std::size_t ply = 0; ply < plies; ++ply) {
+    require(!ps::is_terminal(state),
+            "The deterministic position fixture ended too early.");
+    state = ps::apply_move(state, generator.choose_move(state));
+  }
+  return state;
+}
+
 const std::vector<ps::Point> &replay_path_before_ply_34() {
   static const std::vector<ps::Point> path{
       {5, 5}, {5, 6}, {4, 6}, {3, 5}, {2, 6}, {1, 5}, {0, 6},
@@ -133,6 +145,23 @@ void alpha_beta_has_a_stable_name_and_chooses_legally() {
   require(selected != stats.root_moves.end() &&
               selected->bound == ps::AlphaBetaScoreBound::Exact,
           "The selected root move should expose an exact score.");
+}
+
+void alpha_beta_defaults_to_the_promoted_physical_horizon() {
+  const ps::GameState state =
+      state_after_random_plies(848'874'971'319'355'010ULL, 24);
+  require(state.ball == ps::Point{2, 5} &&
+              state.to_move == ps::Player::Two,
+          "The promoted-horizon fixture should reconstruct its expected root.");
+
+  ps::AlphaBetaConfig previous;
+  previous.max_search_plies = 10;
+  ps::AlphaBetaBot old_horizon(previous);
+  ps::AlphaBetaBot promoted;
+  require(promoted.config().max_search_plies == 12 &&
+              old_horizon.choose_move(state).to == ps::Point{1, 6} &&
+              promoted.choose_move(state).to == ps::Point{3, 6},
+          "The default bot should use the promoted 12-ply physical horizon.");
 }
 
 void alpha_beta_is_deterministic() {
@@ -421,6 +450,8 @@ int run_alpha_beta_tests() {
   const std::vector<TestCase> tests{
       {"alpha_beta_has_a_stable_name_and_chooses_legally",
        alpha_beta_has_a_stable_name_and_chooses_legally},
+      {"alpha_beta_defaults_to_the_promoted_physical_horizon",
+       alpha_beta_defaults_to_the_promoted_physical_horizon},
       {"alpha_beta_is_deterministic", alpha_beta_is_deterministic},
       {"alpha_beta_is_color_reflection_symmetric",
        alpha_beta_is_color_reflection_symmetric},

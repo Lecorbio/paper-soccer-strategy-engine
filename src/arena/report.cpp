@@ -200,6 +200,28 @@ void write_decision(std::ostream &out, const DecisionReport &decision) {
   out << '}';
 }
 
+void write_opening(std::ostream &out, const OpeningReport &opening,
+                   std::size_t requested_plies) {
+  const std::size_t actual_plies = opening.state.path.size() - 1;
+  out << "{\"pair_index\":" << opening.pair_index
+      << ",\"generation_seed\":";
+  write_uint64_string(out, opening.generation_seed);
+  out << ",\"attempts\":" << opening.attempts
+      << ",\"requested_plies\":" << requested_plies
+      << ",\"actual_plies\":" << actual_plies << ",\"moves\":[";
+  for (std::size_t index = 1; index < opening.state.path.size(); ++index) {
+    if (index != 1) {
+      out << ',';
+    }
+    write_point(out, opening.state.path[index]);
+  }
+  out << "],\"state\":{\"ball\":";
+  write_point(out, opening.state.ball);
+  out << ",\"to_move\":";
+  write_string(out, player_name(opening.state.to_move));
+  out << "}}";
+}
+
 void write_record(std::ostream &out, const Record &record) {
   const double percent =
       record.games == 0 ? 0.0 : 100.0 * record.score() / record.games;
@@ -327,6 +349,10 @@ std::string run_matches_json(const MatchesConfig &config) {
   if (config.max_plies == 0) {
     throw std::invalid_argument("arena max plies must be greater than zero");
   }
+  if (config.opening_plies >= config.max_plies && config.opening_plies != 0) {
+    throw std::invalid_argument(
+        "arena opening plies must be less than max plies");
+  }
   if (config.bootstrap_samples == 0) {
     throw std::invalid_argument("arena bootstrap samples must be greater than zero");
   }
@@ -335,25 +361,37 @@ std::string run_matches_json(const MatchesConfig &config) {
   }
 
   SplitMix64 seeds{config.base_seed};
+  SplitMix64 opening_pair_seeds{config.base_seed ^ kOpeningSeedSalt};
+  std::vector<OpeningReport> openings;
+  if (config.opening_plies != 0) {
+    openings.reserve(config.seed_pairs);
+  }
   std::vector<GameReport> games;
   games.reserve(config.seed_pairs * 2);
   for (std::size_t pair = 0; pair < config.seed_pairs; ++pair) {
     const std::uint64_t candidate_seed = seeds.next();
     const std::uint64_t reference_seed = seeds.next();
+    GameState initial_state = make_initial_state(config.rules);
+    if (config.opening_plies != 0) {
+      OpeningReport opening = generate_opening(
+          pair, config.rules, opening_pair_seeds.next(), config.opening_plies);
+      initial_state = opening.state;
+      openings.push_back(std::move(opening));
+    }
     games.push_back(play_game(
         pair, 0,
         Participant{Entrant::Candidate, Player::One, candidate_seed,
                     config.candidate},
         Participant{Entrant::Reference, Player::Two, reference_seed,
                     config.reference},
-        config.rules, config.max_plies));
+        initial_state, config.max_plies));
     games.push_back(play_game(
         pair, 1,
         Participant{Entrant::Reference, Player::One, reference_seed,
                     config.reference},
         Participant{Entrant::Candidate, Player::Two, candidate_seed,
                     config.candidate},
-        config.rules, config.max_plies));
+        initial_state, config.max_plies));
   }
 
   const std::vector<double> pair_scores =
@@ -377,13 +415,24 @@ std::string run_matches_json(const MatchesConfig &config) {
   out << ",\"seed_derivation\":\"splitmix64\""
       << ",\"seed_pairs\":" << config.seed_pairs
       << ",\"games\":" << games.size()
+      << ",\"opening_plies\":" << config.opening_plies
+      << ",\"opening_generator\":\"uniform_random\""
+      << ",\"opening_seed_derivation\":"
+         "\"domain_separated_splitmix64\""
       << ",\"max_plies\":" << config.max_plies
       << ",\"bootstrap_samples\":" << config.bootstrap_samples
       << ",\"candidate\":";
   write_bot_config(out, config.candidate);
   out << ",\"reference\":";
   write_bot_config(out, config.reference);
-  out << "},\"games\":[";
+  out << "},\"openings\":[";
+  for (std::size_t index = 0; index < openings.size(); ++index) {
+    if (index != 0) {
+      out << ',';
+    }
+    write_opening(out, openings[index], config.opening_plies);
+  }
+  out << "],\"games\":[";
   for (std::size_t index = 0; index < games.size(); ++index) {
     if (index != 0) {
       out << ',';

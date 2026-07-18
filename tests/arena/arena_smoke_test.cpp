@@ -38,6 +38,15 @@ std::string deterministic_match_summary(const std::string &json) {
   return json.substr(start);
 }
 
+std::string deterministic_openings(const std::string &json) {
+  const std::size_t start = json.find("\"openings\"");
+  const std::size_t end = json.find(",\"games\":[", start);
+  if (start == std::string::npos || end == std::string::npos) {
+    throw std::runtime_error("match report is missing opening data");
+  }
+  return json.substr(start, end - start);
+}
+
 void matches_report_has_paired_games_and_measurements() {
   arena::MatchesConfig config;
   config.seed_pairs = 1;
@@ -68,6 +77,10 @@ void matches_report_has_paired_games_and_measurements() {
                    "match report should identify its mode");
   require_contains(json, "\"games\":2",
                    "one seed pair should produce two games");
+  require_contains(json, "\"opening_plies\":0",
+                   "default matches should report an empty opening");
+  require_contains(json, "\"openings\":[]",
+                   "default matches should not generate opening states");
   require_contains(json, "\"base_seed\":\"18446744073709551615\"",
                    "64-bit seeds should be represented losslessly");
   require_contains(
@@ -102,6 +115,38 @@ void matches_report_has_paired_games_and_measurements() {
       deterministic_match_summary(repeated)) {
     throw std::runtime_error(
         "identical arena runs should reproduce pair scores and confidence bounds");
+  }
+}
+
+void randomized_openings_are_shared_reproducible_and_ply_aware() {
+  arena::MatchesConfig config;
+  config.seed_pairs = 1;
+  config.opening_plies = 4;
+  config.max_plies = 8;
+  config.bootstrap_samples = 32;
+  config.candidate.kind = papersoccer::BotKind::Random;
+  config.reference.kind = papersoccer::BotKind::Random;
+  config.base_seed = 123456789;
+
+  const std::string json = arena::run_matches_json(config);
+  require_contains(json, "\"opening_plies\":4",
+                   "match configuration should retain its opening length");
+  require_contains(json, "\"opening_generator\":\"uniform_random\"",
+                   "match configuration should identify the opening generator");
+  require_contains(json, "\"opening_seed_derivation\":"
+                         "\"domain_separated_splitmix64\"",
+                   "match configuration should identify its independent seed stream");
+  require_contains(json, "\"pair_index\":0,\"generation_seed\":\"",
+                   "an opening should retain its lossless generation seed");
+  require_contains(json, "\"requested_plies\":4,\"actual_plies\":4",
+                   "an accepted opening should reach the exact requested ply");
+  require_contains(json, "\"ply\":5",
+                   "competitive decision numbering should follow the opening");
+
+  const std::string repeated = arena::run_matches_json(config);
+  if (deterministic_openings(json) != deterministic_openings(repeated)) {
+    throw std::runtime_error(
+        "identical arena runs should reproduce randomized openings");
   }
 }
 
@@ -220,15 +265,26 @@ void invalid_alpha_beta_settings_and_unknown_kinds_are_rejected() {
       "arena should reject unknown bot kinds instead of treating them as MCTS");
 }
 
+void invalid_opening_length_is_rejected() {
+  arena::MatchesConfig config;
+  config.opening_plies = 8;
+  config.max_plies = 8;
+  require_invalid_argument(
+      [&] { (void)arena::run_matches_json(config); },
+      "arena should reserve at least one competitive ply after an opening");
+}
+
 }  // namespace
 
 int main() {
   try {
     matches_report_has_paired_games_and_measurements();
+    randomized_openings_are_shared_reproducible_and_ply_aware();
     positions_report_measures_both_bots_on_shared_positions();
     alpha_beta_is_configured_measured_and_summarized();
     invalid_tactical_limits_and_policy_are_rejected();
     invalid_alpha_beta_settings_and_unknown_kinds_are_rejected();
+    invalid_opening_length_is_rejected();
     std::cout << "[PASS] arena smoke test\n";
     return 0;
   } catch (const std::exception &error) {

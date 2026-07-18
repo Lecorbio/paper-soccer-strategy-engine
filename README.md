@@ -79,7 +79,7 @@ depth reaches the configured node or optional wall-clock budget. A zero `max_tim
 the default, disables the wall-clock cutoff and preserves deterministic fixed-work searches.
 The default configuration searches up to six possession
 handoffs, visits at most 100,000 nodes across the complete decision, stores 65,536 compact
-transposition entries, and applies a soft horizon after ten physical edges. At that horizon the
+transposition entries, and applies a soft horizon after twelve physical edges. At that horizon the
 search evaluates positions with multiple choices, but continues a forced single-move line as far
 as the absolute 512-edge recursion guard. This bounds unusually large same-turn rebound trees,
 still proves long forced combinations, and covers the nine-edge forcing sequence found in the
@@ -98,7 +98,7 @@ papersoccer::AlphaBetaConfig config{
     .max_turn_depth = 6,
     .max_nodes = 100'000,
     .transposition_table_entries = 65'536,
-    .max_search_plies = 10,
+    .max_search_plies = 12,
     .max_time_ms = 0,
 };
 papersoccer::AlphaBetaBot bot(config);
@@ -116,8 +116,8 @@ completed bounded depth.
 
 ### Initial smoke evaluation — July 16, 2026
 
-With the defaults above, an eight-position shared-state check and a ten-pair color-swapped match
-against Tactical `MctsBot` at 2,000 iterations produced:
+With the original 10-ply soft horizon, an eight-position shared-state check and a ten-pair
+color-swapped match against Tactical `MctsBot` at 2,000 iterations produced:
 
 | Check | Alpha-beta | MCTS reference |
 | --- | ---: | ---: |
@@ -132,6 +132,21 @@ bootstrap interval was wide at 40%-90%, so the 65% score is promising smoke evid
 strength conclusion. A larger fixed-seed tournament and evaluator ablations are still required
 before choosing a default opponent or tuning the weights around this result. Timings are
 machine-specific.
+
+### Soft-horizon promotion — July 18, 2026
+
+The paired-opening arena compared the 12-ply candidate directly with the previous 10-ply bot.
+Both used depth 6, the same 100,000-node hard limit, and identical 12-ply random opening states:
+
+| Opening bank | 12-ply record | Score | Paired 95% interval | Median move time | 10-ply median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Default seed, 50 pairs / 100 games | 64-36 | 64.0% | 55.0%-73.0% | 5.133 ms | 2.035 ms |
+| Independent seed, 30 pairs / 60 games | 35-25 | 58.3% | 48.3%-68.3% | 5.042 ms | 2.157 ms |
+
+The combined record was 99-61 (61.9%), with no illegal moves or truncations, and both banks
+favored the longer horizon from both colors. The longer search uses more of the existing hard
+node allowance; it does not raise that allowance. This evidence promoted 12 plies to the default.
+Timings are machine-specific.
 
 ## Monte Carlo Tree Search Bot
 
@@ -293,7 +308,8 @@ node --test tests/web/web_wasm_test.mjs
 ## Measure Bot Performance
 
 The native arena compares fresh bot instances on deterministic seed pairs and swaps their colors
-for the second game in every pair. Its defaults compare the experimental Tactical +
+for the second game in every pair. Optional random openings are generated once per pair, so both
+color assignments start from exactly the same state. Its defaults compare the experimental Tactical +
 TacticalQuiescence candidate with the frozen Tactical + RolloutOnly reference. Both reuse their
 trees and use the same 2,000-iteration budget, exploration value, and MCTS node bound:
 
@@ -302,6 +318,7 @@ cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release
 ./build/release/papersoccer_arena positions --positions 16 > positions.json
 ./build/release/papersoccer_arena matches --pairs 20 > quiescence-equal-iterations-20-pairs.json
+./build/release/papersoccer_arena matches --pairs 20 --opening-plies 8 > randomized-openings.json
 ```
 
 Both modes emit `papersoccer.arena.v1` JSON. Match reports contain per-game configurations,
@@ -315,6 +332,13 @@ the two entrants with:
   `tactical-quiescence`.
 - `--candidate-quiescence-max-depth` and `--reference-quiescence-max-depth`.
 - `--candidate-quiescence-max-nodes` and `--reference-quiescence-max-nodes`.
+
+Use `--opening-plies N` to compare deterministic bots across a reproducible bank of non-terminal
+uniform-random openings. Opening generation uses an independent seed stream, so enabling openings
+does not change either entrant's bot seeds. The report records every accepted opening seed and move
+sequence. `--max-plies` remains the total game limit: opening moves count toward it, while timings
+and search statistics cover only moves selected by the compared bots. Run separate 4-, 8-, 12-,
+and 20-ply opening banks to sample several game phases without mixing pair definitions.
 
 The same arena can compare alpha-beta with the frozen MCTS reference:
 

@@ -26,6 +26,7 @@ struct CliConfig {
   arena::ArenaBotConfig reference{arena::MatchesConfig{}.reference};
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
   std::size_t pairs{200};
+  std::size_t opening_plies{0};
   std::size_t max_plies{512};
   std::size_t bootstrap_samples{10000};
   std::size_t positions{16};
@@ -76,7 +77,8 @@ void print_usage(std::ostream &out) {
       "                                     Reference soft physical horizon\n\n"
       "Match options:\n"
       "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
-      "  --max-plies N                    Per-game limit (default: 512)\n"
+      "  --opening-plies N                Shared random opening length (default: 0)\n"
+      "  --max-plies N                    Total per-game limit, opening included (default: 512)\n"
       "  --bootstrap-samples N            Paired resamples (default: 10000)\n\n"
       "Position options:\n"
       "  --positions N                    Positions to measure (default: 16)\n"
@@ -217,6 +219,9 @@ CliConfig parse_cli(int argc, char **argv) {
     } else if (option == "--pairs") {
       require_mode(config.mode, Mode::Matches, option);
       config.pairs = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--opening-plies") {
+      require_mode(config.mode, Mode::Matches, option);
+      config.opening_plies = parse_unsigned<std::size_t>(value(), option);
     } else if (option == "--max-plies") {
       require_mode(config.mode, Mode::Matches, option);
       config.max_plies = parse_unsigned<std::size_t>(value(), option);
@@ -322,6 +327,7 @@ int main(int argc, char **argv) {
       config.reference = cli.reference;
       config.base_seed = cli.base_seed;
       config.seed_pairs = cli.pairs;
+      config.opening_plies = cli.opening_plies;
       config.max_plies = cli.max_plies;
       config.bootstrap_samples = cli.bootstrap_samples;
       std::cout << arena::run_matches_json(config) << '\n';

@@ -24,7 +24,7 @@ struct ArenaBotConfig {
   std::uint32_t alpha_beta_depth{6};
   std::uint64_t alpha_beta_max_nodes{100'000};
   std::size_t alpha_beta_transposition_table_entries{65'536};
-  std::uint32_t alpha_beta_max_search_plies{10};
+  std::uint32_t alpha_beta_max_search_plies{12};
 };
 
 struct MatchesConfig {
@@ -41,6 +41,7 @@ struct MatchesConfig {
   std::size_t seed_pairs{200};
   std::size_t max_plies{512};
   std::size_t bootstrap_samples{10000};
+  std::size_t opening_plies{0};
 };
 
 struct PositionsConfig {

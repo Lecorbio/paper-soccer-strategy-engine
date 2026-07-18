@@ -23,6 +23,12 @@ add_library(papersoccer_core
   src/web/web_game.cpp
 )
 target_include_directories(papersoccer_core PUBLIC include)
+if(EMSCRIPTEN)
+  # Alpha-beta uses a private exception to unwind cleanly when its hard node
+  # budget is reached. Every Wasm consumer must compile the core with catches
+  # enabled, not only the test executable that links it.
+  target_compile_options(papersoccer_core PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+endif()
 
 add_executable(papersoccer_cli src/cli/main.cpp)
 target_link_libraries(papersoccer_cli PRIVATE papersoccer_core)
@@ -39,6 +45,13 @@ target_link_libraries(papersoccer_arena_support PUBLIC papersoccer_core)
 
 add_executable(papersoccer_arena src/arena/main.cpp)
 target_link_libraries(papersoccer_arena PRIVATE papersoccer_arena_support)
+
+if(EMSCRIPTEN)
+  target_link_options(papersoccer_cli PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+  target_link_options(papersoccer_replay_export PRIVATE
+    -sDISABLE_EXCEPTION_CATCHING=0)
+  target_link_options(papersoccer_arena PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+endif()
 
 add_executable(papersoccer_tests
   tests/bots/alpha_beta_test.cpp
@@ -139,6 +152,7 @@ if(EMSCRIPTEN)
     --no-entry
     -O3
     -flto
+    -sDISABLE_EXCEPTION_CATCHING=0
     -sMODULARIZE=1
     -sEXPORT_NAME=createPaperSoccerModule
     -sEXPORT_ES6=0

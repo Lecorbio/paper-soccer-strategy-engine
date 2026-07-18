@@ -11,6 +11,7 @@
 namespace papersoccer::arena::detail {
 
 constexpr std::uint64_t kBootstrapSeedSalt = 0x4152454e414349ULL;
+constexpr std::uint64_t kOpeningSeedSalt = 0x4f50454e494e4753ULL;
 constexpr std::size_t kMaxPositionGenerationAttempts = 4096;
 
 constexpr std::string_view runtime_name() noexcept {
@@ -73,6 +74,13 @@ struct GameReport {
   std::size_t plies{};
   bool truncated{};
   std::vector<DecisionReport> decisions{};
+};
+
+struct OpeningReport {
+  std::size_t pair_index{};
+  std::uint64_t generation_seed{};
+  std::size_t attempts{};
+  GameState state{};
 };
 
 struct PositionEvaluation {
@@ -172,7 +180,11 @@ void validate_common(const RulesConfig &rules,
                      const ArenaBotConfig &reference);
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
                      Participant player_one, Participant player_two,
-                     const RulesConfig &rules, std::size_t max_plies);
+                     const GameState &initial_state, std::size_t max_plies);
+OpeningReport generate_opening(std::size_t pair_index,
+                               const RulesConfig &rules,
+                               std::uint64_t pair_seed,
+                               std::size_t opening_plies);
 GameState generate_position(const RulesConfig &rules, std::uint64_t seed,
                             std::size_t generation_plies);
 PositionEvaluation evaluate_position(const ArenaBotConfig &config,

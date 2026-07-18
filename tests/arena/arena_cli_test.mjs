@@ -74,6 +74,68 @@ test("matches mode emits parseable paired JSON", () => {
   assert.equal(report.summary.reference.mcts.tactical_solution_rate, 0);
 });
 
+test("matches mode shares deterministic randomized openings across colors", () => {
+  const common = [
+    "matches",
+    "--seed", "123456789",
+    "--pairs", "1",
+    "--max-plies", "8",
+    "--bootstrap-samples", "32",
+    "--candidate-kind", "random",
+    "--reference-kind", "random",
+  ];
+  const report = runJson([...common, "--opening-plies", "4"]);
+
+  assert.equal(report.configuration.opening_plies, 4);
+  assert.equal(report.configuration.opening_generator, "uniform_random");
+  assert.equal(report.configuration.opening_seed_derivation,
+    "domain_separated_splitmix64");
+  assert.equal(report.openings.length, 1);
+
+  const opening = report.openings[0];
+  assert.equal(opening.pair_index, 0);
+  assert.equal(opening.generation_seed, "3010655281933515797");
+  assert.equal(opening.requested_plies, 4);
+  assert.equal(opening.actual_plies, 4);
+  assert.equal(opening.moves.length, 4);
+  assert.deepEqual(opening.moves, [
+    { x: 5, y: 6 },
+    { x: 6, y: 5 },
+    { x: 7, y: 4 },
+    { x: 7, y: 5 },
+  ]);
+  assert.deepEqual(opening.state.ball, opening.moves.at(-1));
+  assert.match(opening.state.to_move, /^(one|two)$/);
+
+  assert.equal(report.games[0].pair_index, opening.pair_index);
+  assert.equal(report.games[1].pair_index, opening.pair_index);
+  assert.equal(report.games[0].player_one.bot, "candidate");
+  assert.equal(report.games[1].player_one.bot, "reference");
+  for (const game of report.games) {
+    assert.equal(game.decisions[0].ply, opening.actual_plies + 1);
+    assert.deepEqual(game.decisions[0].from, opening.state.ball);
+    assert.equal(game.decisions[0].player, opening.state.to_move);
+    assert.equal(game.outcome.plies,
+      opening.actual_plies + game.decisions.length);
+    assert.ok(game.outcome.plies <= report.configuration.max_plies);
+  }
+
+  const repeated = runJson([...common, "--opening-plies", "4"]);
+  assert.deepEqual(repeated.openings, report.openings);
+
+  const noOpening = runJson([...common, "--opening-plies", "0"]);
+  const participantSeeds = ({ games }) => games.map((game) => [
+    game.player_one.seed,
+    game.player_two.seed,
+  ]);
+  assert.deepEqual(participantSeeds(report), participantSeeds(noOpening));
+  assert.deepEqual(participantSeeds(report), [
+    ["2466975172287755897", "8832083440362974766"],
+    ["8832083440362974766", "2466975172287755897"],
+  ]);
+  assert.deepEqual(noOpening.openings, []);
+});
+
 test("positions mode evaluates both bots on parseable shared positions", () => {
   const report = runJson([
     "positions",
@@ -147,6 +209,24 @@ test("mode-specific options are rejected outside their mode", () => {
   });
   assert.notEqual(matches.status, 0);
   assert.match(matches.stderr, /--positions is only valid in positions mode/);
+
+  const opening = spawnSync(arena, [
+    "positions", "--opening-plies", "4",
+  ], { encoding: "utf8" });
+  assert.notEqual(opening.status, 0);
+  assert.match(opening.stderr,
+    /--opening-plies is only valid in matches mode/);
+});
+
+test("opening length must leave room below the total ply limit", () => {
+  const result = spawnSync(arena, [
+    "matches",
+    "--pairs", "1",
+    "--opening-plies", "8",
+    "--max-plies", "8",
+  ], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /opening plies must be less than max plies/);
 });
 
 test("invalid tactical arena settings are rejected", () => {
