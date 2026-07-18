@@ -256,16 +256,16 @@
       const from = mapper.point(liveState().ball);
       ctx.save();
       ctx.lineCap = "round";
-      ctx.setLineDash([5, 5]);
+      ctx.setLineDash([3, 6]);
       for (const move of liveLegalMoves()) {
         const hovered = hoveredDestination &&
           samePoint(hoveredDestination, move.to);
         ctx.strokeStyle = hovered
-          ? "rgba(255, 243, 201, 0.98)"
-          : "rgba(255, 243, 201, 0.55)";
+          ? "rgba(255, 243, 201, 0.9)"
+          : "rgba(255, 243, 201, 0.24)";
         ctx.lineWidth = hovered
-          ? Math.max(4, mapper.cell * 0.07)
-          : Math.max(2, mapper.cell * 0.04);
+          ? Math.max(2.5, mapper.cell * 0.04)
+          : Math.max(1, mapper.cell * 0.018);
         drawLine(from, mapper.point(move.to));
       }
       ctx.restore();
@@ -327,6 +327,7 @@
 
       const mapper = makeMapper();
       const targetSize = Math.max(32, Math.min(44, mapper.cell * 0.78));
+      const markerSize = Math.max(16, Math.min(20, mapper.cell * 0.3));
       const moves = liveLegalMoves().slice().sort(function (left, right) {
         return left.to.y - right.to.y || left.to.x - right.to.x;
       });
@@ -340,6 +341,7 @@
         button.style.left = point.x + "px";
         button.style.top = point.y + "px";
         button.style.setProperty("--target-size", targetSize + "px");
+        button.style.setProperty("--marker-size", markerSize + "px");
         button.setAttribute(
           "aria-label",
           destinationLabel(liveState().ball, move.to, extraTurn),

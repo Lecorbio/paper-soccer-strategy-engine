@@ -215,44 +215,86 @@ select:disabled {
   height: var(--target-size, 36px);
   min-height: 0;
   transform: translate(-50%, -50%);
-  border: 3px solid #ffe7a0;
+  border: 0;
   border-radius: 50%;
-  background: rgba(255, 243, 201, 0.38);
-  box-shadow: 0 0 0 2px rgba(68, 48, 0, 0.7), 0 2px 7px rgba(17, 27, 16, 0.4);
+  background: transparent;
+  box-shadow: none;
   color: #3f2b00;
   cursor: pointer;
+  padding: 0;
   pointer-events: auto;
   touch-action: manipulation;
 }
 
+.board-target::before,
 .board-target::after {
   position: absolute;
-  inset: 50% auto auto 50%;
-  width: 7px;
-  height: 7px;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: #ffe7a0;
   content: "";
+  pointer-events: none;
 }
 
-.board-target.is-extra-turn {
-  border-color: #bce7ad;
-  background: rgba(188, 231, 173, 0.48);
-  box-shadow: 0 0 0 2px #245a2a, 0 0 0 5px rgba(188, 231, 173, 0.7),
-    0 2px 7px rgba(17, 27, 16, 0.4);
+.board-target::before {
+  width: var(--marker-size, 18px);
+  height: var(--marker-size, 18px);
+  border: 2px solid rgba(255, 231, 160, 0.82);
+  background: rgba(255, 243, 201, 0.1);
+  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.55);
+}
+
+.board-target::after {
+  width: 5px;
+  height: 5px;
+  background: rgba(255, 231, 160, 0.95);
+  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.45);
+}
+
+.board-target.is-extra-turn::before {
+  border-color: rgba(188, 231, 173, 0.92);
+  background: rgba(188, 231, 173, 0.12);
+  box-shadow: 0 0 0 2px rgba(36, 90, 42, 0.82);
 }
 
 .board-target.is-extra-turn::after {
-  background: #d6f4cc;
+  background: rgba(214, 244, 204, 0.98);
+  box-shadow: 0 0 0 1px rgba(36, 90, 42, 0.7);
 }
 
-.board-target:hover,
+button.board-target:hover,
 .board-target.is-hovered,
 .board-target:focus-visible {
-  background: rgba(255, 230, 139, 0.78);
-  box-shadow: 0 0 0 3px #fff8dc, 0 0 0 6px rgba(82, 56, 0, 0.85),
-    0 3px 9px rgba(17, 27, 16, 0.5);
+  background: transparent;
+  box-shadow: none;
+}
+
+.board-target:hover::before,
+.board-target.is-hovered::before,
+.board-target:focus-visible::before {
+  transform: translate(-50%, -50%) scale(1.25);
+  border-color: rgba(255, 231, 160, 0.98);
+  background: rgba(255, 230, 139, 0.42);
+  box-shadow: 0 0 0 2px rgba(31, 35, 40, 0.72),
+    0 2px 5px rgba(17, 27, 16, 0.38);
+}
+
+.board-target.is-extra-turn:hover::before,
+.board-target.is-extra-turn.is-hovered::before,
+.board-target.is-extra-turn:focus-visible::before {
+  border-color: rgba(214, 244, 204, 0.98);
+  background: rgba(188, 231, 173, 0.38);
+  box-shadow: 0 0 0 2px rgba(36, 90, 42, 0.9),
+    0 2px 5px rgba(17, 27, 16, 0.38);
+}
+
+.board-target:focus-visible {
+  outline: none;
+}
+
+.board-target:focus-visible::before {
+  box-shadow: 0 0 0 2px #fff8dc, 0 0 0 5px var(--focus);
 }
 
 .board-target:not(:disabled):active {
