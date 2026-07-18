@@ -262,7 +262,7 @@
           samePoint(hoveredDestination, move.to);
         ctx.strokeStyle = hovered
           ? "rgba(255, 243, 201, 0.9)"
-          : "rgba(255, 243, 201, 0.24)";
+          : "rgba(255, 243, 201, 0.34)";
         ctx.lineWidth = hovered
           ? Math.max(2.5, mapper.cell * 0.04)
           : Math.max(1, mapper.cell * 0.018);
