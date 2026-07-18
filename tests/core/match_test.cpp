@@ -18,6 +18,8 @@ void require(bool condition, const std::string &message) {
 
 bool same_state(const ps::GameState &lhs, const ps::GameState &rhs) {
   if (!(lhs.config.width == rhs.config.width && lhs.config.height == rhs.config.height &&
+        lhs.config.goal_rule == rhs.config.goal_rule &&
+        lhs.config.blocked_rule == rhs.config.blocked_rule &&
         lhs.ball == rhs.ball && lhs.to_move == rhs.to_move && lhs.status == rhs.status &&
         lhs.path == rhs.path && lhs.used_segments.size() == rhs.used_segments.size() &&
         lhs.visit_count.size() == rhs.visit_count.size())) {

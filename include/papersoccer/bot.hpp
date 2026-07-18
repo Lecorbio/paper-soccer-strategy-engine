@@ -50,6 +50,7 @@ struct AlphaBetaConfig {
   std::uint64_t max_nodes{100'000};
   std::size_t transposition_table_entries{65'536};
   std::uint32_t max_search_plies{10};
+  std::uint32_t max_time_ms{0};
 };
 
 enum class AlphaBetaScoreBound {

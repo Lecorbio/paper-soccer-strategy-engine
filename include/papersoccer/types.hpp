@@ -13,6 +13,10 @@ enum class Player { One, Two };
 
 enum class Status { InProgress, WonByOne, WonByTwo };
 
+enum class GoalRule { OpponentGoalOnly, OwnGoalsAllowed };
+
+enum class BlockedRule { PlayerToMoveLoses, MoverLoses };
+
 inline constexpr Player opponent(Player player) noexcept {
   return player == Player::One ? Player::Two : Player::One;
 }
@@ -70,6 +74,8 @@ struct Move {
 struct RulesConfig {
   int width{8};
   int height{10};
+  GoalRule goal_rule{GoalRule::OpponentGoalOnly};
+  BlockedRule blocked_rule{BlockedRule::PlayerToMoveLoses};
 };
 
 struct GameState {

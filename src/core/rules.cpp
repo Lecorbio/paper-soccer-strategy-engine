@@ -66,7 +66,9 @@ GameState apply_move(const GameState &state, Move move) {
   next.visit_count[move.to] += 1;
 
   if (is_goal_point(next.config, move.to)) {
-    next.status = (state.to_move == Player::One) ? Status::WonByOne : Status::WonByTwo;
+    next.status = is_attacking_goal(next.config, move.to, Player::One)
+                      ? Status::WonByOne
+                      : Status::WonByTwo;
     return next;
   }
 
@@ -75,7 +77,11 @@ GameState apply_move(const GameState &state, Move move) {
   next.status = Status::InProgress;
 
   if (legal_moves(next).empty()) {
-    next.status = (next.to_move == Player::One) ? Status::WonByTwo : Status::WonByOne;
+    const Player blocked_player =
+        next.config.blocked_rule == BlockedRule::MoverLoses ? state.to_move
+                                                            : next.to_move;
+    next.status = blocked_player == Player::One ? Status::WonByTwo
+                                                : Status::WonByOne;
   }
 
   return next;

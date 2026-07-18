@@ -66,6 +66,13 @@ if(NOT EMSCRIPTEN)
     PRIVATE papersoccer_arena_support)
   add_test(NAME papersoccer_arena_smoke_test
            COMMAND papersoccer_arena_smoke_test)
+
+  add_executable(papersoccer_codingame_submission
+    submissions/codingame/paper_soccer_alpha_beta.cpp)
+  add_executable(papersoccer_codingame_submission_test
+    submissions/codingame/submission_test.cpp)
+  add_test(NAME papersoccer_codingame_submission_test
+           COMMAND papersoccer_codingame_submission_test)
 endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
@@ -88,6 +95,18 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_app_support_test.mjs
     )
     if(NOT EMSCRIPTEN)
+      add_test(
+        NAME papersoccer_codingame_submission_current
+        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/generate_submission.mjs
+                --check
+      )
+      add_test(
+        NAME papersoccer_codingame_protocol_smoke_test
+        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/protocol_smoke_test.mjs
+                $<TARGET_FILE:papersoccer_codingame_submission>
+      )
       add_test(
         NAME papersoccer_replay_export_tests
         COMMAND ${CMAKE_COMMAND} -E env

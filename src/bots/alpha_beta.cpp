@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -34,6 +35,16 @@ constexpr int kCenterAlignmentWeight = 6;
 constexpr int kTempoWeight = 15;
 
 class SearchBudgetReached final {};
+
+using SearchClock = std::chrono::steady_clock;
+
+std::optional<SearchClock::time_point> search_deadline(
+    const AlphaBetaConfig &config) {
+  if (config.max_time_ms == 0) {
+    return std::nullopt;
+  }
+  return SearchClock::now() + std::chrono::milliseconds(config.max_time_ms);
+}
 
 struct TranspositionEntry {
   detail::PositionKey key{};
@@ -133,6 +144,7 @@ class AlphaBetaSearch {
  public:
   AlphaBetaSearch(const GameState &state, const AlphaBetaConfig &config)
       : config_(config),
+        deadline_(search_deadline(config)),
         topology_(std::make_shared<detail::SearchTopology>(state.config)),
         position_(topology_, state), table_(config.transposition_table_entries),
         distances_(topology_->vertex_count(), -1),
@@ -184,6 +196,7 @@ class AlphaBetaSearch {
 
  private:
   AlphaBetaConfig config_{};
+  std::optional<SearchClock::time_point> deadline_{};
   std::shared_ptr<const detail::SearchTopology> topology_{};
   detail::SearchPosition position_;
   TranspositionTable table_;
@@ -193,6 +206,10 @@ class AlphaBetaSearch {
 
   void visit_node(std::uint32_t physical_ply) {
     if (stats_.nodes >= config_.max_nodes) {
+      throw SearchBudgetReached{};
+    }
+    if ((stats_.nodes & 31U) == 0U && deadline_.has_value() &&
+        SearchClock::now() >= *deadline_) {
       throw SearchBudgetReached{};
     }
     ++stats_.nodes;
@@ -231,8 +248,8 @@ class AlphaBetaSearch {
         }
         const int distance = distances_[vertex] + 1;
         distances_[arc.destination] = distance;
-        if (is_goal_point(topology_->config(),
-                          topology_->point(arc.destination))) {
+        if (is_attacking_goal(topology_->config(),
+                              topology_->point(arc.destination), player)) {
           return distance;
         }
         queue_[tail++] = arc.destination;
@@ -256,7 +273,8 @@ class AlphaBetaSearch {
     for (std::uint8_t index = 0; index < count; ++index) {
       const std::uint8_t slot = slots[index];
       const Point destination = position_.move_for_slot(slot).to;
-      direct_goal = direct_goal || is_goal_point(rules, destination);
+      direct_goal =
+          direct_goal || is_attacking_goal(rules, destination, mover);
       continuations += position_.grants_extra_turn(slot) ? 1 : 0;
       const bool forward = mover == Player::One ? destination.y < ball.y
                                                 : destination.y > ball.y;

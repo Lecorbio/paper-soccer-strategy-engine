@@ -9,6 +9,7 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A native arena for paired strength matches and position throughput measurements
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
 - A static browser game powered by the same C++ engine through WebAssembly
+- A generated, paste-ready [CodinGame entry](submissions/codingame/README.md)
 - Dependency-free tests integrated with CTest (`papersoccer_tests`)
 
 The rules engine remains the single source of truth for human play, bots, replays, and
@@ -74,7 +75,9 @@ positions and proven wins. These weights are a readable starting point, not trai
 the arena is the intended place to measure and tune them.
 
 Search uses iterative deepening, so every completed shallower result remains usable if the next
-depth reaches the fixed node budget. The default configuration searches up to six possession
+depth reaches the configured node or optional wall-clock budget. A zero `max_time_ms`, including
+the default, disables the wall-clock cutoff and preserves deterministic fixed-work searches.
+The default configuration searches up to six possession
 handoffs, visits at most 100,000 nodes across the complete decision, stores 65,536 compact
 transposition entries, and applies a soft horizon after ten physical edges. At that horizon the
 search evaluates positions with multiple choices, but continues a forced single-move line as far
@@ -96,6 +99,7 @@ papersoccer::AlphaBetaConfig config{
     .max_nodes = 100'000,
     .transposition_table_entries = 65'536,
     .max_search_plies = 10,
+    .max_time_ms = 0,
 };
 papersoccer::AlphaBetaBot bot(config);
 papersoccer::Move move = bot.choose_move(state);

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -45,8 +46,9 @@ bool contains_point(const std::vector<ps::Point> &points, ps::Point point) {
 }
 
 ps::GameState make_clean_state_at(ps::Point point,
-                                  ps::Player player = ps::Player::One) {
-  ps::GameState state = ps::make_initial_state();
+                                  ps::Player player = ps::Player::One,
+                                  const ps::RulesConfig &config = {}) {
+  ps::GameState state = ps::make_initial_state(config);
   state.ball = point;
   state.to_move = player;
   state.status = ps::Status::InProgress;
@@ -186,6 +188,25 @@ void alpha_beta_takes_immediate_goals_for_both_players() {
           "Player Two should take an immediate south goal.");
 }
 
+void alpha_beta_avoids_own_goals_under_codingame_rules() {
+  const ps::RulesConfig rules{8, 10, ps::GoalRule::OwnGoalsAllowed,
+                              ps::BlockedRule::MoverLoses};
+  ps::AlphaBetaConfig config;
+  config.max_turn_depth = 1;
+  config.max_nodes = 5'000;
+  ps::AlphaBetaBot bot(config);
+
+  const ps::GameState player_two =
+      make_clean_state_at({4, 1}, ps::Player::Two, rules);
+  require(!ps::is_goal_point(rules, bot.choose_move(player_two).to),
+          "Player Two should avoid scoring an immediate north own goal.");
+
+  const ps::GameState player_one =
+      make_clean_state_at({4, 11}, ps::Player::One, rules);
+  require(!ps::is_goal_point(rules, bot.choose_move(player_one).to),
+          "Player One should avoid scoring an immediate south own goal.");
+}
+
 void alpha_beta_depth_one_follows_a_rebound_turn_to_goal() {
   const ps::Point root{4, 3};
   const ps::Point rebound{4, 2};
@@ -243,6 +264,26 @@ void alpha_beta_tiny_budget_returns_a_deterministic_fallback() {
               first.last_search_stats().nodes == 1 &&
               first.last_search_stats().completed_turn_depth == 0,
           "The tiny search should report its interrupted first iteration.");
+}
+
+void alpha_beta_honors_a_wall_clock_budget() {
+  ps::AlphaBetaConfig config;
+  config.max_turn_depth = ps::AlphaBetaConfig::maximum_turn_depth;
+  config.max_nodes = 100'000'000;
+  config.max_search_plies = 64;
+  config.max_time_ms = 1;
+  ps::AlphaBetaBot bot(config);
+
+  const auto started = std::chrono::steady_clock::now();
+  const ps::Move move = bot.choose_move(ps::make_initial_state());
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+
+  require(contains_move(ps::legal_moves(ps::make_initial_state()), move.to),
+          "A timed search should still return a legal fallback move.");
+  require(bot.last_search_stats().budget_exhausted,
+          "A one-millisecond search should report its time cutoff.");
+  require(elapsed < std::chrono::milliseconds(250),
+          "The wall-clock cutoff should stop the search promptly.");
 }
 
 void alpha_beta_reports_a_physical_ply_horizon() {
@@ -385,12 +426,16 @@ int run_alpha_beta_tests() {
        alpha_beta_is_color_reflection_symmetric},
       {"alpha_beta_takes_immediate_goals_for_both_players",
        alpha_beta_takes_immediate_goals_for_both_players},
+      {"alpha_beta_avoids_own_goals_under_codingame_rules",
+       alpha_beta_avoids_own_goals_under_codingame_rules},
       {"alpha_beta_depth_one_follows_a_rebound_turn_to_goal",
        alpha_beta_depth_one_follows_a_rebound_turn_to_goal},
       {"alpha_beta_rejects_invalid_states_and_configuration",
        alpha_beta_rejects_invalid_states_and_configuration},
       {"alpha_beta_tiny_budget_returns_a_deterministic_fallback",
        alpha_beta_tiny_budget_returns_a_deterministic_fallback},
+      {"alpha_beta_honors_a_wall_clock_budget",
+       alpha_beta_honors_a_wall_clock_budget},
       {"alpha_beta_reports_a_physical_ply_horizon",
        alpha_beta_reports_a_physical_ply_horizon},
       {"alpha_beta_extends_forced_play_beyond_the_soft_ply_horizon",

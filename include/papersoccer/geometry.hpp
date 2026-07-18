@@ -10,6 +10,8 @@ bool is_regular_point(const RulesConfig &config, Point point);
 
 bool is_goal_point(const RulesConfig &config, Point point);
 
+bool is_attacking_goal(const RulesConfig &config, Point point, Player player);
+
 bool is_boundary_point(const RulesConfig &config, Point point);
 
 bool is_neighbor(Point from, Point to);

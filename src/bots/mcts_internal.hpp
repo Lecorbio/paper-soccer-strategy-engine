@@ -19,7 +19,9 @@ inline constexpr std::size_t kMaximumMoves = 8;
 
 inline constexpr bool same_rules_config(const RulesConfig &lhs,
                                         const RulesConfig &rhs) noexcept {
-  return lhs.width == rhs.width && lhs.height == rhs.height;
+  return lhs.width == rhs.width && lhs.height == rhs.height &&
+         lhs.goal_rule == rhs.goal_rule &&
+         lhs.blocked_rule == rhs.blocked_rule;
 }
 
 struct PositionKey {
@@ -326,6 +328,7 @@ class SearchPosition {
     }
 
     const SearchTopology::Arc arc = adjacency.arcs[slot];
+    const Player mover = to_move_;
     const bool destination_was_visited = visited_vertices_.test(arc.destination);
     undo_stack_.push_back(
         Undo{ball_, arc.edge, to_move_, status_, destination_was_visited});
@@ -341,7 +344,10 @@ class SearchPosition {
 
     const Point destination = topology_->point(ball_);
     if (is_goal_point(topology_->config(), destination)) {
-      status_ = to_move_ == Player::One ? Status::WonByOne : Status::WonByTwo;
+      status_ =
+          is_attacking_goal(topology_->config(), destination, Player::One)
+              ? Status::WonByOne
+              : Status::WonByTwo;
       add_dynamic_key();
       return;
     }
@@ -356,7 +362,12 @@ class SearchPosition {
 
     std::array<std::uint8_t, kMaximumMoves> slots{};
     if (legal_slots(slots) == 0) {
-      status_ = to_move_ == Player::One ? Status::WonByTwo : Status::WonByOne;
+      const Player blocked_player =
+          topology_->config().blocked_rule == BlockedRule::MoverLoses
+              ? mover
+              : to_move_;
+      status_ = blocked_player == Player::One ? Status::WonByTwo
+                                              : Status::WonByOne;
     }
     add_dynamic_key();
   }

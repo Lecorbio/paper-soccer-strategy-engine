@@ -72,6 +72,11 @@ bool is_goal_point(const RulesConfig &config, Point point) {
   return is_north_goal(config, point) || is_south_goal(config, point);
 }
 
+bool is_attacking_goal(const RulesConfig &config, Point point, Player player) {
+  return player == Player::One ? is_north_goal(config, point)
+                               : is_south_goal(config, point);
+}
+
 bool is_boundary_point(const RulesConfig &config, Point point) {
   if (!is_regular_point(config, point)) {
     return false;
@@ -143,7 +148,10 @@ std::vector<Point> neighbors(const RulesConfig &config, Point from, Player playe
   }
 
   if (is_goal_mouth_point(config, from)) {
-    if (player == Player::One && from.y == kFieldTopY) {
+    const bool own_goals_allowed =
+        config.goal_rule == GoalRule::OwnGoalsAllowed;
+    if ((own_goals_allowed || player == Player::One) &&
+        from.y == kFieldTopY) {
       for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
         const Point goal_point{goal_x, kNorthGoalY};
         if (is_neighbor(from, goal_point)) {
@@ -151,7 +159,8 @@ std::vector<Point> neighbors(const RulesConfig &config, Point from, Player playe
         }
       }
     }
-    if (player == Player::Two && from.y == field_bottom_y(config)) {
+    if ((own_goals_allowed || player == Player::Two) &&
+        from.y == field_bottom_y(config)) {
       for (int goal_x = mouth_left_x(config); goal_x <= mouth_right_x(config); ++goal_x) {
         const Point goal_point{goal_x, south_goal_y(config)};
         if (is_neighbor(from, goal_point)) {

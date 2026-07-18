@@ -72,8 +72,9 @@ bool has_no_tactical_probe_work(const ps::SearchStats &stats) {
 }
 
 ps::GameState make_clean_state_at(ps::Point point,
-                                  ps::Player to_move = ps::Player::One) {
-  ps::GameState state = ps::make_initial_state();
+                                  ps::Player to_move = ps::Player::One,
+                                  const ps::RulesConfig &config = {}) {
+  ps::GameState state = ps::make_initial_state(config);
   state.ball = point;
   state.to_move = to_move;
   state.status = ps::Status::InProgress;
@@ -641,7 +642,12 @@ void invalid_mcts_configurations_are_rejected() {
 }
 
 void compact_search_position_matches_authoritative_rules() {
-  const ps::RulesConfig configurations[]{{}, {6, 8}, {10, 12}};
+  const ps::RulesConfig configurations[]{
+      {},
+      {6, 8},
+      {10, 12},
+      {8, 10, ps::GoalRule::OwnGoalsAllowed, ps::BlockedRule::MoverLoses},
+  };
   for (const ps::RulesConfig config : configurations) {
     for (std::uint64_t seed = 1; seed <= 12; ++seed) {
       ps::RandomBot bot(seed * 0x9e3779b97f4a7c15ULL);
@@ -657,6 +663,18 @@ void compact_search_position_matches_authoritative_rules() {
               "Seeded differential games should reach a terminal position.");
     }
   }
+
+  const ps::RulesConfig codingame_config{
+      8, 10, ps::GoalRule::OwnGoalsAllowed, ps::BlockedRule::MoverLoses};
+  require_compact_position_matches(
+      make_clean_state_at({4, 1}, ps::Player::Two, codingame_config));
+  require_compact_position_matches(
+      make_clean_state_at({4, 11}, ps::Player::One, codingame_config));
+
+  ps::GameState blocked =
+      make_clean_state_at({4, 6}, ps::Player::One, codingame_config);
+  block_edges_except(blocked, {4, 5}, {{4, 6}});
+  require_compact_position_matches(blocked);
 }
 
 void tactical_probe_proves_multi_rebound_goals_for_both_players() {
