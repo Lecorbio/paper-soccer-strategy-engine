@@ -86,6 +86,17 @@ if(NOT EMSCRIPTEN)
     submissions/codingame/submission_test.cpp)
   add_test(NAME papersoccer_codingame_submission_test
            COMMAND papersoccer_codingame_submission_test)
+
+  add_executable(papersoccer_codingame_rank_one_submission
+    submissions/codingame/rank_one/paper_soccer_rank_one.cpp)
+  add_executable(papersoccer_codingame_rank_one_submission_test
+    submissions/codingame/rank_one/submission_test.cpp)
+  add_test(NAME papersoccer_codingame_rank_one_submission_test
+           COMMAND papersoccer_codingame_rank_one_submission_test)
+  add_executable(papersoccer_codingame_rank_one_timing_probe
+    submissions/codingame/rank_one/timing_probe.cpp)
+  add_test(NAME papersoccer_codingame_rank_one_timing_probe
+           COMMAND papersoccer_codingame_rank_one_timing_probe)
 endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
@@ -119,6 +130,18 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
         COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/protocol_smoke_test.mjs
                 $<TARGET_FILE:papersoccer_codingame_submission>
+      )
+      add_test(
+        NAME papersoccer_codingame_rank_one_submission_current
+        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/rank_one/generate_submission.mjs
+                --check
+      )
+      add_test(
+        NAME papersoccer_codingame_rank_one_protocol_smoke_test
+        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/rank_one/protocol_smoke_test.mjs
+                $<TARGET_FILE:papersoccer_codingame_rank_one_submission>
       )
       add_test(
         NAME papersoccer_replay_export_tests
