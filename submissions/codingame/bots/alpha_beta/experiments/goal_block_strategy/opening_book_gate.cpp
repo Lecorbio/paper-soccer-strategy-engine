@@ -1,5 +1,5 @@
 #define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
-#include "paper_soccer_rank_one.cpp"
+#include "../../submission.cpp"
 
 #include <cstdlib>
 #include <iostream>

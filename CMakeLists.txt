@@ -72,6 +72,17 @@ endif()
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
+set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_one)
+
+function(papersoccer_codingame_target_prefix output_variable bot_name)
+  if(bot_name STREQUAL "alpha_beta")
+    set(prefix papersoccer_codingame)
+  else()
+    set(prefix "papersoccer_codingame_${bot_name}")
+  endif()
+  set(${output_variable} "${prefix}" PARENT_SCOPE)
+endfunction()
+
 if(NOT EMSCRIPTEN)
   add_executable(papersoccer_arena_smoke_test
     tests/arena/arena_smoke_test.cpp)
@@ -80,23 +91,26 @@ if(NOT EMSCRIPTEN)
   add_test(NAME papersoccer_arena_smoke_test
            COMMAND papersoccer_arena_smoke_test)
 
-  add_executable(papersoccer_codingame_submission
-    submissions/codingame/paper_soccer_alpha_beta.cpp)
-  add_executable(papersoccer_codingame_submission_test
-    submissions/codingame/submission_test.cpp)
-  add_test(NAME papersoccer_codingame_submission_test
-           COMMAND papersoccer_codingame_submission_test)
+  foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
+    papersoccer_codingame_target_prefix(
+      PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
+    set(PAPERSOCCER_CODINGAME_BOT_DIRECTORY
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/${PAPERSOCCER_CODINGAME_BOT}")
 
-  add_executable(papersoccer_codingame_rank_one_submission
-    submissions/codingame/rank_one/paper_soccer_rank_one.cpp)
-  add_executable(papersoccer_codingame_rank_one_submission_test
-    submissions/codingame/rank_one/submission_test.cpp)
-  add_test(NAME papersoccer_codingame_rank_one_submission_test
-           COMMAND papersoccer_codingame_rank_one_submission_test)
-  add_executable(papersoccer_codingame_rank_one_timing_probe
-    submissions/codingame/rank_one/timing_probe.cpp)
-  add_test(NAME papersoccer_codingame_rank_one_timing_probe
-           COMMAND papersoccer_codingame_rank_one_timing_probe)
+    add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission
+      "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission.cpp")
+    add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+      "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+    add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+             COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test)
+
+    if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
+      add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+        "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
+      add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+               COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe)
+    endif()
+  endforeach()
 endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
@@ -119,30 +133,23 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_app_support_test.mjs
     )
     if(NOT EMSCRIPTEN)
-      add_test(
-        NAME papersoccer_codingame_submission_current
-        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/generate_submission.mjs
-                --check
-      )
-      add_test(
-        NAME papersoccer_codingame_protocol_smoke_test
-        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/protocol_smoke_test.mjs
-                $<TARGET_FILE:papersoccer_codingame_submission>
-      )
-      add_test(
-        NAME papersoccer_codingame_rank_one_submission_current
-        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/rank_one/generate_submission.mjs
-                --check
-      )
-      add_test(
-        NAME papersoccer_codingame_rank_one_protocol_smoke_test
-        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/rank_one/protocol_smoke_test.mjs
-                $<TARGET_FILE:papersoccer_codingame_rank_one_submission>
-      )
+      foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
+        papersoccer_codingame_target_prefix(
+          PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
+        add_test(
+          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
+          COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                  ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_submission.mjs
+                  ${PAPERSOCCER_CODINGAME_BOT}
+                  --check
+        )
+        add_test(
+          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_protocol_smoke_test
+          COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                  ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/protocol_smoke_test.mjs
+                  $<TARGET_FILE:${PAPERSOCCER_CODINGAME_PREFIX}_submission>
+        )
+      endforeach()
       add_test(
         NAME papersoccer_replay_export_tests
         COMMAND ${CMAKE_COMMAND} -E env

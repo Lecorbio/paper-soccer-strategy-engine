@@ -1,5 +1,5 @@
 #define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
-#include "paper_soccer_alpha_beta.cpp"
+#include "submission.cpp"
 
 #include <algorithm>
 #include <array>
@@ -238,101 +238,30 @@ void selected_replay_correction_activates_exactly() {
           "The accepted correction should reach the directly replayed state.");
 }
 
-void elite_replay_paths_are_legal_and_exact() {
-  struct Replay {
-    int player_id;
-    std::size_t first_corrected_turn;
-    std::string_view transcript;
-  };
-  static constexpr std::array<Replay, 12> replays{{
-      {1, 3,
-       "1/1/7/6/0/75/74/3/00523/135/01/13/27435/35/7/164675/6/6/71/"
-       "72524/4611232/764/763/30654/17201/3550102144444/1721/425/46/16467/"
-       "5/024674/75252/53/530/1/0/711324/75/0632/3/1/3/17505675/23/"
-       "2027545/2/13/3/25050/50/11356675/47/4772420613520633/10/3067425/"
-       "46165"},
-      {0, 6,
-       "0/5/21/2/7/523/3/35/0/36350/07/5/6/6/0/5/5/631/16430/5023/21/"
-       "41674/7577/2/21/3/577/55327/724101305/533/3050100/321647/66666/"
-       "72/5202/243/11425056542006074772/71/714/3/66144/3/6302/330/007/2/"
-       "2/2/0/0363636/7507/13/34546764750014/71/05211"},
-      {1, 5,
-       "1/1/7/6/6/3/07/05/74/53/1/2060350634/14/663/1211/4/1/03635/"
-       "6060/1474553/032/17723/364/27056/56/30206577/724452/22076524144/"
-       "2/0574/1313/12744/3/17563/235/350/17/1647074665/3/5/2/01/05/"
-       "0367635/61/7241466335/6300/61420/742164203/02/3/24705/652/105633/"
-       "6/35"},
-      {0, 4,
-       "0/6/5/5/53/4/610/063523/503030/60/521/4723/1/4/31/2507/2/46/"
-       "054177/50/561/222/3607/05/4147547270/1/46632/221/3/3/360257/"
-       "05241656/670771/4/22322/0/3/36/72250507/477/5763341/4721222/17/"
-       "0/035275/5/0/5/6412477/"},
-      {0, 6,
-       "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/"
-       "0/255336/5702/3025607/22/520167/5446166/6/1/7/7/0524/53/27/"
-       "0255253/2244775272417/2/70721/61444/306541414/502135/4720632100/"
-       "161/035074/52424766/050/714/52031/30744357472720/71"},
-      {0, 2,
-       "0/6/5/4/5/53/61/72442/30/2/7/46413/00/2/531/316/50216/56/52076572/450120"
-       "/357177/532/21/03/2/3/2500/65/441/24763072/4167474/2507/2253117/50/24765"
-       "6431605470/7272/350230/270/330/1/7/2/42/25/2743527/677/45017/2/46124/520"
-       "1317/05/74/53611631757/65/31/30616474/60317"},
-      {1, 1,
-       "4/6/6/3/6/3/2/746/6/14117/7/7/71/63/003/14/6544/61613/0/7144524612/4/617"
-       "13/4/53550143/01/6605/74/20553/6301021/72432/4/2/75/555/7531070/72361342"
-       "3/2/4/71/43/17/0522725743/425750/306064/5747/72422/13610/722744641320555"
-       "/0603364"},
-      {1, 3,
-       "3/1/7/7/7/2/2/505/6/6/1/7/5352/7243/2/3/6/02574/5/3/6/6171/6110300/5253/"
-       "312/1/7/2/0/25252744/64136/02566/44/71134/4/27254/4/166/74/6/16/323257/5"
-       "0/1467016023/03663/534705/07/2050610164563353/57/006353012/3647/23/02525"},
-      {1, 3,
-       "0/0/3/67/27/45/5/71/1/7/52/0053461231/65/4725/52023/5/4/5/0/175323/0/64/"
-       "6616352/111/060/7242533/0/3/2/5/0633/57/7/64/111/3356/50202/02575/6772/2"
-       "27557/4321/34160644/505741/33"},
-      {0, 40,
-       "0/3/2/3/6/5/2/4/76/5/6/4/10/55/2476317/1/221/030524745/674663071/36/071/"
-       "3/0/2/21/3/5671/47/5671/4/72714/43/65212221/4/2/505/247021/2506335/2553/"
-       "66/677/0174744/366311/1256650134/6413312/005325357/014271761/0270/56/57/"
-       "47/22/2470/13/030522575771"},
-      {0, 18,
-       "0/5/21/3/0/3/17/55/061/4276/1/42/217/4/427570/5/4432225/35/36/57/1/4/125"
-       "664130061/02745/2470/274763/25/5/0/5/230/65/57/4721/2470/5/71/335/724247"
-       "6061/721/0/364/671/33/0523111/60575/6671/4/721/7533/6301/74/2221/3166614"
-       "743/67/756/3552133550500/33/6631231642706/427543/07027027/4561160327417/"
-       "01"},
-      {1, 3,
-       "7/6/1/44/21/7/7/422/7/455/00/21657/1/75353/10/27433/141/3/17/25/42700/25"
-       "6/3607/135524/665760/166352325/06/33/0/10676356144/133/3/1/6/1/44/2/71/7"
-       "/42355/01/435755"},
 
-  }};
-
-  for (const Replay &replay : replays) {
+void complete_replay_book_is_legal_and_exact() {
+  for (const cg::replay_book::Replay &replay : cg::replay_book::kReplays) {
     ps::GameState state = ps::make_initial_state(codingame_rules());
     std::string prefix;
     std::size_t turn = 0;
     std::size_t begin = 0;
-    while (begin <= replay.transcript.size()) {
+    while (begin < replay.transcript.size()) {
       const std::size_t separator = replay.transcript.find('/', begin);
       const std::size_t end = separator == std::string_view::npos
                                   ? replay.transcript.size()
                                   : separator;
       const std::string_view action = replay.transcript.substr(begin, end - begin);
-      if (action.empty()) {
-        break;
-      }
-      if (turn >= replay.first_corrected_turn &&
-          (state.to_move == ps::Player::One ? 0 : 1) == replay.player_id) {
+      require(!action.empty(), "A replay-book action cannot be empty.");
+      if (turn >= replay.first_turn && turn % 2U == replay.player_id) {
         ps::GameState actual = state;
         ps::GameState expected = state;
         cg::apply_encoded_turn(expected, action);
         std::string encoded = "sentinel";
         require(cg::try_replay_correction(actual, replay.player_id, prefix,
                                           encoded),
-                "An elite replay correction should activate.");
+                "Every eligible replay-book decision should activate.");
         require(encoded == action && same_state(actual, expected),
-                "An elite replay correction should apply its exact action.");
+                "Every replay-book decision should be exact and legal.");
       }
       cg::apply_encoded_turn(state, action);
       if (!prefix.empty()) {
@@ -343,7 +272,7 @@ void elite_replay_paths_are_legal_and_exact() {
       if (separator == std::string_view::npos) {
         break;
       }
-      begin = separator + 1;
+      begin = separator + 1U;
     }
   }
 }
@@ -415,8 +344,8 @@ int main() {
        interrupted_search_preserves_a_complete_action},
       {"selected_replay_correction_activates_exactly",
        selected_replay_correction_activates_exactly},
-      {"elite_replay_paths_are_legal_and_exact",
-       elite_replay_paths_are_legal_and_exact},
+      {"complete_replay_book_is_legal_and_exact",
+       complete_replay_book_is_legal_and_exact},
       {"rejected_replay_corrections_are_absent",
        rejected_replay_corrections_are_absent},
       {"replay_correction_fallback_is_safe",

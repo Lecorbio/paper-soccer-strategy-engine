@@ -4,6 +4,5 @@ include/papersoccer/rules.hpp
 src/bots/mcts_internal.hpp
 src/core/geometry.cpp
 src/core/rules.cpp
-submissions/codingame/rank_one/replay_book.hpp
-submissions/codingame/rank_one/replay_value_model.hpp
-submissions/codingame/rank_one/bot.cpp
+submissions/codingame/bots/alpha_beta/replay_value_model.hpp
+submissions/codingame/bots/alpha_beta/bot.cpp

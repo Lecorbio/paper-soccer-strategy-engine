@@ -12,7 +12,7 @@ The submitted artifact was named `paper_soccer_v2_replay_book.cpp`, contained
 `e79390a1833d9b9b28a22d7ff8a662bdb32d77c57b6d24152e0a888aef0cb66c`.
 The byte-exact file is not retained because it contained an attribution banner
 disallowed by the repository's public-file policy. The maintained
-`../../paper_soccer_alpha_beta.cpp` is behavior-equivalent, but its consolidated
+`../../submission.cpp` is behavior-equivalent, but its consolidated
 comments make it byte-distinct from the submitted artifact.
 
 The live result was rank 8 of 206 with score 41.65, compared with rank 13 and

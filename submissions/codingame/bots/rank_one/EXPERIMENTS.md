@@ -19,7 +19,7 @@ decisive choice often preceded the visible goal by many forced edges.
 ## Candidate v1
 
 - Maintained source: `bot.cpp`
-- Paste-ready source: `paper_soccer_rank_one.cpp`
+- Paste-ready source: `submission.cpp`
 - Source: 91,461 characters; SHA-256
   `30ac27e3d0b5e0f02aa3701c281fcf1d96250655b9a06bb026865d55b9f0e805`
 - Replay book: 17 full paths and 350 exact-history decisions

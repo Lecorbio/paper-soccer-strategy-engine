@@ -1,50 +1,43 @@
-# CodinGame Paper Soccer submission
+# CodinGame submissions
 
-`paper_soccer_alpha_beta.cpp` is the paste-ready C++20 submission. Copy the
-entire file into the CodinGame editor, select C++, and run it in the arena.
+CodinGame support is split into reusable tooling and self-contained bots:
 
-The maintained bot uses complete-turn AlphaBeta V2. One search ply is one
-complete legal turn, including every mandatory rebound; there is no fixed cap
-on the number of edges in a turn. Its evaluation blends 85% of the original
-tactical score with 15% from a compact quantized 1156-8-8-1 value model trained
-from public Arena replays. The model represents all 316 edges plus
-rebound-aware distances to all 105 vertices and rotates Player 1 positions so
-both colors share one representation. Its internal response budgets are 650 ms
-on the first execution and 130 ms afterward, leaving margin below CodinGame's
-1000 ms and 200 ms limits.
+```text
+submissions/codingame/
+├── bots/                 maintained source, tests, data, and output per bot
+│   ├── alpha_beta/       production baseline and its experiment archive
+│   └── rank_one/         strongest verified arena candidate
+└── tools/                shared generation, protocol, and replay utilities
+```
 
-The last fully measured baseline finished rank 8 of 206 with a score of 42.32,
-improving the preceding production score of 41.65. Its Arena batch included a
-win against the rank-1 bot whose goal-line strategy supplied the training data.
+Every bot uses the same small contract. Its directory contains
+`submission.json`, an ordered `sources.txt`, maintained implementation files,
+`submission_test.cpp`, and the generated paste-ready `submission.cpp`. Optional
+data generators and timing probes stay beside the bot that owns them. Historical
+experiments also stay with their bot instead of becoming shared dependencies.
 
-The current candidate also contains exact responses copied from 12 public
-winning replays against opponents that beat the baseline. Its 275-entry table
-covers every retained response along those complete continuations, plus one
-independently screened late-game correction. A correction requires both the
-expected player ID and the hash of the complete slash-delimited transcript.
-The bot applies the proposed action to a state copy and commits it only when
-the whole action is legal. Unknown transcripts, hash misses, the wrong player,
-or an illegal action fall back to untouched V2 search.
-
-The paste-ready file is generated from the maintained sources listed in
-`alpha_beta.sources`; production does not depend on the experiment tree. The
-training and paired-gate evidence is retained in
-`experiments/goal_block_strategy/`. Do not hand-edit the generated file.
-Rebuild and verify it from the repository root with:
+Generate or verify either submission from the repository root:
 
 ```sh
-node submissions/codingame/generate_submission.mjs
-node submissions/codingame/generate_submission.mjs --check
-cmake --build build
+node submissions/codingame/tools/generate_submission.mjs alpha_beta
+node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
+node submissions/codingame/tools/generate_submission.mjs rank_one --check
+cmake -S . -B build
+cmake --build build -j4
 ctest --test-dir build --output-on-failure
 ```
 
-The generator removes repository-local includes, combines duplicate standard
-headers, strips source comments and redundant blank lines, rejects unexpected
-dependencies, and enforces the platform-wide 100,000-character source limit.
-The tests compile the generated file by itself; verify direction codes,
-contest rules, atomic complete-turn parsing, rebound-complete search fallbacks,
-and interrupted-search legality; reconstruct all 12 copied replays and check
-every retained response for an exact legal state transition; exercise the
-late-game correction and exclusion/fallback paths; and smoke-test the first
-protocol exchange as both player IDs.
+Do not edit a `submission.cpp` directly. Change the maintained bot source or
+data and regenerate it. See [bots/README.md](bots/README.md) for the directory
+contract and the shortest path to starting another bot. Shared command details
+are in [tools/README.md](tools/README.md).
+
+## Current bots
+
+- [`alpha_beta`](bots/alpha_beta/README.md) is the prior production baseline
+  and retains its compact historical experiment evidence. Its paste-ready file
+  is [`submission.cpp`](bots/alpha_beta/submission.cpp).
+- [`rank_one`](bots/rank_one/README.md) is the strongest completed arena
+  candidate: version 26, agent `6561779`, rank 5 of 206 with score
+  `42.42773147296124`. Its paste-ready file is
+  [`submission.cpp`](bots/rank_one/submission.cpp).

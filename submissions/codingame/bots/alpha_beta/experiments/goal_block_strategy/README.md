@@ -70,9 +70,9 @@ to the live state.
 Run the trainer with Python and NumPy, then regenerate and verify the submission:
 
 ```sh
-python3 submissions/codingame/experiments/goal_block_strategy/train_replay_value_model.py
-node submissions/codingame/experiments/goal_block_strategy/generate_replay_value_header.mjs
-node submissions/codingame/generate_submission.mjs
+python3 submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/train_replay_value_model.py
+node submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/generate_replay_value_header.mjs
+node submissions/codingame/tools/generate_submission.mjs alpha_beta
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```

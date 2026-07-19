@@ -74,7 +74,7 @@
     },
     {
       "name": "c9",
-      "source": "HEAD:submissions/codingame/paper_soccer_alpha_beta.cpp",
+      "source": "HEAD:submissions/codingame/bots/alpha_beta/submission.cpp",
       "sha256": "fa1c50d8054b088db9955e9de9fcb90801985b7d96cf1f4c8494bef414bcd542",
       "compiledComponent": "../iterative_safe_tail/c9_reference.generated.cpp",
       "compiledComponentSha256": "ebe7395bf692ec8ba0513094f0b3c5ed8ddf822a219e90eb9791f71454efe5ce"
