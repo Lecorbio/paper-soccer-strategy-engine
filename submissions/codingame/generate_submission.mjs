@@ -9,7 +9,6 @@ const outputPath = path.join(scriptDirectory, "paper_soccer_alpha_beta.cpp");
 
 const allowedLocalIncludes = new Set([
   "mcts_internal.hpp",
-  "papersoccer/bot.hpp",
   "papersoccer/geometry.hpp",
   "papersoccer/rules.hpp",
   "papersoccer/types.hpp",
@@ -77,7 +76,7 @@ for (const relativePath of sources) {
 }
 
 const banner = [
-  "// Paper Soccer AlphaBeta submission for CodinGame.",
+  "// Paper Soccer complete-turn AlphaBeta V2/replay correction.",
   "// Paste this complete file into the C++ editor.",
   "// Rebuild with: node submissions/codingame/generate_submission.mjs",
   "",

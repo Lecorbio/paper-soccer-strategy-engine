@@ -1,0 +1,68 @@
+{
+  "schema": "papersoccer.v2-replay-correction-live-arena-result.v1",
+  "recordedAt": "2026-07-19T04:42:29+02:00",
+  "timezone": "Europe/Warsaw",
+  "candidate": {
+    "artifact": "paper_soccer_v2_replay_book.cpp",
+    "sha256": "e79390a1833d9b9b28a22d7ff8a662bdb32d77c57b6d24152e0a888aef0cb66c",
+    "bytes": 64818,
+    "characters": 64818
+  },
+  "arena": {
+    "finalRank": 8,
+    "participantCount": 206,
+    "score": 41.65,
+    "currentLeader": {
+      "pseudo": "jacek",
+      "rank": 1,
+      "score": 49.66
+    },
+    "priorPureV2": {
+      "finalRank": 13,
+      "score": 37.67
+    }
+  },
+  "recentPublicReplays": [
+    {
+      "replayId": 896296319,
+      "result": "loss",
+      "opponent": "Laars",
+      "candidatePlayer": 0
+    },
+    {
+      "replayId": 896296668,
+      "result": "win",
+      "opponent": "trictrac",
+      "candidatePlayer": 0
+    },
+    {
+      "replayId": 896296666,
+      "result": "loss",
+      "opponent": "derjack",
+      "candidatePlayer": 0
+    },
+    {
+      "replayId": 896296664,
+      "result": "win",
+      "opponent": "red1ynx",
+      "candidatePlayer": 1
+    },
+    {
+      "replayId": 896296655,
+      "result": "win",
+      "opponent": "Laars",
+      "candidatePlayer": 1
+    }
+  ],
+  "correctionObservation": {
+    "inspectedReplayCount": 5,
+    "exactTranscriptOccurrences": 0,
+    "closestReplay": {
+      "replayId": 896296668,
+      "matchedPrefix": "7/6/0/35/01/44/21",
+      "expectedNextOpponentAction": "4",
+      "observedNextOpponentAction": "2"
+    },
+    "interpretation": "The placement is observational Arena evidence for the combined candidate, not causal evidence that the accepted correction activated."
+  }
+}

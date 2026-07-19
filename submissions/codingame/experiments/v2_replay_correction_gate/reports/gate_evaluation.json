@@ -1,0 +1,56 @@
+{
+  "schema": "papersoccer.v2-replay-correction-gate-evaluation.v1",
+  "freezeSha256": "acf848e0988b525bc5a8a058239beae93e80b2e9dd5df7bc6f5a6176d78cfc34",
+  "entries": [
+    {
+      "stateId": "35561379d87e3534",
+      "recorded": {"wins": 7, "draws": 0, "losses": 1},
+      "proposed": {"wins": 7, "draws": 0, "losses": 1},
+      "regressions": [],
+      "gate": {
+        "proposedWinsAtLeast6Of8": true,
+        "proposedBeatsRecordedByAtLeast2Wins": false,
+        "proposedNeverLosesCellRecordedWins": true
+      },
+      "passed": false
+    },
+    {
+      "stateId": "60efd6e1ae7043a4",
+      "recorded": {"wins": 0, "draws": 0, "losses": 8},
+      "proposed": {"wins": 8, "draws": 0, "losses": 0},
+      "regressions": [],
+      "gate": {
+        "proposedWinsAtLeast6Of8": true,
+        "proposedBeatsRecordedByAtLeast2Wins": true,
+        "proposedNeverLosesCellRecordedWins": true
+      },
+      "passed": true
+    },
+    {
+      "stateId": "7af857ebe9b3b0bf",
+      "recorded": {"wins": 5, "draws": 0, "losses": 3},
+      "proposed": {"wins": 6, "draws": 0, "losses": 2},
+      "regressions": ["3000000/v2"],
+      "gate": {
+        "proposedWinsAtLeast6Of8": true,
+        "proposedBeatsRecordedByAtLeast2Wins": false,
+        "proposedNeverLosesCellRecordedWins": false
+      },
+      "passed": false
+    },
+    {
+      "stateId": "fee06c671407e573",
+      "recorded": {"wins": 2, "draws": 0, "losses": 6},
+      "proposed": {"wins": 0, "draws": 0, "losses": 8},
+      "regressions": ["1000000/c9", "3000000/c9"],
+      "gate": {
+        "proposedWinsAtLeast6Of8": false,
+        "proposedBeatsRecordedByAtLeast2Wins": false,
+        "proposedNeverLosesCellRecordedWins": false
+      },
+      "passed": false
+    }
+  ],
+  "passingEntries": ["60efd6e1ae7043a4"],
+  "bookRule": "independent pass only; no cross-entry selection or tie-break"
+}

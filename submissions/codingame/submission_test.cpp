@@ -1,4 +1,4 @@
-#define PAPER_SOCCER_CODINGAME_NO_MAIN
+#define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
 #include "paper_soccer_alpha_beta.cpp"
 
 #include <algorithm>
@@ -6,12 +6,17 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ps = papersoccer;
-namespace cg = papersoccer::codingame;
+namespace cg = papersoccer::turn_action_v2;
 
 namespace {
+
+constexpr std::string_view kSelectedTranscript =
+    "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474";
+constexpr std::string_view kSelectedAction = "42474176";
 
 void require(bool condition, const std::string &message) {
   if (!condition) {
@@ -48,15 +53,15 @@ ps::GameState make_clean_state_at(ps::Point point,
   return state;
 }
 
-bool same_state(const ps::GameState &lhs, const ps::GameState &rhs) {
-  return lhs.config.width == rhs.config.width &&
-         lhs.config.height == rhs.config.height &&
-         lhs.config.goal_rule == rhs.config.goal_rule &&
-         lhs.config.blocked_rule == rhs.config.blocked_rule &&
-         lhs.ball == rhs.ball && lhs.to_move == rhs.to_move &&
-         lhs.status == rhs.status && lhs.path == rhs.path &&
-         lhs.used_segments == rhs.used_segments &&
-         lhs.visit_count == rhs.visit_count;
+bool same_state(const ps::GameState &left, const ps::GameState &right) {
+  return left.config.width == right.config.width &&
+         left.config.height == right.config.height &&
+         left.config.goal_rule == right.config.goal_rule &&
+         left.config.blocked_rule == right.config.blocked_rule &&
+         left.ball == right.ball && left.to_move == right.to_move &&
+         left.status == right.status && left.path == right.path &&
+         left.used_segments == right.used_segments &&
+         left.visit_count == right.visit_count;
 }
 
 void block_edges_except(ps::GameState &state, ps::Point from,
@@ -86,6 +91,32 @@ ps::GameState forced_two_move_rebound() {
   return state;
 }
 
+std::vector<std::string_view> split_transcript(std::string_view transcript) {
+  std::vector<std::string_view> turns;
+  std::size_t start = 0;
+  while (start <= transcript.size()) {
+    const std::size_t separator = transcript.find('/', start);
+    const std::size_t end = separator == std::string_view::npos
+                                ? transcript.size()
+                                : separator;
+    require(end != start, "Transcript contains an empty turn.");
+    turns.push_back(transcript.substr(start, end - start));
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    start = separator + 1;
+  }
+  return turns;
+}
+
+ps::GameState reconstruct(std::string_view transcript) {
+  ps::GameState state = ps::make_initial_state(codingame_rules());
+  for (const std::string_view turn : split_transcript(transcript)) {
+    cg::apply_encoded_turn(state, turn);
+  }
+  return state;
+}
+
 void directions_round_trip_exactly() {
   const ps::Point origin{4, 6};
   constexpr std::array<ps::Point, 8> expected{{
@@ -104,7 +135,7 @@ void directions_round_trip_exactly() {
       "Direction eight must never be accepted or emitted.");
 }
 
-void own_goals_are_legal_and_awarded_to_the_other_player() {
+void own_goals_and_blocked_mover_follow_contest_rules() {
   ps::GameState north = make_clean_state_at({4, 1}, ps::Player::Two);
   north = ps::apply_move(north, {{4, 0}});
   require(ps::winner(north) == ps::Player::One,
@@ -117,20 +148,19 @@ void own_goals_are_legal_and_awarded_to_the_other_player() {
 
   ps::GameState blocked = make_clean_state_at({4, 6}, ps::Player::One);
   block_edges_except(blocked, {4, 5}, {{4, 6}});
-  const std::string action =
-      cg::complete_turn_from_plan(blocked, {ps::Move{{4, 5}}});
-  require(action == "0" && ps::winner(blocked) == ps::Player::Two,
+  blocked = ps::apply_move(blocked, {{4, 5}});
+  require(ps::winner(blocked) == ps::Player::Two,
           "A blocked landing should immediately defeat the mover.");
 }
 
-void turn_validation_rejects_early_and_extra_moves() {
+void encoded_turn_validation_is_atomic() {
   ps::GameState rebound = forced_two_move_rebound();
   const ps::GameState snapshot = rebound;
   require_invalid_argument(
       [&] { cg::apply_encoded_turn(rebound, "0"); },
       "A turn may not stop during a mandatory rebound.");
   require(same_state(rebound, snapshot),
-          "A rejected turn should not partially mutate the game.");
+          "A rejected early turn should not partially mutate state.");
 
   cg::apply_encoded_turn(rebound, "00");
   require(rebound.ball == ps::Point{4, 2} &&
@@ -138,57 +168,120 @@ void turn_validation_rejects_early_and_extra_moves() {
           "A complete rebound sequence should hand possession over.");
 
   ps::GameState initial = ps::make_initial_state(codingame_rules());
+  const ps::GameState initial_snapshot = initial;
   require_invalid_argument(
       [&] { cg::apply_encoded_turn(initial, "00"); },
       "A turn may not include an opponent's next move.");
+  require(same_state(initial, initial_snapshot),
+          "A rejected extra move should not partially mutate state.");
 }
 
-void composer_finishes_rebounds_and_stops_at_the_turn_boundary() {
-  ps::GameState rebound = forced_two_move_rebound();
-  const std::string forced =
-      cg::complete_turn_from_plan(rebound, {ps::Move{{4, 3}}});
-  require(forced == "00" && rebound.to_move == ps::Player::Two,
-          "The fallback should finish a rebound when the plan runs out.");
-
-  ps::GameState initial = ps::make_initial_state(codingame_rules());
-  const std::string one_turn = cg::complete_turn_from_plan(
-      initial, {ps::Move{{4, 5}}, ps::Move{{4, 4}}});
-  require(one_turn == "0" && initial.to_move == ps::Player::Two,
-          "The composer must not emit the opponent portion of a deeper plan.");
-
-  ps::GameState goal = make_clean_state_at({4, 1}, ps::Player::One);
-  const std::string terminal = cg::complete_turn_from_plan(
-      goal, {ps::Move{{4, 0}}, ps::Move{{4, 1}}});
-  require(terminal == "0" && ps::winner(goal) == ps::Player::One,
-          "The composer should stop immediately after a goal.");
-}
-
-void timed_search_produces_a_complete_replayable_turn() {
+void timed_search_returns_a_complete_replayable_action() {
   const ps::GameState original = ps::make_initial_state(codingame_rules());
   ps::GameState chosen = original;
   const std::string action = cg::choose_complete_turn(chosen, 1);
-  require(action.size() == 1,
-          "Every initial move should end the first player's turn.");
+  require(!action.empty(), "Timed search should return an action.");
 
   ps::GameState replayed = original;
   cg::apply_encoded_turn(replayed, action);
   require(same_state(chosen, replayed),
-          "The emitted action should reconstruct the chosen game state.");
+          "The timed action should reconstruct the chosen state.");
 }
 
-void deterministic_turns_remain_replayable() {
-  ps::GameState state = ps::make_initial_state(codingame_rules());
-  int turns = 0;
-  while (!ps::is_terminal(state) && turns < 24) {
-    const ps::GameState before = state;
-    const std::string action = cg::complete_turn_from_plan(state, {});
-    ps::GameState replayed = before;
-    cg::apply_encoded_turn(replayed, action);
-    require(same_state(state, replayed),
-            "Every composed turn should pass the protocol verifier mirror.");
-    ++turns;
+void normal_fallback_finishes_mandatory_rebounds() {
+  const ps::GameState original = forced_two_move_rebound();
+  ps::GameState chosen = original;
+  const std::string action = cg::choose_complete_turn(chosen, 1);
+  require(action == "00",
+          "The normal V2 path should finish the forced rebound action.");
+
+  ps::GameState replayed = original;
+  cg::apply_encoded_turn(replayed, action);
+  require(same_state(chosen, replayed) &&
+              replayed.to_move == ps::Player::Two,
+          "The fallback action should be legal and rebound-complete.");
+}
+
+void interrupted_search_preserves_a_complete_action() {
+  const ps::GameState state = forced_two_move_rebound();
+  cg::SearchConfig config;
+  config.max_nodes = 1;
+  config.max_time_ms = 0;
+  cg::CompleteTurnSearch search(state, config);
+  const std::vector<ps::Move> moves = search.run();
+  require(search.stats().budget_exhausted && !moves.empty(),
+          "A one-node search should return its complete fallback action.");
+
+  ps::GameState replayed = state;
+  std::string encoded;
+  for (const ps::Move move : moves) {
+    encoded.push_back(cg::encode_direction(replayed.ball, move.to));
+    replayed = ps::apply_move(replayed, move);
   }
-  require(turns > 0, "The replayability check should execute at least one turn.");
+  ps::GameState verified = state;
+  cg::apply_encoded_turn(verified, encoded);
+  require(same_state(replayed, verified),
+          "The interrupted search fallback should replay exactly.");
+}
+
+void selected_replay_correction_activates_exactly() {
+  ps::GameState actual = reconstruct(kSelectedTranscript);
+  ps::GameState expected = actual;
+  cg::apply_encoded_turn(expected, kSelectedAction);
+
+  std::string encoded = "sentinel";
+  require(cg::try_replay_correction(actual, 0, kSelectedTranscript, encoded),
+          "The independently accepted correction should activate.");
+  require(encoded == kSelectedAction,
+          "The accepted correction should return the frozen action.");
+  require(same_state(actual, expected),
+          "The accepted correction should reach the directly replayed state.");
+}
+
+void rejected_replay_corrections_are_absent() {
+  constexpr std::array<std::string_view, 3> rejected{{
+      "7/6/0/5/71/335",
+      "7/6/0/5/71/335/01/44/21/2/0/3/17/554",
+      "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474/"
+      "42474177/65",
+  }};
+  for (const std::string_view transcript : rejected) {
+    ps::GameState state = reconstruct(transcript);
+    const ps::GameState before = state;
+    std::string encoded = "sentinel";
+    require(!cg::try_replay_correction(state, 0, transcript, encoded),
+            "An independently rejected correction activated.");
+    require(same_state(state, before) && encoded == "sentinel",
+            "A rejected correction should preserve state and output.");
+  }
+}
+
+void replay_correction_fallback_is_safe() {
+  ps::GameState wrong_player = reconstruct(kSelectedTranscript);
+  const ps::GameState wrong_player_before = wrong_player;
+  std::string encoded = "sentinel";
+  require(!cg::try_replay_correction(
+              wrong_player, 1, kSelectedTranscript, encoded),
+          "The correction should not activate for Player 1.");
+  require(same_state(wrong_player, wrong_player_before) &&
+              encoded == "sentinel",
+          "Wrong-player lookup should preserve state and output.");
+
+  ps::GameState unknown = ps::make_initial_state(codingame_rules());
+  const ps::GameState unknown_before = unknown;
+  require(!cg::try_replay_correction(unknown, 0, "not/a/transcript", encoded),
+          "An unknown transcript should not activate.");
+  require(same_state(unknown, unknown_before) && encoded == "sentinel",
+          "Unknown lookup should preserve state and output.");
+
+  ps::GameState terminal = reconstruct(kSelectedTranscript);
+  terminal.status = ps::Status::WonByOne;
+  const ps::GameState terminal_before = terminal;
+  require(!cg::try_replay_correction(
+              terminal, 0, kSelectedTranscript, encoded),
+          "An illegal correction should fail its copy-before-apply guard.");
+  require(same_state(terminal, terminal_before) && encoded == "sentinel",
+          "An illegal correction should preserve state and output.");
 }
 
 }  // namespace
@@ -200,29 +293,35 @@ int main() {
   };
   const std::vector<TestCase> tests{
       {"directions_round_trip_exactly", directions_round_trip_exactly},
-      {"own_goals_are_legal_and_awarded_to_the_other_player",
-       own_goals_are_legal_and_awarded_to_the_other_player},
-      {"turn_validation_rejects_early_and_extra_moves",
-       turn_validation_rejects_early_and_extra_moves},
-      {"composer_finishes_rebounds_and_stops_at_the_turn_boundary",
-       composer_finishes_rebounds_and_stops_at_the_turn_boundary},
-      {"timed_search_produces_a_complete_replayable_turn",
-       timed_search_produces_a_complete_replayable_turn},
-      {"deterministic_turns_remain_replayable",
-       deterministic_turns_remain_replayable},
+      {"own_goals_and_blocked_mover_follow_contest_rules",
+       own_goals_and_blocked_mover_follow_contest_rules},
+      {"encoded_turn_validation_is_atomic",
+       encoded_turn_validation_is_atomic},
+      {"timed_search_returns_a_complete_replayable_action",
+       timed_search_returns_a_complete_replayable_action},
+      {"normal_fallback_finishes_mandatory_rebounds",
+       normal_fallback_finishes_mandatory_rebounds},
+      {"interrupted_search_preserves_a_complete_action",
+       interrupted_search_preserves_a_complete_action},
+      {"selected_replay_correction_activates_exactly",
+       selected_replay_correction_activates_exactly},
+      {"rejected_replay_corrections_are_absent",
+       rejected_replay_corrections_are_absent},
+      {"replay_correction_fallback_is_safe",
+       replay_correction_fallback_is_safe},
   };
 
   int failures = 0;
   for (const TestCase &test : tests) {
     try {
       test.run();
-      std::cout << "[PASS] " << test.name << "\n";
+      std::cout << "[PASS] " << test.name << '\n';
     } catch (const std::exception &error) {
       ++failures;
-      std::cout << "[FAIL] " << test.name << ": " << error.what() << "\n";
+      std::cout << "[FAIL] " << test.name << ": " << error.what() << '\n';
     }
   }
-  std::cout << "\n" << (tests.size() - static_cast<std::size_t>(failures))
-            << "/" << tests.size() << " submission tests passed.\n";
+  std::cout << '\n' << (tests.size() - static_cast<std::size_t>(failures))
+            << '/' << tests.size() << " submission tests passed.\n";
   return failures == 0 ? 0 : 1;
 }

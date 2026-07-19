@@ -1,0 +1,40 @@
+{
+  "schema": "papersoccer.v2-replay-correction-gate-preflight.v1",
+  "completedAtUtc": "2026-07-19T01:52:35Z",
+  "freezeSha256": "acf848e0988b525bc5a8a058239beae93e80b2e9dd5df7bc6f5a6176d78cfc34",
+  "strengthRunStatus": "not-started",
+  "strengthGamesStarted": 0,
+  "frozenDesign": {
+    "entries": 4,
+    "gamesPerEntry": 16,
+    "totalGames": 64,
+    "maximumConcurrency": 3,
+    "selection": "independent pass only; no cross-entry selection or tie-break"
+  },
+  "checks": {
+    "freezeAndSourceHashes": "passed",
+    "verbatimMiningImport": "passed",
+    "recordedAndProposedActionLegality": "passed for all four entries",
+    "strictCpp20LegalityBuild": "passed with warnings as errors",
+    "strictCpp20ExactHarnessBuild": "passed with warnings as errors",
+    "exactHarnessSha256": "63d4a6b251fcd172331ff2f4694765885c8f0ae0976d4f7f7f5b8644abd2451d",
+    "strengthGuardWithoutCpuClear": "rejected before compilation or game start",
+    "syntheticIndependentGate": "passed; pass/fail/no-regression boundaries checked",
+    "tamperedExactTranscript": "rejected",
+    "gateToBookSelection": "passed; only independently passed rows accepted",
+    "syntheticSinglePassBook": "generated and compiled with only the independently passing correction",
+    "temporaryAllEntryAdapterStrictBuild": "passed with warnings as errors",
+    "temporaryAllEntryAdapterUnitTest": "passed",
+    "temporaryAllEntryProtocolRoles": "passed for player 0 and player 1",
+    "temporaryAllEntryAdapterAsciiStandalone": "passed"
+  },
+  "temporaryAdapter": {
+    "purpose": "synthetic all-pass generator and adapter preflight only",
+    "ignoredPath": ".build/book_candidate.cpp",
+    "bytes": 65195,
+    "sha256": "477b4180ce23e03cba535685237e938a778f600ddd3b4028a9e61cf9229a550a",
+    "isStrengthResult": false,
+    "isPasteArtifact": false
+  },
+  "pasteArtifactStatus": "absent until frozen strength results identify independently passing entries"
+}

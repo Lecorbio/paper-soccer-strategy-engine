@@ -1,0 +1,132 @@
+{
+  "schema": "papersoccer.v2-replay-correction-gate-freeze.v1",
+  "frozenBeforeResults": true,
+  "strengthRunStatus": "not-started",
+  "sourceEvidence": {
+    "report": "../v2_replay_disagreement_mining/reports/mining_results.json",
+    "reportSha256": "bcc6032dbabe2d9dbd5f0899eb100dc3822b5dcd6c6f34e9da805b60f946ee95",
+    "dataset": "../v2_replay_disagreement_mining/data/public_v2_losses.json",
+    "datasetSha256": "f33889fd64a0fce38032abeb54595c895caf6da35bbaac5a9d88180e7497baf7",
+    "miningFreeze": "../v2_replay_disagreement_mining/evaluation_freeze.json",
+    "miningFreezeSha256": "605b905fbf7f1049997319ed0c41c071886449d7cb0e2e8c3ef777e276907c1b",
+    "importRule": "verbatim actionable tuples only"
+  },
+  "base": {
+    "name": "untouched-v2",
+    "source": "../turn_action_search_v2/paper_soccer_turn_action_v2.cpp",
+    "sha256": "9c6043ca48224faadd693c424d2aa9cdb68d2a5b44897f2a76570f70e2cbcddc",
+    "compiledComponent": "../turn_action_search_v2/turn_action_bot_v2.cpp",
+    "compiledComponentSha256": "c29608ed4773f8880bd3ffb2a4ce4545199287394f2474d7cd27cb2e11f42a22"
+  },
+  "entries": [
+    {
+      "stateId": "35561379d87e3534",
+      "player": 0,
+      "transcript": "7/6/0/5/71/335",
+      "recordedAction": "01",
+      "proposedAction": "721",
+      "sourceGameId": 896269838,
+      "sourcePly": 6,
+      "miningSupport": {"at1s": 4, "at5s": 4, "at20s": 4},
+      "miningLegalProof": true
+    },
+    {
+      "stateId": "7af857ebe9b3b0bf",
+      "player": 0,
+      "transcript": "7/6/0/5/71/335/01/44/21/2/0/3/17/554",
+      "recordedAction": "14",
+      "proposedAction": "1227",
+      "sourceGameId": 896269838,
+      "sourcePly": 14,
+      "miningSupport": {"at1s": 4, "at5s": 3, "at20s": 4},
+      "miningLegalProof": true
+    },
+    {
+      "stateId": "60efd6e1ae7043a4",
+      "player": 0,
+      "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474",
+      "recordedAction": "42474177",
+      "proposedAction": "42474176",
+      "sourceGameId": 896269820,
+      "sourcePly": 20,
+      "miningSupport": {"at1s": 4, "at5s": 4, "at20s": 4},
+      "miningLegalProof": true
+    },
+    {
+      "stateId": "fee06c671407e573",
+      "player": 0,
+      "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474/42474177/65",
+      "recordedAction": "36",
+      "proposedAction": "31",
+      "sourceGameId": 896269820,
+      "sourcePly": 22,
+      "miningSupport": {"at1s": 3, "at5s": 4, "at20s": 4},
+      "miningLegalProof": true
+    }
+  ],
+  "references": [
+    {
+      "name": "v2",
+      "source": "../turn_action_search_v2/paper_soccer_turn_action_v2.cpp",
+      "sha256": "9c6043ca48224faadd693c424d2aa9cdb68d2a5b44897f2a76570f70e2cbcddc",
+      "compiledComponent": "../turn_action_search_v2/turn_action_bot_v2.cpp",
+      "compiledComponentSha256": "c29608ed4773f8880bd3ffb2a4ce4545199287394f2474d7cd27cb2e11f42a22"
+    },
+    {
+      "name": "c9",
+      "source": "HEAD:submissions/codingame/paper_soccer_alpha_beta.cpp",
+      "sha256": "fa1c50d8054b088db9955e9de9fcb90801985b7d96cf1f4c8494bef414bcd542",
+      "compiledComponent": "../iterative_safe_tail/c9_reference.generated.cpp",
+      "compiledComponentSha256": "ebe7395bf692ec8ba0513094f0b3c5ed8ddf822a219e90eb9791f71454efe5ce"
+    },
+    {
+      "name": "selective-h16",
+      "source": "../candidate_design/paper_soccer_selective_h16.cpp",
+      "sha256": "f1eb51cb3b72e39ab9fab7088cf754f26d55f822b8cf29c117018788cf974ed3",
+      "compiledComponent": "../candidate_design/selective_alpha_beta.generated.cpp",
+      "compiledComponentSha256": "48dce91f34cc9abc70d5cacf0f2bb5358cb76fba487d5608d3a9a0a14e6b289c"
+    },
+    {
+      "name": "rank10",
+      "source": "../fast_learned_rank_sweep/paper_soccer_fast_learned_rank10.cpp",
+      "sha256": "c653154f06e83dcee92d26fc9a9dae11bdeccb0e928e1cdeb0b92c26ae66628c",
+      "compiledComponent": "../fast_learned_rank_sweep/generated/rank10/fast_learned_rank10_bot.generated.cpp",
+      "compiledComponentSha256": "6950c0f321a516125e2125404c7bc6ecb14041899eb3edb0f77cce41840bc96a"
+    }
+  ],
+  "harnessCore": {
+    "library": "../../../../build/libpapersoccer_core.a",
+    "sha256": "38488fb0b6bdb9fc0ea611c154e716c6b66cf135c50b04487acb6236d145bd4b"
+  },
+  "exactStateScreen": {
+    "variantsPerEntry": ["recorded", "proposed"],
+    "nodeBudgetsPerSearch": [1000000, 3000000],
+    "references": ["v2", "c9", "selective-h16", "rank10"],
+    "cellsPerVariant": 8,
+    "gamesPerEntry": 16,
+    "entries": 4,
+    "totalGames": 64,
+    "maximumCompleteTurnsIncludingPriorTranscript": 66,
+    "continuations": "Player 0 uses untouched V2; Player 1 uses the named reference",
+    "maximumConcurrency": 3
+  },
+  "promotionGatePerEntry": {
+    "proposedWinsAtLeast6Of8": true,
+    "proposedBeatsRecordedByAtLeast2Wins": true,
+    "proposedNeverLosesCellRecordedWins": true,
+    "allRequirementsMustPass": true
+  },
+  "bookRule": {
+    "inclusion": "include each exact tuple if and only if that entry independently passes all promotion requirements",
+    "crossEntrySelection": "none",
+    "tieBreak": "none",
+    "fallback": "untouched complete-turn V2 search"
+  },
+  "preStrengthChecks": {
+    "strictCpp20": true,
+    "protocolRoles": [0, 1],
+    "legality": "reconstruct each exact transcript and independently apply both recorded and proposed complete actions",
+    "adapter": "exact player/transcript match, copy-before-apply legality guard, unchanged V2 fallback"
+  },
+  "artifactRule": "No paste-ready artifact before results. A later book artifact may contain only entries listed as independently passing by the frozen gate evaluator."
+}

@@ -1,0 +1,178 @@
+{
+  "schema": "papersoccer.v2-replay-correction-results.v1",
+  "verdict": {
+    "status": "accepted-one-entry",
+    "passingEntries": ["60efd6e1ae7043a4"],
+    "rejectedEntries": [
+      "35561379d87e3534",
+      "7af857ebe9b3b0bf",
+      "fee06c671407e573"
+    ],
+    "pasteArtifactCreated": true,
+    "submitted": false
+  },
+  "freeze": {
+    "path": "evaluation_freeze.json",
+    "sha256": "acf848e0988b525bc5a8a058239beae93e80b2e9dd5df7bc6f5a6176d78cfc34",
+    "recordedBeforeStrengthResults": true,
+    "bookRule": "independent pass only; no cross-entry selection or tie-break"
+  },
+  "execution": {
+    "completedInvocations": 1,
+    "games": 64,
+    "maximumConcurrency": 3,
+    "additionalStrengthRuns": 0
+  },
+  "exactReplayScreen": {
+    "rawReport": "reports/exact_replay_screen.json",
+    "rawReportSha256": "8f1c6978a365a0a315313432770ba4bd6fa864947dfb7c280313305cd9b4ddee",
+    "rawReportBytes": 72803,
+    "gateEvaluation": "reports/gate_evaluation.json",
+    "gateEvaluationSha256": "8c3608da3c1eef83e8d3767dd0333796ddf65b14fe9755673449ea4088ee5626",
+    "nodeBudgets": [1000000, 3000000],
+    "references": ["v2", "c9", "selective-h16", "rank10"],
+    "entries": [
+      {
+        "stateId": "35561379d87e3534",
+        "player": 0,
+        "transcript": "7/6/0/5/71/335",
+        "recordedAction": "01",
+        "proposedAction": "721",
+        "cells": [
+          {"nodes": 1000000, "reference": "v2", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "c9", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "selective-h16", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "rank10", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "v2", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "c9", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "selective-h16", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 0}
+        ],
+        "recorded": {"wins": 7, "losses": 1, "draws": 0},
+        "proposed": {"wins": 7, "losses": 1, "draws": 0},
+        "regressions": [],
+        "gate": {
+          "proposedWinsAtLeast6Of8": true,
+          "proposedBeatsRecordedByAtLeast2Wins": false,
+          "proposedNeverLosesCellRecordedWins": true,
+          "passed": false
+        }
+      },
+      {
+        "stateId": "7af857ebe9b3b0bf",
+        "player": 0,
+        "transcript": "7/6/0/5/71/335/01/44/21/2/0/3/17/554",
+        "recordedAction": "14",
+        "proposedAction": "1227",
+        "cells": [
+          {"nodes": 1000000, "reference": "v2", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "c9", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "selective-h16", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "v2", "recordedScore": 1, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "c9", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "selective-h16", "recordedScore": 1, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 1}
+        ],
+        "recorded": {"wins": 5, "losses": 3, "draws": 0},
+        "proposed": {"wins": 6, "losses": 2, "draws": 0},
+        "regressions": ["3000000/v2"],
+        "gate": {
+          "proposedWinsAtLeast6Of8": true,
+          "proposedBeatsRecordedByAtLeast2Wins": false,
+          "proposedNeverLosesCellRecordedWins": false,
+          "passed": false
+        }
+      },
+      {
+        "stateId": "60efd6e1ae7043a4",
+        "player": 0,
+        "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474",
+        "recordedAction": "42474177",
+        "proposedAction": "42474176",
+        "cells": [
+          {"nodes": 1000000, "reference": "v2", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "c9", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "selective-h16", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 1000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "v2", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "c9", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "selective-h16", "recordedScore": 0, "proposedScore": 1},
+          {"nodes": 3000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 1}
+        ],
+        "recorded": {"wins": 0, "losses": 8, "draws": 0},
+        "proposed": {"wins": 8, "losses": 0, "draws": 0},
+        "regressions": [],
+        "gate": {
+          "proposedWinsAtLeast6Of8": true,
+          "proposedBeatsRecordedByAtLeast2Wins": true,
+          "proposedNeverLosesCellRecordedWins": true,
+          "passed": true
+        }
+      },
+      {
+        "stateId": "fee06c671407e573",
+        "player": 0,
+        "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474/42474177/65",
+        "recordedAction": "36",
+        "proposedAction": "31",
+        "cells": [
+          {"nodes": 1000000, "reference": "v2", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 1000000, "reference": "c9", "recordedScore": 1, "proposedScore": 0},
+          {"nodes": 1000000, "reference": "selective-h16", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 1000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "v2", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "c9", "recordedScore": 1, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "selective-h16", "recordedScore": 0, "proposedScore": 0},
+          {"nodes": 3000000, "reference": "rank10", "recordedScore": 0, "proposedScore": 0}
+        ],
+        "recorded": {"wins": 2, "losses": 6, "draws": 0},
+        "proposed": {"wins": 0, "losses": 8, "draws": 0},
+        "regressions": ["1000000/c9", "3000000/c9"],
+        "gate": {
+          "proposedWinsAtLeast6Of8": false,
+          "proposedBeatsRecordedByAtLeast2Wins": false,
+          "proposedNeverLosesCellRecordedWins": false,
+          "passed": false
+        }
+      }
+    ]
+  },
+  "artifact": {
+    "path": "paper_soccer_v2_replay_book.cpp",
+    "base": "untouched V2",
+    "baseSha256": "9c6043ca48224faadd693c424d2aa9cdb68d2a5b44897f2a76570f70e2cbcddc",
+    "includedStateIds": ["60efd6e1ae7043a4"],
+    "excludedStateIds": [
+      "35561379d87e3534",
+      "7af857ebe9b3b0bf",
+      "fee06c671407e573"
+    ],
+    "exactCorrection": {
+      "player": 0,
+      "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474",
+      "action": "42474176"
+    },
+    "bytes": 64818,
+    "characters": 64818,
+    "characterLimit": 100000,
+    "sha256": "e79390a1833d9b9b28a22d7ff8a662bdb32d77c57b6d24152e0a888aef0cb66c",
+    "strictCpp20": "passed with warnings as errors",
+    "protocolPlayer0": "passed",
+    "protocolPlayer1": "passed",
+    "selectedActivationAndStateTransition": "passed",
+    "threeFailingEntriesExcluded": "passed",
+    "wrongPlayerAndIllegalStateFallback": "passed",
+    "asciiOnly": true,
+    "localIncludes": 0,
+    "pasteReady": true
+  },
+  "validation": {
+    "freezeAndInputHashes": "passed",
+    "exact64CellCoverage": true,
+    "forcedTranscriptAndActionConsistency": true,
+    "winnerScoreConsistency": true,
+    "savedGateMatchesFrozenEvaluator": true,
+    "illegalActions": 0
+  }
+}
