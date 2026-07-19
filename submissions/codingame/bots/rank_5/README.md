@@ -1,4 +1,4 @@
-# Paper Soccer rank-one candidate
+# Paper Soccer rank-5 candidate
 
 This folder is an isolated CodinGame candidate. The prior production reference
 is maintained separately in `../alpha_beta/`.
@@ -27,8 +27,8 @@ Unmatched, ambiguous, or illegal entries fall back to normal search.
 Generate and verify from the repository root:
 
 ```sh
-node submissions/codingame/tools/generate_submission.mjs rank_one
-node submissions/codingame/tools/generate_submission.mjs rank_one --check
+node submissions/codingame/tools/generate_submission.mjs rank_5
+node submissions/codingame/tools/generate_submission.mjs rank_5 --check
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -38,9 +38,9 @@ Useful analysis gates:
 
 ```sh
 python3 submissions/codingame/tools/screen_replay_book.py \
-  AGENT_ID submissions/codingame/bots/rank_one/replay_book.json
+  AGENT_ID submissions/codingame/bots/rank_5/replay_book.json
 python3 submissions/codingame/tools/analyze_arena.py AGENT_ID --pretty
-./build/papersoccer_codingame_rank_one_timing_probe
+./build/papersoccer_codingame_rank_5_timing_probe
 ```
 
 `replay_book.json` is the auditable source of replay paths and provenance;

@@ -72,7 +72,7 @@ endif()
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
-set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_one)
+set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_5)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
