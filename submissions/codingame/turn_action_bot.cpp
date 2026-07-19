@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -15,6 +17,7 @@
 
 #include "mcts_internal.hpp"
 #include "papersoccer/rules.hpp"
+#include "replay_value_model.hpp"
 
 namespace papersoccer::turn_action_v2 {
 
@@ -64,6 +67,7 @@ struct SearchConfig {
   bool root_seed_endpoints{true};
   bool terminal_bound_pruning{true};
   bool root_transposition_pruning{true};
+  int replay_value_blend_percent{};
 };
 
 struct SearchStats {
@@ -264,6 +268,13 @@ class CompleteTurnSearch {
         config_.max_turn_depth > kMaximumTurnDepth || config_.max_nodes == 0) {
       throw std::invalid_argument("invalid complete-turn search configuration");
     }
+    if (config_.replay_value_blend_percent < 0 ||
+        config_.replay_value_blend_percent > 100) {
+      throw std::invalid_argument("invalid replay value blend percentage");
+    }
+    if (config_.replay_value_blend_percent != 0) {
+      initialize_rotation_maps();
+    }
     if (config_.absolute_deadline.has_value()) {
       deadline_ = config_.absolute_deadline;
     } else if (config_.max_time_ms != 0) {
@@ -313,6 +324,9 @@ class CompleteTurnSearch {
   SearchStats stats_;
   std::vector<int> distances_;
   std::vector<detail::SearchTopology::VertexIndex> queue_;
+  std::deque<detail::SearchTopology::VertexIndex> distance_queue_;
+  std::vector<detail::SearchTopology::VertexIndex> rotated_vertices_;
+  std::vector<detail::SearchTopology::EdgeIndex> rotated_edges_;
   std::optional<SearchClock::time_point> deadline_;
   std::vector<Move> current_action_;
   std::vector<Move> captured_action_;
@@ -362,6 +376,51 @@ class CompleteTurnSearch {
            score == immediate_win_score(mover, turn_ply);
   }
 
+  Point rotated_point(Point point) const noexcept {
+    return {topology_->config().width - point.x,
+            topology_->config().height + 2 - point.y};
+  }
+
+  void initialize_rotation_maps() {
+    using VertexIndex = detail::SearchTopology::VertexIndex;
+    using EdgeIndex = detail::SearchTopology::EdgeIndex;
+    constexpr EdgeIndex kMissingEdge =
+        std::numeric_limits<EdgeIndex>::max();
+
+    rotated_vertices_.resize(topology_->vertex_count());
+    for (std::size_t vertex = 0; vertex < topology_->vertex_count(); ++vertex) {
+      const auto rotated =
+          topology_->find_vertex(rotated_point(topology_->point(vertex)));
+      if (!rotated.has_value()) {
+        throw std::logic_error("rotated vertex is missing from topology");
+      }
+      rotated_vertices_[vertex] = *rotated;
+    }
+
+    rotated_edges_.assign(topology_->edge_count(), kMissingEdge);
+    for (std::size_t source = 0; source < topology_->vertex_count(); ++source) {
+      for (const Player player : {Player::One, Player::Two}) {
+        const auto &adjacency = topology_->adjacency(
+            static_cast<VertexIndex>(source), player);
+        for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+          const auto &arc = adjacency.arcs[index];
+          const Segment rotated_segment{
+              rotated_point(topology_->point(source)),
+              rotated_point(topology_->point(arc.destination))};
+          const auto rotated_edge = topology_->find_edge(rotated_segment);
+          if (!rotated_edge.has_value()) {
+            throw std::logic_error("rotated edge is missing from topology");
+          }
+          rotated_edges_[arc.edge] = *rotated_edge;
+        }
+      }
+    }
+    if (std::find(rotated_edges_.begin(), rotated_edges_.end(), kMissingEdge) !=
+        rotated_edges_.end()) {
+      throw std::logic_error("rotation map does not cover every edge");
+    }
+  }
+
   int shortest_goal_distance(Player player) {
     std::fill(distances_.begin(), distances_.end(), -1);
     std::size_t head = 0;
@@ -389,6 +448,174 @@ class CompleteTurnSearch {
       }
     }
     return static_cast<int>(topology_->vertex_count()) + 8;
+  }
+
+  void calculate_goal_turn_distances(Player player) {
+    constexpr int kUnreachable = 1'000'000;
+    std::fill(distances_.begin(), distances_.end(), kUnreachable);
+    distance_queue_.clear();
+    const auto start = position_.ball_vertex();
+    distances_[start] = 0;
+    distance_queue_.push_front(start);
+
+    while (!distance_queue_.empty()) {
+      const auto vertex = distance_queue_.front();
+      distance_queue_.pop_front();
+      const auto &adjacency = topology_->adjacency(vertex, player);
+      for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+        const auto &arc = adjacency.arcs[index];
+        if (position_.edge_used(arc.edge)) {
+          continue;
+        }
+        const Point destination = topology_->point(arc.destination);
+        const bool continues_turn =
+            is_boundary_point(topology_->config(), destination) ||
+            position_.vertex_visited(arc.destination) ||
+            is_goal_point(topology_->config(), destination);
+        const int edge_cost = continues_turn ? 0 : 1;
+        const int distance = distances_[vertex] + edge_cost;
+        if (distance >= distances_[arc.destination]) {
+          continue;
+        }
+        distances_[arc.destination] = distance;
+        if (edge_cost == 0) {
+          distance_queue_.push_front(arc.destination);
+        } else {
+          distance_queue_.push_back(arc.destination);
+        }
+      }
+    }
+  }
+
+  static int base64_value(char character) noexcept {
+    if (character >= 'A' && character <= 'Z') {
+      return character - 'A';
+    }
+    if (character >= 'a' && character <= 'z') {
+      return character - 'a' + 26;
+    }
+    if (character >= '0' && character <= '9') {
+      return character - '0' + 52;
+    }
+    if (character == '+') {
+      return 62;
+    }
+    if (character == '/') {
+      return 63;
+    }
+    return -1;
+  }
+
+  static const std::vector<std::int8_t> &replay_value_weights() {
+    static const std::vector<std::int8_t> weights = [] {
+      std::vector<std::int8_t> decoded;
+      decoded.reserve(replay_value_model::kInputCount *
+                          replay_value_model::kHiddenOne +
+                      replay_value_model::kHiddenOne *
+                          replay_value_model::kHiddenTwo +
+                      replay_value_model::kHiddenTwo);
+      std::uint32_t buffer = 0;
+      int bits = 0;
+      for (const char character : replay_value_model::kEncodedWeights) {
+        if (character == '=') {
+          break;
+        }
+        const int value = base64_value(character);
+        if (value < 0) {
+          throw std::logic_error("invalid replay value model encoding");
+        }
+        buffer = (buffer << 6U) | static_cast<std::uint32_t>(value);
+        bits += 6;
+        if (bits >= 8) {
+          bits -= 8;
+          decoded.push_back(static_cast<std::int8_t>(
+              static_cast<std::uint8_t>((buffer >> bits) & 0xffU)));
+        }
+      }
+      const std::size_t expected =
+          replay_value_model::kInputCount * replay_value_model::kHiddenOne +
+          replay_value_model::kHiddenOne * replay_value_model::kHiddenTwo +
+          replay_value_model::kHiddenTwo;
+      if (decoded.size() != expected) {
+        throw std::logic_error("replay value model has an invalid size");
+      }
+      return decoded;
+    }();
+    return weights;
+  }
+
+  float replay_value_logit(Player mover) {
+    if (topology_->edge_count() != replay_value_model::kEdgeCount ||
+        topology_->vertex_count() != replay_value_model::kVertexCount) {
+      throw std::logic_error("replay value model topology mismatch");
+    }
+    const auto &weights = replay_value_weights();
+    std::array<float, replay_value_model::kHiddenOne> hidden_one =
+        replay_value_model::kB1;
+
+    const auto accumulate_first_layer = [&](std::size_t input) {
+      const std::size_t offset = input * replay_value_model::kHiddenOne;
+      for (std::size_t hidden = 0;
+           hidden < replay_value_model::kHiddenOne; ++hidden) {
+        hidden_one[hidden] +=
+            static_cast<float>(weights[offset + hidden]) *
+            replay_value_model::kW1Scale;
+      }
+    };
+
+    for (std::size_t edge = 0; edge < topology_->edge_count(); ++edge) {
+      if (!position_.edge_used(
+              static_cast<detail::SearchTopology::EdgeIndex>(edge))) {
+        continue;
+      }
+      const std::size_t normalized_edge =
+          mover == Player::One ? edge : rotated_edges_[edge];
+      accumulate_first_layer(normalized_edge);
+    }
+
+    calculate_goal_turn_distances(mover);
+    for (std::size_t vertex = 0; vertex < topology_->vertex_count(); ++vertex) {
+      const std::size_t physical_vertex =
+          mover == Player::One ? vertex : rotated_vertices_[vertex];
+      const int distance = std::clamp(distances_[physical_vertex], 0, 7);
+      accumulate_first_layer(replay_value_model::kEdgeCount + vertex * 8U +
+                             static_cast<std::size_t>(distance));
+    }
+    for (float &value : hidden_one) {
+      value = std::max(value, 0.0F);
+    }
+
+    constexpr std::size_t kSecondLayerOffset =
+        replay_value_model::kInputCount * replay_value_model::kHiddenOne;
+    std::array<float, replay_value_model::kHiddenTwo> hidden_two =
+        replay_value_model::kB2;
+    for (std::size_t first = 0; first < replay_value_model::kHiddenOne;
+         ++first) {
+      for (std::size_t second = 0; second < replay_value_model::kHiddenTwo;
+           ++second) {
+        const std::size_t weight = kSecondLayerOffset +
+                                   first * replay_value_model::kHiddenTwo +
+                                   second;
+        hidden_two[second] += hidden_one[first] *
+                              static_cast<float>(weights[weight]) *
+                              replay_value_model::kW2Scale;
+      }
+    }
+    for (float &value : hidden_two) {
+      value = std::max(value, 0.0F);
+    }
+
+    constexpr std::size_t kOutputLayerOffset =
+        kSecondLayerOffset + replay_value_model::kHiddenOne *
+                                 replay_value_model::kHiddenTwo;
+    float output = replay_value_model::kB3;
+    for (std::size_t hidden = 0; hidden < replay_value_model::kHiddenTwo;
+         ++hidden) {
+      output += hidden_two[hidden] *
+                static_cast<float>(weights[kOutputLayerOffset + hidden]) *
+                replay_value_model::kW3Scale;
+    }
+    return output;
   }
 
   int evaluate() {
@@ -430,6 +657,16 @@ class CompleteTurnSearch {
                      kTempoWeight);
     if (direct_goal) {
       score += sign * kDirectGoalWeight;
+    }
+    if (config_.replay_value_blend_percent != 0) {
+      const float model_probability_score =
+          std::tanh(replay_value_logit(mover) * 0.5F);
+      const int model_score = sign * static_cast<int>(
+                                         std::lround(model_probability_score *
+                                                     kMaximumEvaluation));
+      score = (score * (100 - config_.replay_value_blend_percent) +
+               model_score * config_.replay_value_blend_percent) /
+              100;
     }
     return std::clamp(score, -kMaximumEvaluation, kMaximumEvaluation);
   }
@@ -1017,6 +1254,7 @@ bool try_replay_correction(GameState &state, int player_id,
 std::string choose_complete_turn(GameState &state,
                                  std::uint32_t search_time_ms) {
   SearchConfig config;
+  config.replay_value_blend_percent = 15;
   // Include construction and table initialization in the response budget.
   config.absolute_deadline =
       SearchClock::now() + std::chrono::milliseconds(search_time_ms);

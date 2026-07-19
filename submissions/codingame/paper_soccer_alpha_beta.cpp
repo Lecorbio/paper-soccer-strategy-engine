@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -850,6 +851,24 @@ std::optional<Player> winner(const GameState &state) {
 
 }  // namespace papersoccer
 
+// --- submissions/codingame/replay_value_model.hpp ---
+namespace papersoccer::turn_action_v2::replay_value_model {
+
+inline constexpr std::size_t kInputCount = 1156;
+inline constexpr std::size_t kEdgeCount = 316;
+inline constexpr std::size_t kVertexCount = 105;
+inline constexpr std::size_t kHiddenOne = 8;
+inline constexpr std::size_t kHiddenTwo = 8;
+inline constexpr float kW1Scale = 0.00294888325F;
+inline constexpr float kW2Scale = 0.0120762014F;
+inline constexpr float kW3Scale = 0.00617757604F;
+inline constexpr std::array<float, 8> kB1{{0.0799908191F, 0.0400607735F, 0.0325085968F, 0.0263906606F, 0.0389416032F, 0.0440370515F, 0.0529267117F, 0.0267492924F}};
+inline constexpr std::array<float, 8> kB2{{0.0700218901F, -0.0561930127F, -0.0431844927F, -0.0496364459F, -0.0308015831F, -0.0599980950F, -0.0358039625F, 0.0284082294F}};
+inline constexpr float kB3 = 0.0647875145F;
+inline constexpr std::string_view kEncodedWeights = "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";
+
+}  // namespace papersoccer::turn_action_v2::replay_value_model
+
 // --- submissions/codingame/turn_action_bot.cpp ---
 namespace papersoccer::turn_action_v2 {
 
@@ -899,6 +918,7 @@ struct SearchConfig {
   bool root_seed_endpoints{true};
   bool terminal_bound_pruning{true};
   bool root_transposition_pruning{true};
+  int replay_value_blend_percent{};
 };
 
 struct SearchStats {
@@ -1099,6 +1119,13 @@ class CompleteTurnSearch {
         config_.max_turn_depth > kMaximumTurnDepth || config_.max_nodes == 0) {
       throw std::invalid_argument("invalid complete-turn search configuration");
     }
+    if (config_.replay_value_blend_percent < 0 ||
+        config_.replay_value_blend_percent > 100) {
+      throw std::invalid_argument("invalid replay value blend percentage");
+    }
+    if (config_.replay_value_blend_percent != 0) {
+      initialize_rotation_maps();
+    }
     if (config_.absolute_deadline.has_value()) {
       deadline_ = config_.absolute_deadline;
     } else if (config_.max_time_ms != 0) {
@@ -1148,6 +1175,9 @@ class CompleteTurnSearch {
   SearchStats stats_;
   std::vector<int> distances_;
   std::vector<detail::SearchTopology::VertexIndex> queue_;
+  std::deque<detail::SearchTopology::VertexIndex> distance_queue_;
+  std::vector<detail::SearchTopology::VertexIndex> rotated_vertices_;
+  std::vector<detail::SearchTopology::EdgeIndex> rotated_edges_;
   std::optional<SearchClock::time_point> deadline_;
   std::vector<Move> current_action_;
   std::vector<Move> captured_action_;
@@ -1197,6 +1227,51 @@ class CompleteTurnSearch {
            score == immediate_win_score(mover, turn_ply);
   }
 
+  Point rotated_point(Point point) const noexcept {
+    return {topology_->config().width - point.x,
+            topology_->config().height + 2 - point.y};
+  }
+
+  void initialize_rotation_maps() {
+    using VertexIndex = detail::SearchTopology::VertexIndex;
+    using EdgeIndex = detail::SearchTopology::EdgeIndex;
+    constexpr EdgeIndex kMissingEdge =
+        std::numeric_limits<EdgeIndex>::max();
+
+    rotated_vertices_.resize(topology_->vertex_count());
+    for (std::size_t vertex = 0; vertex < topology_->vertex_count(); ++vertex) {
+      const auto rotated =
+          topology_->find_vertex(rotated_point(topology_->point(vertex)));
+      if (!rotated.has_value()) {
+        throw std::logic_error("rotated vertex is missing from topology");
+      }
+      rotated_vertices_[vertex] = *rotated;
+    }
+
+    rotated_edges_.assign(topology_->edge_count(), kMissingEdge);
+    for (std::size_t source = 0; source < topology_->vertex_count(); ++source) {
+      for (const Player player : {Player::One, Player::Two}) {
+        const auto &adjacency = topology_->adjacency(
+            static_cast<VertexIndex>(source), player);
+        for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+          const auto &arc = adjacency.arcs[index];
+          const Segment rotated_segment{
+              rotated_point(topology_->point(source)),
+              rotated_point(topology_->point(arc.destination))};
+          const auto rotated_edge = topology_->find_edge(rotated_segment);
+          if (!rotated_edge.has_value()) {
+            throw std::logic_error("rotated edge is missing from topology");
+          }
+          rotated_edges_[arc.edge] = *rotated_edge;
+        }
+      }
+    }
+    if (std::find(rotated_edges_.begin(), rotated_edges_.end(), kMissingEdge) !=
+        rotated_edges_.end()) {
+      throw std::logic_error("rotation map does not cover every edge");
+    }
+  }
+
   int shortest_goal_distance(Player player) {
     std::fill(distances_.begin(), distances_.end(), -1);
     std::size_t head = 0;
@@ -1224,6 +1299,174 @@ class CompleteTurnSearch {
       }
     }
     return static_cast<int>(topology_->vertex_count()) + 8;
+  }
+
+  void calculate_goal_turn_distances(Player player) {
+    constexpr int kUnreachable = 1'000'000;
+    std::fill(distances_.begin(), distances_.end(), kUnreachable);
+    distance_queue_.clear();
+    const auto start = position_.ball_vertex();
+    distances_[start] = 0;
+    distance_queue_.push_front(start);
+
+    while (!distance_queue_.empty()) {
+      const auto vertex = distance_queue_.front();
+      distance_queue_.pop_front();
+      const auto &adjacency = topology_->adjacency(vertex, player);
+      for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+        const auto &arc = adjacency.arcs[index];
+        if (position_.edge_used(arc.edge)) {
+          continue;
+        }
+        const Point destination = topology_->point(arc.destination);
+        const bool continues_turn =
+            is_boundary_point(topology_->config(), destination) ||
+            position_.vertex_visited(arc.destination) ||
+            is_goal_point(topology_->config(), destination);
+        const int edge_cost = continues_turn ? 0 : 1;
+        const int distance = distances_[vertex] + edge_cost;
+        if (distance >= distances_[arc.destination]) {
+          continue;
+        }
+        distances_[arc.destination] = distance;
+        if (edge_cost == 0) {
+          distance_queue_.push_front(arc.destination);
+        } else {
+          distance_queue_.push_back(arc.destination);
+        }
+      }
+    }
+  }
+
+  static int base64_value(char character) noexcept {
+    if (character >= 'A' && character <= 'Z') {
+      return character - 'A';
+    }
+    if (character >= 'a' && character <= 'z') {
+      return character - 'a' + 26;
+    }
+    if (character >= '0' && character <= '9') {
+      return character - '0' + 52;
+    }
+    if (character == '+') {
+      return 62;
+    }
+    if (character == '/') {
+      return 63;
+    }
+    return -1;
+  }
+
+  static const std::vector<std::int8_t> &replay_value_weights() {
+    static const std::vector<std::int8_t> weights = [] {
+      std::vector<std::int8_t> decoded;
+      decoded.reserve(replay_value_model::kInputCount *
+                          replay_value_model::kHiddenOne +
+                      replay_value_model::kHiddenOne *
+                          replay_value_model::kHiddenTwo +
+                      replay_value_model::kHiddenTwo);
+      std::uint32_t buffer = 0;
+      int bits = 0;
+      for (const char character : replay_value_model::kEncodedWeights) {
+        if (character == '=') {
+          break;
+        }
+        const int value = base64_value(character);
+        if (value < 0) {
+          throw std::logic_error("invalid replay value model encoding");
+        }
+        buffer = (buffer << 6U) | static_cast<std::uint32_t>(value);
+        bits += 6;
+        if (bits >= 8) {
+          bits -= 8;
+          decoded.push_back(static_cast<std::int8_t>(
+              static_cast<std::uint8_t>((buffer >> bits) & 0xffU)));
+        }
+      }
+      const std::size_t expected =
+          replay_value_model::kInputCount * replay_value_model::kHiddenOne +
+          replay_value_model::kHiddenOne * replay_value_model::kHiddenTwo +
+          replay_value_model::kHiddenTwo;
+      if (decoded.size() != expected) {
+        throw std::logic_error("replay value model has an invalid size");
+      }
+      return decoded;
+    }();
+    return weights;
+  }
+
+  float replay_value_logit(Player mover) {
+    if (topology_->edge_count() != replay_value_model::kEdgeCount ||
+        topology_->vertex_count() != replay_value_model::kVertexCount) {
+      throw std::logic_error("replay value model topology mismatch");
+    }
+    const auto &weights = replay_value_weights();
+    std::array<float, replay_value_model::kHiddenOne> hidden_one =
+        replay_value_model::kB1;
+
+    const auto accumulate_first_layer = [&](std::size_t input) {
+      const std::size_t offset = input * replay_value_model::kHiddenOne;
+      for (std::size_t hidden = 0;
+           hidden < replay_value_model::kHiddenOne; ++hidden) {
+        hidden_one[hidden] +=
+            static_cast<float>(weights[offset + hidden]) *
+            replay_value_model::kW1Scale;
+      }
+    };
+
+    for (std::size_t edge = 0; edge < topology_->edge_count(); ++edge) {
+      if (!position_.edge_used(
+              static_cast<detail::SearchTopology::EdgeIndex>(edge))) {
+        continue;
+      }
+      const std::size_t normalized_edge =
+          mover == Player::One ? edge : rotated_edges_[edge];
+      accumulate_first_layer(normalized_edge);
+    }
+
+    calculate_goal_turn_distances(mover);
+    for (std::size_t vertex = 0; vertex < topology_->vertex_count(); ++vertex) {
+      const std::size_t physical_vertex =
+          mover == Player::One ? vertex : rotated_vertices_[vertex];
+      const int distance = std::clamp(distances_[physical_vertex], 0, 7);
+      accumulate_first_layer(replay_value_model::kEdgeCount + vertex * 8U +
+                             static_cast<std::size_t>(distance));
+    }
+    for (float &value : hidden_one) {
+      value = std::max(value, 0.0F);
+    }
+
+    constexpr std::size_t kSecondLayerOffset =
+        replay_value_model::kInputCount * replay_value_model::kHiddenOne;
+    std::array<float, replay_value_model::kHiddenTwo> hidden_two =
+        replay_value_model::kB2;
+    for (std::size_t first = 0; first < replay_value_model::kHiddenOne;
+         ++first) {
+      for (std::size_t second = 0; second < replay_value_model::kHiddenTwo;
+           ++second) {
+        const std::size_t weight = kSecondLayerOffset +
+                                   first * replay_value_model::kHiddenTwo +
+                                   second;
+        hidden_two[second] += hidden_one[first] *
+                              static_cast<float>(weights[weight]) *
+                              replay_value_model::kW2Scale;
+      }
+    }
+    for (float &value : hidden_two) {
+      value = std::max(value, 0.0F);
+    }
+
+    constexpr std::size_t kOutputLayerOffset =
+        kSecondLayerOffset + replay_value_model::kHiddenOne *
+                                 replay_value_model::kHiddenTwo;
+    float output = replay_value_model::kB3;
+    for (std::size_t hidden = 0; hidden < replay_value_model::kHiddenTwo;
+         ++hidden) {
+      output += hidden_two[hidden] *
+                static_cast<float>(weights[kOutputLayerOffset + hidden]) *
+                replay_value_model::kW3Scale;
+    }
+    return output;
   }
 
   int evaluate() {
@@ -1265,6 +1508,16 @@ class CompleteTurnSearch {
                      kTempoWeight);
     if (direct_goal) {
       score += sign * kDirectGoalWeight;
+    }
+    if (config_.replay_value_blend_percent != 0) {
+      const float model_probability_score =
+          std::tanh(replay_value_logit(mover) * 0.5F);
+      const int model_score = sign * static_cast<int>(
+                                         std::lround(model_probability_score *
+                                                     kMaximumEvaluation));
+      score = (score * (100 - config_.replay_value_blend_percent) +
+               model_score * config_.replay_value_blend_percent) /
+              100;
     }
     return std::clamp(score, -kMaximumEvaluation, kMaximumEvaluation);
   }
@@ -1852,6 +2105,7 @@ bool try_replay_correction(GameState &state, int player_id,
 std::string choose_complete_turn(GameState &state,
                                  std::uint32_t search_time_ms) {
   SearchConfig config;
+  config.replay_value_blend_percent = 15;
   // Include construction and table initialization in the response budget.
   config.absolute_deadline =
       SearchClock::now() + std::chrono::milliseconds(search_time_ms);

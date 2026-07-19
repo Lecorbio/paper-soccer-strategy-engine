@@ -4,4 +4,5 @@ include/papersoccer/rules.hpp
 src/bots/mcts_internal.hpp
 src/core/geometry.cpp
 src/core/rules.cpp
+submissions/codingame/replay_value_model.hpp
 submissions/codingame/turn_action_bot.cpp

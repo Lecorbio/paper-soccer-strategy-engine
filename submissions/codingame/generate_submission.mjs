@@ -12,6 +12,7 @@ const allowedLocalIncludes = new Set([
   "papersoccer/geometry.hpp",
   "papersoccer/rules.hpp",
   "papersoccer/types.hpp",
+  "replay_value_model.hpp",
 ]);
 
 function fail(message) {

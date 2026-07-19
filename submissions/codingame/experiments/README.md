@@ -6,15 +6,17 @@ rejected or superseded experiment implementations were not retained.
 
 ## Final production result
 
-The live CodinGame submission finished rank 8 of 206 with a score of 41.65.
-The preceding pure V2 submission finished rank 13 with 37.67. The submitted
-historical artifact was named `paper_soccer_v2_replay_book.cpp`, contained
-64,818 characters, and had SHA-256
+The current live CodinGame submission finished rank 8 of 206 with a score of
+42.32. It adds the replay-trained value model documented in
+`goal_block_strategy/` and improves the preceding production score of 41.65.
+The earlier pure V2 submission finished rank 13 with 37.67.
+
+The preceding historical artifact was named
+`paper_soccer_v2_replay_book.cpp`, contained 64,818 characters, and had SHA-256
 `e79390a1833d9b9b28a22d7ff8a662bdb32d77c57b6d24152e0a888aef0cb66c`.
 That byte-exact source is omitted because it contained an attribution banner
-disallowed by the repository's public-file policy. The maintained
-`../paper_soccer_alpha_beta.cpp` is behavior-equivalent, without being
-byte-identical to the live artifact.
+disallowed by the repository's public-file policy. The current maintained
+submission supersedes it while preserving its accepted replay correction.
 
 The accepted correction was exact and narrow: Player 0, transcript
 `7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474`, action
