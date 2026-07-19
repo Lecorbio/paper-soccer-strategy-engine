@@ -13,18 +13,18 @@ both colors share one representation. Its internal response budgets are 650 ms
 on the first execution and 130 ms afterward, leaving margin below CodinGame's
 1000 ms and 200 ms limits.
 
-The live submission finished rank 8 of 206 with a score of 42.32, improving the
-preceding production score of 41.65. Its Arena batch included a win against the
-rank-1 bot whose goal-line strategy supplied the training data.
+The last fully measured baseline finished rank 8 of 206 with a score of 42.32,
+improving the preceding production score of 41.65. Its Arena batch included a
+win against the rank-1 bot whose goal-line strategy supplied the training data.
 
-One independently validated replay correction is included for Player 0 after
-the exact transcript
-`7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474`: action
-`42474176`. The bot matches the full slash-delimited transcript, applies the
-correction to a state copy, and commits it only when the action is legal.
-Unknown transcripts, the wrong player, or an illegal correction use untouched
-V2 search. The three replay corrections that failed their frozen gates are not
-included.
+The current candidate also contains exact responses copied from 12 public
+winning replays against opponents that beat the baseline. Its 275-entry table
+covers every retained response along those complete continuations, plus one
+independently screened late-game correction. A correction requires both the
+expected player ID and the hash of the complete slash-delimited transcript.
+The bot applies the proposed action to a state copy and commits it only when
+the whole action is legal. Unknown transcripts, hash misses, the wrong player,
+or an illegal action fall back to untouched V2 search.
 
 The paste-ready file is generated from the maintained sources listed in
 `alpha_beta.sources`; production does not depend on the experiment tree. The
@@ -40,9 +40,11 @@ ctest --test-dir build --output-on-failure
 ```
 
 The generator removes repository-local includes, combines duplicate standard
-headers, rejects unexpected dependencies, and enforces the platform-wide
-100,000-character source limit. The tests compile the generated file by
-itself; verify direction codes, contest rules, atomic complete-turn parsing,
-rebound-complete search fallbacks, and interrupted-search legality; exercise
-the sole accepted replay correction and every exclusion/fallback path; and
-smoke-test the first protocol exchange as both player IDs.
+headers, strips source comments and redundant blank lines, rejects unexpected
+dependencies, and enforces the platform-wide 100,000-character source limit.
+The tests compile the generated file by itself; verify direction codes,
+contest rules, atomic complete-turn parsing, rebound-complete search fallbacks,
+and interrupted-search legality; reconstruct all 12 copied replays and check
+every retained response for an exact legal state transition; exercise the
+late-game correction and exclusion/fallback paths; and smoke-test the first
+protocol exchange as both player IDs.

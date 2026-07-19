@@ -3,8 +3,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const sourcePath = path.join(directory, "replay_value_model.json");
-const outputPath = path.resolve(directory, "../../replay_value_model.hpp");
+const argumentsList = process.argv.slice(2);
+if (argumentsList.length > 2) {
+  throw new Error("Usage: node generate_replay_value_header.mjs [model.json] [output.hpp]");
+}
+const sourcePath = argumentsList[0]
+  ? path.resolve(argumentsList[0])
+  : path.join(directory, "replay_value_model.json");
+const outputPath = argumentsList[1]
+  ? path.resolve(argumentsList[1])
+  : path.resolve(directory, "../../replay_value_model.hpp");
 const report = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 
 if (report.schema !== "papersoccer.replay-value-model.v1") {

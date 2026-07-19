@@ -33,7 +33,23 @@ up from 41.65. Its 90-game batch included a win against the leader.
 `replay_value_model.json` is the quantized training artifact.
 `generate_replay_value_header.mjs` converts it to the compact production header
 at `../../replay_value_model.hpp`. `opening_book_gate.cpp` is the paired-game
-screen used for blend and timing comparisons.
+screen used for blend, replay-correction, and independently configured timing
+comparisons.
+
+## Replay-derived counters
+
+After the learned evaluator reached rank 8, losses against the leading Arena
+bots were compared with public games in which an elite bot beat the same
+opponent from the same color. The retained candidate copies 12 complete
+winning response paths, keyed by player ID and the hash of the exact transcript,
+and preserves the previously accepted late-game correction. This produces 275
+exact response entries without changing search on any unknown position.
+
+`submission_test.cpp` reconstructs every retained replay from the initial
+position, checks every table hit against the expected action, and verifies that
+the resulting complete turn is legal. Corrections also retain the runtime
+state-copy legality guard, so a malformed or colliding entry cannot be applied
+to the live state.
 
 ## Rejected alternatives
 
@@ -43,6 +59,9 @@ screen used for blend and timing comparisons.
   opening reproduced one public win, but lost all three local games as Player 1
   against the production baseline. The replay-specific opening book is not in
   production.
+- Increasing the response budgets to 900 ms and 180 ms won a small local
+  self-play screen but regressed in the live Arena. Production remains at the
+  measured 650 ms and 130 ms budgets.
 - A 100% learned-value blend became unstable at deeper node budgets. The model
   remains a guide for AlphaBeta rather than replacing its evaluator.
 

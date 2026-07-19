@@ -90,7 +90,18 @@ const includes = [...systemIncludes]
   .sort()
   .map((header) => `#include <${header}>`)
   .join("\n");
-const output = `${banner}${includes}\n\n${bodies.join("\n\n")}\n`;
+const readableOutput = `${banner}${includes}\n\n${bodies.join("\n\n")}\n`;
+const compactLines = [];
+for (const line of readableOutput.split("\n")) {
+  if (line.trimStart().startsWith("//")) {
+    continue;
+  }
+  if (line.trim() === "" && compactLines.at(-1)?.trim() === "") {
+    continue;
+  }
+  compactLines.push(line);
+}
+const output = compactLines.join("\n");
 
 if ([...output].some((character) => character.codePointAt(0) > 0x7f)) {
   fail("Generated submission must contain ASCII characters only.");
