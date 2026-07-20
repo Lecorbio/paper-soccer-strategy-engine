@@ -376,6 +376,78 @@ void bot_command_uses_the_cpp_random_bot_and_returns_one_ply() {
           "A bot command should apply exactly one ply, leaving rebound sequencing to callers.");
 }
 
+void undo_rewinds_one_ply_per_revision_and_stops_at_the_start() {
+  ps::WebGameSession session(ps::Player::Two, 17);
+
+  const ps::WebGameCommandResult bot = session.play_bot(0);
+  require(bot.ok(), "The undo fixture's opening bot move should succeed.");
+  const ps::Point after_bot = session.match().state().ball;
+  const ps::WebGameCommandResult human = session.play_human(1, 0);
+  require(human.ok() && session.match().history().size() == 2,
+          "The undo fixture should contain one bot and one human move.");
+
+  const ps::WebGameCommandResult first_undo = session.undo(2);
+  require(first_undo.ok() && first_undo.revision == 3 &&
+              first_undo.move == human.move &&
+              session.match().history().size() == 1 &&
+              session.match().state().ball == after_bot &&
+              session.match().state().to_move == ps::Player::Two,
+          "The first undo should remove only the latest human ply.");
+
+  const std::string after_first_undo = session.snapshot_json();
+  require_error(session.undo(2), ps::WebGameErrorCode::StaleRevision,
+                "An undo command should reject a stale revision");
+  require(session.snapshot_json() == after_first_undo,
+          "A rejected stale undo should not mutate the restored game.");
+
+  const ps::WebGameCommandResult second_undo = session.undo(3);
+  require(second_undo.ok() && second_undo.revision == 4 &&
+              second_undo.move == bot.move && session.match().history().empty() &&
+              session.match().state().ball == ps::Point{4, 6} &&
+              session.match().state().to_move == ps::Player::One,
+          "The second undo should independently remove the bot ply.");
+
+  const std::string initial_again = session.snapshot_json();
+  require_error(session.undo(4), ps::WebGameErrorCode::NoMovesToUndo,
+                "Undo should stop cleanly at the initial position");
+  require(session.snapshot_json() == initial_again && session.revision() == 4,
+          "An empty undo should not advance the revision or change the snapshot.");
+}
+
+void undo_removes_discarded_bot_diagnostics_and_reopens_terminal_games() {
+  const ps::BotConfig mcts_config{ps::BotKind::Mcts, 31, 1};
+  ps::WebGameSession diagnostic_session(ps::Player::Two, mcts_config);
+  require(diagnostic_session.play_bot(0).ok() &&
+              diagnostic_session.bot_searches().size() == 1,
+          "The diagnostic fixture should record one bot search.");
+  require(diagnostic_session.undo(1).ok() &&
+              diagnostic_session.bot_searches().empty(),
+          "Undoing a bot move should discard diagnostics for that removed ply.");
+  require(diagnostic_session.snapshot_json().find(
+              "\"lastBotSearch\":null,\"botSearches\":[]") !=
+              std::string::npos,
+          "Snapshots should not expose diagnostics from an undone future.");
+
+  ps::WebGameSession terminal_session(ps::Player::One, 41,
+                                      ps::RulesConfig{8, 1});
+  const std::vector<ps::Move> terminal_moves =
+      terminal_session.match().legal_moves();
+  std::size_t goal_move_id = 0;
+  while (goal_move_id < terminal_moves.size() &&
+         terminal_moves[goal_move_id].to.y != 0) {
+    ++goal_move_id;
+  }
+  require(goal_move_id < terminal_moves.size() &&
+              terminal_session.play_human(0, goal_move_id).ok() &&
+              ps::is_terminal(terminal_session.match().state()),
+          "The terminal undo fixture should finish in one human move.");
+  const ps::WebGameCommandResult reopened = terminal_session.undo(1);
+  require(reopened.ok() && reopened.revision == 2 &&
+              !ps::is_terminal(terminal_session.match().state()) &&
+              !terminal_session.match().legal_moves().empty(),
+          "Undo should be accepted after game over and reopen the prior position.");
+}
+
 void terminal_session_rejects_both_controller_commands() {
   ps::WebGameSession session(ps::Player::One, 41);
   std::size_t plies = 0;
@@ -534,6 +606,8 @@ void error_codes_have_stable_bridge_names() {
                   "move_out_of_range" &&
               ps::web_game_error_code_name(ps::WebGameErrorCode::NoLegalMoves) ==
                   "no_legal_moves" &&
+              ps::web_game_error_code_name(ps::WebGameErrorCode::NoMovesToUndo) ==
+                  "no_moves_to_undo" &&
               ps::web_game_error_code_name(ps::WebGameErrorCode::ReplayComplete) ==
                   "replay_complete",
           "Every command error should have a stable machine-readable bridge name.");
@@ -583,6 +657,10 @@ int run_web_game_session_tests() {
        out_of_range_move_id_is_rejected_without_mutation},
       {"bot_command_uses_the_cpp_random_bot_and_returns_one_ply",
        bot_command_uses_the_cpp_random_bot_and_returns_one_ply},
+      {"undo_rewinds_one_ply_per_revision_and_stops_at_the_start",
+       undo_rewinds_one_ply_per_revision_and_stops_at_the_start},
+      {"undo_removes_discarded_bot_diagnostics_and_reopens_terminal_games",
+       undo_removes_discarded_bot_diagnostics_and_reopens_terminal_games},
       {"terminal_session_rejects_both_controller_commands",
        terminal_session_rejects_both_controller_commands},
       {"zero_length_bot_replay_is_immediately_truncated",

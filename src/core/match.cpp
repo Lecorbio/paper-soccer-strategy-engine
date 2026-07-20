@@ -36,4 +36,31 @@ PlayedMove Match::play(Move move) {
   return played;
 }
 
+std::optional<PlayedMove> Match::undo() {
+  if (history_.empty()) {
+    return std::nullopt;
+  }
+
+  const PlayedMove undone = history_.back();
+  state_.used_segments.erase(Segment{undone.from, undone.to});
+
+  const auto visit = state_.visit_count.find(undone.to);
+  if (visit != state_.visit_count.end()) {
+    if (visit->second <= 1) {
+      state_.visit_count.erase(visit);
+    } else {
+      --visit->second;
+    }
+  }
+
+  if (!state_.path.empty()) {
+    state_.path.pop_back();
+  }
+  state_.ball = undone.from;
+  state_.to_move = undone.player;
+  state_.status = Status::InProgress;
+  history_.pop_back();
+  return undone;
+}
+
 }  // namespace papersoccer

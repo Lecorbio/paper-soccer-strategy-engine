@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "papersoccer/types.hpp"
@@ -27,6 +28,7 @@ class Match {
 
   std::vector<Move> legal_moves() const;
   PlayedMove play(Move move);
+  std::optional<PlayedMove> undo();
 
  private:
   GameState state_;

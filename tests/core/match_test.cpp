@@ -115,6 +115,54 @@ void match_respects_custom_rules_configuration() {
           "The initial point should derive from the supplied rules configuration.");
 }
 
+void undo_restores_each_prior_authoritative_state() {
+  ps::Match match;
+  std::vector<ps::GameState> states{match.state()};
+  const std::vector<ps::Move> moves{
+      ps::Move{{4, 5}},
+      ps::Move{{5, 5}},
+      ps::Move{{5, 6}},
+      ps::Move{{4, 6}},
+  };
+
+  for (const ps::Move move : moves) {
+    (void)match.play(move);
+    states.push_back(match.state());
+  }
+  require(match.history().back().extra_turn,
+          "The undo fixture should include a rebound onto a visited point.");
+
+  for (std::size_t remaining = moves.size(); remaining > 0; --remaining) {
+    const std::optional<ps::PlayedMove> undone = match.undo();
+    require(undone.has_value() && undone->ply == remaining,
+            "Undo should return and remove exactly the latest played move.");
+    require(match.history().size() == remaining - 1,
+            "Undo should shorten the authoritative history by one ply.");
+    require(same_state(match.state(), states[remaining - 1]),
+            "Undo should restore the complete state from before that ply.");
+  }
+
+  require(!match.undo().has_value(),
+          "Undo at the initial position should be a non-mutating no-op.");
+  require(same_state(match.state(), states.front()) && match.history().empty(),
+          "Repeated undo should stop at the exact initial state.");
+}
+
+void undo_reopens_a_terminal_match() {
+  ps::Match match(ps::RulesConfig{8, 1});
+  const ps::GameState initial = match.state();
+
+  const ps::PlayedMove goal = match.play(ps::Move{{4, 0}});
+  require(goal.status_after == ps::Status::WonByOne &&
+              ps::is_terminal(match.state()),
+          "The compact-board fixture should finish with an immediate goal.");
+
+  const std::optional<ps::PlayedMove> undone = match.undo();
+  require(undone == goal && same_state(match.state(), initial) &&
+              match.legal_moves().size() > 0,
+          "Undoing a winning move should restore the playable pre-goal state.");
+}
+
 }  // namespace
 
 int run_match_tests() {
@@ -134,6 +182,9 @@ int run_match_tests() {
        rejected_move_does_not_change_state_or_history},
       {"match_respects_custom_rules_configuration",
        match_respects_custom_rules_configuration},
+      {"undo_restores_each_prior_authoritative_state",
+       undo_restores_each_prior_authoritative_state},
+      {"undo_reopens_a_terminal_match", undo_reopens_a_terminal_match},
   };
 
   int failures = 0;

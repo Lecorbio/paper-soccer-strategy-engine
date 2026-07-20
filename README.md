@@ -549,6 +549,11 @@ The app starts in **Play vs bot** mode:
 
 Once a game starts, its opponent, side, seed, and search setting are locked. The active
 configuration remains visible beside the latest MCTS search counters when MCTS is selected.
+Select **Undo move** as often as needed to remove the latest ply, whether it belongs to the
+human or the bot. Undoing a bot ply pauses at the restored position instead of immediately
+replaying it; select **Continue bot** when ready to let the bot choose again. A stateful or
+random bot may choose a different continuation after a takeback, which makes the live game
+useful as a sandbox, while a fresh game with the same settings remains reproducible.
 Select **Change settings** to stop the current game without discarding it, or **Export game** to
 save a `papersoccer.human-match.v1` document containing the standard replay and every recorded
 bot search. Exported human matches can be opened through the normal replay loader.

@@ -33,6 +33,7 @@ test("browser client exposes the compiled C++ session instead of JavaScript rule
   assert.equal(typeof gameEngine.startGame, "function");
   assert.equal(typeof gameEngine.playHuman, "function");
   assert.equal(typeof gameEngine.playBot, "function");
+  assert.equal(typeof gameEngine.undo, "function");
   assert.equal(typeof gameEngine.humanMatch, "function");
   assert.equal(typeof gameEngine.startBotReplay, "function");
   assert.equal(typeof gameEngine.playBotReplay, "function");
@@ -145,6 +146,42 @@ test("the browser bot move is selected by the compiled C++ RandomBot", () => {
   });
   assert.equal(afterBot.diagnostics.lastBotSearch, null);
   assert.deepEqual(afterBot.diagnostics.botSearches, []);
+});
+
+test("browser undo removes human and bot plies one at a time", () => {
+  const initial = gameEngine.startGame("17", Player.Two);
+  const afterBot = gameEngine.playBot(initial.sessionId, initial.revision);
+  const afterHuman = gameEngine.playHuman(
+    afterBot.sessionId,
+    afterBot.revision,
+    0,
+  );
+
+  const withoutHuman = gameEngine.undo(
+    afterHuman.sessionId,
+    afterHuman.revision,
+  );
+  assert.equal(withoutHuman.revision, 3);
+  assert.deepEqual(withoutHuman.replay.moves, afterBot.replay.moves);
+  assert.deepEqual(withoutHuman.state, afterBot.state);
+
+  assert.throws(
+    () => gameEngine.undo(withoutHuman.sessionId, afterHuman.revision),
+    /stale_revision/,
+  );
+
+  const withoutBot = gameEngine.undo(
+    withoutHuman.sessionId,
+    withoutHuman.revision,
+  );
+  assert.equal(withoutBot.revision, 4);
+  assert.deepEqual(withoutBot.replay.moves, []);
+  assert.deepEqual(withoutBot.state, initial.state);
+  assert.throws(
+    () => gameEngine.undo(withoutBot.sessionId, withoutBot.revision),
+    /no_moves_to_undo/,
+  );
+  assert.deepEqual(gameEngine.snapshot(), withoutBot);
 });
 
 test("a 10,000-search budget reaches the authoritative live configuration", () => {

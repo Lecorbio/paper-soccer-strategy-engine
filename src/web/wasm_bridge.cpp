@@ -201,6 +201,24 @@ EMSCRIPTEN_KEEPALIVE int ps_play_bot(std::uint32_t expected_session_id,
   return 1;
 }
 
+EMSCRIPTEN_KEEPALIVE int ps_undo(std::uint32_t expected_session_id,
+                                std::uint32_t expected_revision) {
+  if (!validate_session(expected_session_id)) {
+    return 0;
+  }
+
+  const ps::WebGameCommandResult result = session->undo(expected_revision);
+  if (!result.ok()) {
+    set_command_error(result);
+    return 0;
+  }
+
+  snapshot_cache.clear();
+  human_match_cache.clear();
+  last_error.clear();
+  return 1;
+}
+
 EMSCRIPTEN_KEEPALIVE int ps_start_bot_replay(
     const char *one_seed, int one_kind, std::uint32_t one_search_setting,
     const char *two_seed, int two_kind, std::uint32_t two_search_setting,

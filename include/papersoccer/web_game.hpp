@@ -19,6 +19,7 @@ enum class WebGameErrorCode {
   TerminalGame,
   MoveOutOfRange,
   NoLegalMoves,
+  NoMovesToUndo,
   ReplayComplete,
 };
 
@@ -69,6 +70,7 @@ class WebGameSession {
   WebGameCommandResult play_human(std::uint64_t expected_revision,
                                   std::size_t move_id);
   WebGameCommandResult play_bot(std::uint64_t expected_revision);
+  WebGameCommandResult undo(std::uint64_t expected_revision);
 
  private:
   WebGameCommandResult validate_command(std::uint64_t expected_revision,

@@ -196,6 +196,8 @@ std::string_view web_game_error_code_name(WebGameErrorCode code) noexcept {
       return "move_out_of_range";
     case WebGameErrorCode::NoLegalMoves:
       return "no_legal_moves";
+    case WebGameErrorCode::NoMovesToUndo:
+      return "no_moves_to_undo";
     case WebGameErrorCode::ReplayComplete:
       return "replay_complete";
   }
@@ -345,6 +347,26 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
   }
   ++revision_;
   return success(played);
+}
+
+WebGameCommandResult WebGameSession::undo(std::uint64_t expected_revision) {
+  if (expected_revision != revision_) {
+    return failure(WebGameErrorCode::StaleRevision,
+                   "command revision does not match the current game revision");
+  }
+
+  const std::optional<PlayedMove> undone = match_.undo();
+  if (!undone.has_value()) {
+    return failure(WebGameErrorCode::NoMovesToUndo,
+                   "the game is already at its initial position");
+  }
+
+  const std::size_t retained_plies = match_.history().size();
+  while (!bot_searches_.empty() && bot_searches_.back().ply > retained_plies) {
+    bot_searches_.pop_back();
+  }
+  ++revision_;
+  return success(*undone);
 }
 
 WebGameCommandResult WebGameSession::validate_command(

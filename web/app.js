@@ -89,6 +89,9 @@
   const moveChoicesSection = document.querySelector("#moveChoicesSection");
   const moveChoices = document.querySelector("#moveChoices");
   const replayControls = document.querySelector("#replayControls");
+  const liveHistoryControls = document.querySelector("#liveHistoryControls");
+  const undoMoveButton = document.querySelector("#undoMoveButton");
+  const resumeBotButton = document.querySelector("#resumeBotButton");
 
   const MODE_PLAY = "play";
   const MODE_REPLAY = "replay";
@@ -121,6 +124,7 @@
   };
   let replayGenerationId = 0;
   let isGeneratingReplay = false;
+  let botPausedAfterUndo = false;
 
   const boardView = board.createBoardView({
     boardTargets: boardTargets,
@@ -405,6 +409,7 @@
       movesEnabled: liveGame.movesEnabled,
       gameError: gameError,
       lastLiveMove: lastLiveMove,
+      botPausedAfterUndo: botPausedAfterUndo,
     };
   }
 
@@ -451,12 +456,14 @@
     liveGame.restore(session.movesEnabled);
     gameError = session.gameError;
     lastLiveMove = session.lastLiveMove;
+    botPausedAfterUndo = session.botPausedAfterUndo;
     boardView.resetHover();
     plyRange.max = String(replay.moves.length);
     plyRange.value = String(currentPly);
     renderInterface();
 
-    if (liveGame.movesEnabled && !gameError && !isLiveTerminal() &&
+    if (liveGame.movesEnabled && !botPausedAfterUndo && !gameError &&
+        !isLiveTerminal() &&
         liveState().toMove !== humanPlayer) {
       scheduleBotTurn();
     }
@@ -483,6 +490,7 @@
     stopPlayback();
     setupError.textContent = "";
     gameError = "";
+    botPausedAfterUndo = false;
     mode = MODE_PLAY;
     liveSession = null;
     const selectedHuman = sideSelect.value === Player.Two
@@ -515,6 +523,7 @@
     }
     liveGame.changeSettings();
     gameError = "";
+    botPausedAfterUndo = false;
     boardView.resetHover();
     renderInterface();
     botSelect.focus();
@@ -550,6 +559,58 @@
       liveState().toMove === humanPlayer;
   }
 
+  function canUndoMove() {
+    if (mode !== MODE_PLAY || !liveSnapshot || replay.moves.length === 0) {
+      return false;
+    }
+    return liveGame.movesEnabled || isLiveTerminal();
+  }
+
+  function restoreActiveGameSettings() {
+    botSelect.value = activeBotConfig.kind;
+    sideSelect.value = humanPlayer;
+    seedInput.value = activeBotConfig.seed;
+    botIterationsInput.value = String(activeBotConfig.iterations);
+    botDepthInput.value = String(activeBotConfig.depth);
+    syncBotSetupFields();
+  }
+
+  function undoLastMove() {
+    if (!canUndoMove()) {
+      return;
+    }
+
+    clearBotTimer();
+    try {
+      const snapshot = gameEngine.undo(
+        liveSnapshot.sessionId,
+        liveSnapshot.revision,
+      );
+      liveGame.start();
+      adoptLiveSnapshot(snapshot);
+      restoreActiveGameSettings();
+      gameError = "";
+      botPausedAfterUndo = !isLiveTerminal() &&
+        liveState().toMove !== humanPlayer;
+      renderInterface();
+      if (undoMoveButton.disabled && !resumeBotButton.hidden) {
+        resumeBotButton.focus();
+      }
+    } catch (error) {
+      gameError = "Could not undo the last move: " + error.message;
+      renderInterface();
+    }
+  }
+
+  function resumeBotTurn() {
+    if (!botPausedAfterUndo || !liveSnapshot || isLiveTerminal() ||
+        liveState().toMove === humanPlayer) {
+      return;
+    }
+    botPausedAfterUndo = false;
+    scheduleBotTurn();
+  }
+
   function playHumanMove(move, keyboardActivated) {
     if (!canHumanMove()) {
       return;
@@ -570,6 +631,7 @@
           legal.id,
         ),
       );
+      botPausedAfterUndo = false;
       continueLiveGame();
     } catch (error) {
       gameError = "Your move was not accepted: " + error.message;
@@ -596,7 +658,8 @@
 
   function scheduleBotTurn() {
     clearBotTimer();
-    if (!liveGame.movesEnabled || !liveSnapshot || isLiveTerminal() ||
+    if (!liveGame.movesEnabled || botPausedAfterUndo || !liveSnapshot ||
+        isLiveTerminal() ||
         liveState().toMove === humanPlayer) {
       renderInterface();
       return;
@@ -920,6 +983,11 @@
       moveLabel.textContent = "This game is paused and remains available to export. " +
         "Choose settings, then start a new game.";
       boardTurnBadge.textContent = "Game paused";
+    } else if (botPausedAfterUndo && liveState().toMove !== humanPlayer) {
+      statusLabel.textContent = "Bot move undone";
+      moveLabel.textContent = "The bot is paused at this position. Undo another " +
+        "move or continue when you are ready.";
+      boardTurnBadge.textContent = "Bot paused";
     } else if (liveGame.botThinking || liveState().toMove !== humanPlayer) {
       const movesAgain = lastLiveMove?.player !== humanPlayer &&
         lastLiveMove?.extraTurn;
@@ -989,6 +1057,7 @@
     gameSetup.hidden = !playingGame;
     replaySetup.hidden = playingGame;
     moveChoicesSection.hidden = !playingGame;
+    liveHistoryControls.hidden = !playingGame;
     replayControls.hidden = playingGame;
     boardTargets.hidden = !playingGame;
     boardTurnBadge.hidden = !playingGame;
@@ -1006,6 +1075,7 @@
     canvas.classList.toggle("is-playable", canHumanMove());
     syncBotSetupFields();
     syncLiveGameControls();
+    syncLiveHistoryControls();
     syncReplayGenerationControls();
     updateLiveDiagnostics();
   }
@@ -1029,6 +1099,12 @@
       exportButton: exportGameButton,
     }, state);
     gameSetup.classList.toggle("is-configuration-locked", state.locked);
+  }
+
+  function syncLiveHistoryControls() {
+    undoMoveButton.disabled = !canUndoMove();
+    resumeBotButton.hidden = !botPausedAfterUndo || !liveSnapshot ||
+      isLiveTerminal() || liveState().toMove === humanPlayer;
   }
 
   function syncBotSetupFields() {
@@ -1091,6 +1167,8 @@
         message.textContent = "The game is finished.";
       } else if (!liveGame.movesEnabled) {
         message.textContent = "Settings are unlocked. Start a new game to continue.";
+      } else if (botPausedAfterUndo) {
+        message.textContent = "The bot is paused. Undo again or continue the bot.";
       } else {
         message.textContent = "Waiting for " + activeBotName() + "…";
       }
@@ -1257,6 +1335,8 @@
   gameSetup.addEventListener("submit", startNewGame);
   changeSettingsButton.addEventListener("click", changeSettings);
   exportGameButton.addEventListener("click", exportHumanMatch);
+  undoMoveButton.addEventListener("click", undoLastMove);
+  resumeBotButton.addEventListener("click", resumeBotTurn);
   replaySetup.addEventListener("submit", generateBotReplay);
   botSelect.addEventListener("change", syncBotSetupFields);
   replayOneBotSelect.addEventListener("change", syncBotSetupFields);

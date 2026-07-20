@@ -564,6 +564,27 @@ button.board-target:hover,
   line-height: 1.45;
 }
 
+.live-history-controls {
+  display: flex;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-history-controls button {
+  flex: 1;
+}
+
+.undo-control {
+  border-color: #806e4c;
+  background: #f3ead3;
+  font-weight: 700;
+}
+
+.undo-control:not(:disabled):hover {
+  background: #fff3cf;
+}
+
 .move-choices-section {
   padding: 14px 0;
   border-bottom: 1px solid var(--line);

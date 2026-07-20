@@ -178,6 +178,14 @@
           snapshot,
         );
       },
+      undo: function (expectedSessionId, expectedRevision) {
+        return runCommand(
+          "ps_undo",
+          ["number", "number"],
+          [expectedSessionId, expectedRevision],
+          snapshot,
+        );
+      },
       humanMatch: humanMatch,
       startBotReplay: function (oneConfig, twoConfig, maxPlies = 512) {
         const one = botConfigArguments(oneConfig, "Player 1");

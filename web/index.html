@@ -220,6 +220,17 @@
           <p id="moveLabel" class="summary-detail">Click a highlighted point to move.</p>
         </div>
 
+        <div id="liveHistoryControls" class="live-history-controls"
+          role="group" aria-label="Move history controls">
+          <button id="undoMoveButton" class="undo-control" type="button"
+            title="Take back one move" disabled>
+            <span aria-hidden="true">↶</span> Undo move
+          </button>
+          <button id="resumeBotButton" class="primary-control" type="button" hidden>
+            Continue bot
+          </button>
+        </div>
+
         <section id="moveChoicesSection" class="move-choices-section" aria-labelledby="moveChoicesHeading">
           <div class="move-choices-heading">
             <h2 id="moveChoicesHeading">Choose a destination</h2>
