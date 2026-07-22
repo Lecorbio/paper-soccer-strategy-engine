@@ -6,9 +6,10 @@ CodinGame support is split into reusable tooling and self-contained bots:
 submissions/codingame/
 ├── bots/                 maintained source, tests, data, and output per bot
 │   ├── alpha_beta/       production baseline and its experiment archive
-│   ├── rank_5/           strongest verified arena candidate
+│   ├── rank_5/           immutable verified arena incumbent
 │   ├── challenger/       completed exact-topology challenger experiment
-│   └── selfplay_nn/      learned value and self-play training experiment
+│   ├── selfplay_nn/      learned value and self-play training experiment
+│   └── selfplay_nn_v2/   rank-5-anchored teacher-residual challenger
 └── tools/                shared generation, protocol, and replay utilities
 ```
 
@@ -25,6 +26,7 @@ node submissions/codingame/tools/generate_submission.mjs alpha_beta
 node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
+node submissions/codingame/tools/generate_submission.mjs selfplay_nn_v2 --check
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -40,8 +42,8 @@ are in [tools/README.md](tools/README.md).
 - [`alpha_beta`](bots/alpha_beta/README.md) is the prior production baseline
   and retains its compact historical experiment evidence. Its paste-ready file
   is [`submission.cpp`](bots/alpha_beta/submission.cpp).
-- [`rank_5`](bots/rank_5/README.md) is the strongest completed arena
-  candidate: version 26, agent `6561779`, rank 5 of 206 with score
+- [`rank_5`](bots/rank_5/README.md) is the immutable verified incumbent:
+  version 26, agent `6561779`, rank 5 of 206 with score
   `42.42773147296124`. Its paste-ready file is
   [`submission.cpp`](bots/rank_5/submission.cpp).
 - [`challenger`](bots/challenger/README.md) is the independently maintained
@@ -54,3 +56,11 @@ are in [tools/README.md](tools/README.md).
   completed result is version 41 at rank 5 with score `41.77236003585933`,
   below the accepted `rank_5` bot; all three live batches are recorded in
   [`EXPERIMENTS.md`](bots/selfplay_nn/EXPERIMENTS.md).
+- [`selfplay_nn_v2`](bots/selfplay_nn_v2/README.md) is the separate
+  rank-5-anchored, value-only teacher-residual challenger. One completed batch
+  scored `42.82914600312645`, but an exact-source confirmation scored
+  `42.001868057527055`; the mean did not clear the incumbent, so v2 remains an
+  unpromoted experiment. It carries reproducible fixed-node, deadline,
+  symmetry, legality, and chronological arena-loss regression gates; full
+  live evidence is recorded in
+  [`EXPERIMENTS.md`](bots/selfplay_nn_v2/EXPERIMENTS.md).
