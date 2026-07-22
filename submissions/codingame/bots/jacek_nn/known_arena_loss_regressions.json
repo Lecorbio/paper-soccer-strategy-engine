@@ -1,0 +1,78 @@
+{
+  "schema": "papersoccer.known-arena-loss-regressions.v1",
+  "source_agents": [6567850, 6567868, 6567898, 6561779],
+  "public_batch_download_status": "The historical agent battle endpoint returned an empty list on 2026-07-22; these documented loss states are frozen locally and new completed batches are appended separately.",
+  "cases": [
+    {
+      "label": "v39 opponent-opening-1 loss family",
+      "player_id": 1,
+      "prefix": "1",
+      "observed_family_record": "0-9",
+      "selfplay_nn_action": "2",
+      "rank_5_action": "1"
+    },
+    {
+      "label": "v40 player-0 0/6/1 loss family",
+      "player_id": 0,
+      "prefix": "0/6",
+      "observed_family_record": "2-7",
+      "selfplay_nn_action": "1",
+      "rank_5_action": "5"
+    },
+    {
+      "label": "opening-0 reply",
+      "player_id": 1,
+      "prefix": "0"
+    },
+    {
+      "label": "jacek family 0/0",
+      "player_id": 0,
+      "prefix": "0/0"
+    },
+    {
+      "label": "jacek family 0/0/1",
+      "player_id": 1,
+      "prefix": "0/0/1"
+    },
+    {
+      "label": "jacek family 0/0/3",
+      "player_id": 1,
+      "prefix": "0/0/3"
+    },
+    {
+      "label": "Deltaspace family 0/6/1",
+      "player_id": 1,
+      "prefix": "0/6/1"
+    },
+    {
+      "label": "Deltaspace family 0/6/5",
+      "player_id": 1,
+      "prefix": "0/6/5"
+    },
+    {
+      "label": "Deltaspace 0633 branch",
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/53/61/0633"
+    },
+    {
+      "label": "Deltaspace 431 branch",
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/53/61/431"
+    },
+    {
+      "label": "Deltaspace opening-5 branch",
+      "player_id": 0,
+      "prefix": "0/6/5/5"
+    },
+    {
+      "label": "Deltaspace player-1 003 branch",
+      "player_id": 1,
+      "prefix": "1/1/7/6/0/75/74/3/003"
+    },
+    {
+      "label": "jacek 5330 branch",
+      "player_id": 1,
+      "prefix": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330"
+    }
+  ]
+}

@@ -9,7 +9,8 @@ submissions/codingame/
 │   ├── rank_5/           immutable verified arena incumbent
 │   ├── challenger/       completed exact-topology challenger experiment
 │   ├── selfplay_nn/      learned value and self-play training experiment
-│   └── selfplay_nn_v2/   rank-5-anchored teacher-residual challenger
+│   ├── selfplay_nn_v2/   rank-5-anchored teacher-residual challenger
+│   └── jacek_nn/         Jacek-input, rank-5-anchored residual experiment
 └── tools/                shared generation, protocol, and replay utilities
 ```
 
@@ -27,6 +28,7 @@ node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn_v2 --check
+node submissions/codingame/tools/generate_submission.mjs jacek_nn --check
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -64,3 +66,18 @@ are in [tools/README.md](tools/README.md).
   symmetry, legality, and chronological arena-loss regression gates; full
   live evidence is recorded in
   [`EXPERIMENTS.md`](bots/selfplay_nn_v2/EXPERIMENTS.md).
+- [`jacek_nn`](bots/jacek_nn/README.md) is the separate Jacek-input
+  challenger. It preserves rank_5's complete search, replay book, and compact
+  `1156 -> 8 -> 8 -> 1` value anchor, then adds a bounded 24-feature residual
+  trained from 10,000 games of soft search targets. At its selected 50%
+  strength it beat rank_5 174-132 over 306 games at 5k nodes and 58-48 over
+  106 games at 30k nodes. The identical 800/165 source scored 42.3232 at 59-31
+  in v47 and 40.3909 at 61-29 in v49; their mean 41.3570 did not beat the
+  incumbent's 42.4277 weighted score, so the bot remains unpromoted. The
+  independent v48 650/130 clock ablation scored 39.7385. Earlier 32x
+  replacement batches and post-v49 deeper-training/search experiments were
+  also rejected. The retained paste-ready source is 98,623 characters,
+  SHA-256
+  `fb570f7d60157ad1681569011b4249a5db415c1aeca6f665936b26ba5cc52102`;
+  complete evidence is in
+  [`EXPERIMENTS.md`](bots/jacek_nn/EXPERIMENTS.md).

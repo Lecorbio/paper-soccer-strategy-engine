@@ -1,0 +1,8909 @@
+{
+  "agent_id": 6568150,
+  "field_size": 206,
+  "games": 90,
+  "history_version": 48,
+  "loss_records": [
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636565,
+      "opponent_agent_id": 5471081,
+      "opponent_name": "Deltaspace",
+      "player_id": 0,
+      "transcript": "0/6/5/5/71/34/1/033/5/5/2/4/31/30/6417/47/74221/3527/1616/4456/05210/27/63161/257/217/5/0/5/24767/5/360201/6/7/14/1/23/03/035/5217634276/5/552107774243/67/0752/4/165225/3663/46132/5/0633357/7/5310/6147/630524/241/61411/674/661320/53345",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "033",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "30",
+          "player_id": 1
+        },
+        {
+          "action": "6417",
+          "player_id": 0
+        },
+        {
+          "action": "47",
+          "player_id": 1
+        },
+        {
+          "action": "74221",
+          "player_id": 0
+        },
+        {
+          "action": "3527",
+          "player_id": 1
+        },
+        {
+          "action": "1616",
+          "player_id": 0
+        },
+        {
+          "action": "4456",
+          "player_id": 1
+        },
+        {
+          "action": "05210",
+          "player_id": 0
+        },
+        {
+          "action": "27",
+          "player_id": 1
+        },
+        {
+          "action": "63161",
+          "player_id": 0
+        },
+        {
+          "action": "257",
+          "player_id": 1
+        },
+        {
+          "action": "217",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "24767",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "360201",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "03",
+          "player_id": 0
+        },
+        {
+          "action": "035",
+          "player_id": 1
+        },
+        {
+          "action": "5217634276",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "552107774243",
+          "player_id": 0
+        },
+        {
+          "action": "67",
+          "player_id": 1
+        },
+        {
+          "action": "0752",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "165225",
+          "player_id": 0
+        },
+        {
+          "action": "3663",
+          "player_id": 1
+        },
+        {
+          "action": "46132",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0633357",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "5310",
+          "player_id": 0
+        },
+        {
+          "action": "6147",
+          "player_id": 1
+        },
+        {
+          "action": "630524",
+          "player_id": 0
+        },
+        {
+          "action": "241",
+          "player_id": 1
+        },
+        {
+          "action": "61411",
+          "player_id": 0
+        },
+        {
+          "action": "674",
+          "player_id": 1
+        },
+        {
+          "action": "661320",
+          "player_id": 0
+        },
+        {
+          "action": "53345",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636536,
+      "opponent_agent_id": 4792144,
+      "opponent_name": "About",
+      "player_id": 0,
+      "transcript": "0/2/7/43/3/3/17/54/236/0255/31777/714422/027/0/254177/5/57/6/7/63/21/45/753/53/63/6143/5711/3/2/1/06/324/450/241/71055/25723206745/571307/10254/5027/6/4147712/025350/02550/1743367663/36017/44253/16464/142/0631011/45634635",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "236",
+          "player_id": 0
+        },
+        {
+          "action": "0255",
+          "player_id": 1
+        },
+        {
+          "action": "31777",
+          "player_id": 0
+        },
+        {
+          "action": "714422",
+          "player_id": 1
+        },
+        {
+          "action": "027",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "254177",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "57",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "753",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "6143",
+          "player_id": 1
+        },
+        {
+          "action": "5711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "06",
+          "player_id": 0
+        },
+        {
+          "action": "324",
+          "player_id": 1
+        },
+        {
+          "action": "450",
+          "player_id": 0
+        },
+        {
+          "action": "241",
+          "player_id": 1
+        },
+        {
+          "action": "71055",
+          "player_id": 0
+        },
+        {
+          "action": "25723206745",
+          "player_id": 1
+        },
+        {
+          "action": "571307",
+          "player_id": 0
+        },
+        {
+          "action": "10254",
+          "player_id": 1
+        },
+        {
+          "action": "5027",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "4147712",
+          "player_id": 0
+        },
+        {
+          "action": "025350",
+          "player_id": 1
+        },
+        {
+          "action": "02550",
+          "player_id": 0
+        },
+        {
+          "action": "1743367663",
+          "player_id": 1
+        },
+        {
+          "action": "36017",
+          "player_id": 0
+        },
+        {
+          "action": "44253",
+          "player_id": 1
+        },
+        {
+          "action": "16464",
+          "player_id": 0
+        },
+        {
+          "action": "142",
+          "player_id": 1
+        },
+        {
+          "action": "0631011",
+          "player_id": 0
+        },
+        {
+          "action": "45634635",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636512,
+      "opponent_agent_id": 2632888,
+      "opponent_name": "Marchete",
+      "player_id": 1,
+      "transcript": "6/7/2/0/6/45/0/52721345/3/5/7/7132/5/44/1/72014/2/2/4/5/7/0603543/10/654/503131/30/5072/07771/65671/63/21/32/4/1/4/3/0/255533605/21/760577/0743450/0255225/23650/122/306520063171/614123636/354160/7206/72720/1/035/27457/22350/545021727506/1/45064135/036652177/6414772/2/0530500314/2/4746163131/77",
+      "turns": [
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "52721345",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "7132",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "44",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "72014",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "0603543",
+          "player_id": 1
+        },
+        {
+          "action": "10",
+          "player_id": 0
+        },
+        {
+          "action": "654",
+          "player_id": 1
+        },
+        {
+          "action": "503131",
+          "player_id": 0
+        },
+        {
+          "action": "30",
+          "player_id": 1
+        },
+        {
+          "action": "5072",
+          "player_id": 0
+        },
+        {
+          "action": "07771",
+          "player_id": 1
+        },
+        {
+          "action": "65671",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "32",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "255533605",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "760577",
+          "player_id": 1
+        },
+        {
+          "action": "0743450",
+          "player_id": 0
+        },
+        {
+          "action": "0255225",
+          "player_id": 1
+        },
+        {
+          "action": "23650",
+          "player_id": 0
+        },
+        {
+          "action": "122",
+          "player_id": 1
+        },
+        {
+          "action": "306520063171",
+          "player_id": 0
+        },
+        {
+          "action": "614123636",
+          "player_id": 1
+        },
+        {
+          "action": "354160",
+          "player_id": 0
+        },
+        {
+          "action": "7206",
+          "player_id": 1
+        },
+        {
+          "action": "72720",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "035",
+          "player_id": 0
+        },
+        {
+          "action": "27457",
+          "player_id": 1
+        },
+        {
+          "action": "22350",
+          "player_id": 0
+        },
+        {
+          "action": "545021727506",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "45064135",
+          "player_id": 1
+        },
+        {
+          "action": "036652177",
+          "player_id": 0
+        },
+        {
+          "action": "6414772",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "0530500314",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "4746163131",
+          "player_id": 1
+        },
+        {
+          "action": "77",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636502,
+      "opponent_agent_id": 2616930,
+      "opponent_name": "trictrac",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/56/0/324/677/6/71/053/5253/3/105/43/2/3/0/5/021/3/17/54/235/6/41257711/425/760/34/41056670/35/01/0350332475/767/1645/71/34/661/2257452/31/3/21605/53",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "56",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "324",
+          "player_id": 1
+        },
+        {
+          "action": "677",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "053",
+          "player_id": 1
+        },
+        {
+          "action": "5253",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "105",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "021",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "235",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "41257711",
+          "player_id": 0
+        },
+        {
+          "action": "425",
+          "player_id": 1
+        },
+        {
+          "action": "760",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "41056670",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "0350332475",
+          "player_id": 1
+        },
+        {
+          "action": "767",
+          "player_id": 0
+        },
+        {
+          "action": "1645",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "661",
+          "player_id": 0
+        },
+        {
+          "action": "2257452",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "21605",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636488,
+      "opponent_agent_id": 6075670,
+      "opponent_name": "Laars",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/466/0/5/301/33/2/35/7/5/6/6/6/3/07/44/7/53/63016/431/7211/45/64170/33/600/33/127/44/7/23663/03657/45",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "466",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "301",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "44",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63016",
+          "player_id": 0
+        },
+        {
+          "action": "431",
+          "player_id": 1
+        },
+        {
+          "action": "7211",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "64170",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "600",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "127",
+          "player_id": 0
+        },
+        {
+          "action": "44",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "23663",
+          "player_id": 1
+        },
+        {
+          "action": "03657",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636476,
+      "opponent_agent_id": 6273433,
+      "opponent_name": "jacek",
+      "player_id": 1,
+      "transcript": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330/27412/41/654/7661/06344/1721/05/3075221/23/57/063633/655022141/6030/0135/54/653/6/5/63/05/22/70/54652/720/352/500330/12/7/543/21/30/16/16/436617/7571467723/3467/20032/14/5053/6412217/71/1642761/472746/054142770",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "67",
+          "player_id": 1
+        },
+        {
+          "action": "27",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "6143",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "717271",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "5330",
+          "player_id": 0
+        },
+        {
+          "action": "27412",
+          "player_id": 1
+        },
+        {
+          "action": "41",
+          "player_id": 0
+        },
+        {
+          "action": "654",
+          "player_id": 1
+        },
+        {
+          "action": "7661",
+          "player_id": 0
+        },
+        {
+          "action": "06344",
+          "player_id": 1
+        },
+        {
+          "action": "1721",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "3075221",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "57",
+          "player_id": 0
+        },
+        {
+          "action": "063633",
+          "player_id": 1
+        },
+        {
+          "action": "655022141",
+          "player_id": 0
+        },
+        {
+          "action": "6030",
+          "player_id": 1
+        },
+        {
+          "action": "0135",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "653",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "54652",
+          "player_id": 1
+        },
+        {
+          "action": "720",
+          "player_id": 0
+        },
+        {
+          "action": "352",
+          "player_id": 1
+        },
+        {
+          "action": "500330",
+          "player_id": 0
+        },
+        {
+          "action": "12",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "543",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "30",
+          "player_id": 1
+        },
+        {
+          "action": "16",
+          "player_id": 0
+        },
+        {
+          "action": "16",
+          "player_id": 1
+        },
+        {
+          "action": "436617",
+          "player_id": 0
+        },
+        {
+          "action": "7571467723",
+          "player_id": 1
+        },
+        {
+          "action": "3467",
+          "player_id": 0
+        },
+        {
+          "action": "20032",
+          "player_id": 1
+        },
+        {
+          "action": "14",
+          "player_id": 0
+        },
+        {
+          "action": "5053",
+          "player_id": 1
+        },
+        {
+          "action": "6412217",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "1642761",
+          "player_id": 0
+        },
+        {
+          "action": "472746",
+          "player_id": 1
+        },
+        {
+          "action": "054142770",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636466,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553/66/531/710/14600525/254710671/71/0522/14/1/23/05/5/321/17563/50/132506367202/54343",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "563",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "2505",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "0524",
+          "player_id": 1
+        },
+        {
+          "action": "4711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "660",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "023225",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "025743",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "0256447",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "006",
+          "player_id": 0
+        },
+        {
+          "action": "313",
+          "player_id": 1
+        },
+        {
+          "action": "4271671",
+          "player_id": 0
+        },
+        {
+          "action": "02565553",
+          "player_id": 1
+        },
+        {
+          "action": "66",
+          "player_id": 0
+        },
+        {
+          "action": "531",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14600525",
+          "player_id": 1
+        },
+        {
+          "action": "254710671",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "0522",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "17563",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "132506367202",
+          "player_id": 1
+        },
+        {
+          "action": "54343",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636435,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 1,
+      "transcript": "0/0/0/6/6/5/2/5/0527271/61434135/21/2/0/1/03636/63/67/5272253/4/4/7/675/0/633/0/724253/1/23/17/17275452507565/2/25/013/27443/1/235/2500/701714/366166/453/034/60312565/41/745/67/0/5/31/1/0254/36741220350100/007567/474107/61414/357022/5056/322300717",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0527271",
+          "player_id": 0
+        },
+        {
+          "action": "61434135",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "03636",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "5272253",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "675",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "633",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "724253",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "17275452507565",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "013",
+          "player_id": 0
+        },
+        {
+          "action": "27443",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "235",
+          "player_id": 1
+        },
+        {
+          "action": "2500",
+          "player_id": 0
+        },
+        {
+          "action": "701714",
+          "player_id": 1
+        },
+        {
+          "action": "366166",
+          "player_id": 0
+        },
+        {
+          "action": "453",
+          "player_id": 1
+        },
+        {
+          "action": "034",
+          "player_id": 0
+        },
+        {
+          "action": "60312565",
+          "player_id": 1
+        },
+        {
+          "action": "41",
+          "player_id": 0
+        },
+        {
+          "action": "745",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "31",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "0254",
+          "player_id": 1
+        },
+        {
+          "action": "36741220350100",
+          "player_id": 0
+        },
+        {
+          "action": "007567",
+          "player_id": 1
+        },
+        {
+          "action": "474107",
+          "player_id": 0
+        },
+        {
+          "action": "61414",
+          "player_id": 1
+        },
+        {
+          "action": "357022",
+          "player_id": 0
+        },
+        {
+          "action": "5056",
+          "player_id": 1
+        },
+        {
+          "action": "322300717",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636423,
+      "opponent_agent_id": 6273433,
+      "opponent_name": "jacek",
+      "player_id": 0,
+      "transcript": "0/0/1/6/43/55/3/3/6/1/1/1/6/46/520172/317/7/1/35543/163600/65/2100/025661/74/53/174452447275/7/4/7/53/63/53/471/720134/6/3/1477/46417214653/641146012/063134/674612314/723635/2500/0652/036357/45",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "43",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "46",
+          "player_id": 1
+        },
+        {
+          "action": "520172",
+          "player_id": 0
+        },
+        {
+          "action": "317",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "35543",
+          "player_id": 0
+        },
+        {
+          "action": "163600",
+          "player_id": 1
+        },
+        {
+          "action": "65",
+          "player_id": 0
+        },
+        {
+          "action": "2100",
+          "player_id": 1
+        },
+        {
+          "action": "025661",
+          "player_id": 0
+        },
+        {
+          "action": "74",
+          "player_id": 1
+        },
+        {
+          "action": "53",
+          "player_id": 0
+        },
+        {
+          "action": "174452447275",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "471",
+          "player_id": 0
+        },
+        {
+          "action": "720134",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1477",
+          "player_id": 0
+        },
+        {
+          "action": "46417214653",
+          "player_id": 1
+        },
+        {
+          "action": "641146012",
+          "player_id": 0
+        },
+        {
+          "action": "063134",
+          "player_id": 1
+        },
+        {
+          "action": "674612314",
+          "player_id": 0
+        },
+        {
+          "action": "723635",
+          "player_id": 1
+        },
+        {
+          "action": "2500",
+          "player_id": 0
+        },
+        {
+          "action": "0652",
+          "player_id": 1
+        },
+        {
+          "action": "036357",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636409,
+      "opponent_agent_id": 4553858,
+      "opponent_name": "YurkovAS",
+      "player_id": 1,
+      "transcript": "1/1/0/1/0366/45/7/4/2477/5/0/6/1/36075334/1/16465/710/14635/06346132/5/03/6753/13/4/1/050271644365/70/5252/222/5/75/614530/02/146531/47/142/31/316/500/0/1/6/0/5/21/36722535/25052727770/55/06025323020/345/21/66/0527106771/61431/07",
+      "turns": [
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0366",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2477",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "36075334",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "16465",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14635",
+          "player_id": 1
+        },
+        {
+          "action": "06346132",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "03",
+          "player_id": 0
+        },
+        {
+          "action": "6753",
+          "player_id": 1
+        },
+        {
+          "action": "13",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "050271644365",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "5252",
+          "player_id": 1
+        },
+        {
+          "action": "222",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "614530",
+          "player_id": 1
+        },
+        {
+          "action": "02",
+          "player_id": 0
+        },
+        {
+          "action": "146531",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "142",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "316",
+          "player_id": 1
+        },
+        {
+          "action": "500",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "36722535",
+          "player_id": 1
+        },
+        {
+          "action": "25052727770",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "06025323020",
+          "player_id": 0
+        },
+        {
+          "action": "345",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "66",
+          "player_id": 1
+        },
+        {
+          "action": "0527106771",
+          "player_id": 0
+        },
+        {
+          "action": "61431",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636355,
+      "opponent_agent_id": 5773889,
+      "opponent_name": "derjack",
+      "player_id": 0,
+      "transcript": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/0/255336/5702/4202577/22/520167/5446166/1/45/461277/4/2471/205335/64465/4727163/071/36/061/72/42752127/4616/1/14/1/23/52031752/525/4456313/50227435/27/6347/713525050/5/67/7421752441/707410/741433053535",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "33",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "66",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "161",
+          "player_id": 0
+        },
+        {
+          "action": "13442",
+          "player_id": 1
+        },
+        {
+          "action": "72",
+          "player_id": 0
+        },
+        {
+          "action": "01",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "255336",
+          "player_id": 0
+        },
+        {
+          "action": "5702",
+          "player_id": 1
+        },
+        {
+          "action": "4202577",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "520167",
+          "player_id": 0
+        },
+        {
+          "action": "5446166",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "461277",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2471",
+          "player_id": 0
+        },
+        {
+          "action": "205335",
+          "player_id": 1
+        },
+        {
+          "action": "64465",
+          "player_id": 0
+        },
+        {
+          "action": "4727163",
+          "player_id": 1
+        },
+        {
+          "action": "071",
+          "player_id": 0
+        },
+        {
+          "action": "36",
+          "player_id": 1
+        },
+        {
+          "action": "061",
+          "player_id": 0
+        },
+        {
+          "action": "72",
+          "player_id": 1
+        },
+        {
+          "action": "42752127",
+          "player_id": 0
+        },
+        {
+          "action": "4616",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "52031752",
+          "player_id": 0
+        },
+        {
+          "action": "525",
+          "player_id": 1
+        },
+        {
+          "action": "4456313",
+          "player_id": 0
+        },
+        {
+          "action": "50227435",
+          "player_id": 1
+        },
+        {
+          "action": "27",
+          "player_id": 0
+        },
+        {
+          "action": "6347",
+          "player_id": 1
+        },
+        {
+          "action": "713525050",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "7421752441",
+          "player_id": 1
+        },
+        {
+          "action": "707410",
+          "player_id": 0
+        },
+        {
+          "action": "741433053535",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636333,
+      "opponent_agent_id": 6305973,
+      "opponent_name": "Snekkers",
+      "player_id": 0,
+      "transcript": "0/6/5/5/71/34/1/033/5/5/2/3/31/2507/2/27/2507/4/416721/6/0/336/603017/56/67/6/301/6/1/75/35571/17532/24746/724524/52022211/27/1/036350/506/603347/127/03654554/6653/52/7241/60/171/6034333/25011160/025764354/17/654/3064672/035034/47/035050221202346/0760/5612354/1364752/4",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "033",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "2507",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "27",
+          "player_id": 1
+        },
+        {
+          "action": "2507",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "416721",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "336",
+          "player_id": 1
+        },
+        {
+          "action": "603017",
+          "player_id": 0
+        },
+        {
+          "action": "56",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "301",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "35571",
+          "player_id": 0
+        },
+        {
+          "action": "17532",
+          "player_id": 1
+        },
+        {
+          "action": "24746",
+          "player_id": 0
+        },
+        {
+          "action": "724524",
+          "player_id": 1
+        },
+        {
+          "action": "52022211",
+          "player_id": 0
+        },
+        {
+          "action": "27",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "036350",
+          "player_id": 1
+        },
+        {
+          "action": "506",
+          "player_id": 0
+        },
+        {
+          "action": "603347",
+          "player_id": 1
+        },
+        {
+          "action": "127",
+          "player_id": 0
+        },
+        {
+          "action": "03654554",
+          "player_id": 1
+        },
+        {
+          "action": "6653",
+          "player_id": 0
+        },
+        {
+          "action": "52",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "60",
+          "player_id": 1
+        },
+        {
+          "action": "171",
+          "player_id": 0
+        },
+        {
+          "action": "6034333",
+          "player_id": 1
+        },
+        {
+          "action": "25011160",
+          "player_id": 0
+        },
+        {
+          "action": "025764354",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "654",
+          "player_id": 1
+        },
+        {
+          "action": "3064672",
+          "player_id": 0
+        },
+        {
+          "action": "035034",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "035050221202346",
+          "player_id": 1
+        },
+        {
+          "action": "0760",
+          "player_id": 0
+        },
+        {
+          "action": "5612354",
+          "player_id": 1
+        },
+        {
+          "action": "1364752",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636321,
+      "opponent_agent_id": 6273433,
+      "opponent_name": "jacek",
+      "player_id": 0,
+      "transcript": "0/0/1/6/43/55/3/3/6/00/65/3/11/6032/1/17/7/1/355/666/36/017/27/75/05252/4/53/2/211/3327/435/5/2/17/442770/24710256453/520336/57/766/06/35/472714/72714/3523/47/14570322/1463017/1465453",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "43",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "00",
+          "player_id": 1
+        },
+        {
+          "action": "65",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "11",
+          "player_id": 0
+        },
+        {
+          "action": "6032",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "17",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "355",
+          "player_id": 0
+        },
+        {
+          "action": "666",
+          "player_id": 1
+        },
+        {
+          "action": "36",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "27",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "05252",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "53",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "211",
+          "player_id": 0
+        },
+        {
+          "action": "3327",
+          "player_id": 1
+        },
+        {
+          "action": "435",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "17",
+          "player_id": 1
+        },
+        {
+          "action": "442770",
+          "player_id": 0
+        },
+        {
+          "action": "24710256453",
+          "player_id": 1
+        },
+        {
+          "action": "520336",
+          "player_id": 0
+        },
+        {
+          "action": "57",
+          "player_id": 1
+        },
+        {
+          "action": "766",
+          "player_id": 0
+        },
+        {
+          "action": "06",
+          "player_id": 1
+        },
+        {
+          "action": "35",
+          "player_id": 0
+        },
+        {
+          "action": "472714",
+          "player_id": 1
+        },
+        {
+          "action": "72714",
+          "player_id": 0
+        },
+        {
+          "action": "3523",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "14570322",
+          "player_id": 1
+        },
+        {
+          "action": "1463017",
+          "player_id": 0
+        },
+        {
+          "action": "1465453",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636313,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553/66/531/710/14600525/254710671/71/0522/14/1/23/05/5/321/17563/50/132506367202/54343",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "563",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "2505",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "0524",
+          "player_id": 1
+        },
+        {
+          "action": "4711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "660",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "023225",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "025743",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "0256447",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "006",
+          "player_id": 0
+        },
+        {
+          "action": "313",
+          "player_id": 1
+        },
+        {
+          "action": "4271671",
+          "player_id": 0
+        },
+        {
+          "action": "02565553",
+          "player_id": 1
+        },
+        {
+          "action": "66",
+          "player_id": 0
+        },
+        {
+          "action": "531",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14600525",
+          "player_id": 1
+        },
+        {
+          "action": "254710671",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "0522",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "17563",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "132506367202",
+          "player_id": 1
+        },
+        {
+          "action": "54343",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636297,
+      "opponent_agent_id": 6075670,
+      "opponent_name": "Laars",
+      "player_id": 1,
+      "transcript": "1/1/1/174/75/3/136647/5/6/5/0/7/2/424/130/23/6/3/274161706/742525363/10/54235/7/4/7/5/7/4/7/2132054/23/16425/41606/7664/6/4/12/3/317020/65571/0771/477/05213/4325/65/45/61/132453/241/65/27520003/41665/211176/520605/063607/0053113/17/505/42722/44433143",
+      "turns": [
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "174",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "136647",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "424",
+          "player_id": 1
+        },
+        {
+          "action": "130",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "274161706",
+          "player_id": 0
+        },
+        {
+          "action": "742525363",
+          "player_id": 1
+        },
+        {
+          "action": "10",
+          "player_id": 0
+        },
+        {
+          "action": "54235",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "2132054",
+          "player_id": 1
+        },
+        {
+          "action": "23",
+          "player_id": 0
+        },
+        {
+          "action": "16425",
+          "player_id": 1
+        },
+        {
+          "action": "41606",
+          "player_id": 0
+        },
+        {
+          "action": "7664",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "12",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "317020",
+          "player_id": 0
+        },
+        {
+          "action": "65571",
+          "player_id": 1
+        },
+        {
+          "action": "0771",
+          "player_id": 0
+        },
+        {
+          "action": "477",
+          "player_id": 1
+        },
+        {
+          "action": "05213",
+          "player_id": 0
+        },
+        {
+          "action": "4325",
+          "player_id": 1
+        },
+        {
+          "action": "65",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "61",
+          "player_id": 0
+        },
+        {
+          "action": "132453",
+          "player_id": 1
+        },
+        {
+          "action": "241",
+          "player_id": 0
+        },
+        {
+          "action": "65",
+          "player_id": 1
+        },
+        {
+          "action": "27520003",
+          "player_id": 0
+        },
+        {
+          "action": "41665",
+          "player_id": 1
+        },
+        {
+          "action": "211176",
+          "player_id": 0
+        },
+        {
+          "action": "520605",
+          "player_id": 1
+        },
+        {
+          "action": "063607",
+          "player_id": 0
+        },
+        {
+          "action": "0053113",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "505",
+          "player_id": 1
+        },
+        {
+          "action": "42722",
+          "player_id": 0
+        },
+        {
+          "action": "44433143",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636280,
+      "opponent_agent_id": 6305973,
+      "opponent_name": "Snekkers",
+      "player_id": 0,
+      "transcript": "0/6/5/5/71/34/1/033/5/5/2/3/31/4167/2/27/2507/4/416721/6/0/336/603017/56/67/6/301/6/1/75/35571/71352/24746/524/52022211/27/47/22/250174/4545/03671/72713/03654106/50245/454/1235/67664/613/653/63030/17071/07634212247564354/527/2433",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "033",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "4167",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "27",
+          "player_id": 1
+        },
+        {
+          "action": "2507",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "416721",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "336",
+          "player_id": 1
+        },
+        {
+          "action": "603017",
+          "player_id": 0
+        },
+        {
+          "action": "56",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "301",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "35571",
+          "player_id": 0
+        },
+        {
+          "action": "71352",
+          "player_id": 1
+        },
+        {
+          "action": "24746",
+          "player_id": 0
+        },
+        {
+          "action": "524",
+          "player_id": 1
+        },
+        {
+          "action": "52022211",
+          "player_id": 0
+        },
+        {
+          "action": "27",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "250174",
+          "player_id": 0
+        },
+        {
+          "action": "4545",
+          "player_id": 1
+        },
+        {
+          "action": "03671",
+          "player_id": 0
+        },
+        {
+          "action": "72713",
+          "player_id": 1
+        },
+        {
+          "action": "03654106",
+          "player_id": 0
+        },
+        {
+          "action": "50245",
+          "player_id": 1
+        },
+        {
+          "action": "454",
+          "player_id": 0
+        },
+        {
+          "action": "1235",
+          "player_id": 1
+        },
+        {
+          "action": "67664",
+          "player_id": 0
+        },
+        {
+          "action": "613",
+          "player_id": 1
+        },
+        {
+          "action": "653",
+          "player_id": 0
+        },
+        {
+          "action": "63030",
+          "player_id": 1
+        },
+        {
+          "action": "17071",
+          "player_id": 0
+        },
+        {
+          "action": "07634212247564354",
+          "player_id": 1
+        },
+        {
+          "action": "527",
+          "player_id": 0
+        },
+        {
+          "action": "2433",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636270,
+      "opponent_agent_id": 5471081,
+      "opponent_name": "Deltaspace",
+      "player_id": 0,
+      "transcript": "0/6/5/4/5/4/612/3/1/3/6/5/0207/13/1/4/650/23/07/5655531/30677272/30643/254175/021/727571/1/1/4/6332771/3/0/3/1/35/761/45/0523607/23/227/4503/03655/4163/2/5/3177442/5055",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "612",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0207",
+          "player_id": 0
+        },
+        {
+          "action": "13",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "650",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "5655531",
+          "player_id": 1
+        },
+        {
+          "action": "30677272",
+          "player_id": 0
+        },
+        {
+          "action": "30643",
+          "player_id": 1
+        },
+        {
+          "action": "254175",
+          "player_id": 0
+        },
+        {
+          "action": "021",
+          "player_id": 1
+        },
+        {
+          "action": "727571",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "6332771",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "761",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "0523607",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "227",
+          "player_id": 0
+        },
+        {
+          "action": "4503",
+          "player_id": 1
+        },
+        {
+          "action": "03655",
+          "player_id": 0
+        },
+        {
+          "action": "4163",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "3177442",
+          "player_id": 0
+        },
+        {
+          "action": "5055",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636261,
+      "opponent_agent_id": 2616930,
+      "opponent_name": "trictrac",
+      "player_id": 0,
+      "transcript": "0/2/7/43/0523/3/17/55/0/5/7/6/3/4/160133/65/023/05/216061/0/63270/2/17/035/075/3/23655242/02536053/03636/47/41741467667/234/170/344/25776/012554/7/53133",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "0523",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "160133",
+          "player_id": 0
+        },
+        {
+          "action": "65",
+          "player_id": 1
+        },
+        {
+          "action": "023",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "216061",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "63270",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "035",
+          "player_id": 1
+        },
+        {
+          "action": "075",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "23655242",
+          "player_id": 0
+        },
+        {
+          "action": "02536053",
+          "player_id": 1
+        },
+        {
+          "action": "03636",
+          "player_id": 0
+        },
+        {
+          "action": "47",
+          "player_id": 1
+        },
+        {
+          "action": "41741467667",
+          "player_id": 0
+        },
+        {
+          "action": "234",
+          "player_id": 1
+        },
+        {
+          "action": "170",
+          "player_id": 0
+        },
+        {
+          "action": "344",
+          "player_id": 1
+        },
+        {
+          "action": "25776",
+          "player_id": 0
+        },
+        {
+          "action": "012554",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53133",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636253,
+      "opponent_agent_id": 5773889,
+      "opponent_name": "derjack",
+      "player_id": 0,
+      "transcript": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/0/255336/5702/4202577/22/520167/5446166/1/45/461277/4/2471/205335/64465/6307163/071/36/061/72/42752127/5206/1/14/1/23/52031752/525/4456313/64103635/27/6347/713525050/5/67/1754272441/707410/603330535325",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "33",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "66",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "161",
+          "player_id": 0
+        },
+        {
+          "action": "13442",
+          "player_id": 1
+        },
+        {
+          "action": "72",
+          "player_id": 0
+        },
+        {
+          "action": "01",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "255336",
+          "player_id": 0
+        },
+        {
+          "action": "5702",
+          "player_id": 1
+        },
+        {
+          "action": "4202577",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "520167",
+          "player_id": 0
+        },
+        {
+          "action": "5446166",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "461277",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2471",
+          "player_id": 0
+        },
+        {
+          "action": "205335",
+          "player_id": 1
+        },
+        {
+          "action": "64465",
+          "player_id": 0
+        },
+        {
+          "action": "6307163",
+          "player_id": 1
+        },
+        {
+          "action": "071",
+          "player_id": 0
+        },
+        {
+          "action": "36",
+          "player_id": 1
+        },
+        {
+          "action": "061",
+          "player_id": 0
+        },
+        {
+          "action": "72",
+          "player_id": 1
+        },
+        {
+          "action": "42752127",
+          "player_id": 0
+        },
+        {
+          "action": "5206",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "52031752",
+          "player_id": 0
+        },
+        {
+          "action": "525",
+          "player_id": 1
+        },
+        {
+          "action": "4456313",
+          "player_id": 0
+        },
+        {
+          "action": "64103635",
+          "player_id": 1
+        },
+        {
+          "action": "27",
+          "player_id": 0
+        },
+        {
+          "action": "6347",
+          "player_id": 1
+        },
+        {
+          "action": "713525050",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "1754272441",
+          "player_id": 1
+        },
+        {
+          "action": "707410",
+          "player_id": 0
+        },
+        {
+          "action": "603330535325",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636237,
+      "opponent_agent_id": 2632888,
+      "opponent_name": "Marchete",
+      "player_id": 1,
+      "transcript": "0/0/0/6/5/7/1/75363/4/61614253/4/3/6/5/2/3/1/71/6/4503/457/1222/2/3/0/3501665/41/630745/747/13/42703666506172/202143/31/7/7/1/2/16/4276/4116/6/41174/75/03/250347752/0253335/3500650/61421/74/30657275/5534747172/13066/4271/334/75771203/5021774/21/7505/42722/30352/5631/1644214365/3500647641130072716475/5713601216/7",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "75363",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "61614253",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "4503",
+          "player_id": 1
+        },
+        {
+          "action": "457",
+          "player_id": 0
+        },
+        {
+          "action": "1222",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3501665",
+          "player_id": 1
+        },
+        {
+          "action": "41",
+          "player_id": 0
+        },
+        {
+          "action": "630745",
+          "player_id": 1
+        },
+        {
+          "action": "747",
+          "player_id": 0
+        },
+        {
+          "action": "13",
+          "player_id": 1
+        },
+        {
+          "action": "42703666506172",
+          "player_id": 0
+        },
+        {
+          "action": "202143",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "16",
+          "player_id": 1
+        },
+        {
+          "action": "4276",
+          "player_id": 0
+        },
+        {
+          "action": "4116",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "41174",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "03",
+          "player_id": 1
+        },
+        {
+          "action": "250347752",
+          "player_id": 0
+        },
+        {
+          "action": "0253335",
+          "player_id": 1
+        },
+        {
+          "action": "3500650",
+          "player_id": 0
+        },
+        {
+          "action": "61421",
+          "player_id": 1
+        },
+        {
+          "action": "74",
+          "player_id": 0
+        },
+        {
+          "action": "30657275",
+          "player_id": 1
+        },
+        {
+          "action": "5534747172",
+          "player_id": 0
+        },
+        {
+          "action": "13066",
+          "player_id": 1
+        },
+        {
+          "action": "4271",
+          "player_id": 0
+        },
+        {
+          "action": "334",
+          "player_id": 1
+        },
+        {
+          "action": "75771203",
+          "player_id": 0
+        },
+        {
+          "action": "5021774",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "7505",
+          "player_id": 1
+        },
+        {
+          "action": "42722",
+          "player_id": 0
+        },
+        {
+          "action": "30352",
+          "player_id": 1
+        },
+        {
+          "action": "5631",
+          "player_id": 0
+        },
+        {
+          "action": "1644214365",
+          "player_id": 1
+        },
+        {
+          "action": "3500647641130072716475",
+          "player_id": 0
+        },
+        {
+          "action": "5713601216",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636226,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553/66/531/710/14600525/254710671/71/0522/14/1/23/05/5/321/17563/50/132506367202/54343",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "563",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "2505",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "0524",
+          "player_id": 1
+        },
+        {
+          "action": "4711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "660",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "023225",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "025743",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "0256447",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "006",
+          "player_id": 0
+        },
+        {
+          "action": "313",
+          "player_id": 1
+        },
+        {
+          "action": "4271671",
+          "player_id": 0
+        },
+        {
+          "action": "02565553",
+          "player_id": 1
+        },
+        {
+          "action": "66",
+          "player_id": 0
+        },
+        {
+          "action": "531",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14600525",
+          "player_id": 1
+        },
+        {
+          "action": "254710671",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "0522",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "17563",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "132506367202",
+          "player_id": 1
+        },
+        {
+          "action": "54343",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636214,
+      "opponent_agent_id": 2632888,
+      "opponent_name": "Marchete",
+      "player_id": 1,
+      "transcript": "1/1/7/6/4/5/0/5/6/53/0/0631235/5/4/2/3/0/3/1/2/0/17/0/361672/0/252716/6/5534/7/425/2/7466/4761361/45/0522327/55/471/1245/47024672331241/2/7136563125007/46/127/743014/36060/76063653414/4271161/2054356/43076671/6771/0/52723/317/05/032/34/7071",
+      "turns": [
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0631235",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "17",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "361672",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "252716",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5534",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "425",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "7466",
+          "player_id": 1
+        },
+        {
+          "action": "4761361",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "0522327",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "471",
+          "player_id": 0
+        },
+        {
+          "action": "1245",
+          "player_id": 1
+        },
+        {
+          "action": "47024672331241",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7136563125007",
+          "player_id": 0
+        },
+        {
+          "action": "46",
+          "player_id": 1
+        },
+        {
+          "action": "127",
+          "player_id": 0
+        },
+        {
+          "action": "743014",
+          "player_id": 1
+        },
+        {
+          "action": "36060",
+          "player_id": 0
+        },
+        {
+          "action": "76063653414",
+          "player_id": 1
+        },
+        {
+          "action": "4271161",
+          "player_id": 0
+        },
+        {
+          "action": "2054356",
+          "player_id": 1
+        },
+        {
+          "action": "43076671",
+          "player_id": 0
+        },
+        {
+          "action": "6771",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "52723",
+          "player_id": 1
+        },
+        {
+          "action": "317",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "032",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "7071",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636191,
+      "opponent_agent_id": 6305973,
+      "opponent_name": "Snekkers",
+      "player_id": 1,
+      "transcript": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/660/33/020/641364/61365/4/7/7/711222571/250174/47/27474/24/74/5/3676671/05214/3/42461202477/555/247461721/72136/01",
+      "turns": [
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "10",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "221",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "660",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "020",
+          "player_id": 0
+        },
+        {
+          "action": "641364",
+          "player_id": 1
+        },
+        {
+          "action": "61365",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "711222571",
+          "player_id": 0
+        },
+        {
+          "action": "250174",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "27474",
+          "player_id": 1
+        },
+        {
+          "action": "24",
+          "player_id": 0
+        },
+        {
+          "action": "74",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "3676671",
+          "player_id": 1
+        },
+        {
+          "action": "05214",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "42461202477",
+          "player_id": 0
+        },
+        {
+          "action": "555",
+          "player_id": 1
+        },
+        {
+          "action": "247461721",
+          "player_id": 0
+        },
+        {
+          "action": "72136",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896636036,
+      "opponent_agent_id": 6075670,
+      "opponent_name": "Laars",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/523/3/35/0/3636/07/5/0/5/22/020255350/07210/745/72/45/2030/21616/46165247001/6/1/74/1443/50/1/672135350601/6303641",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "523",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3636",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "22",
+          "player_id": 0
+        },
+        {
+          "action": "020255350",
+          "player_id": 1
+        },
+        {
+          "action": "07210",
+          "player_id": 0
+        },
+        {
+          "action": "745",
+          "player_id": 1
+        },
+        {
+          "action": "72",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "2030",
+          "player_id": 0
+        },
+        {
+          "action": "21616",
+          "player_id": 1
+        },
+        {
+          "action": "46165247001",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "74",
+          "player_id": 1
+        },
+        {
+          "action": "1443",
+          "player_id": 0
+        },
+        {
+          "action": "50",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "672135350601",
+          "player_id": 1
+        },
+        {
+          "action": "6303641",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635994,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553/66/531/710/14600525/254710671/71/0522/14/1/23/05/5/321/17563/50/132506367202/54343",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "563",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "2505",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "0524",
+          "player_id": 1
+        },
+        {
+          "action": "4711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "660",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "023225",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "025743",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "0256447",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "006",
+          "player_id": 0
+        },
+        {
+          "action": "313",
+          "player_id": 1
+        },
+        {
+          "action": "4271671",
+          "player_id": 0
+        },
+        {
+          "action": "02565553",
+          "player_id": 1
+        },
+        {
+          "action": "66",
+          "player_id": 0
+        },
+        {
+          "action": "531",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14600525",
+          "player_id": 1
+        },
+        {
+          "action": "254710671",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "0522",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "17563",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "132506367202",
+          "player_id": 1
+        },
+        {
+          "action": "54343",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635979,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 0,
+      "transcript": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553/66/531/710/14600525/254710671/71/0522/14/1/23/05/5/321/17563/50/132506367202/54343",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "01",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "563",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "2505",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "0524",
+          "player_id": 1
+        },
+        {
+          "action": "4711",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "660",
+          "player_id": 1
+        },
+        {
+          "action": "7241",
+          "player_id": 0
+        },
+        {
+          "action": "023225",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "025743",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "017",
+          "player_id": 1
+        },
+        {
+          "action": "0256447",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "006",
+          "player_id": 0
+        },
+        {
+          "action": "313",
+          "player_id": 1
+        },
+        {
+          "action": "4271671",
+          "player_id": 0
+        },
+        {
+          "action": "02565553",
+          "player_id": 1
+        },
+        {
+          "action": "66",
+          "player_id": 0
+        },
+        {
+          "action": "531",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14600525",
+          "player_id": 1
+        },
+        {
+          "action": "254710671",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "0522",
+          "player_id": 0
+        },
+        {
+          "action": "14",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "17563",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "132506367202",
+          "player_id": 1
+        },
+        {
+          "action": "54343",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635943,
+      "opponent_agent_id": 2616930,
+      "opponent_name": "trictrac",
+      "player_id": 1,
+      "transcript": "7/6/0/2/0/57/1/33/1/6/4617/6147475361/452/2305753/2/0553/1/3/0/3/1/3/0/3/17/564/17/65605/720/332/11/34/160/64/127/41656/1/74/761/65/5410201/63023/5717",
+      "turns": [
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "57",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "4617",
+          "player_id": 0
+        },
+        {
+          "action": "6147475361",
+          "player_id": 1
+        },
+        {
+          "action": "452",
+          "player_id": 0
+        },
+        {
+          "action": "2305753",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "0553",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "564",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "65605",
+          "player_id": 1
+        },
+        {
+          "action": "720",
+          "player_id": 0
+        },
+        {
+          "action": "332",
+          "player_id": 1
+        },
+        {
+          "action": "11",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "160",
+          "player_id": 0
+        },
+        {
+          "action": "64",
+          "player_id": 1
+        },
+        {
+          "action": "127",
+          "player_id": 0
+        },
+        {
+          "action": "41656",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "74",
+          "player_id": 1
+        },
+        {
+          "action": "761",
+          "player_id": 0
+        },
+        {
+          "action": "65",
+          "player_id": 1
+        },
+        {
+          "action": "5410201",
+          "player_id": 0
+        },
+        {
+          "action": "63023",
+          "player_id": 1
+        },
+        {
+          "action": "5717",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635885,
+      "opponent_agent_id": 2616930,
+      "opponent_name": "trictrac",
+      "player_id": 0,
+      "transcript": "0/3/2/4/71/45/720/55/3/3/2/4/76/5/7/5/63071/32/1121/35/50/3/357102527741/7244654/700/14665/671/3/43447/412/065007/524/36021/4353",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "720",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "76",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "63071",
+          "player_id": 0
+        },
+        {
+          "action": "32",
+          "player_id": 1
+        },
+        {
+          "action": "1121",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "357102527741",
+          "player_id": 0
+        },
+        {
+          "action": "7244654",
+          "player_id": 1
+        },
+        {
+          "action": "700",
+          "player_id": 0
+        },
+        {
+          "action": "14665",
+          "player_id": 1
+        },
+        {
+          "action": "671",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "43447",
+          "player_id": 0
+        },
+        {
+          "action": "412",
+          "player_id": 1
+        },
+        {
+          "action": "065007",
+          "player_id": 0
+        },
+        {
+          "action": "524",
+          "player_id": 1
+        },
+        {
+          "action": "36021",
+          "player_id": 0
+        },
+        {
+          "action": "4353",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635851,
+      "opponent_agent_id": 6305973,
+      "opponent_name": "Snekkers",
+      "player_id": 1,
+      "transcript": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/67/7660/5272714/431/47/22/7/753105/445/3661453/1/3/1/1647505/22/105445/0/661435/0/636123/47/23/21/7/7/661245/450025710743303/21/0/0236/75/03254/1/67543/0244717/7241327435/25061/7667706016133/25036616132217/2745/2/4747/0/134364/717/6541416175/71",
+      "turns": [
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "10",
+          "player_id": 0
+        },
+        {
+          "action": "34",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "221",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "7660",
+          "player_id": 1
+        },
+        {
+          "action": "5272714",
+          "player_id": 0
+        },
+        {
+          "action": "431",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "753105",
+          "player_id": 1
+        },
+        {
+          "action": "445",
+          "player_id": 0
+        },
+        {
+          "action": "3661453",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1647505",
+          "player_id": 1
+        },
+        {
+          "action": "22",
+          "player_id": 0
+        },
+        {
+          "action": "105445",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "661435",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "636123",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "661245",
+          "player_id": 1
+        },
+        {
+          "action": "450025710743303",
+          "player_id": 0
+        },
+        {
+          "action": "21",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0236",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "03254",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "67543",
+          "player_id": 1
+        },
+        {
+          "action": "0244717",
+          "player_id": 0
+        },
+        {
+          "action": "7241327435",
+          "player_id": 1
+        },
+        {
+          "action": "25061",
+          "player_id": 0
+        },
+        {
+          "action": "7667706016133",
+          "player_id": 1
+        },
+        {
+          "action": "25036616132217",
+          "player_id": 0
+        },
+        {
+          "action": "2745",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "4747",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "134364",
+          "player_id": 1
+        },
+        {
+          "action": "717",
+          "player_id": 0
+        },
+        {
+          "action": "6541416175",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635793,
+      "opponent_agent_id": 4553858,
+      "opponent_name": "YurkovAS",
+      "player_id": 1,
+      "transcript": "1/1/0/1/0366/45/7/4/2477/5/0/6/1/36075334/1/16465/710/14635/06346132/5/03/6753/13/4/1/050271644365/70/5252/222/5/75/614530/02/146531/47/142/31/316/500/0/1/6/0/5/21/36722535/25052727770/55/06025323020/345/21/66/0527106771/61431/07",
+      "turns": [
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0366",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2477",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "36075334",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "16465",
+          "player_id": 1
+        },
+        {
+          "action": "710",
+          "player_id": 0
+        },
+        {
+          "action": "14635",
+          "player_id": 1
+        },
+        {
+          "action": "06346132",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "03",
+          "player_id": 0
+        },
+        {
+          "action": "6753",
+          "player_id": 1
+        },
+        {
+          "action": "13",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "050271644365",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "5252",
+          "player_id": 1
+        },
+        {
+          "action": "222",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "614530",
+          "player_id": 1
+        },
+        {
+          "action": "02",
+          "player_id": 0
+        },
+        {
+          "action": "146531",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "142",
+          "player_id": 1
+        },
+        {
+          "action": "31",
+          "player_id": 0
+        },
+        {
+          "action": "316",
+          "player_id": 1
+        },
+        {
+          "action": "500",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "36722535",
+          "player_id": 1
+        },
+        {
+          "action": "25052727770",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "06025323020",
+          "player_id": 0
+        },
+        {
+          "action": "345",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "66",
+          "player_id": 1
+        },
+        {
+          "action": "0527106771",
+          "player_id": 0
+        },
+        {
+          "action": "61431",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635762,
+      "opponent_agent_id": 3915005,
+      "opponent_name": "saraneth",
+      "player_id": 0,
+      "transcript": "0/5/21/3/0/3/17/55/061/4276/1/42/217/4/427570/5/4432225/5/6/5/0/5/6/4/127/43/57572/30613/20567/472216/0/5/6314727/4722323/07/423/07/6141335/70/5057/05212314667467/235053443",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "061",
+          "player_id": 0
+        },
+        {
+          "action": "4276",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "42",
+          "player_id": 1
+        },
+        {
+          "action": "217",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "427570",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "4432225",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "127",
+          "player_id": 0
+        },
+        {
+          "action": "43",
+          "player_id": 1
+        },
+        {
+          "action": "57572",
+          "player_id": 0
+        },
+        {
+          "action": "30613",
+          "player_id": 1
+        },
+        {
+          "action": "20567",
+          "player_id": 0
+        },
+        {
+          "action": "472216",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "6314727",
+          "player_id": 0
+        },
+        {
+          "action": "4722323",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "423",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        },
+        {
+          "action": "6141335",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "5057",
+          "player_id": 1
+        },
+        {
+          "action": "05212314667467",
+          "player_id": 0
+        },
+        {
+          "action": "235053443",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635752,
+      "opponent_agent_id": 5471081,
+      "opponent_name": "Deltaspace",
+      "player_id": 1,
+      "transcript": "1/1/1/174/75/3/47/21435/6/0327/063176/60354/22577/2055/6/3/00/54/17/7/0524/24753/24/4/7/216553/3/4/30/3/21/7/7/4/570/613/67/461006363245/5312507210/36325/52001/42/77/057716/1220/35/7117",
+      "turns": [
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "174",
+          "player_id": 1
+        },
+        {
+          "action": "75",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "21435",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "0327",
+          "player_id": 1
+        },
+        {
+          "action": "063176",
+          "player_id": 0
+        },
+        {
+          "action": "60354",
+          "player_id": 1
+        },
+        {
+          "action": "22577",
+          "player_id": 0
+        },
+        {
+          "action": "2055",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "00",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "0524",
+          "player_id": 0
+        },
+        {
+          "action": "24753",
+          "player_id": 1
+        },
+        {
+          "action": "24",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "216553",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "30",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "570",
+          "player_id": 0
+        },
+        {
+          "action": "613",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "461006363245",
+          "player_id": 1
+        },
+        {
+          "action": "5312507210",
+          "player_id": 0
+        },
+        {
+          "action": "36325",
+          "player_id": 1
+        },
+        {
+          "action": "52001",
+          "player_id": 0
+        },
+        {
+          "action": "42",
+          "player_id": 1
+        },
+        {
+          "action": "77",
+          "player_id": 0
+        },
+        {
+          "action": "057716",
+          "player_id": 1
+        },
+        {
+          "action": "1220",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "7117",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635745,
+      "opponent_agent_id": 4792144,
+      "opponent_name": "About",
+      "player_id": 1,
+      "transcript": "7/6/7/53/11/45/00/672/321/4/570/502323/50/22/1/6/0/6/1/74/3005214/5335/707057/05/21/63/00",
+      "turns": [
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "11",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "00",
+          "player_id": 0
+        },
+        {
+          "action": "672",
+          "player_id": 1
+        },
+        {
+          "action": "321",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "570",
+          "player_id": 0
+        },
+        {
+          "action": "502323",
+          "player_id": 1
+        },
+        {
+          "action": "50",
+          "player_id": 0
+        },
+        {
+          "action": "22",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "74",
+          "player_id": 1
+        },
+        {
+          "action": "3005214",
+          "player_id": 0
+        },
+        {
+          "action": "5335",
+          "player_id": 1
+        },
+        {
+          "action": "707057",
+          "player_id": 0
+        },
+        {
+          "action": "05",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "00",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635721,
+      "opponent_agent_id": 6075670,
+      "opponent_name": "Laars",
+      "player_id": 1,
+      "transcript": "7/6/0/2/477/63/311/4/1/2/0/53/02/175354/7/655/7/6141663245/4/3/5/31/70/67233/1/3/1/4/2/71/17/65/61/07242544/76/75/47142202/55/561241/74210067/1/75/4250713/6302053/336701/132/36057/2055603030672/1",
+      "turns": [
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "477",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "311",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        },
+        {
+          "action": "02",
+          "player_id": 0
+        },
+        {
+          "action": "175354",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "655",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "6141663245",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "31",
+          "player_id": 1
+        },
+        {
+          "action": "70",
+          "player_id": 0
+        },
+        {
+          "action": "67233",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "71",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "65",
+          "player_id": 1
+        },
+        {
+          "action": "61",
+          "player_id": 0
+        },
+        {
+          "action": "07242544",
+          "player_id": 1
+        },
+        {
+          "action": "76",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "47142202",
+          "player_id": 0
+        },
+        {
+          "action": "55",
+          "player_id": 1
+        },
+        {
+          "action": "561241",
+          "player_id": 0
+        },
+        {
+          "action": "74210067",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "4250713",
+          "player_id": 0
+        },
+        {
+          "action": "6302053",
+          "player_id": 1
+        },
+        {
+          "action": "336701",
+          "player_id": 0
+        },
+        {
+          "action": "132",
+          "player_id": 1
+        },
+        {
+          "action": "36057",
+          "player_id": 0
+        },
+        {
+          "action": "2055603030672",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635692,
+      "opponent_agent_id": 2632888,
+      "opponent_name": "Marchete",
+      "player_id": 1,
+      "transcript": "5/7/0/2/2/1/0/6/0/75/2/74752/53/0/524/275234/6/1134/5/4/6/4/17/147445/47224771/33/67/0123/6674257172/01/1/274133/63/02/36/6125017/05/03655/5771642/033274443/5541/3/1/3/17/25/617/6643/431417017/54/71/14605/24766/6631360706112133/55/6353/3660225000076/60311/07",
+      "turns": [
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "7",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "75",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "74752",
+          "player_id": 1
+        },
+        {
+          "action": "53",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "524",
+          "player_id": 0
+        },
+        {
+          "action": "275234",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "1134",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "147445",
+          "player_id": 1
+        },
+        {
+          "action": "47224771",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "0123",
+          "player_id": 1
+        },
+        {
+          "action": "6674257172",
+          "player_id": 0
+        },
+        {
+          "action": "01",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "274133",
+          "player_id": 1
+        },
+        {
+          "action": "63",
+          "player_id": 0
+        },
+        {
+          "action": "02",
+          "player_id": 1
+        },
+        {
+          "action": "36",
+          "player_id": 0
+        },
+        {
+          "action": "6125017",
+          "player_id": 1
+        },
+        {
+          "action": "05",
+          "player_id": 0
+        },
+        {
+          "action": "03655",
+          "player_id": 1
+        },
+        {
+          "action": "5771642",
+          "player_id": 0
+        },
+        {
+          "action": "033274443",
+          "player_id": 1
+        },
+        {
+          "action": "5541",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "617",
+          "player_id": 0
+        },
+        {
+          "action": "6643",
+          "player_id": 1
+        },
+        {
+          "action": "431417017",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "71",
+          "player_id": 0
+        },
+        {
+          "action": "14605",
+          "player_id": 1
+        },
+        {
+          "action": "24766",
+          "player_id": 0
+        },
+        {
+          "action": "6631360706112133",
+          "player_id": 1
+        },
+        {
+          "action": "55",
+          "player_id": 0
+        },
+        {
+          "action": "6353",
+          "player_id": 1
+        },
+        {
+          "action": "3660225000076",
+          "player_id": 0
+        },
+        {
+          "action": "60311",
+          "player_id": 1
+        },
+        {
+          "action": "07",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635665,
+      "opponent_agent_id": 6075670,
+      "opponent_name": "Laars",
+      "player_id": 0,
+      "transcript": "0/2/7/45/7/4/2214/65/3/5/7/4/6/63/47201175/32/461000/54/671/36/4611671/63/3211/3/1/25/35/35/4/165/2277/4/47/23350/76/4/7/23/0521464747/53",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "45",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "2214",
+          "player_id": 0
+        },
+        {
+          "action": "65",
+          "player_id": 1
+        },
+        {
+          "action": "3",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "47201175",
+          "player_id": 0
+        },
+        {
+          "action": "32",
+          "player_id": 1
+        },
+        {
+          "action": "461000",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "671",
+          "player_id": 0
+        },
+        {
+          "action": "36",
+          "player_id": 1
+        },
+        {
+          "action": "4611671",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "3211",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "35",
+          "player_id": 0
+        },
+        {
+          "action": "35",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "165",
+          "player_id": 1
+        },
+        {
+          "action": "2277",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "47",
+          "player_id": 0
+        },
+        {
+          "action": "23350",
+          "player_id": 1
+        },
+        {
+          "action": "76",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "0521464747",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635654,
+      "opponent_agent_id": 2602969,
+      "opponent_name": "EricSMSO",
+      "player_id": 1,
+      "transcript": "0/0/0/6/6/5/2/5/0527271/61434135/21/2/0/1/03636/63/67/5272253/4/4/7/675/0/633/0/724253/1/23/17/17275452507565/2/25/013/27443/1/235/2500/701714/366166/453/034/60312565/41/745/67/0/5/31/1/0254/36741220350100/007567/474107/61414/357022/5056/322300717",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "0527271",
+          "player_id": 0
+        },
+        {
+          "action": "61434135",
+          "player_id": 1
+        },
+        {
+          "action": "21",
+          "player_id": 0
+        },
+        {
+          "action": "2",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "1",
+          "player_id": 1
+        },
+        {
+          "action": "03636",
+          "player_id": 0
+        },
+        {
+          "action": "63",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "5272253",
+          "player_id": 1
+        },
+        {
+          "action": "4",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "7",
+          "player_id": 0
+        },
+        {
+          "action": "675",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "633",
+          "player_id": 1
+        },
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "724253",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "23",
+          "player_id": 1
+        },
+        {
+          "action": "17",
+          "player_id": 0
+        },
+        {
+          "action": "17275452507565",
+          "player_id": 1
+        },
+        {
+          "action": "2",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "013",
+          "player_id": 0
+        },
+        {
+          "action": "27443",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "235",
+          "player_id": 1
+        },
+        {
+          "action": "2500",
+          "player_id": 0
+        },
+        {
+          "action": "701714",
+          "player_id": 1
+        },
+        {
+          "action": "366166",
+          "player_id": 0
+        },
+        {
+          "action": "453",
+          "player_id": 1
+        },
+        {
+          "action": "034",
+          "player_id": 0
+        },
+        {
+          "action": "60312565",
+          "player_id": 1
+        },
+        {
+          "action": "41",
+          "player_id": 0
+        },
+        {
+          "action": "745",
+          "player_id": 1
+        },
+        {
+          "action": "67",
+          "player_id": 0
+        },
+        {
+          "action": "0",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "31",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "0254",
+          "player_id": 1
+        },
+        {
+          "action": "36741220350100",
+          "player_id": 0
+        },
+        {
+          "action": "007567",
+          "player_id": 1
+        },
+        {
+          "action": "474107",
+          "player_id": 0
+        },
+        {
+          "action": "61414",
+          "player_id": 1
+        },
+        {
+          "action": "357022",
+          "player_id": 0
+        },
+        {
+          "action": "5056",
+          "player_id": 1
+        },
+        {
+          "action": "322300717",
+          "player_id": 0
+        }
+      ],
+      "won": false
+    },
+    {
+      "focus_agent_id": 6568150,
+      "focus_name": "Lecorbio",
+      "focus_score": 39.73850251341997,
+      "game_id": 896635631,
+      "opponent_agent_id": 2616930,
+      "opponent_name": "trictrac",
+      "player_id": 0,
+      "transcript": "0/6/5/4/5/3/6/72463/053010/3/1/3/6/5/72200/3/1/4/5023/25/017/54/23671/16445/41672767/553/24763010/33/14647/53",
+      "turns": [
+        {
+          "action": "0",
+          "player_id": 0
+        },
+        {
+          "action": "6",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "72463",
+          "player_id": 1
+        },
+        {
+          "action": "053010",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "6",
+          "player_id": 0
+        },
+        {
+          "action": "5",
+          "player_id": 1
+        },
+        {
+          "action": "72200",
+          "player_id": 0
+        },
+        {
+          "action": "3",
+          "player_id": 1
+        },
+        {
+          "action": "1",
+          "player_id": 0
+        },
+        {
+          "action": "4",
+          "player_id": 1
+        },
+        {
+          "action": "5023",
+          "player_id": 0
+        },
+        {
+          "action": "25",
+          "player_id": 1
+        },
+        {
+          "action": "017",
+          "player_id": 0
+        },
+        {
+          "action": "54",
+          "player_id": 1
+        },
+        {
+          "action": "23671",
+          "player_id": 0
+        },
+        {
+          "action": "16445",
+          "player_id": 1
+        },
+        {
+          "action": "41672767",
+          "player_id": 0
+        },
+        {
+          "action": "553",
+          "player_id": 1
+        },
+        {
+          "action": "24763010",
+          "player_id": 0
+        },
+        {
+          "action": "33",
+          "player_id": 1
+        },
+        {
+          "action": "14647",
+          "player_id": 0
+        },
+        {
+          "action": "53",
+          "player_id": 1
+        }
+      ],
+      "won": false
+    }
+  ],
+  "losses": 38,
+  "opponents": [
+    {
+      "games": 5,
+      "losses": 2,
+      "opponent": "About",
+      "wins": 3
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "BenjaminUrquhart",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "BigToeMan",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "Bowie41",
+      "wins": 1
+    },
+    {
+      "games": 2,
+      "losses": 0,
+      "opponent": "BrainSolver",
+      "wins": 2
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "Bwvolleyball_2",
+      "wins": 1
+    },
+    {
+      "games": 3,
+      "losses": 3,
+      "opponent": "Deltaspace",
+      "wins": 0
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "EdgeCase_2",
+      "wins": 1
+    },
+    {
+      "games": 7,
+      "losses": 7,
+      "opponent": "EricSMSO",
+      "wins": 0
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "Hugo33",
+      "wins": 1
+    },
+    {
+      "games": 8,
+      "losses": 5,
+      "opponent": "Laars",
+      "wins": 3
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "Leff",
+      "wins": 1
+    },
+    {
+      "games": 5,
+      "losses": 4,
+      "opponent": "Marchete",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "PoppyTrail",
+      "wins": 1
+    },
+    {
+      "games": 9,
+      "losses": 4,
+      "opponent": "Snekkers",
+      "wins": 5
+    },
+    {
+      "games": 4,
+      "losses": 2,
+      "opponent": "YurkovAS",
+      "wins": 2
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "adelay",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "ahornik",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "artmyros",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "audrey",
+      "wins": 1
+    },
+    {
+      "games": 5,
+      "losses": 2,
+      "opponent": "derjack",
+      "wins": 3
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "ereiam",
+      "wins": 1
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "field3",
+      "wins": 1
+    },
+    {
+      "games": 3,
+      "losses": 3,
+      "opponent": "jacek",
+      "wins": 0
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "julioca",
+      "wins": 1
+    },
+    {
+      "games": 2,
+      "losses": 0,
+      "opponent": "matlewan7",
+      "wins": 2
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "mokaspark",
+      "wins": 1
+    },
+    {
+      "games": 4,
+      "losses": 0,
+      "opponent": "red1ynx",
+      "wins": 4
+    },
+    {
+      "games": 8,
+      "losses": 1,
+      "opponent": "saraneth",
+      "wins": 7
+    },
+    {
+      "games": 8,
+      "losses": 5,
+      "opponent": "trictrac",
+      "wins": 3
+    },
+    {
+      "games": 1,
+      "losses": 0,
+      "opponent": "ximmi",
+      "wins": 1
+    }
+  ],
+  "regression_cases": [
+    {
+      "game_id": 896635631,
+      "observed_action": "1",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/3/6/72463/053010/3",
+      "source_agent_id": 6568150,
+      "turn_index": 10
+    },
+    {
+      "game_id": 896635631,
+      "observed_action": "017",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/3/6/72463/053010/3/1/3/6/5/72200/3/1/4/5023/25",
+      "source_agent_id": 6568150,
+      "turn_index": 20
+    },
+    {
+      "game_id": 896635665,
+      "observed_action": "6",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/2/7/45/7/4/2214/65/3/5/7/4",
+      "source_agent_id": 6568150,
+      "turn_index": 12
+    },
+    {
+      "game_id": 896635665,
+      "observed_action": "35",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/2/7/45/7/4/2214/65/3/5/7/4/6/63/47201175/32/461000/54/671/36/4611671/63/3211/3/1/25",
+      "source_agent_id": 6568150,
+      "turn_index": 26
+    },
+    {
+      "game_id": 896635692,
+      "observed_action": "7",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "5",
+      "source_agent_id": 6568150,
+      "turn_index": 1
+    },
+    {
+      "game_id": 896635692,
+      "observed_action": "4",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "5/7/0/2/2/1/0/6/0/75/2/74752/53/0/524/275234/6/1134/5",
+      "source_agent_id": 6568150,
+      "turn_index": 19
+    },
+    {
+      "game_id": 896635692,
+      "observed_action": "033274443",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "5/7/0/2/2/1/0/6/0/75/2/74752/53/0/524/275234/6/1134/5/4/6/4/17/147445/47224771/33/67/0123/6674257172/01/1/274133/63/02/36/6125017/05/03655/5771642",
+      "source_agent_id": 6568150,
+      "turn_index": 39
+    },
+    {
+      "game_id": 896635721,
+      "observed_action": "6141663245",
+      "opponent_agent_id": 6075670,
+      "player_id": 1,
+      "prefix": "7/6/0/2/477/63/311/4/1/2/0/53/02/175354/7/655/7",
+      "source_agent_id": 6568150,
+      "turn_index": 17
+    },
+    {
+      "game_id": 896635721,
+      "observed_action": "07242544",
+      "opponent_agent_id": 6075670,
+      "player_id": 1,
+      "prefix": "7/6/0/2/477/63/311/4/1/2/0/53/02/175354/7/655/7/6141663245/4/3/5/31/70/67233/1/3/1/4/2/71/17/65/61",
+      "source_agent_id": 6568150,
+      "turn_index": 33
+    },
+    {
+      "game_id": 896635745,
+      "observed_action": "4",
+      "opponent_agent_id": 4792144,
+      "player_id": 1,
+      "prefix": "7/6/7/53/11/45/00/672/321",
+      "source_agent_id": 6568150,
+      "turn_index": 9
+    },
+    {
+      "game_id": 896635745,
+      "observed_action": "6",
+      "opponent_agent_id": 4792144,
+      "player_id": 1,
+      "prefix": "7/6/7/53/11/45/00/672/321/4/570/502323/50/22/1/6/0",
+      "source_agent_id": 6568150,
+      "turn_index": 17
+    },
+    {
+      "game_id": 896635752,
+      "observed_action": "3",
+      "opponent_agent_id": 5471081,
+      "player_id": 1,
+      "prefix": "1/1/1/174/75/3/47/21435/6/0327/063176/60354/22577/2055/6",
+      "source_agent_id": 6568150,
+      "turn_index": 15
+    },
+    {
+      "game_id": 896635752,
+      "observed_action": "7",
+      "opponent_agent_id": 5471081,
+      "player_id": 1,
+      "prefix": "1/1/1/174/75/3/47/21435/6/0327/063176/60354/22577/2055/6/3/00/54/17/7/0524/24753/24/4/7/216553/3/4/30/3/21",
+      "source_agent_id": 6568150,
+      "turn_index": 31
+    },
+    {
+      "game_id": 896635762,
+      "observed_action": "427570",
+      "opponent_agent_id": 3915005,
+      "player_id": 0,
+      "prefix": "0/5/21/3/0/3/17/55/061/4276/1/42/217/4",
+      "source_agent_id": 6568150,
+      "turn_index": 14
+    },
+    {
+      "game_id": 896635762,
+      "observed_action": "20567",
+      "opponent_agent_id": 3915005,
+      "player_id": 0,
+      "prefix": "0/5/21/3/0/3/17/55/061/4276/1/42/217/4/427570/5/4432225/5/6/5/0/5/6/4/127/43/57572/30613",
+      "source_agent_id": 6568150,
+      "turn_index": 28
+    },
+    {
+      "game_id": 896635851,
+      "observed_action": "22",
+      "opponent_agent_id": 6305973,
+      "player_id": 1,
+      "prefix": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/67/7660/5272714/431/47",
+      "source_agent_id": 6568150,
+      "turn_index": 21
+    },
+    {
+      "game_id": 896635851,
+      "observed_action": "661245",
+      "opponent_agent_id": 6305973,
+      "player_id": 1,
+      "prefix": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/67/7660/5272714/431/47/22/7/753105/445/3661453/1/3/1/1647505/22/105445/0/661435/0/636123/47/23/21/7/7",
+      "source_agent_id": 6568150,
+      "turn_index": 41
+    },
+    {
+      "game_id": 896635885,
+      "observed_action": "2",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/3/2/4/71/45/720/55/3/3",
+      "source_agent_id": 6568150,
+      "turn_index": 10
+    },
+    {
+      "game_id": 896635885,
+      "observed_action": "357102527741",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/3/2/4/71/45/720/55/3/3/2/4/76/5/7/5/63071/32/1121/35/50/3",
+      "source_agent_id": 6568150,
+      "turn_index": 22
+    },
+    {
+      "game_id": 896635943,
+      "observed_action": "0553",
+      "opponent_agent_id": 2616930,
+      "player_id": 1,
+      "prefix": "7/6/0/2/0/57/1/33/1/6/4617/6147475361/452/2305753/2",
+      "source_agent_id": 6568150,
+      "turn_index": 15
+    },
+    {
+      "game_id": 896635943,
+      "observed_action": "332",
+      "opponent_agent_id": 2616930,
+      "player_id": 1,
+      "prefix": "7/6/0/2/0/57/1/33/1/6/4617/6147475361/452/2305753/2/0553/1/3/0/3/1/3/0/3/17/564/17/65605/720",
+      "source_agent_id": 6568150,
+      "turn_index": 29
+    },
+    {
+      "game_id": 896636036,
+      "observed_action": "07",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/523/3/35/0/3636",
+      "source_agent_id": 6568150,
+      "turn_index": 10
+    },
+    {
+      "game_id": 896636036,
+      "observed_action": "2030",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/523/3/35/0/3636/07/5/0/5/22/020255350/07210/745/72/45",
+      "source_agent_id": 6568150,
+      "turn_index": 20
+    },
+    {
+      "game_id": 896636191,
+      "observed_action": "6",
+      "opponent_agent_id": 6305973,
+      "player_id": 1,
+      "prefix": "7",
+      "source_agent_id": 6568150,
+      "turn_index": 1
+    },
+    {
+      "game_id": 896636191,
+      "observed_action": "54",
+      "opponent_agent_id": 6305973,
+      "player_id": 1,
+      "prefix": "7/6/7/53/10/34/71/45/221/2/1/35/70",
+      "source_agent_id": 6568150,
+      "turn_index": 13
+    },
+    {
+      "game_id": 896636191,
+      "observed_action": "250174",
+      "opponent_agent_id": 6305973,
+      "player_id": 1,
+      "prefix": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/660/33/020/641364/61365/4/7/7/711222571",
+      "source_agent_id": 6568150,
+      "turn_index": 25
+    },
+    {
+      "game_id": 896636214,
+      "observed_action": "2",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "1/1/7/6/4/5/0/5/6/53/0/0631235/5/4/2/3/0/3/1",
+      "source_agent_id": 6568150,
+      "turn_index": 19
+    },
+    {
+      "game_id": 896636214,
+      "observed_action": "1245",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "1/1/7/6/4/5/0/5/6/53/0/0631235/5/4/2/3/0/3/1/2/0/17/0/361672/0/252716/6/5534/7/425/2/7466/4761361/45/0522327/55/471",
+      "source_agent_id": 6568150,
+      "turn_index": 37
+    },
+    {
+      "game_id": 896636237,
+      "observed_action": "1222",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "0/0/0/6/5/7/1/75363/4/61614253/4/3/6/5/2/3/1/71/6/4503/457",
+      "source_agent_id": 6568150,
+      "turn_index": 21
+    },
+    {
+      "game_id": 896636237,
+      "observed_action": "03",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "0/0/0/6/5/7/1/75363/4/61614253/4/3/6/5/2/3/1/71/6/4503/457/1222/2/3/0/3501665/41/630745/747/13/42703666506172/202143/31/7/7/1/2/16/4276/4116/6/41174/75",
+      "source_agent_id": 6568150,
+      "turn_index": 43
+    },
+    {
+      "game_id": 896636253,
+      "observed_action": "061",
+      "opponent_agent_id": 5773889,
+      "player_id": 0,
+      "prefix": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/0/255336/5702/4202577/22/520167/5446166/1/45/461277/4/2471/205335/64465/6307163/071/36",
+      "source_agent_id": 6568150,
+      "turn_index": 40
+    },
+    {
+      "game_id": 896636261,
+      "observed_action": "3",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/2/7/43/0523/3/17/55/0/5/7/6",
+      "source_agent_id": 6568150,
+      "turn_index": 12
+    },
+    {
+      "game_id": 896636261,
+      "observed_action": "075",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/2/7/43/0523/3/17/55/0/5/7/6/3/4/160133/65/023/05/216061/0/63270/2/17/035",
+      "source_agent_id": 6568150,
+      "turn_index": 24
+    },
+    {
+      "game_id": 896636270,
+      "observed_action": "1",
+      "opponent_agent_id": 5471081,
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/4/612/3/1/3/6/5/0207/13",
+      "source_agent_id": 6568150,
+      "turn_index": 14
+    },
+    {
+      "game_id": 896636270,
+      "observed_action": "0",
+      "opponent_agent_id": 5471081,
+      "player_id": 0,
+      "prefix": "0/6/5/4/5/4/612/3/1/3/6/5/0207/13/1/4/650/23/07/5655531/30677272/30643/254175/021/727571/1/1/4/6332771/3",
+      "source_agent_id": 6568150,
+      "turn_index": 30
+    },
+    {
+      "game_id": 896636280,
+      "observed_action": "416721",
+      "opponent_agent_id": 6305973,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/3/31/4167/2/27/2507/4",
+      "source_agent_id": 6568150,
+      "turn_index": 18
+    },
+    {
+      "game_id": 896636280,
+      "observed_action": "47",
+      "opponent_agent_id": 6305973,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/3/31/4167/2/27/2507/4/416721/6/0/336/603017/56/67/6/301/6/1/75/35571/71352/24746/524/52022211/27",
+      "source_agent_id": 6568150,
+      "turn_index": 36
+    },
+    {
+      "game_id": 896636297,
+      "observed_action": "54235",
+      "opponent_agent_id": 6075670,
+      "player_id": 1,
+      "prefix": "1/1/1/174/75/3/136647/5/6/5/0/7/2/424/130/23/6/3/274161706/742525363/10",
+      "source_agent_id": 6568150,
+      "turn_index": 21
+    },
+    {
+      "game_id": 896636297,
+      "observed_action": "477",
+      "opponent_agent_id": 6075670,
+      "player_id": 1,
+      "prefix": "1/1/1/174/75/3/136647/5/6/5/0/7/2/424/130/23/6/3/274161706/742525363/10/54235/7/4/7/5/7/4/7/2132054/23/16425/41606/7664/6/4/12/3/317020/65571/0771",
+      "source_agent_id": 6568150,
+      "turn_index": 41
+    },
+    {
+      "game_id": 896636321,
+      "observed_action": "7",
+      "opponent_agent_id": 6273433,
+      "player_id": 0,
+      "prefix": "0/0/1/6/43/55/3/3/6/00/65/3/11/6032/1/17",
+      "source_agent_id": 6568150,
+      "turn_index": 16
+    },
+    {
+      "game_id": 896636321,
+      "observed_action": "2",
+      "opponent_agent_id": 6273433,
+      "player_id": 0,
+      "prefix": "0/0/1/6/43/55/3/3/6/00/65/3/11/6032/1/17/7/1/355/666/36/017/27/75/05252/4/53/2/211/3327/435/5",
+      "source_agent_id": 6568150,
+      "turn_index": 32
+    },
+    {
+      "game_id": 896636333,
+      "observed_action": "0",
+      "opponent_agent_id": 6305973,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/3/31/2507/2/27/2507/4/416721/6",
+      "source_agent_id": 6568150,
+      "turn_index": 20
+    },
+    {
+      "game_id": 896636333,
+      "observed_action": "127",
+      "opponent_agent_id": 6305973,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/3/31/2507/2/27/2507/4/416721/6/0/336/603017/56/67/6/301/6/1/75/35571/17532/24746/724524/52022211/27/1/036350/506/603347",
+      "source_agent_id": 6568150,
+      "turn_index": 40
+    },
+    {
+      "game_id": 896636355,
+      "observed_action": "72",
+      "opponent_agent_id": 5773889,
+      "player_id": 0,
+      "prefix": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442",
+      "source_agent_id": 6568150,
+      "turn_index": 20
+    },
+    {
+      "game_id": 896636355,
+      "observed_action": "061",
+      "opponent_agent_id": 5773889,
+      "player_id": 0,
+      "prefix": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/0/255336/5702/4202577/22/520167/5446166/1/45/461277/4/2471/205335/64465/4727163/071/36",
+      "source_agent_id": 6568150,
+      "turn_index": 40
+    },
+    {
+      "game_id": 896636409,
+      "observed_action": "1",
+      "opponent_agent_id": 4553858,
+      "player_id": 1,
+      "prefix": "1",
+      "source_agent_id": 6568150,
+      "turn_index": 1
+    },
+    {
+      "game_id": 896636409,
+      "observed_action": "5",
+      "opponent_agent_id": 4553858,
+      "player_id": 1,
+      "prefix": "1/1/0/1/0366/45/7/4/2477/5/0/6/1/36075334/1/16465/710/14635/06346132",
+      "source_agent_id": 6568150,
+      "turn_index": 19
+    },
+    {
+      "game_id": 896636409,
+      "observed_action": "316",
+      "opponent_agent_id": 4553858,
+      "player_id": 1,
+      "prefix": "1/1/0/1/0366/45/7/4/2477/5/0/6/1/36075334/1/16465/710/14635/06346132/5/03/6753/13/4/1/050271644365/70/5252/222/5/75/614530/02/146531/47/142/31",
+      "source_agent_id": 6568150,
+      "turn_index": 37
+    },
+    {
+      "game_id": 896636423,
+      "observed_action": "520172",
+      "opponent_agent_id": 6273433,
+      "player_id": 0,
+      "prefix": "0/0/1/6/43/55/3/3/6/1/1/1/6/46",
+      "source_agent_id": 6568150,
+      "turn_index": 14
+    },
+    {
+      "game_id": 896636423,
+      "observed_action": "63",
+      "opponent_agent_id": 6273433,
+      "player_id": 0,
+      "prefix": "0/0/1/6/43/55/3/3/6/1/1/1/6/46/520172/317/7/1/35543/163600/65/2100/025661/74/53/174452447275/7/4/7/53",
+      "source_agent_id": 6568150,
+      "turn_index": 30
+    },
+    {
+      "game_id": 896636435,
+      "observed_action": "4",
+      "opponent_agent_id": 2602969,
+      "player_id": 1,
+      "prefix": "0/0/0/6/6/5/2/5/0527271/61434135/21/2/0/1/03636/63/67/5272253/4",
+      "source_agent_id": 6568150,
+      "turn_index": 19
+    },
+    {
+      "game_id": 896636435,
+      "observed_action": "701714",
+      "opponent_agent_id": 2602969,
+      "player_id": 1,
+      "prefix": "0/0/0/6/6/5/2/5/0527271/61434135/21/2/0/1/03636/63/67/5272253/4/4/7/675/0/633/0/724253/1/23/17/17275452507565/2/25/013/27443/1/235/2500",
+      "source_agent_id": 6568150,
+      "turn_index": 37
+    },
+    {
+      "game_id": 896636466,
+      "observed_action": "4711",
+      "opponent_agent_id": 2602969,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524",
+      "source_agent_id": 6568150,
+      "turn_index": 18
+    },
+    {
+      "game_id": 896636466,
+      "observed_action": "66",
+      "opponent_agent_id": 2602969,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/43/01/35/70/563/07/2505/7/4/5/53/63/0524/4711/3/0/660/7241/023225/2/025743/3/6/3/017/0256447/25/006/313/4271671/02565553",
+      "source_agent_id": 6568150,
+      "turn_index": 36
+    },
+    {
+      "game_id": 896636476,
+      "observed_action": "0",
+      "opponent_agent_id": 6273433,
+      "player_id": 1,
+      "prefix": "0",
+      "source_agent_id": 6568150,
+      "turn_index": 1
+    },
+    {
+      "game_id": 896636476,
+      "observed_action": "06344",
+      "opponent_agent_id": 6273433,
+      "player_id": 1,
+      "prefix": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330/27412/41/654/7661",
+      "source_agent_id": 6568150,
+      "turn_index": 19
+    },
+    {
+      "game_id": 896636476,
+      "observed_action": "352",
+      "opponent_agent_id": 6273433,
+      "player_id": 1,
+      "prefix": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330/27412/41/654/7661/06344/1721/05/3075221/23/57/063633/655022141/6030/0135/54/653/6/5/63/05/22/70/54652/720",
+      "source_agent_id": 6568150,
+      "turn_index": 39
+    },
+    {
+      "game_id": 896636488,
+      "observed_action": "7",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/466/0/5/301/33/2/35",
+      "source_agent_id": 6568150,
+      "turn_index": 12
+    },
+    {
+      "game_id": 896636488,
+      "observed_action": "7211",
+      "opponent_agent_id": 6075670,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/466/0/5/301/33/2/35/7/5/6/6/6/3/07/44/7/53/63016/431",
+      "source_agent_id": 6568150,
+      "turn_index": 24
+    },
+    {
+      "game_id": 896636502,
+      "observed_action": "105",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/56/0/324/677/6/71/053/5253/3",
+      "source_agent_id": 6568150,
+      "turn_index": 14
+    },
+    {
+      "game_id": 896636502,
+      "observed_action": "760",
+      "opponent_agent_id": 2616930,
+      "player_id": 0,
+      "prefix": "0/5/21/2/7/56/0/324/677/6/71/053/5253/3/105/43/2/3/0/5/021/3/17/54/235/6/41257711/425",
+      "source_agent_id": 6568150,
+      "turn_index": 28
+    },
+    {
+      "game_id": 896636512,
+      "observed_action": "7",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "6",
+      "source_agent_id": 6568150,
+      "turn_index": 1
+    },
+    {
+      "game_id": 896636512,
+      "observed_action": "0603543",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "6/7/2/0/6/45/0/52721345/3/5/7/7132/5/44/1/72014/2/2/4/5/7",
+      "source_agent_id": 6568150,
+      "turn_index": 21
+    },
+    {
+      "game_id": 896636512,
+      "observed_action": "0255225",
+      "opponent_agent_id": 2632888,
+      "player_id": 1,
+      "prefix": "6/7/2/0/6/45/0/52721345/3/5/7/7132/5/44/1/72014/2/2/4/5/7/0603543/10/654/503131/30/5072/07771/65671/63/21/32/4/1/4/3/0/255533605/21/760577/0743450",
+      "source_agent_id": 6568150,
+      "turn_index": 41
+    },
+    {
+      "game_id": 896636536,
+      "observed_action": "57",
+      "opponent_agent_id": 4792144,
+      "player_id": 0,
+      "prefix": "0/2/7/43/3/3/17/54/236/0255/31777/714422/027/0/254177/5",
+      "source_agent_id": 6568150,
+      "turn_index": 16
+    },
+    {
+      "game_id": 896636536,
+      "observed_action": "450",
+      "opponent_agent_id": 4792144,
+      "player_id": 0,
+      "prefix": "0/2/7/43/3/3/17/54/236/0255/31777/714422/027/0/254177/5/57/6/7/63/21/45/753/53/63/6143/5711/3/2/1/06/324",
+      "source_agent_id": 6568150,
+      "turn_index": 32
+    },
+    {
+      "game_id": 896636565,
+      "observed_action": "0",
+      "opponent_agent_id": 5471081,
+      "player_id": 0,
+      "prefix": "",
+      "source_agent_id": 6568150,
+      "turn_index": 0
+    },
+    {
+      "game_id": 896636565,
+      "observed_action": "1616",
+      "opponent_agent_id": 5471081,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/4/31/30/6417/47/74221/3527",
+      "source_agent_id": 6568150,
+      "turn_index": 18
+    },
+    {
+      "game_id": 896636565,
+      "observed_action": "5217634276",
+      "opponent_agent_id": 5471081,
+      "player_id": 0,
+      "prefix": "0/6/5/5/71/34/1/033/5/5/2/4/31/30/6417/47/74221/3527/1616/4456/05210/27/63161/257/217/5/0/5/24767/5/360201/6/7/14/1/23/03/035",
+      "source_agent_id": 6568150,
+      "turn_index": 38
+    }
+  ],
+  "schema": "papersoccer.completed-arena-loss-regressions.v1",
+  "score": 39.73850251341997,
+  "selection": "first, one-third, and two-thirds own-turn states per loss; deduplicated by player and complete prefix",
+  "rank": 8,
+  "submission_characters": 98623,
+  "submission_sha256": "3debbcd3043d3c0fb18ddac982d05a6ca82835f01b610ea256ea2c940cbd080a",
+  "wins": 52
+}

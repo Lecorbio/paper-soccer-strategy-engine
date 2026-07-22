@@ -1,0 +1,112 @@
+{
+  "schema": "papersoccer.teacher-residual-model.v1",
+  "input_count": 24,
+  "feature_schema": "rank5-hidden2-hand-scalars-used-edge-phase-v2",
+  "target": "clipped-mover-relative-teacher-minus-rank5-anchor",
+  "target_scale": 20000,
+  "hard_cap": 6000,
+  "trainer_sha256": "aecf0dcbbd8535675a82a373c9e7684126ed9016d6827fd5626bd34feaf1a064",
+  "corpus_sha256": "fb1600d5a667f77a35f23121e2f036faac88877828080eb87b101fa89bde2da4",
+  "arena_loss_holdout_sha256": "61c21fde5ee6125d6933dff750ae08a68f451088d05ef62aabeb8014a6ddfa78",
+  "games": {
+    "train": 7960,
+    "validation": 978,
+    "test": 1062
+  },
+  "samples": {
+    "train": 249293,
+    "validation": 30403,
+    "test": 31837
+  },
+  "rejected": {
+    "shallow": 19847,
+    "mate": 15383,
+    "direct_goal": 0,
+    "invalid": 0,
+    "overlap": 12208,
+    "arena_holdout": 110,
+    "opening_gate": 21188
+  },
+  "fit": {
+    "loss": "huber-irls",
+    "ridge": 1.0,
+    "huber_delta": 0.1,
+    "recommended_strength_percent": 50,
+    "validation_strength_mae": {
+      "10": 4822.664635417815,
+      "20": 4806.7985218776685,
+      "30": 4794.875229767302,
+      "40": 4786.569095435337,
+      "50": 4781.886201105433,
+      "75": 4784.848359155401,
+      "100": 4802.772637701483
+    }
+  },
+  "metrics": {
+    "train": {
+      "samples": 249293,
+      "target_mae": 0.20945506046395712,
+      "target_rmse": 0.3727133522342977,
+      "target_correlation": 0.26476719252139586,
+      "residual_sign_accuracy": 0.6223800908970569,
+      "anchor_teacher_mae": 4649.757225433526,
+      "corrected_teacher_mae": 4618.906290121057,
+      "corrected_teacher_rmse": 8811.208910364923,
+      "mean_completed_depth": 3.0990641534258883,
+      "strength_percent": 100
+    },
+    "validation": {
+      "samples": 30403,
+      "target_mae": 0.21684376953596385,
+      "target_rmse": 0.3814363492940657,
+      "target_correlation": 0.2690867932218462,
+      "residual_sign_accuracy": 0.6220438772489557,
+      "anchor_teacher_mae": 4842.69318817222,
+      "corrected_teacher_mae": 4802.772637701483,
+      "corrected_teacher_rmse": 9073.309308305528,
+      "mean_completed_depth": 3.0972272473111206,
+      "strength_percent": 100
+    },
+    "test": {
+      "samples": 31837,
+      "target_mae": 0.2200656717632658,
+      "target_rmse": 0.3826008790695798,
+      "target_correlation": 0.27597775763029714,
+      "residual_sign_accuracy": 0.62735182335019,
+      "anchor_teacher_mae": 4869.112510600873,
+      "corrected_teacher_mae": 4817.701547341701,
+      "corrected_teacher_rmse": 8942.053367735181,
+      "mean_completed_depth": 3.086126205358545,
+      "strength_percent": 100
+    }
+  },
+  "model": {
+    "weights": [
+      4.3855967199178576e-05,
+      -0.04826403950091239,
+      0.0,
+      0.009659297462740682,
+      0.004877748850872986,
+      -0.03766094056763099,
+      0.0,
+      0.0,
+      -0.00658001635342286,
+      -0.05424667603108685,
+      -0.04655068189996548,
+      0.007209941557332625,
+      -0.19148294800949084,
+      -0.3746917933163978,
+      0.2646792345861723,
+      -0.13191469260057223,
+      3.837214059467545e-05,
+      0.01120932684056035,
+      0.08940509130387271,
+      0.017571267373719224,
+      0.0,
+      0.0,
+      0.0,
+      -0.004371461010163173
+    ],
+    "bias": 0.004385596374168491
+  }
+}

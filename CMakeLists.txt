@@ -73,7 +73,7 @@ enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2)
+  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -140,6 +140,15 @@ if(NOT EMSCRIPTEN)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(
     papersoccer_codingame_selfplay_nn_v2_teacher_sample_generator
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_codingame_jacek_nn_teacher_sample_generator
+    submissions/codingame/bots/jacek_nn/teacher_sample_generator.cpp)
+  target_include_directories(
+    papersoccer_codingame_jacek_nn_teacher_sample_generator
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_jacek_nn_teacher_sample_generator
     PRIVATE papersoccer_core)
 endif()
 
