@@ -72,7 +72,7 @@ endif()
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
-set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_5 challenger)
+set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_5 challenger selfplay_nn)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -122,6 +122,15 @@ if(NOT EMSCRIPTEN)
         COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
     endif()
   endforeach()
+
+  add_executable(papersoccer_codingame_selfplay_nn_selfplay_generator
+    submissions/codingame/bots/selfplay_nn/selfplay_generator.cpp)
+  target_include_directories(
+    papersoccer_codingame_selfplay_nn_selfplay_generator
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_selfplay_nn_selfplay_generator
+    PRIVATE papersoccer_core)
 endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)

@@ -1,0 +1,18 @@
+{
+  "schema": "papersoccer.selfplay-config.v1",
+  "seed": 6789347283849021,
+  "games": 1024,
+  "teacher": "rank_5",
+  "teacher_replay_corrections": false,
+  "base_node_budget": 4000,
+  "node_budget_multipliers": [0.5, 1.0, 2.0],
+  "maximum_turns": 180,
+  "random_opening_turns": [4, 6, 8, 12, 16, 20],
+  "initial_position_anchors": 1,
+  "features": "canonical-edges316-turn-distance105-ballxy-v1",
+  "hidden_layers": [16, 16],
+  "value_samples": "complete-turn-boundaries",
+  "policy_samples": "every-teacher-edge",
+  "horizontal_reflection": true,
+  "quantization": "per-tensor-symmetric-int8"
+}

@@ -7,7 +7,8 @@ submissions/codingame/
 ├── bots/                 maintained source, tests, data, and output per bot
 │   ├── alpha_beta/       production baseline and its experiment archive
 │   ├── rank_5/           strongest verified arena candidate
-│   └── challenger/       completed exact-topology challenger experiment
+│   ├── challenger/       completed exact-topology challenger experiment
+│   └── selfplay_nn/      learned value and self-play training experiment
 └── tools/                shared generation, protocol, and replay utilities
 ```
 
@@ -23,6 +24,7 @@ Generate or verify either submission from the repository root:
 node submissions/codingame/tools/generate_submission.mjs alpha_beta
 node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
+node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -47,3 +49,8 @@ are in [tools/README.md](tools/README.md).
   narrow replay repairs. Its strongest completed result is version 38 at rank
   5 with score `42.280679071799426`, below the accepted `rank_5` bot; the full
   evidence is recorded in [`EXPERIMENTS.md`](bots/challenger/EXPERIMENTS.md).
+- [`selfplay_nn`](bots/selfplay_nn/README.md) is the compact learned-value
+  experiment with a reproducible 1,024-game training corpus. Its strongest
+  completed result is version 41 at rank 5 with score `41.77236003585933`,
+  below the accepted `rank_5` bot; all three live batches are recorded in
+  [`EXPERIMENTS.md`](bots/selfplay_nn/EXPERIMENTS.md).
