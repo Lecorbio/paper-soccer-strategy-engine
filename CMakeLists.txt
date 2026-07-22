@@ -72,7 +72,7 @@ endif()
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
 
-set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_5)
+set(PAPERSOCCER_CODINGAME_BOTS alpha_beta rank_5 challenger)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -109,6 +109,17 @@ if(NOT EMSCRIPTEN)
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
                COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe)
+    endif()
+
+    if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
+      add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+        "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
+      target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+      target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+        PRIVATE papersoccer_core)
+      add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
     endif()
   endforeach()
 endif()

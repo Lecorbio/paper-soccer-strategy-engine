@@ -6,7 +6,8 @@ CodinGame support is split into reusable tooling and self-contained bots:
 submissions/codingame/
 ├── bots/                 maintained source, tests, data, and output per bot
 │   ├── alpha_beta/       production baseline and its experiment archive
-│   └── rank_5/           strongest verified arena candidate
+│   ├── rank_5/           strongest verified arena candidate
+│   └── challenger/       completed exact-topology challenger experiment
 └── tools/                shared generation, protocol, and replay utilities
 ```
 
@@ -41,3 +42,8 @@ are in [tools/README.md](tools/README.md).
   candidate: version 26, agent `6561779`, rank 5 of 206 with score
   `42.42773147296124`. Its paste-ready file is
   [`submission.cpp`](bots/rank_5/submission.cpp).
+- [`challenger`](bots/challenger/README.md) is the independently maintained
+  candidate with exact rebound analysis, audited search experiments, and
+  narrow replay repairs. Its strongest completed result is version 38 at rank
+  5 with score `42.280679071799426`, below the accepted `rank_5` bot; the full
+  evidence is recorded in [`EXPERIMENTS.md`](bots/challenger/EXPERIMENTS.md).
