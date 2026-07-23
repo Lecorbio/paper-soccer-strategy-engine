@@ -95,6 +95,16 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
           << ",\"max_search_plies\":"
           << config.alpha_beta_max_search_plies;
       break;
+    case BotKind::JacekInspired:
+      out << ",\"max_turn_depth\":" << config.alpha_beta_depth
+          << ",\"max_nodes\":" << config.alpha_beta_max_nodes
+          << ",\"transposition_table_entries\":"
+          << config.alpha_beta_transposition_table_entries
+          << ",\"max_search_plies\":"
+          << config.alpha_beta_max_search_plies
+          << ",\"model_sha256\":";
+      write_string(out, JacekInspiredBot::model_sha256());
+      break;
   }
   out << '}';
 }
@@ -303,7 +313,40 @@ void write_alpha_beta_summary(std::ostream &out,
       << summary.max_attempted_turn_depth
       << ",\"max_physical_ply\":" << summary.max_physical_ply
       << ",\"budget_exhausted_searches\":"
-      << summary.budget_exhausted_searches << '}';
+      << summary.budget_exhausted_searches
+      << ",\"completed_turn_depth_zero_searches\":"
+      << summary.completed_turn_depth_histogram[0]
+      << ",\"completed_turn_depth_histogram\":{";
+  bool first = true;
+  for (std::size_t depth = 0;
+       depth < summary.completed_turn_depth_histogram.size(); ++depth) {
+    const std::size_t count = summary.completed_turn_depth_histogram[depth];
+    if (count == 0) {
+      continue;
+    }
+    if (!first) {
+      out << ',';
+    }
+    first = false;
+    write_string(out, std::to_string(depth));
+    out << ':' << count;
+  }
+  out << "},\"attempted_turn_depth_histogram\":{";
+  first = true;
+  for (std::size_t depth = 0;
+       depth < summary.attempted_turn_depth_histogram.size(); ++depth) {
+    const std::size_t count = summary.attempted_turn_depth_histogram[depth];
+    if (count == 0) {
+      continue;
+    }
+    if (!first) {
+      out << ',';
+    }
+    first = false;
+    write_string(out, std::to_string(depth));
+    out << ':' << count;
+  }
+  out << "}}";
 }
 
 void write_entrant_summary(std::ostream &out, Entrant entrant,
@@ -527,6 +570,11 @@ std::string run_positions_json(const PositionsConfig &config) {
         config.reference, Entrant::Reference, reference_seed, report.state);
     positions.push_back(std::move(report));
   }
+  const std::size_t move_agreements = static_cast<std::size_t>(std::count_if(
+      positions.begin(), positions.end(), [](const PositionReport &position) {
+        return position.candidate.move == position.reference.move;
+      }));
+  const std::size_t move_changes = positions.size() - move_agreements;
 
   std::ostringstream out;
   out.imbue(std::locale::classic());
@@ -594,7 +642,10 @@ std::string run_positions_json(const PositionsConfig &config) {
     }
     out << "]}";
   }
-  out << "],\"summary\":{\"illegal_moves\":0,\"candidate\":";
+  out << "],\"summary\":{\"illegal_moves\":0,\"move_comparison\":{"
+      << "\"positions\":" << positions.size()
+      << ",\"agreements\":" << move_agreements
+      << ",\"changes\":" << move_changes << "},\"candidate\":";
   write_position_entrant_summary(out, Entrant::Candidate, positions);
   out << ",\"reference\":";
   write_position_entrant_summary(out, Entrant::Reference, positions);

@@ -15,7 +15,13 @@ namespace ps = papersoccer;
 
 namespace {
 
-enum class ControllerKind { Human, RandomBot, MctsBot, AlphaBetaBot };
+enum class ControllerKind {
+  Human,
+  RandomBot,
+  MctsBot,
+  AlphaBetaBot,
+  JacekInspiredBot,
+};
 
 struct CliConfig {
   ControllerKind player_one{ControllerKind::Human};
@@ -25,6 +31,8 @@ struct CliConfig {
   std::uint32_t mcts_iterations{2000};
   std::uint32_t alpha_beta_depth{6};
   std::uint64_t alpha_beta_max_nodes{100'000};
+  std::uint32_t jacek_depth{6};
+  std::uint64_t jacek_max_nodes{20'000};
 };
 
 std::string player_to_string(ps::Player player) {
@@ -41,6 +49,8 @@ std::string controller_to_string(ControllerKind controller) {
       return "MctsBot";
     case ControllerKind::AlphaBetaBot:
       return "AlphaBetaBot";
+    case ControllerKind::JacekInspiredBot:
+      return "JacekInspiredBot";
   }
   return "Unknown";
 }
@@ -192,10 +202,11 @@ std::uint32_t prompt_iterations(std::uint32_t default_iterations) {
   }
 }
 
-std::uint32_t prompt_alpha_beta_depth(std::uint32_t default_depth) {
+std::uint32_t prompt_search_depth(const std::string &bot_name,
+                                  std::uint32_t default_depth) {
   while (true) {
     const std::string input = prompt_line(
-        "AlphaBetaBot turn depth [" + std::to_string(default_depth) + "]: ");
+        bot_name + " turn depth [" + std::to_string(default_depth) + "]: ");
     if (input.empty()) {
       return default_depth;
     }
@@ -209,10 +220,11 @@ std::uint32_t prompt_alpha_beta_depth(std::uint32_t default_depth) {
   }
 }
 
-std::uint64_t prompt_alpha_beta_max_nodes(std::uint64_t default_max_nodes) {
+std::uint64_t prompt_search_max_nodes(const std::string &bot_name,
+                                      std::uint64_t default_max_nodes) {
   while (true) {
     const std::string input = prompt_line(
-        "AlphaBetaBot node budget per move [" +
+        bot_name + " node budget per move [" +
         std::to_string(default_max_nodes) + "]: ");
     if (input.empty()) {
       return default_max_nodes;
@@ -242,9 +254,14 @@ CliConfig prompt_config() {
   std::cout << "  [8] RandomBot vs AlphaBetaBot\n";
   std::cout << "  [9] MctsBot vs AlphaBetaBot\n";
   std::cout << "  [10] AlphaBetaBot vs AlphaBetaBot\n";
+  std::cout << "  [11] Human vs JacekInspiredBot\n";
+  std::cout << "  [12] RandomBot vs JacekInspiredBot\n";
+  std::cout << "  [13] MctsBot vs JacekInspiredBot\n";
+  std::cout << "  [14] AlphaBetaBot vs JacekInspiredBot\n";
+  std::cout << "  [15] JacekInspiredBot vs JacekInspiredBot\n";
 
   CliConfig config;
-  const std::size_t mode = prompt_choice("Mode: ", 10);
+  const std::size_t mode = prompt_choice("Mode: ", 15);
   switch (mode) {
     case 1:
       break;
@@ -314,6 +331,54 @@ CliConfig prompt_config() {
       config.player_one = ControllerKind::AlphaBetaBot;
       config.player_two = ControllerKind::AlphaBetaBot;
       break;
+    case 11: {
+      const std::size_t side =
+          prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::Human
+                      : ControllerKind::JacekInspiredBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::JacekInspiredBot
+                      : ControllerKind::Human;
+      break;
+    }
+    case 12: {
+      const std::size_t side = prompt_choice(
+          "JacekInspiredBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::JacekInspiredBot
+                      : ControllerKind::RandomBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::RandomBot
+                      : ControllerKind::JacekInspiredBot;
+      break;
+    }
+    case 13: {
+      const std::size_t side = prompt_choice(
+          "JacekInspiredBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::JacekInspiredBot
+                      : ControllerKind::MctsBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::MctsBot
+                      : ControllerKind::JacekInspiredBot;
+      break;
+    }
+    case 14: {
+      const std::size_t side = prompt_choice(
+          "JacekInspiredBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          (side == 1) ? ControllerKind::JacekInspiredBot
+                      : ControllerKind::AlphaBetaBot;
+      config.player_two =
+          (side == 1) ? ControllerKind::AlphaBetaBot
+                      : ControllerKind::JacekInspiredBot;
+      break;
+    }
+    case 15:
+      config.player_one = ControllerKind::JacekInspiredBot;
+      config.player_two = ControllerKind::JacekInspiredBot;
+      break;
     default:
       throw std::logic_error("unsupported CLI mode");
   }
@@ -328,8 +393,14 @@ CliConfig prompt_config() {
     config.mcts_iterations = prompt_iterations(2000);
   }
   if (uses_controller(config, ControllerKind::AlphaBetaBot)) {
-    config.alpha_beta_depth = prompt_alpha_beta_depth(6);
-    config.alpha_beta_max_nodes = prompt_alpha_beta_max_nodes(100'000);
+    config.alpha_beta_depth = prompt_search_depth("AlphaBetaBot", 6);
+    config.alpha_beta_max_nodes =
+        prompt_search_max_nodes("AlphaBetaBot", 100'000);
+  }
+  if (uses_controller(config, ControllerKind::JacekInspiredBot)) {
+    config.jacek_depth = prompt_search_depth("JacekInspiredBot", 6);
+    config.jacek_max_nodes =
+        prompt_search_max_nodes("JacekInspiredBot", 20'000);
   }
   return config;
 }
@@ -366,6 +437,11 @@ std::unique_ptr<ps::Bot> make_player_bot(const CliConfig &config,
       bot_config.kind = ps::BotKind::AlphaBeta;
       bot_config.alpha_beta_depth = config.alpha_beta_depth;
       bot_config.alpha_beta_max_nodes = config.alpha_beta_max_nodes;
+      break;
+    case ControllerKind::JacekInspiredBot:
+      bot_config.kind = ps::BotKind::JacekInspired;
+      bot_config.alpha_beta_depth = config.jacek_depth;
+      bot_config.alpha_beta_max_nodes = config.jacek_max_nodes;
       break;
   }
   return ps::make_bot(bot_config);
@@ -418,6 +494,14 @@ int main() {
     std::cout << "AlphaBetaBot node budget per move: "
               << config.alpha_beta_max_nodes << "\n";
   }
+  if (config.player_one == ControllerKind::JacekInspiredBot ||
+      config.player_two == ControllerKind::JacekInspiredBot) {
+    std::cout << "JacekInspiredBot turn depth: " << config.jacek_depth << "\n";
+    std::cout << "JacekInspiredBot node budget per move: "
+              << config.jacek_max_nodes << "\n";
+    std::cout << "JacekInspiredBot model SHA-256: "
+              << ps::JacekInspiredBot::model_sha256() << "\n";
+  }
 
   while (!ps::is_terminal(state)) {
     auto moves = ps::legal_moves(state);
@@ -463,24 +547,40 @@ int main() {
           std::cout << ", tree saturated";
         }
         std::cout << "\n";
-      } else if (const auto *alpha_beta_bot =
-                     dynamic_cast<const ps::AlphaBetaBot *>(bot)) {
-        const ps::AlphaBetaSearchStats &stats =
-            alpha_beta_bot->last_search_stats();
-        std::cout << "Alpha-beta stats: depth="
-                  << stats.completed_turn_depth << "/"
-                  << stats.attempted_turn_depth << ", nodes=" << stats.nodes
-                  << ", evaluations=" << stats.leaf_evaluations
-                  << ", terminal nodes=" << stats.terminal_nodes
-                  << ", cutoffs=" << stats.cutoffs << ", TT hits="
-                  << stats.transposition_hits << "/"
-                  << stats.transposition_probes
-                  << ", max physical ply=" << stats.max_physical_ply
+      } else {
+        const ps::AlphaBetaSearchStats *stats = nullptr;
+        std::string search_name;
+        if (const auto *alpha_beta_bot =
+                dynamic_cast<const ps::AlphaBetaBot *>(bot)) {
+          stats = &alpha_beta_bot->last_search_stats();
+          search_name = "Alpha-beta";
+        } else if (const auto *jacek_bot =
+                       dynamic_cast<const ps::JacekInspiredBot *>(bot)) {
+          stats = &jacek_bot->last_search_stats();
+          search_name = "Jacek-inspired neural alpha-beta";
+        }
+        if (stats == nullptr) {
+          state = ps::apply_move(state, chosen_move);
+          continue;
+        }
+        std::cout << search_name << " stats: depth="
+                  << stats->completed_turn_depth << "/"
+                  << stats->attempted_turn_depth << ", nodes=" << stats->nodes
+                  << ", evaluations=" << stats->leaf_evaluations
+                  << ", terminal nodes=" << stats->terminal_nodes
+                  << ", cutoffs=" << stats->cutoffs << ", TT hits="
+                  << stats->transposition_hits << "/"
+                  << stats->transposition_probes
+                  << ", max physical ply=" << stats->max_physical_ply
                   << ", physical-ply cutoffs="
-                  << stats.physical_ply_cutoffs
-                  << ", root score=" << stats.root_score
-                  << ", PV plies=" << stats.principal_variation.size();
-        if (stats.budget_exhausted) {
+                  << stats->physical_ply_cutoffs;
+        if (stats->completed_turn_depth > 0) {
+          std::cout << ", Player 1 root score=" << stats->root_score;
+        } else {
+          std::cout << ", Player 1 root score=unavailable";
+        }
+        std::cout << ", PV plies=" << stats->principal_variation.size();
+        if (stats->budget_exhausted) {
           std::cout << ", node budget reached";
         }
         std::cout << "\n";

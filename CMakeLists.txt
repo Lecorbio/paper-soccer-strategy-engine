@@ -13,6 +13,9 @@ endif()
 add_library(papersoccer_core
   src/bots/alpha_beta.cpp
   src/bots/bot.cpp
+  src/bots/jacek_features.cpp
+  src/bots/jacek_inspired.cpp
+  src/bots/jacek_neural.cpp
   src/bots/mcts.cpp
   src/bots/random_bot.cpp
   src/bots/tactical_search.cpp
@@ -55,6 +58,7 @@ endif()
 
 add_executable(papersoccer_tests
   tests/bots/alpha_beta_test.cpp
+  tests/bots/jacek_inspired_test.cpp
   tests/bots/mcts_test.cpp
   tests/bots/random_bot_test.cpp
   tests/core/match_test.cpp
@@ -71,6 +75,16 @@ endif()
 
 enable_testing()
 add_test(NAME papersoccer_tests COMMAND papersoccer_tests)
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
+  add_test(
+    NAME papersoccer_jacek_model_current
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_jacek_neural_model.py
+            --check
+  )
+endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
   alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn)
@@ -149,6 +163,13 @@ if(NOT EMSCRIPTEN)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(
     papersoccer_codingame_jacek_nn_teacher_sample_generator
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_training_data
+    tools/jacek_training_data.cpp)
+  target_include_directories(papersoccer_jacek_training_data
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_training_data
     PRIVATE papersoccer_core)
 endif()
 

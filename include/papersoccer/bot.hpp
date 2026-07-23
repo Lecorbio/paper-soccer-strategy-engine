@@ -12,9 +12,10 @@
 namespace papersoccer {
 
 enum class BotKind {
-  Random,
-  Mcts,
-  AlphaBeta,
+  Random = 0,
+  Mcts = 1,
+  AlphaBeta = 2,
+  JacekInspired = 3,
 };
 
 std::string_view bot_kind_name(BotKind kind) noexcept;
@@ -98,6 +99,21 @@ class AlphaBetaBot final : public Bot {
   AlphaBetaSearchStats last_search_stats_{};
 };
 
+class JacekInspiredBot final : public Bot {
+ public:
+  explicit JacekInspiredBot(AlphaBetaConfig config = {});
+
+  std::string_view name() const noexcept override;
+  Move choose_move(const GameState &state) override;
+  const AlphaBetaConfig &config() const noexcept;
+  const AlphaBetaSearchStats &last_search_stats() const noexcept;
+  static std::string_view model_sha256() noexcept;
+
+ private:
+  AlphaBetaConfig config_;
+  AlphaBetaSearchStats last_search_stats_{};
+};
+
 struct BotConfig {
   BotKind kind{BotKind::Random};
   std::uint64_t seed{RandomBot::default_seed()};
@@ -106,6 +122,7 @@ struct BotConfig {
   std::uint64_t alpha_beta_max_nodes{100'000};
   std::size_t alpha_beta_transposition_table_entries{65'536};
   std::uint32_t alpha_beta_max_search_plies{12};
+  std::uint32_t alpha_beta_max_time_ms{0};
 };
 
 enum class MctsRolloutPolicy {

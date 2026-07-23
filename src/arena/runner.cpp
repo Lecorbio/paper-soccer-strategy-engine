@@ -51,6 +51,8 @@ std::string_view kind_name(BotKind kind) noexcept {
       return "mcts";
     case BotKind::AlphaBeta:
       return "alpha-beta";
+    case BotKind::JacekInspired:
+      return "jacek-inspired";
   }
   return "unknown";
 }
@@ -114,6 +116,7 @@ void validate_bot_config(const ArenaBotConfig &config) {
       }
       return;
     case BotKind::AlphaBeta:
+    case BotKind::JacekInspired:
       if (config.alpha_beta_depth == 0 ||
           config.alpha_beta_depth > AlphaBetaConfig::maximum_turn_depth) {
         throw std::invalid_argument(
@@ -161,13 +164,17 @@ std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
       mcts.quiescence_max_nodes = config.quiescence_max_nodes;
       return std::make_unique<MctsBot>(mcts);
     }
-    case BotKind::AlphaBeta: {
+    case BotKind::AlphaBeta:
+    case BotKind::JacekInspired: {
       AlphaBetaConfig alpha_beta;
       alpha_beta.max_turn_depth = config.alpha_beta_depth;
       alpha_beta.max_nodes = config.alpha_beta_max_nodes;
       alpha_beta.transposition_table_entries =
           config.alpha_beta_transposition_table_entries;
       alpha_beta.max_search_plies = config.alpha_beta_max_search_plies;
+      if (config.kind == BotKind::JacekInspired) {
+        return std::make_unique<JacekInspiredBot>(alpha_beta);
+      }
       return std::make_unique<AlphaBetaBot>(alpha_beta);
     }
   }
@@ -183,11 +190,13 @@ std::optional<SearchStats> search_stats(Bot &bot) {
 }
 
 std::optional<AlphaBetaSearchStats> alpha_beta_search_stats(Bot &bot) {
-  auto *alpha_beta = dynamic_cast<AlphaBetaBot *>(&bot);
-  if (alpha_beta == nullptr) {
-    return std::nullopt;
+  if (auto *alpha_beta = dynamic_cast<AlphaBetaBot *>(&bot)) {
+    return alpha_beta->last_search_stats();
   }
-  return alpha_beta->last_search_stats();
+  if (auto *jacek = dynamic_cast<JacekInspiredBot *>(&bot)) {
+    return jacek->last_search_stats();
+  }
+  return std::nullopt;
 }
 
 bool contains_move(const std::vector<Move> &moves, Move move) {
@@ -454,6 +463,8 @@ AlphaBetaSummary summarize_alpha_beta(
     summary.max_physical_ply =
         std::max(summary.max_physical_ply, stats.max_physical_ply);
     summary.budget_exhausted_searches += stats.budget_exhausted ? 1U : 0U;
+    ++summary.completed_turn_depth_histogram[stats.completed_turn_depth];
+    ++summary.attempted_turn_depth_histogram[stats.attempted_turn_depth];
   }
   return summary;
 }

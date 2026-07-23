@@ -52,8 +52,15 @@ void write_bot(std::ostream &out, const BotConfig &config) {
       << config.seed << '"';
   if (config.kind == BotKind::Mcts) {
     out << ",\"iterations\":" << config.mcts_iterations;
-  } else if (config.kind == BotKind::AlphaBeta) {
+  } else if (config.kind == BotKind::AlphaBeta ||
+             config.kind == BotKind::JacekInspired) {
     out << ",\"depth\":" << config.alpha_beta_depth;
+    if (config.kind == BotKind::JacekInspired) {
+      out << ",\"maxNodes\":" << config.alpha_beta_max_nodes
+          << ",\"maxTimeMs\":" << config.alpha_beta_max_time_ms
+          << ",\"modelSha256\":\""
+          << JacekInspiredBot::model_sha256() << '"';
+    }
   }
   out << '}';
 }
@@ -91,9 +98,29 @@ void write_bot_search(std::ostream &out,
   write_point(out, search.from);
   out << ",\"to\":";
   write_point(out, search.chosen_move.to);
-  out << "},\"requestedIterations\":" << search.requested_iterations
+  out << "},\"decisionTimeNs\":" << search.decision_time_ns;
+  if (search.alpha_beta_stats.has_value()) {
+    const AlphaBetaSearchStats &stats = *search.alpha_beta_stats;
+    out << ",\"searchType\":\"alphaBeta\""
+        << ",\"requestedDepth\":" << search.requested_turn_depth
+        << ",\"completedDepth\":" << stats.completed_turn_depth
+        << ",\"attemptedDepth\":" << stats.attempted_turn_depth
+        << ",\"nodes\":" << stats.nodes
+        << ",\"leafEvaluations\":" << stats.leaf_evaluations
+        << ",\"terminalNodes\":" << stats.terminal_nodes
+        << ",\"cutoffs\":" << stats.cutoffs
+        << ",\"transpositionProbes\":" << stats.transposition_probes
+        << ",\"transpositionHits\":" << stats.transposition_hits
+        << ",\"maxPhysicalPly\":" << stats.max_physical_ply
+        << ",\"rootScore\":" << stats.root_score
+        << ",\"rootScoreValid\":"
+        << (stats.completed_turn_depth > 0 ? "true" : "false")
+        << ",\"budgetExhausted\":"
+        << (stats.budget_exhausted ? "true" : "false") << '}';
+    return;
+  }
+  out << ",\"requestedIterations\":" << search.requested_iterations
       << ",\"completedIterations\":" << search.stats.iterations
-      << ",\"decisionTimeNs\":" << search.decision_time_ns
       << ",\"nodes\":" << search.stats.nodes
       << ",\"simulatedPlies\":" << search.stats.simulated_plies
       << ",\"totalRootVisits\":" << search.stats.total_root_visits
@@ -333,6 +360,11 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
   if (const auto *mcts = dynamic_cast<const MctsBot *>(bot_.get())) {
     search_stats = mcts->last_search_stats();
   }
+  std::optional<AlphaBetaSearchStats> alpha_beta_stats;
+  if (const auto *jacek =
+          dynamic_cast<const JacekInspiredBot *>(bot_.get())) {
+    alpha_beta_stats = jacek->last_search_stats();
+  }
   const PlayedMove played = match_.play(chosen);
   if (search_stats.has_value()) {
     bot_searches_.push_back(WebBotSearchDiagnostic{
@@ -343,6 +375,18 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
         bot_config_.mcts_iterations,
         elapsed_nanoseconds(start, end),
         *search_stats,
+    });
+  } else if (alpha_beta_stats.has_value()) {
+    bot_searches_.push_back(WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        0,
+        elapsed_nanoseconds(start, end),
+        SearchStats{},
+        bot_config_.alpha_beta_depth,
+        *alpha_beta_stats,
     });
   }
   ++revision_;

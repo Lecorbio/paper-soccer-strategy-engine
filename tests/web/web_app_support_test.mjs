@@ -62,6 +62,42 @@ test("human-match filenames describe the bot, lossless seed, and budget", () => 
     "papersoccer-human-match-AlphaBetaBot-seed-23-" +
     "handoff-depth-6.json",
   );
+  assert.equal(
+    support.humanMatchFilename({
+      kind: "JacekInspiredBot",
+      seed: "29",
+      depth: 4,
+    }),
+    "papersoccer-human-match-JacekInspiredBot-seed-29-" +
+    "handoff-depth-4.json",
+  );
+});
+
+test("alpha-beta root scores name their Player 1 perspective only when valid", () => {
+  assert.equal(
+    support.alphaBetaRootScoreText({
+      completedDepth: 4,
+      rootScore: -1234,
+      rootScoreValid: true,
+    }),
+    "Player 1 score -1,234",
+  );
+  assert.equal(
+    support.alphaBetaRootScoreText({
+      completedDepth: 0,
+      rootScore: 0,
+      rootScoreValid: false,
+    }),
+    "No completed Player 1 score",
+  );
+  assert.equal(
+    support.alphaBetaRootScoreText({
+      completedDepth: 0,
+      rootScore: 99,
+      rootScoreValid: true,
+    }),
+    "No completed Player 1 score",
+  );
 });
 
 test("successful games lock every configuration control", () => {
@@ -76,7 +112,7 @@ test("successful games lock every configuration control", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: false,
     usesMcts: true,
-    usesAlphaBeta: false,
+    usesDepth: false,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -105,7 +141,7 @@ test("changing settings unlocks controls while retaining export access", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: false,
     usesMcts: true,
-    usesAlphaBeta: false,
+    usesDepth: false,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -122,14 +158,14 @@ test("changing settings unlocks controls while retaining export access", () => {
   assert.equal(elements.exportButton.hidden, false);
 });
 
-test("AlphaBeta settings enable only the possession-handoff depth control", () => {
+test("adversarial-search settings enable only the possession-handoff depth control", () => {
   const elements = controls();
   const state = support.liveGameControlState({
     hasGame: false,
     movesEnabled: false,
     isTerminal: false,
     usesMcts: false,
-    usesAlphaBeta: true,
+    usesDepth: true,
   });
 
   support.syncConfigurationControls(elements, state);
@@ -151,7 +187,7 @@ test("terminal games unlock controls and offer a new game", () => {
     movesEnabled: game.movesEnabled,
     isTerminal: true,
     usesMcts: true,
-    usesAlphaBeta: false,
+    usesDepth: false,
   });
 
   support.syncConfigurationControls(elements, state);

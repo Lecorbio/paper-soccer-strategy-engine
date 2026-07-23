@@ -1,1 +1,3 @@
 web/papersoccer-wasm.js linguist-generated=true
+src/bots/jacek_neural_model.hpp linguist-generated=true
+models/jacek_article_value_model.json linguist-generated=true

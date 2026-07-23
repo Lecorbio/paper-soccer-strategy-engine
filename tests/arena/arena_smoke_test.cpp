@@ -170,6 +170,11 @@ void positions_report_measures_both_bots_on_shared_positions() {
                    "position generation seeds should be represented losslessly");
   require_contains(json, "\"median_simulated_plies_per_second\"",
                    "position report should summarize rollout throughput");
+  require_contains(json, "\"move_comparison\":{\"positions\":2,"
+                         "\"agreements\":",
+                   "position report should count candidate/reference agreements");
+  require_contains(json, "\"changes\":",
+                   "position report should count candidate/reference move changes");
 }
 
 void alpha_beta_is_configured_measured_and_summarized() {
@@ -202,8 +207,53 @@ void alpha_beta_is_configured_measured_and_summarized() {
   require_contains(json, "\"alpha_beta\":{\"searches\":1,"
                          "\"nodes_sum\":",
                    "alpha-beta decisions should be summarized independently");
+  require_contains(
+      json,
+      "\"completed_turn_depth_zero_searches\":0,"
+      "\"completed_turn_depth_histogram\":{\"1\":1},"
+      "\"attempted_turn_depth_histogram\":{\"1\":1}",
+      "alpha-beta summaries should count completed and attempted depths");
   require_contains(json, "\"median_nodes_per_second\":",
                    "arena timing should report comparable node throughput");
+
+  arena::PositionsConfig interrupted = config;
+  interrupted.candidate.alpha_beta_depth = 6;
+  interrupted.candidate.alpha_beta_max_nodes = 1;
+  const std::string interrupted_json = arena::run_positions_json(interrupted);
+  require_contains(
+      interrupted_json,
+      "\"completed_turn_depth_zero_searches\":1,"
+      "\"completed_turn_depth_histogram\":{\"0\":1},"
+      "\"attempted_turn_depth_histogram\":{\"1\":1}",
+      "an interrupted first iteration should be visible as completed depth zero");
+}
+
+void jacek_inspired_is_configured_measured_and_summarized() {
+  arena::PositionsConfig config;
+  config.position_count = 1;
+  config.generation_plies = 0;
+  config.candidate.kind = papersoccer::BotKind::JacekInspired;
+  config.candidate.alpha_beta_depth = 1;
+  config.candidate.alpha_beta_max_nodes = 256;
+  config.candidate.alpha_beta_transposition_table_entries = 0;
+  config.candidate.alpha_beta_max_search_plies = 7;
+  config.reference.kind = papersoccer::BotKind::Random;
+
+  const std::string json = arena::run_positions_json(config);
+  const std::string expected_config =
+      "\"candidate\":{\"kind\":\"jacek-inspired\","
+      "\"max_turn_depth\":1,\"max_nodes\":256,"
+      "\"transposition_table_entries\":0,\"max_search_plies\":7,"
+      "\"model_sha256\":\"" +
+      std::string(papersoccer::JacekInspiredBot::model_sha256()) + "\"}";
+  require_contains(
+      json, expected_config,
+      "position report should retain the Jacek-inspired search limits");
+  require_contains(json, "\"mcts\":null,\"alpha_beta\":{"
+                         "\"completed_turn_depth\":",
+                   "Jacek-inspired evaluations should expose alpha-beta diagnostics");
+  require_contains(json, "\"alpha_beta\":{\"searches\":1,\"nodes_sum\":",
+                   "Jacek-inspired decisions should contribute to search summaries");
 }
 
 void invalid_tactical_limits_and_policy_are_rejected() {
@@ -282,6 +332,7 @@ int main() {
     randomized_openings_are_shared_reproducible_and_ply_aware();
     positions_report_measures_both_bots_on_shared_positions();
     alpha_beta_is_configured_measured_and_summarized();
+    jacek_inspired_is_configured_measured_and_summarized();
     invalid_tactical_limits_and_policy_are_rejected();
     invalid_alpha_beta_settings_and_unknown_kinds_are_rejected();
     invalid_opening_length_is_rejected();

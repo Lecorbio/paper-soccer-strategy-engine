@@ -22,6 +22,8 @@ std::string human_match_cache;
 std::string bot_replay_snapshot_cache;
 std::string last_error;
 std::uint32_t next_session_id{1};
+constexpr std::uint64_t kWebJacekMaxNodes{20'000};
+constexpr std::uint32_t kWebJacekMaxTimeMs{0};
 
 bool parse_seed(std::string_view input, std::uint64_t &value) noexcept {
   if (input.empty()) {
@@ -57,6 +59,10 @@ bool parse_bot_kind(int input, ps::BotKind &kind) noexcept {
     kind = ps::BotKind::AlphaBeta;
     return true;
   }
+  if (input == 3) {
+    kind = ps::BotKind::JacekInspired;
+    return true;
+  }
   return false;
 }
 
@@ -68,16 +74,23 @@ bool parse_bot_config(const char *seed_text, int kind_value,
   }
   if (!parse_bot_kind(kind_value, config.kind)) {
     last_error =
-        "the bot kind must be 0 (RandomBot), 1 (MctsBot), or 2 (AlphaBetaBot)";
+        "the bot kind must be 0 (RandomBot), 1 (MctsBot), "
+        "2 (AlphaBetaBot), or 3 (JacekInspiredBot)";
     return false;
   }
-  if (config.kind == ps::BotKind::AlphaBeta) {
+  if (config.kind == ps::BotKind::AlphaBeta ||
+      config.kind == ps::BotKind::JacekInspired) {
     if (search_setting == 0 ||
         search_setting > ps::AlphaBetaConfig::maximum_turn_depth) {
-      last_error = "AlphaBetaBot depth must be between 1 and 64";
+      last_error = std::string(ps::bot_kind_name(config.kind)) +
+                   " depth must be between 1 and 64";
       return false;
     }
     config.alpha_beta_depth = search_setting;
+    if (config.kind == ps::BotKind::JacekInspired) {
+      config.alpha_beta_max_nodes = kWebJacekMaxNodes;
+      config.alpha_beta_max_time_ms = kWebJacekMaxTimeMs;
+    }
   } else {
     if (search_setting == 0) {
       last_error = "new simulations per bot move must be greater than zero";

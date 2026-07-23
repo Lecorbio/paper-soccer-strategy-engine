@@ -4,6 +4,8 @@ import test from "node:test";
 
 const arena = process.env.PAPERSOCCER_ARENA;
 assert.ok(arena, "PAPERSOCCER_ARENA must name the arena executable");
+const JACEK_MODEL_SHA256 =
+  "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084";
 
 function runJson(arguments_) {
   return JSON.parse(execFileSync(arena, arguments_, { encoding: "utf8" }));
@@ -153,6 +155,14 @@ test("positions mode evaluates both bots on parseable shared positions", () => {
     ["candidate", "reference"],
   );
   assert.equal(report.summary.illegal_moves, 0);
+  const agreements = report.positions.filter(({ evaluations }) =>
+    evaluations[0].move.x === evaluations[1].move.x &&
+    evaluations[0].move.y === evaluations[1].move.y).length;
+  assert.deepEqual(report.summary.move_comparison, {
+    positions: 2,
+    agreements,
+    changes: 2 - agreements,
+  });
 });
 
 test("alpha-beta arena settings reach the bot and its diagnostics", () => {
@@ -191,10 +201,76 @@ test("alpha-beta arena settings reach the bot and its diagnostics", () => {
     candidate.alpha_beta.nodes);
   assert.equal(report.summary.candidate.alpha_beta.physical_ply_cutoffs_sum,
     candidate.alpha_beta.physical_ply_cutoffs);
+  const completedHistogram =
+    report.summary.candidate.alpha_beta.completed_turn_depth_histogram;
+  const attemptedHistogram =
+    report.summary.candidate.alpha_beta.attempted_turn_depth_histogram;
+  assert.equal(Object.values(completedHistogram)
+    .reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(Object.values(attemptedHistogram)
+    .reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(
+    report.summary.candidate.alpha_beta.completed_turn_depth_zero_searches,
+    completedHistogram["0"] ?? 0,
+  );
+  assert.equal(completedHistogram[String(candidate.alpha_beta.completed_turn_depth)], 1);
+  assert.equal(attemptedHistogram[String(candidate.alpha_beta.attempted_turn_depth)], 1);
   assert.equal(report.summary.candidate.mcts.searches, 0);
   assert.equal(report.summary.reference.alpha_beta.searches, 0);
   assert.equal(typeof report.summary.candidate.timing.median_nodes_per_second,
     "number");
+
+  const interrupted = runJson([
+    "positions",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "alpha-beta",
+    "--candidate-alpha-beta-depth", "6",
+    "--candidate-alpha-beta-max-nodes", "1",
+    "--candidate-alpha-beta-table-entries", "0",
+    "--reference-kind", "random",
+  ]);
+  assert.equal(
+    interrupted.summary.candidate.alpha_beta.completed_turn_depth_zero_searches,
+    1,
+  );
+  assert.deepEqual(
+    interrupted.summary.candidate.alpha_beta.completed_turn_depth_histogram,
+    { 0: 1 },
+  );
+  assert.deepEqual(
+    interrupted.summary.candidate.alpha_beta.attempted_turn_depth_histogram,
+    { 1: 1 },
+  );
+});
+
+test("Jacek-inspired arena settings reach the neural evaluator and diagnostics", () => {
+  const report = runJson([
+    "positions",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "jacek-inspired",
+    "--candidate-alpha-beta-depth", "1",
+    "--candidate-alpha-beta-max-nodes", "256",
+    "--candidate-alpha-beta-table-entries", "0",
+    "--candidate-alpha-beta-max-search-plies", "7",
+    "--reference-kind", "random",
+  ]);
+
+  assert.equal(report.configuration.candidate.model_sha256, JACEK_MODEL_SHA256);
+  assert.deepEqual(report.configuration.candidate, {
+    kind: "jacek-inspired",
+    max_turn_depth: 1,
+    max_nodes: 256,
+    transposition_table_entries: 0,
+    max_search_plies: 7,
+    model_sha256: JACEK_MODEL_SHA256,
+  });
+  const candidate = report.positions[0].evaluations[0];
+  assert.equal(candidate.mcts, null);
+  assert.ok(candidate.alpha_beta.nodes > 0);
+  assert.ok(candidate.alpha_beta.nodes <= 256);
+  assert.equal(report.summary.candidate.alpha_beta.searches, 1);
 });
 
 test("mode-specific options are rejected outside their mode", () => {
@@ -303,5 +379,5 @@ test("invalid alpha-beta arena settings are rejected", () => {
   ], { encoding: "utf8" });
   assert.notEqual(unknownKind.status, 0);
   assert.match(unknownKind.stderr,
-    /requires random, mcts, or alpha-beta/);
+    /requires random, mcts, alpha-beta, or jacek-inspired/);
 });

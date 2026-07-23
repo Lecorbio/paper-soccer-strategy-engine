@@ -16,6 +16,7 @@
     Random: "random",
     Mcts: "mcts",
     AlphaBeta: "alphaBeta",
+    JacekInspired: "jacekInspired",
   });
 
   const DEFAULT_BOT_ITERATIONS = 2000;
@@ -37,7 +38,20 @@
     if (kind === BotKind.AlphaBeta) {
       return 2;
     }
+    if (kind === BotKind.JacekInspired) {
+      return 3;
+    }
     throw new Error("Unsupported bot kind: " + String(kind));
+  }
+
+  function isDepthBot(kind) {
+    return kind === BotKind.AlphaBeta || kind === BotKind.JacekInspired;
+  }
+
+  function depthBotName(kind) {
+    return kind === BotKind.JacekInspired
+      ? "JacekInspiredBot"
+      : "AlphaBetaBot";
   }
 
   function unsignedInteger(value, label, allowZero, maximum = MAX_UINT32) {
@@ -57,10 +71,10 @@
     }
 
     const kindValue = botKindValue(config.kind);
-    const searchSetting = config.kind === BotKind.AlphaBeta
+    const searchSetting = isDepthBot(config.kind)
       ? unsignedInteger(
         config.depth ?? DEFAULT_ALPHA_BETA_DEPTH,
-        label + " AlphaBetaBot depth",
+        label + " " + depthBotName(config.kind) + " depth",
         false,
         MAX_ALPHA_BETA_DEPTH,
       )
@@ -143,10 +157,10 @@
       ) {
         const humanValue = humanPlayer === Player.Two ? 2 : 1;
         const kindValue = botKindValue(botKind);
-        const settingValue = botKind === BotKind.AlphaBeta
+        const settingValue = isDepthBot(botKind)
           ? unsignedInteger(
             searchSetting ?? DEFAULT_ALPHA_BETA_DEPTH,
-            "AlphaBetaBot depth",
+            depthBotName(botKind) + " depth",
             false,
             MAX_ALPHA_BETA_DEPTH,
           )

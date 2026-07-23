@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -144,6 +145,9 @@ struct MctsSummary {
 };
 
 struct AlphaBetaSummary {
+  static constexpr std::size_t depth_bucket_count =
+      static_cast<std::size_t>(AlphaBetaConfig::maximum_turn_depth) + 1U;
+
   std::size_t searches{};
   std::uint64_t nodes_sum{};
   std::uint64_t leaf_evaluations_sum{};
@@ -158,6 +162,10 @@ struct AlphaBetaSummary {
   std::uint32_t max_attempted_turn_depth{};
   std::uint32_t max_physical_ply{};
   std::size_t budget_exhausted_searches{};
+  std::array<std::size_t, depth_bucket_count>
+      completed_turn_depth_histogram{};
+  std::array<std::size_t, depth_bucket_count>
+      attempted_turn_depth_histogram{};
 };
 
 struct BootstrapInterval {

@@ -7,6 +7,8 @@ await import("../../web/game-engine.js");
 
 const { BotKind, Player, Status, ready } = globalThis.PaperSoccer;
 const gameEngine = await ready;
+const JACEK_MODEL_SHA256 =
+  "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084";
 
 function botConfig(kind, seed, iterations = 8) {
   return { kind, seed, iterations };
@@ -30,6 +32,7 @@ test("browser client exposes the compiled C++ session instead of JavaScript rule
   assert.equal(BotKind.Random, "random");
   assert.equal(BotKind.Mcts, "mcts");
   assert.equal(BotKind.AlphaBeta, "alphaBeta");
+  assert.equal(BotKind.JacekInspired, "jacekInspired");
   assert.equal(typeof gameEngine.startGame, "function");
   assert.equal(typeof gameEngine.playHuman, "function");
   assert.equal(typeof gameEngine.playBot, "function");
@@ -323,6 +326,59 @@ test("live AlphaBetaBot games default to depth 6", () => {
   assert.equal(snapshot.replay.players.two.depth, 6);
 });
 
+test("live games expose and run JacekInspiredBot with neural-search diagnostics", () => {
+  const initial = gameEngine.startGame(
+    "31",
+    Player.Two,
+    BotKind.JacekInspired,
+    2,
+  );
+
+  const configuration = initial.diagnostics.botConfiguration;
+  assert.equal(configuration.kind, "JacekInspiredBot");
+  assert.equal(configuration.seed, "31");
+  assert.equal(configuration.depth, 2);
+  assert.equal(configuration.maxNodes, 20000);
+  assert.equal(configuration.maxTimeMs, 0);
+  assert.equal(configuration.modelSha256, JACEK_MODEL_SHA256);
+  assert.deepEqual(initial.replay.players.one, configuration);
+
+  const moved = gameEngine.playBot(initial.sessionId, initial.revision);
+  assert.equal(moved.revision, 1);
+  assert.equal(moved.replay.moves.length, 1);
+  const search = moved.diagnostics.lastBotSearch;
+  assert.equal(search.searchType, "alphaBeta");
+  assert.equal(search.ply, 1);
+  assert.equal(search.player, Player.One);
+  assert.equal(search.requestedDepth, 2);
+  assert.ok(search.completedDepth >= 1 && search.completedDepth <= 2);
+  assert.ok(search.attemptedDepth >= search.completedDepth);
+  assert.ok(search.nodes > 0 && search.nodes <= configuration.maxNodes);
+  assert.ok(search.leafEvaluations > 0);
+  assert.equal(typeof search.decisionTimeNs, "number");
+  assert.equal(typeof search.terminalNodes, "number");
+  assert.equal(typeof search.cutoffs, "number");
+  assert.equal(typeof search.transpositionProbes, "number");
+  assert.equal(typeof search.transpositionHits, "number");
+  assert.equal(typeof search.maxPhysicalPly, "number");
+  assert.equal(typeof search.rootScore, "number");
+  assert.equal(search.rootScoreValid, true);
+  assert.equal(typeof search.budgetExhausted, "boolean");
+  assert.deepEqual(moved.diagnostics.botSearches, [search]);
+
+  const repeated = gameEngine.startGame(
+    "31",
+    Player.Two,
+    BotKind.JacekInspired,
+    2,
+  );
+  const repeatedMove = gameEngine.playBot(
+    repeated.sessionId,
+    repeated.revision,
+  );
+  assert.deepEqual(moved.replay, repeatedMove.replay);
+});
+
 test("invalid seeds are rejected by C++ without replacing the live game", () => {
   const initial = gameEngine.startGame("23", Player.One);
 
@@ -419,6 +475,22 @@ test("bot replay sessions preserve AlphaBetaBot depth", () => {
     seed: "101",
     depth: 2,
   });
+  assert.equal(snapshot.done, true);
+});
+
+test("bot replay sessions preserve JacekInspiredBot model and limits", () => {
+  const snapshot = gameEngine.startBotReplay(
+    { kind: BotKind.JacekInspired, seed: "107", depth: 3 },
+    botConfig(BotKind.Random, "109"),
+    0,
+  );
+
+  assert.equal(snapshot.replay.players.one.kind, "JacekInspiredBot");
+  assert.equal(snapshot.replay.players.one.seed, "107");
+  assert.equal(snapshot.replay.players.one.depth, 3);
+  assert.equal(snapshot.replay.players.one.maxNodes, 20000);
+  assert.equal(snapshot.replay.players.one.maxTimeMs, 0);
+  assert.equal(snapshot.replay.players.one.modelSha256, JACEK_MODEL_SHA256);
   assert.equal(snapshot.done, true);
 });
 
@@ -526,6 +598,15 @@ test("invalid replay configurations do not replace either active session", () =>
   assert.throws(
     () => gameEngine.startGame("101", Player.One, BotKind.AlphaBeta, 65),
     /AlphaBetaBot depth must be an integer between 1 and 64/,
+  );
+  assert.throws(
+    () => gameEngine.startGame(
+      "103",
+      Player.One,
+      BotKind.JacekInspired,
+      65,
+    ),
+    /JacekInspiredBot depth must be an integer between 1 and 64/,
   );
 
   assert.deepEqual(gameEngine.snapshot(), live);

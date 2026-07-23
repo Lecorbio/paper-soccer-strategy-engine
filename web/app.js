@@ -270,7 +270,14 @@
     if (kind === BotKind.AlphaBeta) {
       return "AlphaBetaBot";
     }
+    if (kind === BotKind.JacekInspired) {
+      return "JacekInspiredBot";
+    }
     return "UnknownBot";
+  }
+
+  function isDepthBot(kind) {
+    return kind === BotKind.AlphaBeta || kind === BotKind.JacekInspired;
   }
 
   function activeBotName() {
@@ -302,14 +309,15 @@
     return iterations;
   }
 
-  function parseDepth(input) {
+  function parseDepth(input, kind) {
+    const name = botDisplayName(kind);
     const value = input.trim();
     if (!/^[1-9][0-9]*$/.test(value)) {
-      throw new Error("Enter a positive whole number for AlphaBetaBot depth.");
+      throw new Error("Enter a positive whole number for " + name + " depth.");
     }
     const depth = Number(value);
     if (!Number.isSafeInteger(depth) || depth > MAX_ALPHA_BETA_DEPTH) {
-      throw new Error("AlphaBetaBot depth must be at most " +
+      throw new Error(name + " depth must be at most " +
         MAX_ALPHA_BETA_DEPTH + ".");
     }
     return depth;
@@ -317,7 +325,7 @@
 
   function selectedBotKind(value) {
     if (value === BotKind.Random || value === BotKind.Mcts ||
-        value === BotKind.AlphaBeta) {
+        value === BotKind.AlphaBeta || value === BotKind.JacekInspired) {
       return value;
     }
     throw new Error("Unsupported bot kind: " + String(value));
@@ -344,9 +352,9 @@
     }
 
     let depth = DEFAULT_ALPHA_BETA_DEPTH;
-    if (kind === BotKind.AlphaBeta) {
+    if (isDepthBot(kind)) {
       try {
-        depth = parseDepth(depthInput.value);
+        depth = parseDepth(depthInput.value, kind);
       } catch (error) {
         error.input = depthInput;
         throw error;
@@ -362,7 +370,7 @@
   }
 
   function botSearchSetting(config) {
-    return config.kind === BotKind.AlphaBeta ? config.depth : config.iterations;
+    return isDepthBot(config.kind) ? config.depth : config.iterations;
   }
 
   function clearBotTimer() {
@@ -703,9 +711,9 @@
     replayTwoIterationsInput.disabled = isGeneratingReplay ||
       replayTwoBotSelect.value !== BotKind.Mcts;
     replayOneDepthInput.disabled = isGeneratingReplay ||
-      replayOneBotSelect.value !== BotKind.AlphaBeta;
+      !isDepthBot(replayOneBotSelect.value);
     replayTwoDepthInput.disabled = isGeneratingReplay ||
-      replayTwoBotSelect.value !== BotKind.AlphaBeta;
+      !isDepthBot(replayTwoBotSelect.value);
     generateReplayButton.textContent = isGeneratingReplay
       ? "Generating…"
       : "Generate";
@@ -899,20 +907,47 @@
     }
 
     const usesMcts = configuration.kind === "MctsBot";
-    const usesAlphaBeta = configuration.kind === "AlphaBetaBot";
+    const usesDepth = configuration.kind === "AlphaBetaBot" ||
+      configuration.kind === "JacekInspiredBot";
     activeBotConfiguration.textContent = configuration.kind + " · seed " +
       configuration.seed + (usesMcts
         ? " · " + formatCount(configuration.iterations) +
           " new simulations per bot move"
-        : usesAlphaBeta
+        : usesDepth
           ? " · depth " + formatCount(configuration.depth) +
             " possession handoffs"
           : "") + " · You: " + playerName(liveSnapshot.humanPlayer);
 
     const search = diagnostics.lastBotSearch;
     latestSearch.hidden = !search;
-    searchPending.hidden = !usesMcts || Boolean(search);
+    searchPending.hidden = (!usesMcts &&
+      configuration.kind !== "JacekInspiredBot") || Boolean(search);
     if (!search) {
+      return;
+    }
+
+    if (search.searchType === "alphaBeta") {
+      searchVisits.textContent = "Latest completed · depth " +
+        formatCount(search.completedDepth) + " of " +
+        formatCount(search.requestedDepth) + " · " +
+        support.alphaBetaRootScoreText(search);
+      searchShape.textContent = formatCount(search.nodes) + " nodes · " +
+        formatCount(search.leafEvaluations) + " neural evaluations · " +
+        formatDecisionTime(search.decisionTimeNs);
+      const indicators = [];
+      if (search.budgetExhausted) {
+        indicators.push("Safety budget reached at attempted depth " +
+          formatCount(search.attemptedDepth));
+      }
+      if (search.transpositionProbes > 0) {
+        indicators.push("TT hits " + formatCount(search.transpositionHits) +
+          "/" + formatCount(search.transpositionProbes));
+      }
+      searchIndicators.textContent = indicators.join(" · ");
+      searchDetails.textContent = "Move " + formatCount(search.ply) + " · " +
+        formatCount(search.terminalNodes) + " terminal nodes · " +
+        formatCount(search.cutoffs) + " cutoffs · max physical ply " +
+        formatCount(search.maxPhysicalPly);
       return;
     }
 
@@ -1086,7 +1121,7 @@
       movesEnabled: liveGame.movesEnabled,
       isTerminal: isLiveTerminal(),
       usesMcts: botSelect.value === BotKind.Mcts,
-      usesAlphaBeta: botSelect.value === BotKind.AlphaBeta,
+      usesDepth: isDepthBot(botSelect.value),
     });
     support.syncConfigurationControls({
       botSelect: botSelect,
@@ -1109,27 +1144,25 @@
 
   function syncBotSetupFields() {
     const playUsesMcts = botSelect.value === BotKind.Mcts;
-    const playUsesAlphaBeta = botSelect.value === BotKind.AlphaBeta;
+    const playUsesDepth = isDepthBot(botSelect.value);
     botIterationsField.hidden = !playUsesMcts;
     botIterationsInput.disabled = !playUsesMcts;
-    botDepthField.hidden = !playUsesAlphaBeta;
-    botDepthInput.disabled = !playUsesAlphaBeta;
+    botDepthField.hidden = !playUsesDepth;
+    botDepthInput.disabled = !playUsesDepth;
     playSetupEyebrow.textContent = "Play vs " + botDisplayName(botSelect.value);
 
     const playerOneUsesMcts = replayOneBotSelect.value === BotKind.Mcts;
     const playerTwoUsesMcts = replayTwoBotSelect.value === BotKind.Mcts;
-    const playerOneUsesAlphaBeta =
-      replayOneBotSelect.value === BotKind.AlphaBeta;
-    const playerTwoUsesAlphaBeta =
-      replayTwoBotSelect.value === BotKind.AlphaBeta;
+    const playerOneUsesDepth = isDepthBot(replayOneBotSelect.value);
+    const playerTwoUsesDepth = isDepthBot(replayTwoBotSelect.value);
     replayOneIterationsField.hidden = !playerOneUsesMcts;
     replayTwoIterationsField.hidden = !playerTwoUsesMcts;
     replayOneIterationsInput.disabled = isGeneratingReplay || !playerOneUsesMcts;
     replayTwoIterationsInput.disabled = isGeneratingReplay || !playerTwoUsesMcts;
-    replayOneDepthField.hidden = !playerOneUsesAlphaBeta;
-    replayTwoDepthField.hidden = !playerTwoUsesAlphaBeta;
-    replayOneDepthInput.disabled = isGeneratingReplay || !playerOneUsesAlphaBeta;
-    replayTwoDepthInput.disabled = isGeneratingReplay || !playerTwoUsesAlphaBeta;
+    replayOneDepthField.hidden = !playerOneUsesDepth;
+    replayTwoDepthField.hidden = !playerTwoUsesDepth;
+    replayOneDepthInput.disabled = isGeneratingReplay || !playerOneUsesDepth;
+    replayTwoDepthInput.disabled = isGeneratingReplay || !playerTwoUsesDepth;
   }
 
   function updateReplayControls() {

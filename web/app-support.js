@@ -21,7 +21,7 @@
       hasGame: hasGame,
       locked: locked,
       usesMcts: Boolean(options.usesMcts),
-      usesAlphaBeta: Boolean(options.usesAlphaBeta),
+      usesDepth: Boolean(options.usesDepth),
       primaryLabel: hasGame ? "Start new game" : "Start",
     };
   }
@@ -32,7 +32,7 @@
     elements.seedInput.disabled = state.locked;
     elements.budgetInput.disabled = state.locked || !state.usesMcts;
     if (elements.depthInput) {
-      elements.depthInput.disabled = state.locked || !state.usesAlphaBeta;
+      elements.depthInput.disabled = state.locked || !state.usesDepth;
     }
     elements.startButton.hidden = state.locked;
     elements.startButton.textContent = state.primaryLabel;
@@ -126,12 +126,23 @@
     if (configuration?.kind === "MctsBot" &&
         Number.isInteger(configuration.iterations)) {
       suffix = String(configuration.iterations) + "-new-simulations-per-move";
-    } else if (configuration?.kind === "AlphaBetaBot" &&
+    } else if ((configuration?.kind === "AlphaBetaBot" ||
+                configuration?.kind === "JacekInspiredBot") &&
                Number.isInteger(configuration.depth)) {
       suffix = "handoff-depth-" + String(configuration.depth);
     }
     return "papersoccer-human-match-" + kind + "-seed-" + seed +
       "-" + suffix + ".json";
+  }
+
+  function alphaBetaRootScoreText(search) {
+    if (search?.rootScoreValid !== true ||
+        Number(search.completedDepth) <= 0 ||
+        !Number.isFinite(Number(search.rootScore))) {
+      return "No completed Player 1 score";
+    }
+    return "Player 1 score " +
+      Number(search.rootScore).toLocaleString("en-US");
   }
 
   function safeFilenamePart(value) {
@@ -141,6 +152,7 @@
 
   root.PaperSoccerWebSupport = Object.freeze({
     HUMAN_MATCH_SCHEMA,
+    alphaBetaRootScoreText,
     createLiveGameLifecycle,
     createStaleSafeTimer,
     humanMatchFilename,

@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "alpha_beta_internal.hpp"
+#include "jacek_neural_internal.hpp"
 #include "mcts_internal.hpp"
 #include "papersoccer/geometry.hpp"
 #include "papersoccer/rules.hpp"
@@ -142,14 +144,19 @@ int player_sign(Player player) noexcept {
 
 class AlphaBetaSearch {
  public:
-  AlphaBetaSearch(const GameState &state, const AlphaBetaConfig &config)
+  AlphaBetaSearch(const GameState &state, const AlphaBetaConfig &config,
+                  detail::AlphaBetaLeafEvaluator evaluator)
       : config_(config),
+        evaluator_(evaluator),
         deadline_(search_deadline(config)),
         topology_(std::make_shared<detail::SearchTopology>(state.config)),
         position_(topology_, state), table_(config.transposition_table_entries),
         distances_(topology_->vertex_count(), -1),
         queue_(topology_->vertex_count()) {
     validate_config(config_);
+    if (evaluator_ == detail::AlphaBetaLeafEvaluator::JacekNeural) {
+      jacek_evaluator_.emplace(topology_);
+    }
   }
 
   Move run() {
@@ -196,10 +203,13 @@ class AlphaBetaSearch {
 
  private:
   AlphaBetaConfig config_{};
+  detail::AlphaBetaLeafEvaluator evaluator_{
+      detail::AlphaBetaLeafEvaluator::Handcrafted};
   std::optional<SearchClock::time_point> deadline_{};
   std::shared_ptr<const detail::SearchTopology> topology_{};
   detail::SearchPosition position_;
   TranspositionTable table_;
+  std::optional<detail::JacekNeuralEvaluator> jacek_evaluator_{};
   AlphaBetaSearchStats stats_{};
   std::vector<int> distances_{};
   std::vector<detail::SearchTopology::VertexIndex> queue_{};
@@ -258,8 +268,7 @@ class AlphaBetaSearch {
     return static_cast<int>(topology_->vertex_count()) + 8;
   }
 
-  int evaluate() {
-    ++stats_.leaf_evaluations;
+  int evaluate_handcrafted() {
     const Player mover = position_.to_move();
     const int sign = player_sign(mover);
     const Point ball = position_.ball();
@@ -299,6 +308,17 @@ class AlphaBetaSearch {
       score += sign * kDirectGoalWeight;
     }
     return std::clamp(score, -kMaximumEvaluation, kMaximumEvaluation);
+  }
+
+  int evaluate() {
+    ++stats_.leaf_evaluations;
+    if (evaluator_ == detail::AlphaBetaLeafEvaluator::JacekNeural) {
+      if (!jacek_evaluator_.has_value()) {
+        throw std::logic_error("Jacek evaluator was not initialized");
+      }
+      return jacek_evaluator_->evaluate(position_);
+    }
+    return evaluate_handcrafted();
   }
 
   std::vector<OrderedMove> ordered_moves(
@@ -569,17 +589,34 @@ class AlphaBetaSearch {
 
 }  // namespace
 
+namespace detail {
+
+void validate_alpha_beta_config(const AlphaBetaConfig &config) {
+  validate_config(config);
+}
+
+Move run_alpha_beta_search(const GameState &state,
+                           const AlphaBetaConfig &config,
+                           AlphaBetaLeafEvaluator evaluator,
+                           AlphaBetaSearchStats &stats) {
+  AlphaBetaSearch search(state, config, evaluator);
+  const Move move = search.run();
+  stats = search.stats();
+  return move;
+}
+
+}  // namespace detail
+
 AlphaBetaBot::AlphaBetaBot(AlphaBetaConfig config) : config_(config) {
-  validate_config(config_);
+  detail::validate_alpha_beta_config(config_);
 }
 
 std::string_view AlphaBetaBot::name() const noexcept { return "AlphaBetaBot"; }
 
 Move AlphaBetaBot::choose_move(const GameState &state) {
-  AlphaBetaSearch search(state, config_);
-  const Move move = search.run();
-  last_search_stats_ = search.stats();
-  return move;
+  return detail::run_alpha_beta_search(
+      state, config_, detail::AlphaBetaLeafEvaluator::Handcrafted,
+      last_search_stats_);
 }
 
 const AlphaBetaConfig &AlphaBetaBot::config() const noexcept { return config_; }

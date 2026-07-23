@@ -46,6 +46,8 @@ struct WebBotSearchDiagnostic {
   std::uint32_t requested_iterations{};
   std::uint64_t decision_time_ns{};
   SearchStats stats{};
+  std::uint32_t requested_turn_depth{};
+  std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
 };
 
 class WebGameSession {

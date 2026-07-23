@@ -41,9 +41,9 @@ void print_usage(std::ostream &out) {
       "Common options:\n"
       "  --seed N                         Base seed (default: 828927513140)\n"
       "  --width N --height N             Board dimensions (default: 8x10)\n"
-      "  --candidate-kind random|mcts|alpha-beta\n"
+      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired\n"
       "                                     Candidate bot (default: mcts)\n"
-      "  --reference-kind random|mcts|alpha-beta\n"
+      "  --reference-kind random|mcts|alpha-beta|jacek-inspired\n"
       "                                     Reference bot (default: mcts)\n"
       "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
@@ -149,8 +149,12 @@ ps::BotKind parse_kind(std::string_view value, std::string_view option) {
   if (value == "alpha-beta") {
     return ps::BotKind::AlphaBeta;
   }
+  if (value == "jacek-inspired") {
+    return ps::BotKind::JacekInspired;
+  }
   throw std::invalid_argument(std::string(option) +
-                              " requires random, mcts, or alpha-beta");
+                              " requires random, mcts, alpha-beta, or "
+                              "jacek-inspired");
 }
 
 ps::MctsRolloutPolicy parse_policy(std::string_view value,

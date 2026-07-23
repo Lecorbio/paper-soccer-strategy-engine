@@ -121,7 +121,9 @@ void configured_bot_kind_is_used_and_serialized() {
 
   require(ps::bot_kind_name(ps::BotKind::Random) == "RandomBot" &&
               ps::bot_kind_name(ps::BotKind::Mcts) == "MctsBot" &&
-              ps::bot_kind_name(ps::BotKind::AlphaBeta) == "AlphaBetaBot",
+              ps::bot_kind_name(ps::BotKind::AlphaBeta) == "AlphaBetaBot" &&
+              ps::bot_kind_name(ps::BotKind::JacekInspired) ==
+                  "JacekInspiredBot",
           "Bot kinds should expose stable replay names.");
   require(session.bot_config().kind == ps::BotKind::Mcts &&
               session.bot_config().seed == config.seed &&
@@ -212,6 +214,73 @@ void configured_alpha_beta_bot_is_used_and_serialized() {
           "The live web session should move with the configured AlphaBetaBot.");
   require(session.bot_searches().empty(),
           "Alpha-beta decisions should not be mislabeled as MCTS diagnostics.");
+}
+
+void configured_jacek_bot_is_used_serialized_and_measured() {
+  ps::BotConfig config;
+  config.kind = ps::BotKind::JacekInspired;
+  config.seed = 59;
+  config.alpha_beta_depth = 2;
+  config.alpha_beta_max_nodes = 20'000;
+
+  ps::WebGameSession session(ps::Player::Two, config, ps::RulesConfig{}, 53);
+  std::unique_ptr<ps::Bot> control = ps::make_bot(config);
+  const ps::Move expected = control->choose_move(session.match().state());
+
+  const std::string before = session.snapshot_json();
+  require(before.find("\"one\":{\"kind\":\"JacekInspiredBot\","
+                      "\"seed\":\"59\",\"depth\":2,\"maxNodes\":20000,"
+                      "\"maxTimeMs\":0,\"modelSha256\":\"") !=
+              std::string::npos &&
+              before.find(std::string(ps::JacekInspiredBot::model_sha256())) !=
+                  std::string::npos,
+          "The replay should identify the independently trained model and fixed search limits.");
+
+  const ps::WebGameCommandResult result = session.play_bot(0);
+  require(result.ok() && result.move.has_value() &&
+              result.move->to == expected.to &&
+              session.bot_searches().size() == 1,
+          "The live web session should make the same legal Jacek-inspired move as the factory bot.");
+
+  const ps::WebBotSearchDiagnostic &search = session.bot_searches().front();
+  require(search.requested_turn_depth == 2 &&
+              search.alpha_beta_stats.has_value() &&
+              search.alpha_beta_stats->nodes > 0 &&
+              search.alpha_beta_stats->completed_turn_depth == 2,
+          "Jacek-inspired diagnostics should retain requested/completed depth and measured work.");
+
+  const std::string after = session.snapshot_json();
+  require(after.find("\"searchType\":\"alphaBeta\"") != std::string::npos &&
+              after.find("\"requestedDepth\":2") != std::string::npos &&
+              after.find("\"completedDepth\":2") != std::string::npos &&
+              after.find("\"leafEvaluations\":") != std::string::npos &&
+              after.find("\"rootScoreValid\":true") != std::string::npos &&
+              after.find("\"budgetExhausted\":false") != std::string::npos,
+          "The browser snapshot should expose a valid typed neural alpha-beta score.");
+}
+
+void interrupted_jacek_search_does_not_claim_a_completed_root_score() {
+  ps::BotConfig config;
+  config.kind = ps::BotKind::JacekInspired;
+  config.seed = 61;
+  config.alpha_beta_depth = 6;
+  config.alpha_beta_max_nodes = 1;
+
+  ps::WebGameSession session(ps::Player::Two, config);
+  const ps::WebGameCommandResult result = session.play_bot(0);
+
+  require(result.ok() && session.bot_searches().size() == 1 &&
+              session.bot_searches().front().alpha_beta_stats.has_value(),
+          "A node-limited Jacek-inspired decision should retain its diagnostic.");
+  const ps::AlphaBetaSearchStats &stats =
+      *session.bot_searches().front().alpha_beta_stats;
+  require(stats.completed_turn_depth == 0 && stats.budget_exhausted,
+          "The one-node fixture should interrupt its first search iteration.");
+
+  const std::string snapshot = session.snapshot_json();
+  require(snapshot.find("\"completedDepth\":0") != std::string::npos &&
+              snapshot.find("\"rootScoreValid\":false") != std::string::npos,
+          "An interrupted first iteration must mark its fallback root score invalid.");
 }
 
 void proven_root_can_complete_fewer_iterations_than_requested() {
@@ -642,6 +711,10 @@ int run_web_game_session_tests() {
        configured_bot_kind_is_used_and_serialized},
       {"configured_alpha_beta_bot_is_used_and_serialized",
        configured_alpha_beta_bot_is_used_and_serialized},
+      {"configured_jacek_bot_is_used_serialized_and_measured",
+       configured_jacek_bot_is_used_serialized_and_measured},
+      {"interrupted_jacek_search_does_not_claim_a_completed_root_score",
+       interrupted_jacek_search_does_not_claim_a_completed_root_score},
       {"proven_root_can_complete_fewer_iterations_than_requested",
        proven_root_can_complete_fewer_iterations_than_requested},
       {"rebound_bot_turns_record_separate_searches",

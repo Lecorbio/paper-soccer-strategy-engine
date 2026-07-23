@@ -4,8 +4,9 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 
 - A pure rules engine (`papersoccer_core`)
 - A terminal CLI for human and bot play (`papersoccer_cli`)
-- Seeded `RandomBot`, Monte Carlo Tree Search (`MctsBot`), and deterministic
-  alpha-beta (`AlphaBetaBot`) opponents
+- Seeded `RandomBot`, Monte Carlo Tree Search (`MctsBot`), deterministic
+  alpha-beta (`AlphaBetaBot`), and independently trained neural
+  `JacekInspiredBot` opponents
 - A native arena for paired strength matches and position throughput measurements
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
 - A static browser game powered by the same C++ engine through WebAssembly
@@ -15,6 +16,35 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 The rules engine remains the single source of truth for human play, bots, replays, and
 browser sessions. The first complete MCTS implementation is available in native builds and
 uses the existing `GameState` and rule APIs without replacing them with a separate model.
+
+## Jacek-Inspired Neural Bot
+
+`JacekInspiredBot` is a normal-demo opponent built independently from the representation in
+[Jacek Dermont's Paper Soccer article](https://www.codingame.com/playgrounds/157341/inputs-for-neural-networks-for-the-board-games/paper-soccer).
+It is not a copy of his bot: the article does not publish its trained weights, and this
+implementation does not compile, include, or load any contest submission.
+
+The bot rotates Player Two positions so the mover always attacks upward, then encodes 316 drawn
+edges plus eight one-hot true-turn-distance buckets for each of 105 vertices. A compact
+`1156 -> 32 -> 32 -> 1` value network supplies leaf values to the existing possession-aware
+alpha-beta search. The first layer runs only over active binary inputs, avoiding a dense
+1,156-input multiply for every searched leaf. The checkpoint was trained from scratch under the
+normal demo rules on mover-relative soft alpha-beta teacher scores, rather than on final winners
+alone.
+
+The standard-board and demo-rule contract is deliberate. The bot rejects custom board sizes or
+different goal/blocking rules instead of silently applying incompatible weights. Its browser
+profile uses depth 6 and a deterministic 20,000-node cap; diagnostics report
+completed and attempted depth, nodes, neural evaluations, timing, transposition hits, and
+budget exhaustion. Fixed-node arena and native API runs remain deterministic when the optional
+time limit is zero. The fixed-work browser profile avoids load-dependent move changes.
+
+The full feature definition, hashes, held-out metrics, reproduction commands, and measured demo
+gates are in [models/README.md](models/README.md). Fixed paired gates finished 12–12 against
+`AlphaBetaBot` at the same 20,000-node cap and 21–3 against Tactical `MctsBot` at 2,000
+iterations, with no illegal moves or truncations. These small, fixed-seed samples support
+including it as a distinct educational opponent; they are not a claim that the demo model
+reproduces Jacek's contest strength.
 
 ## Rules Implemented (Kurnik-style defaults)
 
@@ -367,6 +397,13 @@ and leaf counts, terminal nodes, pruning and transposition counters, physical-ho
 root scores and bounds, principal variations, and budget exhaustion. Arena timing summaries
 also include median nodes per second for either search family.
 
+Use `--candidate-kind jacek-inspired` or `--reference-kind jacek-inspired`
+with the same `--*-alpha-beta-*` search-limit flags to measure the neural evaluator on identical
+positions or paired openings. The report identifies it as a separate bot while retaining the
+shared alpha-beta diagnostics. Its configuration includes the exact model SHA-256; summaries
+include completed/attempted-depth histograms and depth-zero counts, while position reports count
+candidate/reference move agreements and changes.
+
 An explicit equal-iteration preliminary comparison can be reproduced with:
 
 ```bash
@@ -506,18 +543,29 @@ On startup, the CLI lets you choose:
 8. Seeded `RandomBot` vs `AlphaBetaBot` (choose the alpha-beta side)
 9. `MctsBot` vs `AlphaBetaBot` (choose the alpha-beta side)
 10. `AlphaBetaBot` vs `AlphaBetaBot`
+11. Human vs `JacekInspiredBot` (choose the human side)
+12. Seeded `RandomBot` vs `JacekInspiredBot` (choose the neural-bot side)
+13. `MctsBot` vs `JacekInspiredBot` (choose the neural-bot side)
+14. `AlphaBetaBot` vs `JacekInspiredBot` (choose the neural-bot side)
+15. `JacekInspiredBot` vs `JacekInspiredBot`
 
 Modes involving two different controller types ask which side uses which controller. RandomBot
 modes include a RandomBot base-seed prompt. When MCTS is selected, the CLI also asks for an MCTS
 base seed and a single iteration budget applied to every MCTS move; pressing Enter accepts the
 default of `2,000` iterations. Alpha-beta modes ask for a possession-handoff depth and node
 budget, defaulting to `6` and `100,000` respectively; alpha-beta itself uses no random seed.
+Jacek-inspired modes ask for the same two search controls and default to depth `6` and
+`20,000` nodes because each leaf runs the compact network. The bot is deterministic and its
+recorded seed is metadata only.
 Player 1 uses the relevant base seed and Player 2 uses `base_seed + 1`. After every MCTS move,
 the CLI prints new iterations, tree size, rollout plies, total and reused root visits, maximum
 depth, tactical probe work, proof/rebuild information, saturation, and the Player-1-oriented root
 value estimate. After every alpha-beta move, it prints completed/attempted depth, nodes, leaf and
 terminal counts, cutoffs, transposition hits, physical-horizon cutoffs, maximum physical ply,
 root score, principal-variation length, and whether the node budget was reached.
+Jacek-inspired moves print the same counters with a distinct neural-search label and the CLI
+prints the embedded model SHA-256 at startup. Root scores are labeled as Player-One-oriented and
+shown as unavailable when the first iteration did not complete.
 
 Rule examples above use the engine's `Point{x, y}` order. User-facing coordinates in the
 CLI and renderer are shown as `(row, column)`, which corresponds to `(y, x)`. For example,
@@ -537,18 +585,20 @@ open web/index.html
 
 The app starts in **Play vs bot** mode:
 
-1. Choose `RandomBot`, `MctsBot`, or `AlphaBetaBot` as the opponent.
+1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, or `JacekInspiredBot` as the opponent.
 2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
    move first and attack the bottom goal.
 3. Enter the opponent seed. MCTS games also expose the fixed number of new simulations per
-   bot move; alpha-beta games expose possession-handoff depth. Alpha-beta is deterministic and
-   ignores the seed when choosing moves, although the shared replay metadata still records it.
+   bot move; both alpha-beta bots expose possession-handoff depth. `AlphaBetaBot` and
+   `JacekInspiredBot` are deterministic and ignore the seed when choosing moves, although the
+   shared replay metadata still records it.
    Reusing the same settings and human moves reproduces the bot's choices.
 4. Select **Start**, then click any highlighted destination on the board. Destinations
    marked with `↻` grant another move.
 
 Once a game starts, its opponent, side, seed, and search setting are locked. The active
-configuration remains visible beside the latest MCTS search counters when MCTS is selected.
+configuration remains visible beside the latest MCTS counters or Jacek-inspired neural
+alpha-beta counters when either measured search bot is selected.
 Select **Undo move** as often as needed to remove the latest ply, whether it belongs to the
 human or the bot. Undoing a bot ply pauses at the restored position instead of immediately
 replaying it; select **Continue bot** when ready to let the bot choose again. A stateful or
@@ -637,7 +687,7 @@ grouped by responsibility:
 │   └── web_game.hpp            Versioned browser-session API
 ├── src/
 │   ├── core/                   Rules, geometry, matches, and debug rendering
-│   ├── bots/                   Random, MCTS, alpha-beta, and tactical search
+│   ├── bots/                   Random, MCTS, alpha-beta, neural features/inference
 │   │   └── mcts_internal.hpp   Private compact search position/topology
 │   ├── arena/
 │   │   ├── main.cpp            Native/Wasm command-line entrypoint
@@ -659,12 +709,14 @@ grouped by responsibility:
 │   └── papersoccer-wasm.js     Generated single-file WebAssembly module
 ├── tests/
 │   ├── core/                   Rules and match behavior
-│   ├── bots/                   Random, MCTS, and alpha-beta behavior
+│   ├── bots/                   Random, MCTS, alpha-beta, and neural behavior
 │   ├── arena/                  Arena API smoke and CLI integration tests
 │   ├── web/                    C++ session, Wasm, and web-support tests
 │   ├── replay_export_test.mjs  Replay exporter integration test
 │   └── test_main.cpp           Native test entrypoint
-├── benchmarks/wasm_mcts.mjs    WebAssembly MCTS timing probe
+├── models/                     Trained model JSON and provenance
+├── tools/                      Neural corpus, training, and header generators
+├── benchmarks/                 Reproducible WebAssembly timing probes
 └── CMakeLists.txt              Build targets and complete test registration
 ```
 
