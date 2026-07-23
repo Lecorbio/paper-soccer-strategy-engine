@@ -687,8 +687,13 @@ grouped by responsibility:
 │   └── web_game.hpp            Versioned browser-session API
 ├── src/
 │   ├── core/                   Rules, geometry, matches, and debug rendering
-│   ├── bots/                   Random, MCTS, alpha-beta, neural features/inference
-│   │   └── mcts_internal.hpp   Private compact search position/topology
+│   ├── bots/
+│   │   ├── bot.cpp             Shared bot registry and factory
+│   │   ├── mcts_internal.hpp   Shared compact search position/topology
+│   │   ├── random/             RandomBot implementation
+│   │   ├── mcts/               MctsBot and tactical search
+│   │   ├── alpha_beta/         AlphaBetaBot and private search seam
+│   │   └── jacek_inspired/     Neural bot, features, inference, and generated weights
 │   ├── arena/
 │   │   ├── main.cpp            Native/Wasm command-line entrypoint
 │   │   ├── runner.cpp          Match execution and statistical summaries
@@ -709,7 +714,7 @@ grouped by responsibility:
 │   └── papersoccer-wasm.js     Generated single-file WebAssembly module
 ├── tests/
 │   ├── core/                   Rules and match behavior
-│   ├── bots/                   Random, MCTS, alpha-beta, and neural behavior
+│   ├── bots/                   Per-bot Random, MCTS, alpha-beta, and neural suites
 │   ├── arena/                  Arena API smoke and CLI integration tests
 │   ├── web/                    C++ session, Wasm, and web-support tests
 │   ├── replay_export_test.mjs  Replay exporter integration test

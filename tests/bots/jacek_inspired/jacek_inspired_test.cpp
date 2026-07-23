@@ -7,9 +7,9 @@
 #include <string>
 #include <vector>
 
-#include "jacek_features.hpp"
-#include "jacek_neural_internal.hpp"
-#include "jacek_neural_model.hpp"
+#include "jacek_inspired/jacek_features.hpp"
+#include "jacek_inspired/jacek_neural_internal.hpp"
+#include "jacek_inspired/jacek_neural_model.hpp"
 #include "papersoccer/bot.hpp"
 #include "papersoccer/rules.hpp"
 

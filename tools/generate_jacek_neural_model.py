@@ -10,7 +10,9 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = ROOT / "models" / "jacek_article_value_model.json"
-DEFAULT_HEADER = ROOT / "src" / "bots" / "jacek_neural_model.hpp"
+DEFAULT_HEADER = (
+    ROOT / "src" / "bots" / "jacek_inspired" / "jacek_neural_model.hpp"
+)
 TRAINER = ROOT / "tools" / "train_jacek_neural.py"
 
 

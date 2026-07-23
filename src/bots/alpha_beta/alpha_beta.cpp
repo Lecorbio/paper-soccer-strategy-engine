@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "alpha_beta_internal.hpp"
-#include "jacek_neural_internal.hpp"
+#include "jacek_inspired/jacek_neural_internal.hpp"
 #include "mcts_internal.hpp"
 #include "papersoccer/geometry.hpp"
 #include "papersoccer/rules.hpp"

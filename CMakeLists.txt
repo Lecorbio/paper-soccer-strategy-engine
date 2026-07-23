@@ -11,14 +11,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_library(papersoccer_core
-  src/bots/alpha_beta.cpp
+  src/bots/alpha_beta/alpha_beta.cpp
   src/bots/bot.cpp
-  src/bots/jacek_features.cpp
-  src/bots/jacek_inspired.cpp
-  src/bots/jacek_neural.cpp
-  src/bots/mcts.cpp
-  src/bots/random_bot.cpp
-  src/bots/tactical_search.cpp
+  src/bots/jacek_inspired/jacek_features.cpp
+  src/bots/jacek_inspired/jacek_inspired.cpp
+  src/bots/jacek_inspired/jacek_neural.cpp
+  src/bots/mcts/mcts.cpp
+  src/bots/mcts/tactical_search.cpp
+  src/bots/random/random_bot.cpp
   src/core/debug.cpp
   src/core/geometry.cpp
   src/core/match.cpp
@@ -26,6 +26,7 @@ add_library(papersoccer_core
   src/web/web_game.cpp
 )
 target_include_directories(papersoccer_core PUBLIC include)
+target_include_directories(papersoccer_core PRIVATE src/bots)
 if(EMSCRIPTEN)
   # Alpha-beta uses a private exception to unwind cleanly when its hard node
   # budget is reached. Every Wasm consumer must compile the core with catches
@@ -57,10 +58,10 @@ if(EMSCRIPTEN)
 endif()
 
 add_executable(papersoccer_tests
-  tests/bots/alpha_beta_test.cpp
-  tests/bots/jacek_inspired_test.cpp
-  tests/bots/mcts_test.cpp
-  tests/bots/random_bot_test.cpp
+  tests/bots/alpha_beta/alpha_beta_test.cpp
+  tests/bots/jacek_inspired/jacek_inspired_test.cpp
+  tests/bots/mcts/mcts_test.cpp
+  tests/bots/random/random_bot_test.cpp
   tests/core/match_test.cpp
   tests/core/rules_test.cpp
   tests/test_main.cpp

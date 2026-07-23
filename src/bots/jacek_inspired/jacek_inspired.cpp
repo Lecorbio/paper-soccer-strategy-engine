@@ -1,6 +1,6 @@
 #include "papersoccer/bot.hpp"
 
-#include "alpha_beta_internal.hpp"
+#include "alpha_beta/alpha_beta_internal.hpp"
 #include "jacek_neural_model.hpp"
 
 namespace papersoccer {

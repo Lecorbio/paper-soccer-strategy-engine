@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "jacek_features.hpp"
+#include "jacek_inspired/jacek_features.hpp"
 #include "mcts_internal.hpp"
 #include "papersoccer/bot.hpp"
 #include "papersoccer/rules.hpp"
