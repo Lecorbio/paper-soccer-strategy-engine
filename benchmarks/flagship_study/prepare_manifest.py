@@ -20,19 +20,22 @@ if __package__ in (None, ""):
 from benchmarks.flagship_study import studylib
 
 
-OPENING_SEEDS = {
+V3_OPENING_SEEDS = {
     "development": {4: "1004101", 8: "1008101", 12: "1012101", 20: "1020101"},
     "validation": {4: "2004101", 8: "2008101", 12: "2012101", 20: "2020101"},
     "test": {4: "3004101", 8: "3008101", 12: "3012101", 20: "3020101"},
 }
-PHASE_SEEDS = {
-    "bot": {"development": "4100001", "validation": "4200001", "test": "4300001"},
-    "bootstrap": {"development": "5100001", "validation": "5200001", "test": "5300001"},
-    "analysis": {"development": "7100001", "validation": "7200001", "test": "7300001"},
+OPENING_SEEDS = {
+    "development": dict(V3_OPENING_SEEDS["development"]),
+    "validation": {4: "8004101", 8: "8008101", 12: "8012101", 20: "8020101"},
+    "test": dict(V3_OPENING_SEEDS["test"]),
 }
-SUPERSEDED_MANIFEST_SHA256 = (
-    "eab2728f4f5915926639ab67f20ab94137afe0275543f8eafd34b8047ab4ecf3"
-)
+PHASE_SEEDS = {
+    "bot": {"development": "4100001", "validation": "8200001", "test": "4300001"},
+    "bootstrap": {"development": "5100001", "validation": "9200001", "test": "5300001"},
+    "analysis": {"development": "7100001", "validation": "10200001", "test": "7300001"},
+}
+CALIBRATION_SEED = "11200001"
 
 
 def run_text(command: list[str], repository: pathlib.Path) -> str:
@@ -213,8 +216,8 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
     return {
         "schema_version": studylib.MANIFEST_SCHEMA_VERSION,
         "study": {
-            "id": "competitive-demo-bots-flagship-2026-v3",
-            "version": "1.2.0",
+            "id": "competitive-demo-bots-flagship-2026-v4",
+            "version": "1.3.0",
             "title": "Competitive demo-rule Paper Soccer bot study",
             "study_class": "flagship",
             "preregistered_at_utc": preregistered_at,
@@ -226,6 +229,24 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
                 "rank5_derived": studylib.PUBLIC_RANK5_LABEL,
             },
             "rank5_disclaimer": studylib.RANK5_DISCLAIMER,
+        },
+        "supersession": {
+            "predecessor_manifest_path": studylib.V4_PREDECESSOR_MANIFEST_PATH,
+            "predecessor_manifest_sha256":
+                studylib.V4_PREDECESSOR_MANIFEST_SHA256,
+            "predecessor_status":
+                "stopped_before_test_calibration_implementation_defect",
+            "predecessor_test_outcomes_accessed": False,
+            "predecessor_validation_results_used_for_v4_selection_or_calibration":
+                False,
+            "failure_record_path":
+                "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+            "failure_record_sha256": studylib.sha256_file(
+                repository / "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md"
+            ),
+            "reused_opening_phases": ["development", "test"],
+            "fresh_opening_phases": ["validation"],
+            "fresh_validation_exclusion_scope": "all_predecessor_opening_banks",
         },
         "source": {
             "git_commit": source_commit,
@@ -284,7 +305,7 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
             "opening": {phase: {str(depth): seed for depth, seed in depth_map.items()}
                         for phase, depth_map in OPENING_SEEDS.items()},
             **PHASE_SEEDS,
-            "calibration": {"validation": "6100001"},
+            "calibration": {"validation": CALIBRATION_SEED},
         },
         "samples": {
             phase: {"color_swapped_pairs_per_depth_matchup": pairs, "games_per_pair": 2}
@@ -443,57 +464,19 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
     }
 
 
-def generate_banks(repository: pathlib.Path, opening_tool: pathlib.Path) -> list[dict[str, Any]]:
-    opening_directory = repository / "benchmarks/flagship_study/openings"
-    generated_paths: list[pathlib.Path] = []
-    manifests: list[dict[str, Any]] = []
-    for phase in studylib.FULL_PHASES:
-        for depth in studylib.EXPECTED_OPENING_DEPTHS:
-            pairs = studylib.EXPECTED_PAIR_COUNTS[phase]
-            path = opening_directory / f"{phase}_d{depth:02d}.tsv"
-            command = [
-                str(opening_tool), "generate", "--phase", phase,
-                "--depth", str(depth), "--pairs", str(pairs),
-                "--seed", OPENING_SEEDS[phase][depth],
-            ]
-            for excluded in generated_paths:
-                command += ["--exclude-bank", str(excluded)]
-            process = subprocess.run(command, cwd=repository, capture_output=True, check=False)
-            if process.returncode != 0:
-                raise studylib.StudyError(
-                    f"opening generator failed for {phase}/{depth}:\n"
-                    f"{process.stderr.decode('utf-8', errors='replace').strip()}"
-                )
-            write_bytes_atomic(path, process.stdout)
-            records = studylib.parse_opening_bank(path)
-            if len(records) != pairs:
-                raise studylib.StudyError(f"opening generator produced wrong pair count: {path}")
-            generated_paths.append(path)
-            manifests.append({
-                "id": f"openings-{phase}-d{depth:02d}",
-                "phase": phase,
-                "depth": depth,
-                "pairs": pairs,
-                "path": str(path.relative_to(repository)),
-                "sha256": studylib.sha256_file(path),
-                "seed": OPENING_SEEDS[phase][depth],
-            })
-    return manifests
-
-
 def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
-    """Load the committed banks without regenerating a single opening."""
+    """Load all v3 banks as an immutable audit input without regenerating them."""
 
-    superseded_path = (
-        repository / "benchmarks/flagship_study/superseded" /
-        "manifest-eab2728f.json"
+    manifest_path = (
+        repository / "benchmarks/flagship_study/superseded/manifest-b7553a24.json"
     )
-    if not superseded_path.is_file() or \
-       studylib.sha256_file(superseded_path) != SUPERSEDED_MANIFEST_SHA256:
+    if not manifest_path.is_file() or \
+       studylib.sha256_file(manifest_path) != \
+       studylib.V4_PREDECESSOR_MANIFEST_SHA256:
         raise studylib.StudyError(
-            "audited superseded-manifest identity is missing or changed"
+            "failed v3 manifest identity is missing or changed"
         )
-    superseded = studylib.load_json(superseded_path)
+    superseded = studylib.load_json(manifest_path)
     previous_banks = {
         (bank["phase"], bank["depth"]): bank
         for bank in superseded["openings"]["banks"]
@@ -509,10 +492,8 @@ def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
     for phase in studylib.FULL_PHASES:
         for depth in studylib.EXPECTED_OPENING_DEPTHS:
             pairs = studylib.EXPECTED_PAIR_COUNTS[phase]
-            path = (
-                repository / "benchmarks/flagship_study/openings" /
-                f"{phase}_d{depth:02d}.tsv"
-            )
+            previous = previous_banks[(phase, depth)]
+            path = repository / previous["path"]
             if not path.is_file():
                 raise studylib.StudyError(f"frozen opening bank is missing: {path}")
             records = studylib.parse_opening_bank(path)
@@ -520,17 +501,16 @@ def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
             if len(records) != pairs or metadata.get("phase") != phase or \
                metadata.get("depth") != str(depth) or \
                metadata.get("pairs") != str(pairs) or \
-               metadata.get("generator_seed") != OPENING_SEEDS[phase][depth]:
+               metadata.get("generator_seed") != V3_OPENING_SEEDS[phase][depth]:
                 raise studylib.StudyError(
                     f"frozen opening bank differs from the preregistered design: {path}"
                 )
-            previous = previous_banks[(phase, depth)]
             if previous.get("path") != str(path.relative_to(repository)) or \
-               previous.get("seed") != OPENING_SEEDS[phase][depth] or \
+               previous.get("seed") != V3_OPENING_SEEDS[phase][depth] or \
                previous.get("pairs") != pairs or \
                previous.get("sha256") != studylib.sha256_file(path):
                 raise studylib.StudyError(
-                    f"frozen opening bank changed after the pre-test audit: {path}"
+                    f"frozen v3 opening bank changed after execution: {path}"
                 )
             manifests.append({
                 "id": f"openings-{phase}-d{depth:02d}",
@@ -539,8 +519,123 @@ def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
                 "pairs": pairs,
                 "path": str(path.relative_to(repository)),
                 "sha256": previous["sha256"],
-                "seed": OPENING_SEEDS[phase][depth],
+                "seed": V3_OPENING_SEEDS[phase][depth],
             })
+    return manifests
+
+
+def fresh_validation_command(
+    opening_tool: pathlib.Path, *, depth: int, pairs: int, seed: str,
+    excluded_paths: list[pathlib.Path],
+) -> list[str]:
+    command = [
+        str(opening_tool), "generate", "--phase", "validation",
+        "--depth", str(depth), "--pairs", str(pairs), "--seed", seed,
+    ]
+    for excluded in excluded_paths:
+        command += ["--exclude-bank", str(excluded)]
+    return command
+
+
+def generate_fresh_validation_banks(
+    repository: pathlib.Path, opening_tool: pathlib.Path
+) -> list[dict[str, Any]]:
+    """Reuse v3 development/test bytes and create validation unseen by v3."""
+
+    v3_banks = reuse_frozen_banks(repository)
+    previous = {
+        (bank["phase"], bank["depth"]): bank
+        for bank in v3_banks
+    }
+    excluded_paths = [repository / bank["path"] for bank in v3_banks]
+    seen_states: set[str] = set()
+    seen_canonical: set[str] = set()
+    for path in excluded_paths:
+        for record in studylib.parse_opening_bank(path):
+            if record.state_hash in seen_states or record.canonical_key in seen_canonical:
+                raise studylib.StudyError(
+                    "v3 opening banks are not globally state/canonical disjoint"
+                )
+            seen_states.add(record.state_hash)
+            seen_canonical.add(record.canonical_key)
+
+    opening_directory = repository / "benchmarks/flagship_study/openings"
+    final_paths = {
+        depth: opening_directory / f"validation_v4_d{depth:02d}.tsv"
+        for depth in studylib.EXPECTED_OPENING_DEPTHS
+    }
+    existing = [path for path in final_paths.values() if path.exists()]
+    if existing:
+        raise studylib.StudyError(
+            f"refusing to replace frozen artifact: {existing[0]}"
+        )
+
+    generated: dict[int, dict[str, Any]] = {}
+    opening_directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=opening_directory, prefix=".validation-v4-stage."
+    ) as temporary_name:
+        staging_directory = pathlib.Path(temporary_name)
+        staged_paths: list[pathlib.Path] = []
+        for depth in studylib.EXPECTED_OPENING_DEPTHS:
+            pairs = studylib.EXPECTED_PAIR_COUNTS["validation"]
+            staged_path = staging_directory / f"validation_v4_d{depth:02d}.tsv"
+            command = fresh_validation_command(
+                opening_tool,
+                depth=depth,
+                pairs=pairs,
+                seed=OPENING_SEEDS["validation"][depth],
+                excluded_paths=[*excluded_paths, *staged_paths],
+            )
+            process = subprocess.run(
+                command, cwd=repository, capture_output=True, check=False
+            )
+            if process.returncode != 0:
+                raise studylib.StudyError(
+                    f"fresh validation opening generation failed at depth {depth}:\n"
+                    f"{process.stderr.decode('utf-8', errors='replace').strip()}"
+                )
+            staged_path.write_bytes(process.stdout)
+            records = studylib.parse_opening_bank(staged_path)
+            if len(records) != pairs:
+                raise studylib.StudyError(
+                    f"opening generator produced wrong pair count: {staged_path}"
+                )
+            for record in records:
+                if record.state_hash in seen_states or record.canonical_key in seen_canonical:
+                    raise studylib.StudyError(
+                        "fresh validation opening overlaps a frozen v3 bank"
+                    )
+                seen_states.add(record.state_hash)
+                seen_canonical.add(record.canonical_key)
+            staged_paths.append(staged_path)
+            generated[depth] = {
+                "id": f"openings-validation-d{depth:02d}",
+                "phase": "validation",
+                "depth": depth,
+                "pairs": pairs,
+                "path": str(final_paths[depth].relative_to(repository)),
+                "sha256": studylib.sha256_file(staged_path),
+                "seed": OPENING_SEEDS["validation"][depth],
+            }
+
+        for depth, staged_path in zip(
+            studylib.EXPECTED_OPENING_DEPTHS, staged_paths, strict=True
+        ):
+            write_bytes_atomic(final_paths[depth], staged_path.read_bytes())
+
+    manifests: list[dict[str, Any]] = []
+    for phase in studylib.FULL_PHASES:
+        for depth in studylib.EXPECTED_OPENING_DEPTHS:
+            if phase == "validation":
+                manifests.append(generated[depth])
+                continue
+            frozen = previous[(phase, depth)]
+            if frozen["seed"] != OPENING_SEEDS[phase][depth]:
+                raise studylib.StudyError(
+                    f"v4 may not change the frozen {phase} bank seed"
+                )
+            manifests.append(dict(frozen))
     return manifests
 
 
@@ -554,10 +649,10 @@ def main() -> int:
     parser.add_argument("--preregistered-at-utc",
                         default=dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat())
     parser.add_argument(
-        "--reuse-frozen-openings", action="store_true",
+        "--fresh-validation-keep-frozen-test", action="store_true", required=True,
         help=(
-            "reuse and verify the existing committed banks byte-for-byte; "
-            "intended only for an audited pre-test manifest supersession"
+            "reuse verified v3 development/test banks byte-for-byte and generate "
+            "new validation banks disjoint from every v3 opening"
         ),
     )
     args = parser.parse_args()
@@ -595,10 +690,7 @@ def main() -> int:
         )
     except (json.JSONDecodeError, studylib.StudyError) as error:
         raise studylib.StudyError("arena returned invalid build provenance") from error
-    banks = (
-        reuse_frozen_banks(repository)
-        if args.reuse_frozen_openings else generate_banks(repository, opening_tool)
-    )
+    banks = generate_fresh_validation_banks(repository, opening_tool)
     manifest = build_manifest(
         repository, args.source_commit, banks, args.preregistered_at_utc,
         build_provenance, studylib.sha256_file(arena_path),

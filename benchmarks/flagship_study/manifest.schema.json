@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://papersoccer.example/schemas/flagship-study-manifest-v1.json",
+  "$id": "https://papersoccer.example/schemas/flagship-study-manifest-v2.json",
   "title": "Paper Soccer flagship study manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "study",
+    "supersession",
     "source",
     "rules",
     "configurations",
@@ -23,7 +24,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "papersoccer.flagship-study-manifest.v1"
+      "const": "papersoccer.flagship-study-manifest.v2"
     },
     "study": {
       "type": "object",
@@ -54,6 +55,49 @@
         },
         "rank5_disclaimer": {"type": "string", "minLength": 1}
       }
+    },
+    "supersession": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "predecessor_manifest_path", "predecessor_manifest_sha256",
+            "predecessor_status", "predecessor_test_outcomes_accessed",
+            "predecessor_validation_results_used_for_v4_selection_or_calibration",
+            "failure_record_path", "failure_record_sha256",
+            "reused_opening_phases", "fresh_opening_phases",
+            "fresh_validation_exclusion_scope"
+          ],
+          "properties": {
+            "predecessor_manifest_path": {
+              "const": "benchmarks/flagship_study/superseded/manifest-b7553a24.json"
+            },
+            "predecessor_manifest_sha256": {
+              "const": "b7553a24f618a77162cb256d65fd7cf21a854a10f46726c4a32cd57982ace9fe"
+            },
+            "predecessor_status": {
+              "const": "stopped_before_test_calibration_implementation_defect"
+            },
+            "predecessor_test_outcomes_accessed": {"const": false},
+            "predecessor_validation_results_used_for_v4_selection_or_calibration": {
+              "const": false
+            },
+            "failure_record_path": {
+              "const": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md"
+            },
+            "failure_record_sha256": {"$ref": "#/$defs/sha256"},
+            "reused_opening_phases": {
+              "const": ["development", "test"]
+            },
+            "fresh_opening_phases": {"const": ["validation"]},
+            "fresh_validation_exclusion_scope": {
+              "const": "all_predecessor_opening_banks"
+            }
+          }
+        }
+      ]
     },
     "source": {
       "type": "object",

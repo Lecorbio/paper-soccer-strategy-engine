@@ -71,10 +71,10 @@ All six hand and neural alpha-beta candidate fits encounter the same scale-sensi
 
 ## Integrity and reproduction
 
-- Manifest: [`manifest.json`](manifest.json)
-- Development data: [`data/development.json`](data/development.json)
-- Validation data: [`data/validation.json`](data/validation.json)
-- Runtime projection: [`runtime_projection.json`](runtime_projection.json)
+- Manifest: [`superseded/manifest-b7553a24.json`](superseded/manifest-b7553a24.json)
+- Development data: [`superseded/v3-data/development.json`](superseded/v3-data/development.json)
+- Validation data: [`superseded/v3-data/validation.json`](superseded/v3-data/validation.json)
+- Runtime projection: [`superseded/v3-data/runtime_projection.json`](superseded/v3-data/runtime_projection.json)
 - Analysis contract SHA-256: `a5f712bf353cf1109757f4ff1ff218c585d832147295fa50afad13b43b741272`
 - Jacek model SHA-256: `57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084`
 - Authentic rank-5 source SHA-256: `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`
@@ -82,6 +82,7 @@ All six hand and neural alpha-beta candidate fits encounter the same scale-sensi
 Reproduce the fail-closed decision from the committed v3 checkout and raw result namespace:
 
 ```sh
+git switch --detach 77c8fdc2e417583a83c3004e2e15f18fbe4abaca
 python3 benchmarks/flagship_study/run_study.py aggregate --phase development
 python3 benchmarks/flagship_study/run_study.py aggregate --phase validation
 python3 benchmarks/flagship_study/run_study.py lock-selection

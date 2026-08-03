@@ -25,7 +25,7 @@ from collections import defaultdict
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
-MANIFEST_SCHEMA_VERSION = "papersoccer.flagship-study-manifest.v1"
+MANIFEST_SCHEMA_VERSION = "papersoccer.flagship-study-manifest.v2"
 SELECTION_SCHEMA_VERSION = "papersoccer.flagship-study-selection.v1"
 CURATED_SCHEMA_VERSION = "papersoccer.flagship-study-curated.v1"
 OPENING_BANK_SCHEMA_VERSION = "papersoccer.opening-bank.v1"
@@ -46,6 +46,12 @@ RANK5_DISCLAIMER = (
 )
 RANK5_SOURCE_SHA256 = (
     "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+)
+V4_PREDECESSOR_MANIFEST_PATH = (
+    "benchmarks/flagship_study/superseded/manifest-b7553a24.json"
+)
+V4_PREDECESSOR_MANIFEST_SHA256 = (
+    "b7553a24f618a77162cb256d65fd7cf21a854a10f46726c4a32cd57982ace9fe"
 )
 FULL_PHASES = ("development", "validation", "test")
 TUNABLE_FAMILIES = ("mcts", "alpha_beta", "jacek_inspired")
@@ -447,7 +453,7 @@ def validate_manifest(manifest: Any, repository: pathlib.Path,
             "schema_version", "study", "source", "rules", "configurations",
             "candidate_grids", "openings", "seeds", "samples", "schedule",
             "latency_protocol", "selection_rule", "statistics", "outputs",
-            "environment",
+            "environment", "supersession",
         },
         "manifest",
     )
@@ -484,6 +490,59 @@ def validate_manifest(manifest: Any, repository: pathlib.Path,
         raise StudyError("study.public_labels do not match the four frozen entrant labels")
     if study["rank5_disclaimer"] != RANK5_DISCLAIMER:
         raise StudyError("Rank5Derived disclaimer is not exact")
+
+    supersession: dict[str, Any] | None = None
+    predecessor_path: pathlib.Path | None = None
+    if study_class == "flagship":
+        if study["id"] != "competitive-demo-bots-flagship-2026-v4" or \
+           study["version"] != "1.3.0":
+            raise StudyError("manifest v2 flagship identity must be frozen v4")
+        supersession = _exact_keys(
+            top["supersession"],
+            {
+                "predecessor_manifest_path", "predecessor_manifest_sha256",
+                "predecessor_status", "predecessor_test_outcomes_accessed",
+                "predecessor_validation_results_used_for_v4_selection_or_calibration",
+                "failure_record_path", "failure_record_sha256",
+                "reused_opening_phases", "fresh_opening_phases",
+                "fresh_validation_exclusion_scope",
+            },
+            "supersession",
+        )
+        if supersession != {
+            "predecessor_manifest_path": V4_PREDECESSOR_MANIFEST_PATH,
+            "predecessor_manifest_sha256": V4_PREDECESSOR_MANIFEST_SHA256,
+            "predecessor_status":
+                "stopped_before_test_calibration_implementation_defect",
+            "predecessor_test_outcomes_accessed": False,
+            "predecessor_validation_results_used_for_v4_selection_or_calibration":
+                False,
+            "failure_record_path":
+                "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+            "failure_record_sha256": supersession["failure_record_sha256"],
+            "reused_opening_phases": ["development", "test"],
+            "fresh_opening_phases": ["validation"],
+            "fresh_validation_exclusion_scope": "all_predecessor_opening_banks",
+        }:
+            raise StudyError("v4 supersession lineage is not exact")
+        _sha256(
+            supersession["failure_record_sha256"],
+            "supersession.failure_record_sha256",
+        )
+        predecessor_path = _repository_relative_path(
+            repository, supersession["predecessor_manifest_path"],
+            "supersession.predecessor_manifest_path",
+        )
+        failure_record_path = _repository_relative_path(
+            repository, supersession["failure_record_path"],
+            "supersession.failure_record_path",
+        )
+        if not failure_record_path.is_file() or \
+           sha256_file(failure_record_path) != \
+                supersession["failure_record_sha256"]:
+            raise StudyError("v4 supersession failure record is missing or changed")
+    elif top["supersession"] is not None:
+        raise StudyError("CI smoke manifests must declare null supersession")
 
     source = _exact_keys(
         top["source"],
@@ -692,6 +751,105 @@ def validate_manifest(manifest: Any, repository: pathlib.Path,
             register_seed(phase_map[phase], f"seeds.{category}.{phase}")
     calibration_seeds = _exact_keys(seeds["calibration"], {"validation"}, "seeds.calibration")
     register_seed(calibration_seeds["validation"], "seeds.calibration.validation")
+
+    if study_class == "flagship":
+        if predecessor_path is None or not predecessor_path.is_file() or \
+           sha256_file(predecessor_path) != V4_PREDECESSOR_MANIFEST_SHA256:
+            raise StudyError("v4 predecessor manifest is missing or changed")
+        predecessor = _object(load_json(predecessor_path), "v4 predecessor manifest")
+        if predecessor.get("schema_version") != \
+                "papersoccer.flagship-study-manifest.v1" or \
+           _object(predecessor.get("study"), "v4 predecessor study").get("id") != \
+                "competitive-demo-bots-flagship-2026-v3":
+            raise StudyError("v4 predecessor manifest identity is invalid")
+        predecessor_banks = {
+            (bank["phase"], bank["depth"]): bank
+            for bank in _array(
+                _object(predecessor.get("openings"), "v4 predecessor openings").get(
+                    "banks"
+                ),
+                "v4 predecessor opening banks",
+            )
+        }
+        current_banks = {
+            (bank["phase"], bank["depth"]): bank
+            for bank in banks
+        }
+        expected_keys = {
+            (phase, depth)
+            for phase in FULL_PHASES
+            for depth in EXPECTED_OPENING_DEPTHS
+        }
+        if set(predecessor_banks) != expected_keys:
+            raise StudyError("v4 predecessor opening design is incomplete")
+        for phase in ("development", "test"):
+            for depth in EXPECTED_OPENING_DEPTHS:
+                if current_banks[(phase, depth)] != predecessor_banks[(phase, depth)]:
+                    raise StudyError(
+                        f"v4 must reuse the exact predecessor {phase} bank at depth {depth}"
+                    )
+        predecessor_hashes = {bank["sha256"] for bank in predecessor_banks.values()}
+        predecessor_paths = {bank["path"] for bank in predecessor_banks.values()}
+        for depth in EXPECTED_OPENING_DEPTHS:
+            current = current_banks[("validation", depth)]
+            previous = predecessor_banks[("validation", depth)]
+            if current["path"] == previous["path"] or \
+               current["sha256"] in predecessor_hashes or \
+               current["path"] in predecessor_paths:
+                raise StudyError(
+                    f"v4 validation bank at depth {depth} is not prospectively fresh"
+                )
+
+        predecessor_seeds = _object(predecessor.get("seeds"), "v4 predecessor seeds")
+
+        def seed_values(value: Any, where: str) -> set[int]:
+            if isinstance(value, Mapping):
+                result: set[int] = set()
+                for key, child in value.items():
+                    result.update(seed_values(child, f"{where}.{key}"))
+                return result
+            return {_seed(value, where)}
+
+        old_seed_values = seed_values(predecessor_seeds, "v4 predecessor seeds")
+        new_validation_seed_values = {
+            *(
+                _seed(opening_seed_map["validation"][str(depth)],
+                      f"seeds.opening.validation.{depth}")
+                for depth in EXPECTED_OPENING_DEPTHS
+            ),
+            *(
+                _seed(seeds[category]["validation"],
+                      f"seeds.{category}.validation")
+                for category in ("bot", "bootstrap", "analysis")
+            ),
+            _seed(calibration_seeds["validation"], "seeds.calibration.validation"),
+        }
+        if new_validation_seed_values & old_seed_values:
+            raise StudyError(
+                "v4 validation-specific seeds must be globally fresh versus v3"
+            )
+        for phase in ("development", "test"):
+            if seeds["opening"][phase] != predecessor_seeds["opening"][phase]:
+                raise StudyError(f"v4 changed frozen {phase} opening seeds")
+            for category in ("bot", "bootstrap", "analysis"):
+                if seeds[category][phase] != predecessor_seeds[category][phase]:
+                    raise StudyError(f"v4 changed frozen {phase} {category} seed")
+
+        if verify_files:
+            seen_old_states: set[str] = set()
+            seen_old_canonical: set[str] = set()
+            for bank in predecessor_banks.values():
+                for record in parse_opening_bank(repository / bank["path"]):
+                    seen_old_states.add(record.state_hash)
+                    seen_old_canonical.add(record.canonical_key)
+            for depth in EXPECTED_OPENING_DEPTHS:
+                bank = current_banks[("validation", depth)]
+                for record in parse_opening_bank(repository / bank["path"]):
+                    if record.state_hash in seen_old_states or \
+                       record.canonical_key in seen_old_canonical:
+                        raise StudyError(
+                            "v4 validation opening overlaps a predecessor bank"
+                        )
 
     samples = _exact_keys(top["samples"], set(FULL_PHASES), "samples")
     for phase in FULL_PHASES:

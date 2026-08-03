@@ -35,24 +35,26 @@ is not evidence about comparative strength or latency.
 ## Freeze the full study
 
 Manifest generation is allowed only from a clean, committed framework tree.
-It creates all twelve disjoint banks, validates every replay, and refuses to
-replace an existing bank or manifest.
+For v4 it verifies and reuses the development and never-accessed test banks
+byte-for-byte, creates four fresh validation banks disjoint from every v3
+opening, validates every replay, and refuses to replace an existing artifact.
 
 ```sh
 python3 benchmarks/flagship_study/prepare_manifest.py \
   --opening-tool build/release/papersoccer_opening_bank \
   --source-commit "$(git rev-parse HEAD)" \
-  --reuse-frozen-openings
+  --fresh-validation-keep-frozen-test
 python3 benchmarks/flagship_study/run_study.py validate
 ```
 
 Commit `manifest.json` and `openings/` before running configuration selection.
 The manifest hash is the namespace for every raw result.
 
-The reuse flag is specific to the audited v2 preregistration: its twelve banks
-were already committed by the superseded pre-test manifest and are validated
-and reused byte-for-byte. See `superseded/README.md`; no validation or test
-outcome was accessed under the superseded manifest.
+The v4 flag is specific to the audited v3 stop: v3 completed validation but
+stopped before test when a scale-dependent calibration guard falsely rejected
+a finite fit. V4 uses new validation seeds, bot/bootstrap/analysis/calibration
+seeds, and filenames. The test banks and their hashes remain unchanged. See
+`V3_VALIDATION_FAILURE.md` and `superseded/README.md`.
 
 ## Development and validation
 

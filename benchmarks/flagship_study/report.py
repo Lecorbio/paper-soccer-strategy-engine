@@ -1114,7 +1114,7 @@ def render_markdown_report(
         "  --opening-tool build/release/papersoccer_opening_bank \\",
         f"  --source-commit {source_commit} \\",
         f"  --preregistered-at-utc {preregistered_at} \\",
-        "  --reuse-frozen-openings",
+        "  --fresh-validation-keep-frozen-test",
         "python3 benchmarks/flagship_study/run_study.py validate",
         "git add benchmarks/flagship_study/manifest.json benchmarks/flagship_study/openings",
         "git commit -m 'Freeze flagship manifest and opening banks'",

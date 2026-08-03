@@ -22,3 +22,14 @@ review found that unavailable or malformed `pmset` output was not yet rejected
 as an unknown Low Power Mode state. No raw-result namespace exists for that
 manifest. The v3 runner accepts only an explicit disabled value and rejects
 missing, malformed, unavailable, enabled, or conflicting mode records.
+
+The completed v3 manifest was archived byte-for-byte as
+`manifest-b7553a24.json` before the clean v4 source boundary was committed. V3
+completed all 1,800 development and 3,600 validation games with zero
+truncations, then stopped before test when
+its calibration fitter's scale-dependent coefficient cap rejected a finite
+alpha-beta fit. [`../V3_VALIDATION_FAILURE.md`](../V3_VALIDATION_FAILURE.md)
+records the exact data hashes and numerical diagnosis. V4 repairs that
+implementation defect prospectively, changes all validation-specific seeds,
+and generates four validation banks disjoint from every v3 opening. The
+development banks and never-evaluated test banks remain byte-for-byte fixed.

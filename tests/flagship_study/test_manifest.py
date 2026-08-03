@@ -4,8 +4,10 @@ import copy
 import hashlib
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from benchmarks.flagship_study import prepare_manifest, studylib
 
@@ -14,16 +16,26 @@ REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 
 
 def fake_banks() -> list[dict[str, object]]:
+    predecessor = studylib.load_json(
+        REPOSITORY / studylib.V4_PREDECESSOR_MANIFEST_PATH
+    )
+    previous = {
+        (bank["phase"], bank["depth"]): bank
+        for bank in predecessor["openings"]["banks"]
+    }
     result: list[dict[str, object]] = []
     for phase in studylib.FULL_PHASES:
         for depth in studylib.EXPECTED_OPENING_DEPTHS:
+            if phase in ("development", "test"):
+                result.append(copy.deepcopy(previous[(phase, depth)]))
+                continue
             identifier = f"openings-{phase}-d{depth:02d}"
             result.append({
                 "id": identifier,
                 "phase": phase,
                 "depth": depth,
                 "pairs": studylib.EXPECTED_PAIR_COUNTS[phase],
-                "path": f"unused/{identifier}.tsv",
+                "path": f"unused/v4-{identifier}.tsv",
                 "sha256": hashlib.sha256(identifier.encode()).hexdigest(),
                 "seed": prepare_manifest.OPENING_SEEDS[phase][depth],
             })
@@ -63,7 +75,7 @@ class ManifestValidationTests(unittest.TestCase):
     def test_frozen_flagship_manifest_contract_is_valid(self) -> None:
         self.validate(copy.deepcopy(self.manifest))
 
-    def test_audited_supersession_reuses_committed_banks_byte_for_byte(self) -> None:
+    def test_failed_v3_banks_remain_byte_for_byte_audit_inputs(self) -> None:
         banks = prepare_manifest.reuse_frozen_banks(REPOSITORY)
         self.assertEqual(len(banks), 12)
         self.assertEqual(sum(bank["pairs"] for bank in banks), 700)
@@ -72,8 +84,173 @@ class ManifestValidationTests(unittest.TestCase):
             self.assertEqual(bank["sha256"], studylib.sha256_file(path))
             self.assertEqual(
                 bank["seed"],
-                prepare_manifest.OPENING_SEEDS[bank["phase"]][bank["depth"]],
+                prepare_manifest.V3_OPENING_SEEDS[bank["phase"]][bank["depth"]],
             )
+
+    def test_v4_keeps_test_seeds_and_replaces_validation_seeds(self) -> None:
+        self.assertEqual(
+            prepare_manifest.OPENING_SEEDS["development"],
+            prepare_manifest.V3_OPENING_SEEDS["development"],
+        )
+        self.assertEqual(
+            prepare_manifest.OPENING_SEEDS["test"],
+            prepare_manifest.V3_OPENING_SEEDS["test"],
+        )
+        self.assertTrue(all(
+            prepare_manifest.OPENING_SEEDS["validation"][depth]
+            != prepare_manifest.V3_OPENING_SEEDS["validation"][depth]
+            for depth in studylib.EXPECTED_OPENING_DEPTHS
+        ))
+        self.assertEqual(
+            self.manifest["study"]["id"],
+            "competitive-demo-bots-flagship-2026-v4",
+        )
+
+    def test_v4_supersession_identity_and_failure_record_are_bound(self) -> None:
+        predecessor = copy.deepcopy(self.manifest)
+        predecessor["supersession"]["predecessor_manifest_sha256"] = "0" * 64
+        with self.assertRaisesRegex(studylib.StudyError, "lineage"):
+            self.validate(predecessor)
+
+        failure = copy.deepcopy(self.manifest)
+        failure["supersession"]["failure_record_sha256"] = "0" * 64
+        with self.assertRaisesRegex(studylib.StudyError, "failure record"):
+            self.validate(failure)
+
+    def test_v4_requires_exact_reused_development_and_test_banks(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        bank = next(
+            value for value in manifest["openings"]["banks"]
+            if value["phase"] == "test" and value["depth"] == 4
+        )
+        bank["sha256"] = "0" * 64
+        with self.assertRaisesRegex(studylib.StudyError, "exact predecessor test"):
+            self.validate(manifest)
+
+    def test_v4_rejects_reused_validation_bank_and_any_old_seed(self) -> None:
+        predecessor = studylib.load_json(
+            REPOSITORY / studylib.V4_PREDECESSOR_MANIFEST_PATH
+        )
+        previous_bank = next(
+            value for value in predecessor["openings"]["banks"]
+            if value["phase"] == "validation" and value["depth"] == 4
+        )
+        reused = copy.deepcopy(self.manifest)
+        current_bank = next(
+            value for value in reused["openings"]["banks"]
+            if value["phase"] == "validation" and value["depth"] == 4
+        )
+        current_bank.update(copy.deepcopy(previous_bank))
+        reused["seeds"]["opening"]["validation"]["4"] = previous_bank["seed"]
+        with self.assertRaisesRegex(studylib.StudyError, "prospectively fresh"):
+            self.validate(reused)
+
+        old_seed = copy.deepcopy(self.manifest)
+        old_seed["seeds"]["bot"]["validation"] = \
+            predecessor["seeds"]["bot"]["validation"]
+        with self.assertRaisesRegex(studylib.StudyError, "globally fresh"):
+            self.validate(old_seed)
+
+        changed_test_seed = copy.deepcopy(self.manifest)
+        changed_test_seed["seeds"]["analysis"]["test"] = "123456789"
+        with self.assertRaisesRegex(studylib.StudyError, "frozen test analysis"):
+            self.validate(changed_test_seed)
+
+    def test_v4_preparation_mode_is_mandatory(self) -> None:
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY / "benchmarks/flagship_study/prepare_manifest.py"),
+                "--opening-tool", "unused",
+                "--source-commit", "a" * 40,
+            ],
+            cwd=REPOSITORY,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("--fresh-validation-keep-frozen-test", process.stderr)
+
+    def test_fresh_validation_command_excludes_every_prior_bank(self) -> None:
+        exclusions = [pathlib.Path(f"old-{index}.tsv") for index in range(12)]
+        exclusions += [pathlib.Path(f"new-{index}.tsv") for index in range(3)]
+
+        command = prepare_manifest.fresh_validation_command(
+            pathlib.Path("opening-tool"),
+            depth=20,
+            pairs=50,
+            seed=prepare_manifest.OPENING_SEEDS["validation"][20],
+            excluded_paths=exclusions,
+        )
+
+        self.assertEqual(command.count("--exclude-bank"), 15)
+        self.assertEqual(
+            [
+                pathlib.Path(command[index + 1])
+                for index, value in enumerate(command)
+                if value == "--exclude-bank"
+            ],
+            exclusions,
+        )
+
+    def test_failed_fresh_generation_publishes_no_partial_bank_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = pathlib.Path(temporary)
+            old_banks = []
+            for phase in studylib.FULL_PHASES:
+                for depth in studylib.EXPECTED_OPENING_DEPTHS:
+                    old_banks.append({
+                        "id": f"openings-{phase}-d{depth:02d}",
+                        "phase": phase,
+                        "depth": depth,
+                        "pairs": studylib.EXPECTED_PAIR_COUNTS[phase],
+                        "path": f"old/{phase}_d{depth:02d}.tsv",
+                        "sha256": "0" * 64,
+                        "seed": prepare_manifest.V3_OPENING_SEEDS[phase][depth],
+                    })
+
+            def records(path: pathlib.Path) -> list[studylib.OpeningRecord]:
+                staged = ".validation-v4-stage." in str(path)
+                count = 50 if staged else 1
+                prefix = "new" if staged else str(path)
+                return [
+                    studylib.OpeningRecord(
+                        opening_id=f"{prefix}-{index}",
+                        phase="validation",
+                        depth=4,
+                        generation_seed="1",
+                        state_hash=hashlib.sha256(
+                            f"state-{prefix}-{index}".encode()
+                        ).hexdigest(),
+                        canonical_key=hashlib.sha256(
+                            f"canonical-{prefix}-{index}".encode()
+                        ).hexdigest(),
+                        to_move="one",
+                        moves=(),
+                    )
+                    for index in range(count)
+                ]
+
+            processes = [
+                subprocess.CompletedProcess([], 0, stdout=b"staged", stderr=b""),
+                subprocess.CompletedProcess([], 1, stdout=b"", stderr=b"failed"),
+            ]
+            with mock.patch.object(
+                    prepare_manifest, "reuse_frozen_banks", return_value=old_banks), \
+                 mock.patch.object(
+                    studylib, "parse_opening_bank", side_effect=records), \
+                 mock.patch.object(
+                    prepare_manifest.subprocess, "run", side_effect=processes):
+                with self.assertRaisesRegex(
+                        studylib.StudyError, "failed at depth 8"):
+                    prepare_manifest.generate_fresh_validation_banks(
+                        repository, pathlib.Path("opening-tool")
+                    )
+
+            opening_directory = repository / "benchmarks/flagship_study/openings"
+            self.assertEqual(list(opening_directory.glob("validation_v4_*.tsv")), [])
+            self.assertEqual(list(opening_directory.glob(".validation-v4-stage.*")), [])
 
     def test_missing_and_unknown_fields_are_rejected(self) -> None:
         missing = copy.deepcopy(self.manifest)

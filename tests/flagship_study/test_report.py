@@ -584,7 +584,7 @@ class ReportTests(unittest.TestCase):
             "## Artifact hashes", 1
         )[0]
         self.assertIn("prepare_manifest.py", reproduction)
-        self.assertIn("--reuse-frozen-openings", reproduction)
+        self.assertIn("--fresh-validation-keep-frozen-test", reproduction)
         self.assertIn("platform.python_version()", reproduction)
         self.assertIn('= \"3.14.6\"', reproduction)
         self.assertIn("Freeze flagship manifest and opening banks", reproduction)

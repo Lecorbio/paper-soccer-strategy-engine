@@ -1,11 +1,30 @@
 # Flagship study analysis contract
 
-Version: 1.1.0
+Version: 1.2.0
 
 This document fixes the study estimands, selection logic, and analysis before
 the frozen test tournament is opened. The machine-readable manifest is the
 authoritative configuration. This document explains the definitions used by
 the runner and report generator.
+
+## V4 prospective amendment
+
+Manifest v3 (`b7553a24f618a77162cb256d65fd7cf21a854a10f46726c4a32cd57982ace9fe`)
+completed development and validation, then stopped before test when its
+scale-dependent standardized-coefficient cap falsely classified a finite
+logistic calibration fit as divergent. No v3 selection lock or test result
+exists. V3 remains failed and its validation outcomes are not inputs to v4
+selection or calibration.
+
+Before any test access, v4 removes that parameterization-dependent cap and
+replaces it with the finite-likelihood, gradient, information, line-search,
+separation, and iteration checks specified below. V4 changes every
+validation-specific opening, bot, bootstrap, analysis, and calibration seed;
+its four validation banks are generated under new filenames while excluding
+all twelve v3 banks. Development and test opening banks remain byte-for-byte
+fixed, but development games are rerun under the v4 manifest/raw namespace.
+The v3 failure record and curated artifacts remain committed only as audit and
+cross-version opening-exclusion evidence.
 
 ## Scope and entrants
 

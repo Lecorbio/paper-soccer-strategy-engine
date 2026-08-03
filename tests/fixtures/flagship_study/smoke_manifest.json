@@ -180,7 +180,7 @@
       }
     ]
   },
-  "schema_version": "papersoccer.flagship-study-manifest.v1",
+  "schema_version": "papersoccer.flagship-study-manifest.v2",
   "seeds": {
     "analysis": {
       "development": "9600001",
@@ -226,7 +226,7 @@
   },
   "source": {
     "analysis_contract_path": "benchmarks/flagship_study/analysis_contract.md",
-    "analysis_contract_sha256": "df81d3eb92e89df53726b743d8b0aa9a902b05db9dd091215203668158bf908a",
+    "analysis_contract_sha256": "e37f0706cc10d337401f8d459a2f47182681bffa046c80013d4fa1f3ab341115",
     "arena_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "dirty_worktree": false,
     "git_commit": "69533ceaf008ea8cf82fa33927cbcf741b2b762a",
@@ -282,6 +282,7 @@
     },
     "truncations": "reject_strength_and_calibration"
   },
+  "supersession": null,
   "study": {
     "frozen": true,
     "id": "competitive-demo-bots-ci-smoke",
