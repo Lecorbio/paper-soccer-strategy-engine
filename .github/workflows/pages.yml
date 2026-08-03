@@ -1,25 +1,80 @@
-name: Deploy website
+name: CI and Pages
 
 on:
   push:
+    branches: ["main"]
+  pull_request:
     branches: ["main"]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  test-gcc:
+    name: GCC build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CC: gcc
+      CXX: g++
+      PAPERSOCCER_BUILD_DIR: build/ci-gcc
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build and test
+        run: ./scripts/build-and-test.sh
+
+  test-clang:
+    name: Clang build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CC: clang
+      CXX: clang++
+      PAPERSOCCER_BUILD_DIR: build/ci-clang
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build and test
+        run: ./scripts/build-and-test.sh
+
+  test-sanitizers:
+    name: ASan and UBSan build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CC: clang
+      CXX: clang++
+      PAPERSOCCER_BUILD_DIR: build/ci-sanitizers
+      PAPERSOCCER_BUILD_TYPE: Debug
+      PAPERSOCCER_ENABLE_SANITIZERS: "ON"
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build and test
+        run: ./scripts/build-and-test.sh
+
   deploy:
+    needs: [test-gcc, test-clang, test-sanitizers]
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     steps:
       - name: Checkout repository
