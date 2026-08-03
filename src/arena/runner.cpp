@@ -53,6 +53,8 @@ std::string_view kind_name(BotKind kind) noexcept {
       return "alpha-beta";
     case BotKind::JacekInspired:
       return "jacek-inspired";
+    case BotKind::Rank5Derived:
+      return "rank5-derived";
   }
   return "unknown";
 }
@@ -135,6 +137,13 @@ void validate_bot_config(const ArenaBotConfig &config) {
             std::to_string(AlphaBetaConfig::maximum_search_plies));
       }
       return;
+    case BotKind::Rank5Derived:
+      if (config.rank5_derived_model_blend_percent < 0 ||
+          config.rank5_derived_model_blend_percent > 100) {
+        throw std::invalid_argument(
+            "arena Rank5Derived model blend must be between 0 and 100");
+      }
+      return;
   }
   throw std::invalid_argument("arena bot kind is unknown");
 }
@@ -176,6 +185,12 @@ std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
         return std::make_unique<JacekInspiredBot>(alpha_beta);
       }
       return std::make_unique<AlphaBetaBot>(alpha_beta);
+    }
+    case BotKind::Rank5Derived: {
+      Rank5DerivedConfig rank5;
+      rank5.replay_value_blend_percent =
+          config.rank5_derived_model_blend_percent;
+      return std::make_unique<Rank5DerivedBot>(rank5);
     }
   }
   throw std::invalid_argument("arena bot kind is unknown");

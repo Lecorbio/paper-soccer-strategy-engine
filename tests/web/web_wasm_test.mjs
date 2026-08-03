@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const compiledModule = await import("../../web/papersoccer-wasm.js");
@@ -9,6 +10,16 @@ const { BotKind, Player, Status, ready } = globalThis.PaperSoccer;
 const gameEngine = await ready;
 const JACEK_MODEL_SHA256 =
   "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084";
+const RANK5_ARTIFACT_SHA256 =
+  "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29";
+const RANK5_TRANSCRIPT_FIXTURE = readFileSync(
+  new URL("../fixtures/rank5_derived_vs_mcts_path.txt", import.meta.url),
+  "utf8",
+).split(/\r?\n/u).filter((line) => line && !line.startsWith("#"))
+  .map((line) => {
+    const [x, y] = line.split(" ").map(Number);
+    return { x, y };
+  });
 
 function botConfig(kind, seed, iterations = 8) {
   return { kind, seed, iterations };
@@ -33,6 +44,7 @@ test("browser client exposes the compiled C++ session instead of JavaScript rule
   assert.equal(BotKind.Mcts, "mcts");
   assert.equal(BotKind.AlphaBeta, "alphaBeta");
   assert.equal(BotKind.JacekInspired, "jacekInspired");
+  assert.equal(BotKind.Rank5Derived, "rank5Derived");
   assert.equal(typeof gameEngine.startGame, "function");
   assert.equal(typeof gameEngine.playHuman, "function");
   assert.equal(typeof gameEngine.playBot, "function");
@@ -379,6 +391,46 @@ test("live games expose and run JacekInspiredBot with neural-search diagnostics"
   assert.deepEqual(moved.replay, repeatedMove.replay);
 });
 
+test("live games expose the fixed Rank5DerivedBot demo profile and diagnostics", () => {
+  const initial = gameEngine.startGame(
+    "18446744073709551615",
+    Player.Two,
+    BotKind.Rank5Derived,
+    1,
+  );
+
+  const configuration = initial.diagnostics.botConfiguration;
+  assert.equal(configuration.kind, "Rank5DerivedBot");
+  assert.equal(configuration.profile, "50k-demo");
+  assert.equal(configuration.maxNodes, 50000);
+  assert.equal(configuration.modelBlendPercent, 0);
+  assert.equal(configuration.replayBookEnabled, false);
+  assert.deepEqual(configuration.originalArtifact, {
+    name: "rank_5",
+    rank: 5,
+    fieldSize: 206,
+    submissionId: "41015554",
+    sha256: RANK5_ARTIFACT_SHA256,
+  });
+  assert.deepEqual(initial.replay.players.one, configuration);
+
+  const moved = gameEngine.playBot(initial.sessionId, initial.revision);
+  const search = moved.diagnostics.lastBotSearch;
+  assert.equal(search.searchType, "rank5Derived");
+  assert.equal(search.ply, 1);
+  assert.equal(search.player, Player.One);
+  assert.equal(search.requestedNodes, 50000);
+  assert.ok(search.visitedNodes > 0 && search.visitedNodes <= 50000);
+  assert.ok(search.completedDepth > 0);
+  assert.ok(search.attemptedDepth >= search.completedDepth);
+  assert.equal(typeof search.rootScore, "number");
+  assert.equal(typeof search.budgetExhausted, "boolean");
+  assert.ok(search.plannedActionLength > 0);
+  assert.equal(search.currentEdgeIndex, 0);
+  assert.equal(search.cachedContinuation, false);
+  assert.deepEqual(moved.diagnostics.botSearches, [search]);
+});
+
 test("invalid seeds are rejected by C++ without replacing the live game", () => {
   const initial = gameEngine.startGame("23", Player.One);
 
@@ -492,6 +544,76 @@ test("bot replay sessions preserve JacekInspiredBot model and limits", () => {
   assert.equal(snapshot.replay.players.one.maxTimeMs, 0);
   assert.equal(snapshot.replay.players.one.modelSha256, JACEK_MODEL_SHA256);
   assert.equal(snapshot.done, true);
+});
+
+test("bot replay sessions preserve the fixed Rank5DerivedBot demo profile", () => {
+  const snapshot = gameEngine.startBotReplay(
+    { kind: BotKind.Rank5Derived, seed: "107", iterations: 1 },
+    botConfig(BotKind.Random, "109"),
+    0,
+  );
+
+  const configuration = snapshot.replay.players.one;
+  assert.equal(configuration.kind, "Rank5DerivedBot");
+  assert.equal(configuration.profile, "50k-demo");
+  assert.equal(configuration.maxNodes, 50000);
+  assert.equal(configuration.modelBlendPercent, 0);
+  assert.equal(configuration.replayBookEnabled, false);
+  assert.equal(configuration.originalArtifact.sha256, RANK5_ARTIFACT_SHA256);
+  assert.equal(snapshot.done, true);
+});
+
+test("Rank5Derived-vs-MCTS replay completes with contiguous action diagnostics", () => {
+  const snapshot = finishBotReplay(
+    { kind: BotKind.Rank5Derived, seed: "0" },
+    botConfig(BotKind.Mcts, "23"),
+    512,
+  );
+
+  assert.equal(snapshot.done, true);
+  assert.equal(snapshot.replay.truncated, false);
+  assert.equal(snapshot.revision, snapshot.replay.moves.length);
+  assert.deepEqual(
+    snapshot.replay.moves.map((move) => move.to),
+    RANK5_TRANSCRIPT_FIXTURE,
+    "the Wasm path should match the shared native transcript fixture",
+  );
+
+  const searches = snapshot.botSearches.filter(
+    (search) => search.searchType === "rank5Derived",
+  );
+  let roots = 0;
+  let cachedEdges = 0;
+  for (let searchIndex = 0; searchIndex < searches.length;) {
+    const root = searches[searchIndex];
+    roots += 1;
+    assert.equal(root.cachedContinuation, false);
+    assert.equal(root.requestedNodes, 50000);
+    assert.ok(root.visitedNodes > 0 && root.visitedNodes <= root.requestedNodes);
+    assert.equal(root.currentEdgeIndex, 0);
+    assert.ok(root.plannedActionLength > 0);
+
+    for (let edgeIndex = 1; edgeIndex < root.plannedActionLength; edgeIndex += 1) {
+      const continuation = searches[searchIndex + edgeIndex];
+      assert.ok(continuation, "every planned Rank5 action edge should be present");
+      cachedEdges += 1;
+      assert.equal(continuation.cachedContinuation, true);
+      assert.equal(continuation.requestedNodes, 50000);
+      assert.equal(continuation.visitedNodes, 0);
+      assert.equal(continuation.plannedActionLength, root.plannedActionLength);
+      assert.equal(continuation.currentEdgeIndex, edgeIndex);
+      assert.equal(continuation.ply, root.ply + edgeIndex);
+      assert.equal(continuation.player, root.player);
+      assert.equal(continuation.completedDepth, root.completedDepth);
+      assert.equal(continuation.attemptedDepth, root.attemptedDepth);
+      assert.equal(continuation.rootScore, root.rootScore);
+      assert.equal(continuation.budgetExhausted, root.budgetExhausted);
+    }
+    searchIndex += root.plannedActionLength;
+  }
+
+  assert.ok(roots > 0, "the completed replay should contain Rank5 root searches");
+  assert.ok(cachedEdges > 0, "the completed replay should exercise cached edges");
 });
 
 test("the open center of a goal mouth does not grant an extra turn", () => {

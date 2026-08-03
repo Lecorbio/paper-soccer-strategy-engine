@@ -1,0 +1,13 @@
+# Rank5DerivedBot (Player 1) vs MctsBot(seed=23, iterations=8), demo rules.
+# One destination per physical ply; both native and checked-in Wasm assert it.
+3 5
+4 5
+5 4
+6 3
+6 2
+7 1
+7 2
+6 1
+6 2
+5 1
+4 0

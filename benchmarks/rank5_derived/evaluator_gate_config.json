@@ -1,0 +1,33 @@
+{
+  "schema": "papersoccer.rank5-derived-evaluator-gate-config.v1",
+  "rules": {
+    "width": 8,
+    "height": 10,
+    "goalRule": "opponentGoalOnly",
+    "blockedRule": "playerToMoveLoses"
+  },
+  "candidateModelBlendPercent": 15,
+  "referenceModelBlendPercent": 0,
+  "profile": {
+    "maxTurnDepth": 32,
+    "maxNodes": 50000,
+    "transpositionEntries": 65536,
+    "evaluationEntries": 32768,
+    "wallClockLimitEnabled": false,
+    "replayBookEnabled": false
+  },
+  "openings": {
+    "generator": "xorshift64star/legal-index/v1",
+    "seedBase": "0x52414e4b35474154",
+    "physicalPlies": [4, 12, 20],
+    "colorSwappedPairsPerStage": 20
+  },
+  "bootstrap": {
+    "method": "pairedPercentile",
+    "resamples": 10000,
+    "seed": "0x4253545250354349",
+    "confidence": 0.95
+  },
+  "selectionRule": "Select 15 only when illegal moves, errors, unexplained truncations, and incomplete actions are all zero and the overall paired-bootstrap 95% lower bound is strictly greater than 0.50; otherwise select 0.",
+  "command": "benchmarks/run_rank5_derived_gate.sh --output gate-raw.json --summary gate-summary.json"
+}

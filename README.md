@@ -6,7 +6,7 @@ This repository contains a deterministic C++20 baseline for paper soccer with:
 - A terminal CLI for human and bot play (`papersoccer_cli`)
 - Seeded `RandomBot`, Monte Carlo Tree Search (`MctsBot`), deterministic
   alpha-beta (`AlphaBetaBot`), and independently trained neural
-  `JacekInspiredBot` opponents
+  `JacekInspiredBot` opponents, plus the fixed-work `Rank5DerivedBot` demo profile
 - A native arena for paired strength matches and position throughput measurements
 - A JSON replay exporter for bot self-play (`papersoccer_replay_export`)
 - A static browser game powered by the same C++ engine through WebAssembly
@@ -45,6 +45,44 @@ gates are in [models/README.md](models/README.md). Fixed paired gates finished 1
 iterations, with no illegal moves or truncations. These small, fixed-seed samples support
 including it as a distinct educational opponent; they are not a claim that the demo model
 reproduces Jacek's contest strength.
+
+## Rank-5-Derived Demo Bot
+
+The browser exposes **Rank5DerivedBot — 50k demo profile**: complete-turn search derived from
+the rank 5/206 CodinGame submission, adapted to demo rules and deterministic 50,000-node work.
+This is deliberately not presented as the exact ranked entrant. The authentic artifact used
+CodinGame goal/blocking rules, contest timing, a replay-trained value blend, and an exact-history
+replay book; the derived profile uses the normal 8×10 demo contract and rejects every other board
+or rule configuration.
+
+The maintained [rank-5 source](submissions/codingame/bots/rank_5/bot.cpp) is included through a
+private no-main adapter and remains unchanged. The adapter constructs its `CompleteTurnSearch`
+directly, so contest clock logic and replay correction are never entered. Its fixed browser
+profile is:
+
+- 32 possession turns maximum depth
+- 50,000 visited nodes
+- 65,536 transposition entries and 32,768 evaluation-cache entries
+- no wall-clock cutoff and no replay-book corrections
+- 0% learned-value blend, selected by the gate below
+
+The search returns a complete possession, while the public `Bot::choose_move` API returns one
+edge. `Rank5DerivedBot` therefore searches once, caches rebound edges, and reuses them only when
+the next supplied `GameState` exactly matches the predicted state. Undo or any unrelated input
+invalidates the continuation and starts a fresh search. Browser diagnostics distinguish those
+paths and record requested/visited nodes, completed/attempted depth, root score, budget
+exhaustion, planned action length, edge index, and cached-continuation use.
+
+The evaluator-selection gate compared the original 15% learned-value blend against 0% search
+only over 60 frozen, color-swapped pairs (120 games): 20 pairs after each of 4, 12, and 20 opening
+plies. The 15% candidate went 70–50 with zero illegal moves, errors, unexplained truncations, or
+incomplete actions, but its 10,000-resample paired 95% interval was 49.17%–67.50%. Because the
+lower bound did not strictly exceed 50%, the shipped profile stays at 0%. The exact configuration
+and compact result are in [benchmarks/rank5_derived](benchmarks/rank5_derived).
+
+The original generated submission still has SHA-256
+`f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`. Results from this adapted
+bot must not be attributed to the authentic submission's 5/206 ranking.
 
 ## Rules Implemented (Kurnik-style defaults)
 
@@ -509,7 +547,14 @@ The checked-in browser engine's default-path timing can also be probed with:
 
 ```bash
 node benchmarks/wasm_mcts.mjs 2000 9
+node benchmarks/wasm_rank5_derived.mjs 80 10 120 250
 ```
+
+On the documented Apple M4 Pro gate machine, the Rank5Derived probe measured 80 actual
+complete-turn searches at 42.56 ms median, 50.31 ms p95, and 54.35 ms maximum. It excluded 64
+cached continuation edges and reported zero rejected commands or incomplete actions, passing the
+120 ms p95 and 250 ms maximum limits. These latency values are machine-specific; the fixed-node
+decisions and action diagnostics are deterministic.
 
 The historical Tactical RolloutOnly Wasm initial-position median was 57.700 ms on the gate
 machine, below its previous 174.120 ms baseline. These figures do not measure quiescence. Use the
@@ -585,13 +630,15 @@ open web/index.html
 
 The app starts in **Play vs bot** mode:
 
-1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, or `JacekInspiredBot` as the opponent.
+1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, `JacekInspiredBot`, or the fixed
+   `Rank5DerivedBot — 50k demo profile` as the opponent.
 2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the bot
    move first and attack the bottom goal.
 3. Enter the opponent seed. MCTS games also expose the fixed number of new simulations per
    bot move; both alpha-beta bots expose possession-handoff depth. `AlphaBetaBot` and
    `JacekInspiredBot` are deterministic and ignore the seed when choosing moves, although the
    shared replay metadata still records it.
+   Rank5Derived hides seed and search controls because its profile is fixed and deterministic.
    Reusing the same settings and human moves reproduces the bot's choices.
 4. Select **Start**, then click any highlighted destination on the board. Destinations
    marked with `↻` grant another move.
@@ -611,6 +658,8 @@ bot search. Exported human matches can be opened through the normal replay loade
 Select **Watch replay** to inspect the built-in game or generate a new bot-vs-bot match.
 Player 1 and Player 2 each have an independent bot and seed, plus an MCTS simulation setting or
 alpha-beta handoff-depth setting when applicable.
+Either replay player can use Rank5Derived; its fixed-profile controls and provenance metadata are
+preserved with its typed search diagnostics outside the standard replay payload.
 Generation advances one move at a time so the controls can update between searches, stops after
 512 moves if the game has not finished, reports progress during longer matches, and opens the
 result directly in the replay viewer.
@@ -644,9 +693,11 @@ To verify that the checked-in module exactly matches the C++ sources without upd
 cmake --build build/wasm --target check_papersoccer_web
 ```
 
-The versioned command/snapshot boundary keeps both browser bots in C++; JavaScript only schedules
+The versioned command/snapshot boundary keeps every browser bot in C++; JavaScript only schedules
 their turns and renders the returned session snapshots. Memory growth remains disabled because
-growable Wasm buffers are not compatible with every direct-file browser.
+growable Wasm buffers are not compatible with every direct-file browser. The fixed initial heap
+is 32 MiB so Rank5Derived-vs-MCTS replay sessions have room for both search profiles; this does
+not increase the downloaded Wasm payload.
 
 Generate a new bot-vs-bot replay as JSON:
 
@@ -693,7 +744,8 @@ grouped by responsibility:
 │   │   ├── random/             RandomBot implementation
 │   │   ├── mcts/               MctsBot and tactical search
 │   │   ├── alpha_beta/         AlphaBetaBot and private search seam
-│   │   └── jacek_inspired/     Neural bot, features, inference, and generated weights
+│   │   ├── jacek_inspired/     Neural bot, features, inference, and generated weights
+│   │   └── rank5_derived/      Fixed-work adapter over the maintained rank-5 search
 │   ├── arena/
 │   │   ├── main.cpp            Native/Wasm command-line entrypoint
 │   │   ├── runner.cpp          Match execution and statistical summaries
@@ -721,7 +773,7 @@ grouped by responsibility:
 │   └── test_main.cpp           Native test entrypoint
 ├── models/                     Trained model JSON and provenance
 ├── tools/                      Neural corpus, training, and header generators
-├── benchmarks/                 Reproducible WebAssembly timing probes
+├── benchmarks/                 Reproducible gates and WebAssembly timing probes
 └── CMakeLists.txt              Build targets and complete test registration
 ```
 

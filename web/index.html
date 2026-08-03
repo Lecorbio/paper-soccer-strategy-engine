@@ -66,6 +66,7 @@
               <option value="mcts">MctsBot</option>
               <option value="alphaBeta">AlphaBetaBot</option>
               <option value="jacekInspired">JacekInspiredBot</option>
+              <option value="rank5Derived">Rank5DerivedBot — 50k demo profile</option>
             </select>
           </label>
 
@@ -77,7 +78,7 @@
             </select>
           </label>
 
-          <label class="form-field" for="seedInput">
+          <label id="botSeedField" class="form-field" for="seedInput">
             <span>Opponent seed</span>
             <input id="seedInput" type="text" inputmode="numeric"
               value="12345" autocomplete="off" spellcheck="false">
@@ -94,6 +95,10 @@
             <input id="botDepthInput" type="number" min="1" max="64" step="1"
               value="6" inputmode="numeric" autocomplete="off" disabled>
           </label>
+
+          <p id="botRank5Profile" class="setup-help" hidden>
+            Complete-turn search derived from the rank 5/206 CodinGame submission, adapted to demo rules and deterministic 50,000-node work.
+          </p>
 
           <p class="setup-help">Player 1 moves first. Reuse the same settings to repeat the bot.</p>
           <p id="setupError" class="form-error" role="alert" aria-atomic="true"></p>
@@ -147,10 +152,12 @@
                   <option value="mcts">MctsBot</option>
                   <option value="alphaBeta">AlphaBetaBot</option>
                   <option value="jacekInspired">JacekInspiredBot</option>
+                  <option value="rank5Derived">Rank5DerivedBot — 50k demo profile</option>
                 </select>
               </label>
 
-              <label class="compact-form-field" for="replayOneSeedInput">
+              <label id="replayOneSeedField" class="compact-form-field"
+                for="replayOneSeedInput">
                 <span>Seed</span>
                 <input id="replayOneSeedInput" type="text" inputmode="numeric"
                   value="12345" autocomplete="off" spellcheck="false">
@@ -169,6 +176,10 @@
                 <input id="replayOneDepthInput" type="number" min="1" max="64" step="1"
                   value="6" inputmode="numeric" autocomplete="off" disabled>
               </label>
+
+              <p id="replayOneRank5Profile" class="setup-help" hidden>
+                Complete-turn search derived from the rank 5/206 CodinGame submission, adapted to demo rules and deterministic 50,000-node work.
+              </p>
             </div>
 
             <div class="replay-player-card" role="group"
@@ -184,10 +195,12 @@
                   <option value="mcts">MctsBot</option>
                   <option value="alphaBeta">AlphaBetaBot</option>
                   <option value="jacekInspired">JacekInspiredBot</option>
+                  <option value="rank5Derived">Rank5DerivedBot — 50k demo profile</option>
                 </select>
               </label>
 
-              <label class="compact-form-field" for="replayTwoSeedInput">
+              <label id="replayTwoSeedField" class="compact-form-field"
+                for="replayTwoSeedInput">
                 <span>Seed</span>
                 <input id="replayTwoSeedInput" type="text" inputmode="numeric"
                   value="12346" autocomplete="off" spellcheck="false">
@@ -206,6 +219,10 @@
                 <input id="replayTwoDepthInput" type="number" min="1" max="64" step="1"
                   value="6" inputmode="numeric" autocomplete="off" disabled>
               </label>
+
+              <p id="replayTwoRank5Profile" class="setup-help" hidden>
+                Complete-turn search derived from the rank 5/206 CodinGame submission, adapted to demo rules and deterministic 50,000-node work.
+              </p>
             </div>
           </div>
 

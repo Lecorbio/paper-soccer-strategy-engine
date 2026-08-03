@@ -42,10 +42,12 @@
   const botSelect = document.querySelector("#botSelect");
   const sideSelect = document.querySelector("#sideSelect");
   const seedInput = document.querySelector("#seedInput");
+  const botSeedField = document.querySelector("#botSeedField");
   const botIterationsField = document.querySelector("#botIterationsField");
   const botIterationsInput = document.querySelector("#botIterationsInput");
   const botDepthField = document.querySelector("#botDepthField");
   const botDepthInput = document.querySelector("#botDepthInput");
+  const botRank5Profile = document.querySelector("#botRank5Profile");
   const newGameButton = document.querySelector("#newGameButton");
   const changeSettingsButton = document.querySelector("#changeSettingsButton");
   const exportGameButton = document.querySelector("#exportGameButton");
@@ -64,6 +66,7 @@
   const generateReplayButton = document.querySelector("#generateReplayButton");
   const replayOneBotSelect = document.querySelector("#replayOneBotSelect");
   const replayOneSeedInput = document.querySelector("#replayOneSeedInput");
+  const replayOneSeedField = document.querySelector("#replayOneSeedField");
   const replayOneIterationsField = document.querySelector(
     "#replayOneIterationsField",
   );
@@ -72,8 +75,12 @@
   );
   const replayOneDepthField = document.querySelector("#replayOneDepthField");
   const replayOneDepthInput = document.querySelector("#replayOneDepthInput");
+  const replayOneRank5Profile = document.querySelector(
+    "#replayOneRank5Profile",
+  );
   const replayTwoBotSelect = document.querySelector("#replayTwoBotSelect");
   const replayTwoSeedInput = document.querySelector("#replayTwoSeedInput");
+  const replayTwoSeedField = document.querySelector("#replayTwoSeedField");
   const replayTwoIterationsField = document.querySelector(
     "#replayTwoIterationsField",
   );
@@ -82,6 +89,9 @@
   );
   const replayTwoDepthField = document.querySelector("#replayTwoDepthField");
   const replayTwoDepthInput = document.querySelector("#replayTwoDepthInput");
+  const replayTwoRank5Profile = document.querySelector(
+    "#replayTwoRank5Profile",
+  );
   const replaySetupError = document.querySelector("#replaySetupError");
   const replayGenerationStatus = document.querySelector(
     "#replayGenerationStatus",
@@ -100,6 +110,7 @@
   const MAX_MCTS_ITERATIONS = 10000;
   const DEFAULT_ALPHA_BETA_DEPTH = 6;
   const MAX_ALPHA_BETA_DEPTH = 64;
+  const RANK5_DERIVED_MAX_NODES = 50000;
   const MAX_REPLAY_PLIES = 512;
   const MAX_UINT64 = (1n << 64n) - 1n;
 
@@ -244,7 +255,8 @@
     if (!player) {
       return label;
     }
-    const hasSeed = player.seed !== undefined && player.seed !== null &&
+    const hasSeed = player.kind !== "Rank5DerivedBot" &&
+      player.seed !== undefined && player.seed !== null &&
       String(player.seed).length > 0;
     const details = [];
     if (hasSeed) {
@@ -255,6 +267,10 @@
     }
     if (Number.isInteger(player.depth) && player.depth > 0) {
       details.push("possession-handoff depth " + player.depth);
+    }
+    if (player.kind === "Rank5DerivedBot" &&
+        Number.isInteger(player.maxNodes)) {
+      details.push(formatCount(player.maxNodes) + " deterministic nodes");
     }
     const suffix = details.length > 0 ? " (" + details.join(", ") + ")" : "";
     return label + ": " + (player.kind ?? "Unknown") + suffix;
@@ -272,6 +288,9 @@
     }
     if (kind === BotKind.JacekInspired) {
       return "JacekInspiredBot";
+    }
+    if (kind === BotKind.Rank5Derived) {
+      return "Rank5DerivedBot";
     }
     return "UnknownBot";
   }
@@ -325,7 +344,8 @@
 
   function selectedBotKind(value) {
     if (value === BotKind.Random || value === BotKind.Mcts ||
-        value === BotKind.AlphaBeta || value === BotKind.JacekInspired) {
+        value === BotKind.AlphaBeta || value === BotKind.JacekInspired ||
+        value === BotKind.Rank5Derived) {
       return value;
     }
     throw new Error("Unsupported bot kind: " + String(value));
@@ -333,6 +353,15 @@
 
   function readBotConfig(kindSelect, botSeedInput, iterationsInput, depthInput) {
     const kind = selectedBotKind(kindSelect.value);
+    if (kind === BotKind.Rank5Derived) {
+      return {
+        kind: kind,
+        seed: "0",
+        iterations: DEFAULT_MCTS_ITERATIONS,
+        depth: DEFAULT_ALPHA_BETA_DEPTH,
+        maxNodes: RANK5_DERIVED_MAX_NODES,
+      };
+    }
     let seed;
     try {
       seed = parseSeed(botSeedInput.value);
@@ -370,6 +399,9 @@
   }
 
   function botSearchSetting(config) {
+    if (config.kind === BotKind.Rank5Derived) {
+      return RANK5_DERIVED_MAX_NODES;
+    }
     return isDepthBot(config.kind) ? config.depth : config.iterations;
   }
 
@@ -714,6 +746,10 @@
       !isDepthBot(replayOneBotSelect.value);
     replayTwoDepthInput.disabled = isGeneratingReplay ||
       !isDepthBot(replayTwoBotSelect.value);
+    replayOneSeedInput.disabled = isGeneratingReplay ||
+      replayOneBotSelect.value === BotKind.Rank5Derived;
+    replayTwoSeedInput.disabled = isGeneratingReplay ||
+      replayTwoBotSelect.value === BotKind.Rank5Derived;
     generateReplayButton.textContent = isGeneratingReplay
       ? "Generating…"
       : "Generate";
@@ -909,8 +945,12 @@
     const usesMcts = configuration.kind === "MctsBot";
     const usesDepth = configuration.kind === "AlphaBetaBot" ||
       configuration.kind === "JacekInspiredBot";
-    activeBotConfiguration.textContent = configuration.kind + " · seed " +
-      configuration.seed + (usesMcts
+    const usesRank5Profile = configuration.kind === "Rank5DerivedBot";
+    activeBotConfiguration.textContent = configuration.kind +
+      (usesRank5Profile
+        ? " — 50k demo profile · deterministic " +
+          formatCount(configuration.maxNodes) + "-node work"
+        : " · seed " + configuration.seed) + (usesMcts
         ? " · " + formatCount(configuration.iterations) +
           " new simulations per bot move"
         : usesDepth
@@ -921,7 +961,8 @@
     const search = diagnostics.lastBotSearch;
     latestSearch.hidden = !search;
     searchPending.hidden = (!usesMcts &&
-      configuration.kind !== "JacekInspiredBot") || Boolean(search);
+      configuration.kind !== "JacekInspiredBot" && !usesRank5Profile) ||
+      Boolean(search);
     if (!search) {
       return;
     }
@@ -948,6 +989,26 @@
         formatCount(search.terminalNodes) + " terminal nodes · " +
         formatCount(search.cutoffs) + " cutoffs · max physical ply " +
         formatCount(search.maxPhysicalPly);
+      return;
+    }
+
+    if (search.searchType === "rank5Derived") {
+      searchVisits.textContent = "Latest completed · depth " +
+        formatCount(search.completedDepth) + " · Player 1 score " +
+        formatCount(search.rootScore);
+      searchShape.textContent = formatCount(search.visitedNodes) + " of " +
+        formatCount(search.requestedNodes) + " deterministic nodes · " +
+        formatDecisionTime(search.decisionTimeNs);
+      searchIndicators.textContent = search.budgetExhausted
+        ? "50,000-node budget reached"
+        : "Search completed within the 50,000-node budget";
+      searchDetails.textContent = "Move " + formatCount(search.ply) +
+        " · attempted depth " + formatCount(search.attemptedDepth) +
+        " · planned complete turn: " +
+        formatCount(search.plannedActionLength) + " edges · playing edge " +
+        formatCount(search.currentEdgeIndex + 1) +
+        (search.cachedContinuation ? " · cached continuation" :
+          " · fresh complete-turn search");
       return;
     }
 
@@ -1133,6 +1194,9 @@
       changeSettingsButton: changeSettingsButton,
       exportButton: exportGameButton,
     }, state);
+    if (botSelect.value === BotKind.Rank5Derived) {
+      seedInput.disabled = true;
+    }
     gameSetup.classList.toggle("is-configuration-locked", state.locked);
   }
 
@@ -1145,16 +1209,28 @@
   function syncBotSetupFields() {
     const playUsesMcts = botSelect.value === BotKind.Mcts;
     const playUsesDepth = isDepthBot(botSelect.value);
+    const playUsesRank5Profile = botSelect.value === BotKind.Rank5Derived;
+    botSeedField.hidden = playUsesRank5Profile;
+    seedInput.disabled = playUsesRank5Profile;
     botIterationsField.hidden = !playUsesMcts;
     botIterationsInput.disabled = !playUsesMcts;
     botDepthField.hidden = !playUsesDepth;
     botDepthInput.disabled = !playUsesDepth;
+    botRank5Profile.hidden = !playUsesRank5Profile;
     playSetupEyebrow.textContent = "Play vs " + botDisplayName(botSelect.value);
 
     const playerOneUsesMcts = replayOneBotSelect.value === BotKind.Mcts;
     const playerTwoUsesMcts = replayTwoBotSelect.value === BotKind.Mcts;
     const playerOneUsesDepth = isDepthBot(replayOneBotSelect.value);
     const playerTwoUsesDepth = isDepthBot(replayTwoBotSelect.value);
+    const playerOneUsesRank5Profile =
+      replayOneBotSelect.value === BotKind.Rank5Derived;
+    const playerTwoUsesRank5Profile =
+      replayTwoBotSelect.value === BotKind.Rank5Derived;
+    replayOneSeedField.hidden = playerOneUsesRank5Profile;
+    replayTwoSeedField.hidden = playerTwoUsesRank5Profile;
+    replayOneSeedInput.disabled = isGeneratingReplay || playerOneUsesRank5Profile;
+    replayTwoSeedInput.disabled = isGeneratingReplay || playerTwoUsesRank5Profile;
     replayOneIterationsField.hidden = !playerOneUsesMcts;
     replayTwoIterationsField.hidden = !playerTwoUsesMcts;
     replayOneIterationsInput.disabled = isGeneratingReplay || !playerOneUsesMcts;
@@ -1163,6 +1239,8 @@
     replayTwoDepthField.hidden = !playerTwoUsesDepth;
     replayOneDepthInput.disabled = isGeneratingReplay || !playerOneUsesDepth;
     replayTwoDepthInput.disabled = isGeneratingReplay || !playerTwoUsesDepth;
+    replayOneRank5Profile.hidden = !playerOneUsesRank5Profile;
+    replayTwoRank5Profile.hidden = !playerTwoUsesRank5Profile;
   }
 
   function updateReplayControls() {

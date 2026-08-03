@@ -1,0 +1,71 @@
+{
+  "schema": "papersoccer.rank5-derived-evaluator-gate-summary.v1",
+  "config": {
+    "candidate_blend_percent": 15,
+    "reference_blend_percent": 0,
+    "max_nodes": 50000,
+    "max_turn_depth": 32,
+    "pairs_per_stage": 20,
+    "bootstrap_resamples": 10000
+  },
+  "opening_fingerprint": {
+    "algorithm": "fnv1a64",
+    "value": "0997c7d5fbeb51e6"
+  },
+  "stages": [
+    {
+      "opening_physical_plies": 4,
+      "candidate_wins": 20,
+      "candidate_losses": 20,
+      "complete_pairs": 20,
+      "candidate_paired_score": 0.5,
+      "ci_lower": 0.325,
+      "ci_upper": 0.675
+    },
+    {
+      "opening_physical_plies": 12,
+      "candidate_wins": 25,
+      "candidate_losses": 15,
+      "complete_pairs": 20,
+      "candidate_paired_score": 0.625,
+      "ci_lower": 0.45,
+      "ci_upper": 0.8
+    },
+    {
+      "opening_physical_plies": 20,
+      "candidate_wins": 25,
+      "candidate_losses": 15,
+      "complete_pairs": 20,
+      "candidate_paired_score": 0.625,
+      "ci_lower": 0.5,
+      "ci_upper": 0.75
+    }
+  ],
+  "overall": {
+    "candidate_wins": 70,
+    "candidate_losses": 50,
+    "complete_pairs": 60,
+    "candidate_paired_score": 0.5833333333333334,
+    "ci_lower": 0.49166666666666664,
+    "ci_upper": 0.675,
+    "operational_counts": {
+      "illegal_moves": 0,
+      "errors": 0,
+      "unexplained_truncations": 0,
+      "incomplete_actions": 0,
+      "candidate_searches": 2593,
+      "reference_searches": 2584,
+      "candidate_cached_edges": 7717,
+      "reference_cached_edges": 5920,
+      "candidate_nodes": 121501397,
+      "reference_nodes": 121085524,
+      "candidate_budget_exhaustions": 2398,
+      "reference_budget_exhaustions": 2396
+    }
+  },
+  "selection": {
+    "operationally_clean": true,
+    "lower_bound_strictly_above_half": false,
+    "selected_replay_value_blend_percent": 0
+  }
+}

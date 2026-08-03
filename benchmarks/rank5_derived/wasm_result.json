@@ -1,0 +1,40 @@
+{
+  "schema": "papersoccer.wasm-rank5-derived-benchmark-summary.v1",
+  "runDate": "2026-08-03",
+  "machine": {
+    "cpu": "Apple M4 Pro",
+    "architecture": "arm64",
+    "node": "v26.5.0",
+    "emscripten": "6.0.2-git"
+  },
+  "profile": {
+    "rules": "demo-default",
+    "maxNodes": 50000,
+    "maxTurnDepth": 32,
+    "transpositionEntries": 65536,
+    "evaluationEntries": 32768,
+    "maxTimeMs": 0,
+    "modelBlendPercent": 0,
+    "replayBookEnabled": false
+  },
+  "requestedCompleteTurnSearches": 80,
+  "actualCompleteTurnSearches": 80,
+  "excludedCachedContinuationEdges": 64,
+  "validatedCompleteActionEdges": 144,
+  "games": 18,
+  "operationalCounts": {
+    "illegalOrRejectedCommands": 0,
+    "incompleteActions": 0
+  },
+  "timingMs": {
+    "median": 42.563958,
+    "p95": 50.310625,
+    "max": 54.354666
+  },
+  "limitsMs": {
+    "p95": 120,
+    "max": 250
+  },
+  "passed": true,
+  "command": "node benchmarks/wasm_rank5_derived.mjs 80 10 120 250"
+}

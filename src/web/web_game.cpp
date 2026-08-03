@@ -48,6 +48,22 @@ void write_winner(std::ostream &out, const GameState &state) {
 }
 
 void write_bot(std::ostream &out, const BotConfig &config) {
+  if (config.kind == BotKind::Rank5Derived) {
+    out << "{\"kind\":\"Rank5DerivedBot\",\"profile\":\""
+        << Rank5DerivedBot::profile_name() << "\",\"maxNodes\":"
+        << Rank5DerivedConfig::profile_max_nodes
+        << ",\"modelBlendPercent\":"
+        << Rank5DerivedConfig::default_replay_value_blend_percent
+        << ",\"replayBookEnabled\":"
+        << (Rank5DerivedConfig::default_replay_corrections ? "true" : "false")
+        << ",\"originalArtifact\":{\"name\":\""
+        << Rank5DerivedBot::original_artifact_name() << "\",\"rank\":"
+        << Rank5DerivedBot::original_rank << ",\"fieldSize\":"
+        << Rank5DerivedBot::original_field_size << ",\"submissionId\":\""
+        << Rank5DerivedBot::original_submission_id() << "\",\"sha256\":\""
+        << Rank5DerivedBot::original_sha256() << "\"}}";
+    return;
+  }
   out << "{\"kind\":\"" << bot_kind_name(config.kind) << "\",\"seed\":\""
       << config.seed << '"';
   if (config.kind == BotKind::Mcts) {
@@ -99,6 +115,22 @@ void write_bot_search(std::ostream &out,
   out << ",\"to\":";
   write_point(out, search.chosen_move.to);
   out << "},\"decisionTimeNs\":" << search.decision_time_ns;
+  if (search.rank5_derived_stats.has_value()) {
+    const Rank5DerivedSearchStats &stats = *search.rank5_derived_stats;
+    out << ",\"searchType\":\"rank5Derived\""
+        << ",\"requestedNodes\":" << Rank5DerivedConfig::profile_max_nodes
+        << ",\"visitedNodes\":" << stats.nodes
+        << ",\"completedDepth\":" << stats.completed_turn_depth
+        << ",\"attemptedDepth\":" << stats.attempted_turn_depth
+        << ",\"rootScore\":" << stats.root_score
+        << ",\"budgetExhausted\":"
+        << (stats.budget_exhausted ? "true" : "false")
+        << ",\"plannedActionLength\":" << stats.planned_action_length
+        << ",\"currentEdgeIndex\":" << stats.current_edge_index
+        << ",\"cachedContinuation\":"
+        << (stats.cached_continuation ? "true" : "false") << '}';
+    return;
+  }
   if (search.alpha_beta_stats.has_value()) {
     const AlphaBetaSearchStats &stats = *search.alpha_beta_stats;
     out << ",\"searchType\":\"alphaBeta\""
@@ -157,6 +189,50 @@ void write_bot_searches(std::ostream &out,
     write_bot_search(out, searches[i]);
   }
   out << ']';
+}
+
+std::optional<WebBotSearchDiagnostic> make_bot_search_diagnostic(
+    const Bot &bot, const BotConfig &config, const PlayedMove &played,
+    Point from, Move chosen, Clock::time_point start, Clock::time_point end) {
+  if (const auto *mcts = dynamic_cast<const MctsBot *>(&bot)) {
+    return WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        config.mcts_iterations,
+        elapsed_nanoseconds(start, end),
+        mcts->last_search_stats(),
+    };
+  }
+  if (const auto *jacek = dynamic_cast<const JacekInspiredBot *>(&bot)) {
+    return WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        0,
+        elapsed_nanoseconds(start, end),
+        SearchStats{},
+        config.alpha_beta_depth,
+        jacek->last_search_stats(),
+    };
+  }
+  if (const auto *rank5 = dynamic_cast<const Rank5DerivedBot *>(&bot)) {
+    return WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        0,
+        elapsed_nanoseconds(start, end),
+        SearchStats{},
+        0,
+        std::nullopt,
+        rank5->last_search_stats(),
+    };
+  }
+  return std::nullopt;
 }
 
 void write_diagnostics(
@@ -356,38 +432,10 @@ WebGameCommandResult WebGameSession::play_bot(std::uint64_t expected_revision) {
   const auto start = Clock::now();
   const Move chosen = bot_->choose_move(match_.state());
   const auto end = Clock::now();
-  std::optional<SearchStats> search_stats;
-  if (const auto *mcts = dynamic_cast<const MctsBot *>(bot_.get())) {
-    search_stats = mcts->last_search_stats();
-  }
-  std::optional<AlphaBetaSearchStats> alpha_beta_stats;
-  if (const auto *jacek =
-          dynamic_cast<const JacekInspiredBot *>(bot_.get())) {
-    alpha_beta_stats = jacek->last_search_stats();
-  }
   const PlayedMove played = match_.play(chosen);
-  if (search_stats.has_value()) {
-    bot_searches_.push_back(WebBotSearchDiagnostic{
-        played.ply,
-        played.player,
-        from,
-        chosen,
-        bot_config_.mcts_iterations,
-        elapsed_nanoseconds(start, end),
-        *search_stats,
-    });
-  } else if (alpha_beta_stats.has_value()) {
-    bot_searches_.push_back(WebBotSearchDiagnostic{
-        played.ply,
-        played.player,
-        from,
-        chosen,
-        0,
-        elapsed_nanoseconds(start, end),
-        SearchStats{},
-        bot_config_.alpha_beta_depth,
-        *alpha_beta_stats,
-    });
+  if (auto diagnostic = make_bot_search_diagnostic(
+          *bot_, bot_config_, played, from, chosen, start, end)) {
+    bot_searches_.push_back(std::move(*diagnostic));
   }
   ++revision_;
   return success(played);
@@ -481,9 +529,15 @@ bool WebBotReplaySession::done() const noexcept { return done_; }
 
 bool WebBotReplaySession::truncated() const noexcept { return truncated_; }
 
+const std::vector<WebBotSearchDiagnostic> &WebBotReplaySession::bot_searches()
+    const noexcept {
+  return bot_searches_;
+}
+
 std::string WebBotReplaySession::snapshot_json() const {
   std::ostringstream out;
   out.imbue(std::locale::classic());
+  out << std::setprecision(17);
   out << "{\"schema\":\"papersoccer.bot-replay-session.v1\",\"sessionId\":"
       << session_id_ << ",\"revision\":" << revision_ << ",\"done\":"
       << (done_ ? "true" : "false") << ",\"replay\":";
@@ -493,6 +547,8 @@ std::string WebBotReplaySession::snapshot_json() const {
                                            ? player_one_config_
                                            : player_two_config_);
                });
+  out << ",\"botSearches\":";
+  write_bot_searches(out, bot_searches_);
   out << '}';
   return out.str();
 }
@@ -517,9 +573,19 @@ WebGameCommandResult WebBotReplaySession::play_next(
                    "the bot cannot move because the game has no legal moves");
   }
 
-  Bot &bot = match_.state().to_move == Player::One ? *player_one_bot_
-                                                    : *player_two_bot_;
-  const PlayedMove played = match_.play(bot.choose_move(match_.state()));
+  const bool player_one = match_.state().to_move == Player::One;
+  Bot &bot = player_one ? *player_one_bot_ : *player_two_bot_;
+  const BotConfig &config =
+      player_one ? player_one_config_ : player_two_config_;
+  const Point from = match_.state().ball;
+  const auto start = Clock::now();
+  const Move chosen = bot.choose_move(match_.state());
+  const auto end = Clock::now();
+  const PlayedMove played = match_.play(chosen);
+  if (auto diagnostic = make_bot_search_diagnostic(
+          bot, config, played, from, chosen, start, end)) {
+    bot_searches_.push_back(std::move(*diagnostic));
+  }
   ++revision_;
 
   if (is_terminal(match_.state())) {

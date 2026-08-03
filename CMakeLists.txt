@@ -18,6 +18,7 @@ add_library(papersoccer_core
   src/bots/jacek_inspired/jacek_neural.cpp
   src/bots/mcts/mcts.cpp
   src/bots/mcts/tactical_search.cpp
+  src/bots/rank5_derived/rank5_derived.cpp
   src/bots/random/random_bot.cpp
   src/core/debug.cpp
   src/core/geometry.cpp
@@ -61,6 +62,7 @@ add_executable(papersoccer_tests
   tests/bots/alpha_beta/alpha_beta_test.cpp
   tests/bots/jacek_inspired/jacek_inspired_test.cpp
   tests/bots/mcts/mcts_test.cpp
+  tests/bots/rank5_derived/rank5_derived_test.cpp
   tests/bots/random/random_bot_test.cpp
   tests/core/match_test.cpp
   tests/core/rules_test.cpp
@@ -69,6 +71,8 @@ add_executable(papersoccer_tests
 )
 target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
 target_include_directories(papersoccer_tests PRIVATE src/bots)
+target_compile_definitions(papersoccer_tests PRIVATE
+  PAPERSOCCER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 if(EMSCRIPTEN)
   target_compile_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
   target_link_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
@@ -100,6 +104,18 @@ function(papersoccer_codingame_target_prefix output_variable bot_name)
 endfunction()
 
 if(NOT EMSCRIPTEN)
+  add_executable(papersoccer_rank5_derived_gate
+    tools/rank5_derived_evaluator_gate.cpp)
+  target_link_libraries(papersoccer_rank5_derived_gate
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_rank5_derived_gate_smoke
+    COMMAND papersoccer_rank5_derived_gate
+            --nodes 500
+            --depth 2
+            --pairs-per-stage 1
+            --bootstrap 100
+            --max-plies 1024)
+
   add_executable(papersoccer_arena_smoke_test
     tests/arena/arena_smoke_test.cpp)
   target_link_libraries(papersoccer_arena_smoke_test
@@ -193,6 +209,11 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_app_support_test.mjs
     )
+    add_test(
+      NAME papersoccer_web_rank5_ui_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_rank5_ui_test.mjs
+    )
     if(NOT EMSCRIPTEN)
       foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
         papersoccer_codingame_target_prefix(
@@ -251,6 +272,8 @@ if(EMSCRIPTEN)
     -sSINGLE_FILE_BINARY_ENCODE=0
     -sENVIRONMENT=web,node
     -sFILESYSTEM=0
+    -sINITIAL_MEMORY=33554432
+    -sALLOW_MEMORY_GROWTH=0
     "-sEXPORTED_RUNTIME_METHODS=['ccall']"
   )
   set_target_properties(papersoccer_web_engine PROPERTIES

@@ -105,6 +105,15 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
           << ",\"model_sha256\":";
       write_string(out, JacekInspiredBot::model_sha256());
       break;
+    case BotKind::Rank5Derived:
+      out << ",\"profile\":";
+      write_string(out, Rank5DerivedBot::profile_name());
+      out << ",\"max_nodes\":" << Rank5DerivedConfig::profile_max_nodes
+          << ",\"model_blend_percent\":"
+          << config.rank5_derived_model_blend_percent
+          << ",\"replay_book_enabled\":false,\"original_sha256\":";
+      write_string(out, Rank5DerivedBot::original_sha256());
+      break;
   }
   out << '}';
 }

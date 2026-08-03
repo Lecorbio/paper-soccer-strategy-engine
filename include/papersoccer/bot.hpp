@@ -16,6 +16,7 @@ enum class BotKind {
   Mcts = 1,
   AlphaBeta = 2,
   JacekInspired = 3,
+  Rank5Derived = 4,
 };
 
 std::string_view bot_kind_name(BotKind kind) noexcept;
@@ -112,6 +113,85 @@ class JacekInspiredBot final : public Bot {
  private:
   AlphaBetaConfig config_;
   AlphaBetaSearchStats last_search_stats_{};
+};
+
+struct Rank5DerivedConfig {
+  static constexpr std::uint32_t maximum_turn_depth{32};
+  static constexpr std::uint64_t profile_max_nodes{50'000};
+  static constexpr bool default_replay_corrections{false};
+  static constexpr int default_replay_value_blend_percent{0};
+
+  std::uint32_t max_turn_depth{32};
+  std::uint64_t max_nodes{profile_max_nodes};
+  std::size_t transposition_table_entries{65'536};
+  std::size_t evaluation_table_entries{32'768};
+  std::uint32_t max_time_ms{0};
+  bool replay_corrections{default_replay_corrections};
+  int replay_value_blend_percent{default_replay_value_blend_percent};
+};
+
+struct Rank5DerivedSearchStats {
+  std::uint32_t completed_turn_depth{};
+  std::uint32_t attempted_turn_depth{};
+  std::uint64_t nodes{};
+  std::uint64_t leaf_evaluations{};
+  std::uint64_t terminal_nodes{};
+  std::uint64_t completed_actions{};
+  std::uint64_t cutoffs{};
+  std::uint64_t transposition_probes{};
+  std::uint64_t transposition_hits{};
+  std::uint64_t transposition_cutoffs{};
+  std::uint64_t transposition_stores{};
+  std::uint64_t continuation_transposition_hits{};
+  std::uint64_t evaluation_cache_probes{};
+  std::uint64_t evaluation_cache_hits{};
+  std::uint64_t terminal_bound_cutoffs{};
+  std::uint64_t forced_edges{};
+  std::uint64_t root_seed_actions{};
+  std::uint64_t root_transposition_reuses{};
+  std::uint32_t max_action_edges{};
+  int root_score{};
+  bool budget_exhausted{};
+  bool cached_continuation{};
+  std::size_t planned_action_length{};
+  std::size_t current_edge_index{};
+  std::size_t cached_moves_remaining{};
+  std::uint64_t searches{};
+};
+
+class Rank5DerivedBot final : public Bot {
+ public:
+  static constexpr std::string_view profile_name() noexcept {
+    return "50k-demo";
+  }
+  static constexpr std::string_view original_artifact_name() noexcept {
+    return "rank_5";
+  }
+  static constexpr std::string_view original_submission_id() noexcept {
+    return "41015554";
+  }
+  static constexpr std::string_view original_sha256() noexcept {
+    return "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29";
+  }
+  static constexpr int original_rank{5};
+  static constexpr int original_field_size{206};
+
+  explicit Rank5DerivedBot(Rank5DerivedConfig config = {});
+
+  std::string_view name() const noexcept override;
+  Move choose_move(const GameState &state) override;
+  const Rank5DerivedConfig &config() const noexcept;
+  const Rank5DerivedSearchStats &last_search_stats() const noexcept;
+
+ private:
+  Rank5DerivedConfig config_;
+  Rank5DerivedSearchStats last_search_stats_{};
+  std::vector<Move> cached_action_{};
+  std::size_t next_cached_move_{};
+  std::optional<GameState> expected_state_{};
+  std::uint64_t searches_{};
+
+  void clear_cache() noexcept;
 };
 
 struct BotConfig {

@@ -17,11 +17,13 @@
     Mcts: "mcts",
     AlphaBeta: "alphaBeta",
     JacekInspired: "jacekInspired",
+    Rank5Derived: "rank5Derived",
   });
 
   const DEFAULT_BOT_ITERATIONS = 2000;
   const DEFAULT_ALPHA_BETA_DEPTH = 6;
   const MAX_ALPHA_BETA_DEPTH = 64;
+  const RANK5_DERIVED_MAX_NODES = 50000;
   const MAX_UINT32 = 0xffffffff;
 
   function samePoint(left, right) {
@@ -40,6 +42,9 @@
     }
     if (kind === BotKind.JacekInspired) {
       return 3;
+    }
+    if (kind === BotKind.Rank5Derived) {
+      return 4;
     }
     throw new Error("Unsupported bot kind: " + String(kind));
   }
@@ -71,7 +76,9 @@
     }
 
     const kindValue = botKindValue(config.kind);
-    const searchSetting = isDepthBot(config.kind)
+    const searchSetting = config.kind === BotKind.Rank5Derived
+      ? RANK5_DERIVED_MAX_NODES
+      : isDepthBot(config.kind)
       ? unsignedInteger(
         config.depth ?? DEFAULT_ALPHA_BETA_DEPTH,
         label + " " + depthBotName(config.kind) + " depth",
@@ -84,7 +91,8 @@
         false,
       );
 
-    return [String(config.seed), kindValue, searchSetting];
+    const seed = config.kind === BotKind.Rank5Derived ? "0" : String(config.seed);
+    return [seed, kindValue, searchSetting];
   }
 
   function createClient(module) {
@@ -157,7 +165,9 @@
       ) {
         const humanValue = humanPlayer === Player.Two ? 2 : 1;
         const kindValue = botKindValue(botKind);
-        const settingValue = isDepthBot(botKind)
+        const settingValue = botKind === BotKind.Rank5Derived
+          ? RANK5_DERIVED_MAX_NODES
+          : isDepthBot(botKind)
           ? unsignedInteger(
             searchSetting ?? DEFAULT_ALPHA_BETA_DEPTH,
             depthBotName(botKind) + " depth",
@@ -172,7 +182,8 @@
         return runCommand(
           "ps_start_game",
           ["string", "number", "number", "number"],
-          [String(seed), humanValue, kindValue, settingValue],
+          [botKind === BotKind.Rank5Derived ? "0" : String(seed),
+            humanValue, kindValue, settingValue],
           snapshot,
         );
       },

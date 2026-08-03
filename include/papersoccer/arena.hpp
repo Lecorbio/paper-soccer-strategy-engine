@@ -25,6 +25,8 @@ struct ArenaBotConfig {
   std::uint64_t alpha_beta_max_nodes{100'000};
   std::size_t alpha_beta_transposition_table_entries{65'536};
   std::uint32_t alpha_beta_max_search_plies{12};
+  int rank5_derived_model_blend_percent{
+      Rank5DerivedConfig::default_replay_value_blend_percent};
 };
 
 struct MatchesConfig {

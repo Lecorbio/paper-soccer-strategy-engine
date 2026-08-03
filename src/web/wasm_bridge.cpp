@@ -24,6 +24,8 @@ std::string last_error;
 std::uint32_t next_session_id{1};
 constexpr std::uint64_t kWebJacekMaxNodes{20'000};
 constexpr std::uint32_t kWebJacekMaxTimeMs{0};
+constexpr std::uint64_t kWebRank5DerivedMaxNodes{
+    ps::Rank5DerivedConfig::profile_max_nodes};
 
 bool parse_seed(std::string_view input, std::uint64_t &value) noexcept {
   if (input.empty()) {
@@ -63,6 +65,10 @@ bool parse_bot_kind(int input, ps::BotKind &kind) noexcept {
     kind = ps::BotKind::JacekInspired;
     return true;
   }
+  if (input == 4) {
+    kind = ps::BotKind::Rank5Derived;
+    return true;
+  }
   return false;
 }
 
@@ -75,8 +81,17 @@ bool parse_bot_config(const char *seed_text, int kind_value,
   if (!parse_bot_kind(kind_value, config.kind)) {
     last_error =
         "the bot kind must be 0 (RandomBot), 1 (MctsBot), "
-        "2 (AlphaBetaBot), or 3 (JacekInspiredBot)";
+        "2 (AlphaBetaBot), 3 (JacekInspiredBot), or 4 (Rank5DerivedBot)";
     return false;
+  }
+  if (config.kind == ps::BotKind::Rank5Derived) {
+    if (search_setting != kWebRank5DerivedMaxNodes) {
+      last_error =
+          "Rank5DerivedBot uses the fixed 50000-node browser profile";
+      return false;
+    }
+    config.seed = 0;
+    return true;
   }
   if (config.kind == ps::BotKind::AlphaBeta ||
       config.kind == ps::BotKind::JacekInspired) {

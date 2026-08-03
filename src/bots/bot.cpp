@@ -15,6 +15,8 @@ std::string_view bot_kind_name(BotKind kind) noexcept {
       return "AlphaBetaBot";
     case BotKind::JacekInspired:
       return "JacekInspiredBot";
+    case BotKind::Rank5Derived:
+      return "Rank5DerivedBot";
   }
   return "UnknownBot";
 }
@@ -51,6 +53,8 @@ std::unique_ptr<Bot> make_bot(const BotConfig &config) {
       search_config.max_time_ms = config.alpha_beta_max_time_ms;
       return std::make_unique<JacekInspiredBot>(search_config);
     }
+    case BotKind::Rank5Derived:
+      return std::make_unique<Rank5DerivedBot>();
   }
   throw std::invalid_argument("unknown bot kind");
 }

@@ -256,6 +256,32 @@ void jacek_inspired_is_configured_measured_and_summarized() {
                    "Jacek-inspired decisions should contribute to search summaries");
 }
 
+void rank5_derived_is_available_programmatically_without_cli_options() {
+  arena::PositionsConfig config;
+  config.position_count = 1;
+  config.generation_plies = 0;
+  config.candidate.kind = papersoccer::BotKind::Rank5Derived;
+  config.candidate.rank5_derived_model_blend_percent = 15;
+  config.reference.kind = papersoccer::BotKind::Random;
+
+  const std::string json = arena::run_positions_json(config);
+  const std::string expected_config =
+      "\"candidate\":{\"kind\":\"rank5-derived\","
+      "\"profile\":\"50k-demo\",\"max_nodes\":50000,"
+      "\"model_blend_percent\":15,\"replay_book_enabled\":false,"
+      "\"original_sha256\":\"" +
+      std::string(papersoccer::Rank5DerivedBot::original_sha256()) + "\"}";
+  require_contains(
+      json, expected_config,
+      "programmatic arena reports should preserve the adapted Rank5 profile");
+
+  arena::PositionsConfig invalid = config;
+  invalid.candidate.rank5_derived_model_blend_percent = 101;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(invalid); },
+      "programmatic arena use should reject an invalid Rank5 model blend");
+}
+
 void invalid_tactical_limits_and_policy_are_rejected() {
   arena::MatchesConfig invalid_depth;
   invalid_depth.candidate.quiescence_max_depth = 0;
@@ -333,6 +359,7 @@ int main() {
     positions_report_measures_both_bots_on_shared_positions();
     alpha_beta_is_configured_measured_and_summarized();
     jacek_inspired_is_configured_measured_and_summarized();
+    rank5_derived_is_available_programmatically_without_cli_options();
     invalid_tactical_limits_and_policy_are_rejected();
     invalid_alpha_beta_settings_and_unknown_kinds_are_rejected();
     invalid_opening_length_is_rejected();

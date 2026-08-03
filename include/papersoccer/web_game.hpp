@@ -48,6 +48,7 @@ struct WebBotSearchDiagnostic {
   SearchStats stats{};
   std::uint32_t requested_turn_depth{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
+  std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
 };
 
 class WebGameSession {
@@ -104,6 +105,7 @@ class WebBotReplaySession {
   std::uint64_t revision() const noexcept;
   bool done() const noexcept;
   bool truncated() const noexcept;
+  const std::vector<WebBotSearchDiagnostic> &bot_searches() const noexcept;
 
   std::string snapshot_json() const;
   WebGameCommandResult play_next(std::uint64_t expected_revision);
@@ -122,6 +124,7 @@ class WebBotReplaySession {
   std::uint64_t revision_{0};
   bool done_{false};
   bool truncated_{false};
+  std::vector<WebBotSearchDiagnostic> bot_searches_{};
 };
 
 }  // namespace papersoccer

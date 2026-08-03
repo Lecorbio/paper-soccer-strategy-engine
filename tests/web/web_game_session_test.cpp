@@ -1,6 +1,8 @@
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -123,7 +125,9 @@ void configured_bot_kind_is_used_and_serialized() {
               ps::bot_kind_name(ps::BotKind::Mcts) == "MctsBot" &&
               ps::bot_kind_name(ps::BotKind::AlphaBeta) == "AlphaBetaBot" &&
               ps::bot_kind_name(ps::BotKind::JacekInspired) ==
-                  "JacekInspiredBot",
+                  "JacekInspiredBot" &&
+              ps::bot_kind_name(ps::BotKind::Rank5Derived) ==
+                  "Rank5DerivedBot",
           "Bot kinds should expose stable replay names.");
   require(session.bot_config().kind == ps::BotKind::Mcts &&
               session.bot_config().seed == config.seed &&
@@ -281,6 +285,96 @@ void interrupted_jacek_search_does_not_claim_a_completed_root_score() {
   require(snapshot.find("\"completedDepth\":0") != std::string::npos &&
               snapshot.find("\"rootScoreValid\":false") != std::string::npos,
           "An interrupted first iteration must mark its fallback root score invalid.");
+}
+
+void rank5_derived_runs_for_humans_on_both_sides_and_exports_diagnostics() {
+  ps::BotConfig config;
+  config.kind = ps::BotKind::Rank5Derived;
+  config.seed = std::numeric_limits<std::uint64_t>::max();
+
+  ps::WebGameSession player_two_human(ps::Player::Two, config);
+  const std::string before = player_two_human.snapshot_json();
+  require(before.find(
+              "\"one\":{\"kind\":\"Rank5DerivedBot\",\"profile\":"
+              "\"50k-demo\",\"maxNodes\":50000,\"modelBlendPercent\":0,"
+              "\"replayBookEnabled\":false,\"originalArtifact\":{"
+              "\"name\":\"rank_5\",\"rank\":5,\"fieldSize\":206,"
+              "\"submissionId\":\"41015554\",\"sha256\":"
+              "\"f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29\"}}") !=
+              std::string::npos &&
+              before.find("\"two\":{\"kind\":\"Human\"}") !=
+                  std::string::npos,
+          "Player One should expose the fixed Rank5Derived browser profile and provenance.");
+
+  const ps::WebGameCommandResult opening = player_two_human.play_bot(0);
+  require(opening.ok() && opening.move.has_value() &&
+              opening.move->player == ps::Player::One &&
+              player_two_human.bot_searches().size() == 1,
+          "Rank5DerivedBot should make and diagnose a legal Player One move.");
+  const ps::WebBotSearchDiagnostic &opening_search =
+      player_two_human.bot_searches().front();
+  require(opening_search.rank5_derived_stats.has_value() &&
+              opening_search.rank5_derived_stats->nodes > 0 &&
+              opening_search.rank5_derived_stats->planned_action_length > 0 &&
+              opening_search.rank5_derived_stats->current_edge_index == 0 &&
+              !opening_search.rank5_derived_stats->cached_continuation,
+          "The opening diagnostic should retain the complete-action Rank5 search result.");
+
+  const std::string after = player_two_human.snapshot_json();
+  require(after.find("\"searchType\":\"rank5Derived\"") !=
+              std::string::npos &&
+              after.find("\"requestedNodes\":50000") != std::string::npos &&
+              after.find("\"visitedNodes\":") != std::string::npos &&
+              after.find("\"completedDepth\":") != std::string::npos &&
+              after.find("\"attemptedDepth\":") != std::string::npos &&
+              after.find("\"rootScore\":") != std::string::npos &&
+              after.find("\"budgetExhausted\":") != std::string::npos &&
+              after.find("\"plannedActionLength\":") != std::string::npos &&
+              after.find("\"currentEdgeIndex\":0") != std::string::npos &&
+              after.find("\"cachedContinuation\":false") !=
+                  std::string::npos,
+          "Rank5 browser diagnostics should expose every typed fixed-profile field.");
+  const std::string exported = player_two_human.human_match_json();
+  require(exported.find("\"botSearches\":[{\"ply\":1") !=
+              std::string::npos &&
+              exported.find("\"searchType\":\"rank5Derived\"") !=
+                  std::string::npos,
+          "Human-match exports should preserve Rank5 diagnostics losslessly.");
+
+  ps::WebGameSession player_one_human(ps::Player::One, config);
+  require(player_one_human.play_human(0, 0).ok(),
+          "The Player One human fixture should hand the turn to the bot.");
+  const ps::WebGameCommandResult reply = player_one_human.play_bot(1);
+  require(reply.ok() && reply.move.has_value() &&
+              reply.move->player == ps::Player::Two &&
+              player_one_human.bot_searches().size() == 1 &&
+              player_one_human.bot_searches().front().rank5_derived_stats.has_value(),
+          "Rank5DerivedBot should also run and diagnose moves as Player Two.");
+
+  require(player_one_human.play_human(2, 0).ok(),
+          "The second human fixture move should reach the Rank5 rebound action.");
+  const ps::WebGameCommandResult rebound = player_one_human.play_bot(3);
+  const ps::WebGameCommandResult continuation = player_one_human.play_bot(4);
+  require(rebound.ok() && rebound.move->extra_turn && continuation.ok() &&
+              player_one_human.bot_searches().size() == 3,
+          "The fixture should expose a separately commanded cached rebound edge.");
+  const ps::Rank5DerivedSearchStats &cached =
+      *player_one_human.bot_searches().back().rank5_derived_stats;
+  require(cached.nodes == 0 && cached.planned_action_length == 2 &&
+              cached.current_edge_index == 1 && cached.cached_continuation,
+          "Cached Rank5 edges should retain their originating action metadata "
+          "without revisiting nodes.");
+  const std::string continued_snapshot = player_one_human.snapshot_json();
+  require(continued_snapshot.find("\"lastBotSearch\":{\"ply\":5") !=
+              std::string::npos &&
+              continued_snapshot.find("\"requestedNodes\":50000,"
+                                      "\"visitedNodes\":0") !=
+                  std::string::npos &&
+              continued_snapshot.find("\"plannedActionLength\":2,"
+                                      "\"currentEdgeIndex\":1,"
+                                      "\"cachedContinuation\":true") !=
+                  std::string::npos,
+          "Cached Rank5 diagnostics should serialize the fixed request and zero-based edge index.");
 }
 
 void proven_root_can_complete_fewer_iterations_than_requested() {
@@ -640,6 +734,77 @@ void bounded_mcts_bot_replay_uses_the_selected_player_config() {
           "A one-ply nonterminal MCTS replay should truncate at its bound.");
 }
 
+void bot_replays_support_rank5_as_either_or_both_players() {
+  ps::BotConfig rank5;
+  rank5.kind = ps::BotKind::Rank5Derived;
+  const ps::BotConfig random{ps::BotKind::Random, 37, 8};
+
+  const ps::WebBotReplaySession rank5_as_one(rank5, random, 0);
+  const ps::WebBotReplaySession rank5_as_two(random, rank5, 0);
+  require(rank5_as_one.snapshot_json().find(
+              "\"one\":{\"kind\":\"Rank5DerivedBot\",\"profile\":\"50k-demo\"") !=
+              std::string::npos &&
+              rank5_as_two.snapshot_json().find(
+                  "\"two\":{\"kind\":\"Rank5DerivedBot\",\"profile\":\"50k-demo\"") !=
+                  std::string::npos,
+          "Independent replay configurations should accept Rank5DerivedBot on either side.");
+
+  ps::WebBotReplaySession both(rank5, rank5, 2);
+  require(both.play_next(0).ok() && both.play_next(1).ok() &&
+              both.done() && both.truncated() &&
+              both.bot_searches().size() == 2 &&
+              both.bot_searches()[0].player == ps::Player::One &&
+              both.bot_searches()[1].player == ps::Player::Two &&
+              both.bot_searches()[0].rank5_derived_stats.has_value() &&
+              both.bot_searches()[1].rank5_derived_stats.has_value(),
+          "A both-Rank5 replay should play and retain one typed diagnostic per side.");
+
+  const std::string snapshot = both.snapshot_json();
+  const std::size_t first = snapshot.find("\"searchType\":\"rank5Derived\"");
+  const std::size_t second = snapshot.find("\"searchType\":\"rank5Derived\"",
+                                           first + 1);
+  require(snapshot.find("\"botSearches\":[{\"ply\":1") !=
+              std::string::npos &&
+              first != std::string::npos && second != std::string::npos,
+          "Bot-replay snapshots should preserve ordered Rank5 diagnostics outside replay.v2.");
+}
+
+void rank5_native_transcript_matches_the_shared_wasm_fixture() {
+  std::ifstream fixture(
+      PAPERSOCCER_SOURCE_DIR "/tests/fixtures/rank5_derived_vs_mcts_path.txt");
+  require(static_cast<bool>(fixture),
+          "The shared Rank5 native/Wasm transcript fixture should be readable.");
+  std::vector<ps::Point> expected;
+  std::string line;
+  while (std::getline(fixture, line)) {
+    if (line.empty() || line.front() == '#') {
+      continue;
+    }
+    std::istringstream values(line);
+    ps::Point point;
+    require(static_cast<bool>(values >> point.x >> point.y),
+            "Every transcript fixture row should contain one x/y endpoint.");
+    expected.push_back(point);
+  }
+
+  ps::BotConfig rank5;
+  rank5.kind = ps::BotKind::Rank5Derived;
+  const ps::BotConfig mcts{ps::BotKind::Mcts, 23, 8};
+  ps::WebBotReplaySession replay(rank5, mcts, 512);
+  while (!replay.done()) {
+    require(replay.play_next(replay.revision()).ok(),
+            "The native parity replay should accept every bounded move.");
+  }
+
+  const auto &history = replay.match().history();
+  require(!replay.truncated() && history.size() == expected.size(),
+          "The native parity replay should terminate at the fixture length.");
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    require(history[index].to == expected[index],
+            "The native Rank5-vs-MCTS path should match the shared Wasm fixture.");
+  }
+}
+
 void bot_replay_runs_to_a_terminal_untruncated_game() {
   ps::WebBotReplaySession replay(
       ps::BotConfig{ps::BotKind::Random, 17, 8},
@@ -715,6 +880,8 @@ int run_web_game_session_tests() {
        configured_jacek_bot_is_used_serialized_and_measured},
       {"interrupted_jacek_search_does_not_claim_a_completed_root_score",
        interrupted_jacek_search_does_not_claim_a_completed_root_score},
+      {"rank5_derived_runs_for_humans_on_both_sides_and_exports_diagnostics",
+       rank5_derived_runs_for_humans_on_both_sides_and_exports_diagnostics},
       {"proven_root_can_complete_fewer_iterations_than_requested",
        proven_root_can_complete_fewer_iterations_than_requested},
       {"rebound_bot_turns_record_separate_searches",
@@ -742,6 +909,10 @@ int run_web_game_session_tests() {
        bot_replay_steps_one_ply_per_revision_and_truncates_at_limit},
       {"bounded_mcts_bot_replay_uses_the_selected_player_config",
        bounded_mcts_bot_replay_uses_the_selected_player_config},
+      {"bot_replays_support_rank5_as_either_or_both_players",
+       bot_replays_support_rank5_as_either_or_both_players},
+      {"rank5_native_transcript_matches_the_shared_wasm_fixture",
+       rank5_native_transcript_matches_the_shared_wasm_fixture},
       {"bot_replay_runs_to_a_terminal_untruncated_game",
        bot_replay_runs_to_a_terminal_untruncated_game},
       {"error_codes_have_stable_bridge_names", error_codes_have_stable_bridge_names},
