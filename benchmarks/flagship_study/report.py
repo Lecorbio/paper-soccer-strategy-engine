@@ -344,6 +344,25 @@ def _artifact_rows(manifest: Mapping[str, Any],
         _string(source.get("analysis_contract_path"), "analysis contract path"):
             _hash(source.get("analysis_contract_sha256"), "analysis contract SHA-256"),
     }
+    supersession_value = manifest.get("supersession")
+    if supersession_value is not None:
+        supersession = _mapping(supersession_value, "manifest.supersession")
+        fixed.update({
+            _string(
+                supersession.get("failure_record_path"),
+                "supersession failure record path",
+            ): _hash(
+                supersession.get("failure_record_sha256"),
+                "supersession failure record SHA-256",
+            ),
+            _string(
+                supersession.get("predecessor_manifest_path"),
+                "predecessor manifest path",
+            ): _hash(
+                supersession.get("predecessor_manifest_sha256"),
+                "predecessor manifest SHA-256",
+            ),
+        })
     for path, digest in fixed.items():
         if path in result and result[path] != digest:
             raise ReportError(f"artifact hash disagrees with manifest: {path}")
@@ -443,6 +462,26 @@ def render_markdown_report(
     preregistered_at = _string(
         study.get("preregistered_at_utc"), "study.preregistered_at_utc"
     )
+    supersession_value = manifest.get("supersession")
+    supersession = (
+        _mapping(supersession_value, "manifest.supersession")
+        if supersession_value is not None else None
+    )
+    if supersession is not None:
+        if (
+            supersession.get("predecessor_status")
+            != "stopped_before_test_calibration_implementation_defect"
+            or supersession.get("predecessor_test_outcomes_accessed") is not False
+            or supersession.get(
+                "predecessor_validation_results_used_for_v4_selection_or_calibration"
+            ) is not False
+            or supersession.get("fresh_opening_phases") != ["validation"]
+            or supersession.get("fresh_validation_exclusion_scope")
+            != "all_predecessor_opening_banks"
+            or supersession.get("reused_opening_phases")
+            != ["development", "test"]
+        ):
+            raise ReportError("unsupported prospective recovery lineage")
     ablations = _mapping(
         selection.get("development_validation_ablations"),
         "selection.development_validation_ablations",
@@ -602,6 +641,22 @@ def render_markdown_report(
         "",
         f"Opening ply: {_markdown(rules.get('opening_ply_definition'))}",
         "",
+    ])
+    if supersession is not None:
+        lines.extend([
+            "## Prospective recovery lineage",
+            "",
+            "Version 4 prospectively superseded version 3 after the predecessor "
+            "stopped before test because of a validation calibration implementation "
+            "defect. No version-3 test outcomes were accessed, and no version-3 "
+            "validation results were used for version-4 selection or calibration. "
+            "Version 4 used fresh validation banks excluded from every predecessor "
+            "opening bank while reusing the development and test banks byte-for-byte. "
+            "The predecessor manifest and failure record are bound by SHA-256 in the "
+            "artifact table.",
+            "",
+        ])
+    lines.extend([
         "## Candidate grids",
         "",
     ])
@@ -1095,6 +1150,7 @@ def render_markdown_report(
         "- Calibration decisions within a game are dependent; prediction counts are not independent-game sample sizes.",
         "- The hand-versus-neural comparison changes the evaluator within a shared search family and does not isolate every implementation interaction.",
         f"- {studylib.PUBLIC_RANK5_LABEL} is measured only under demo rules and its fixed-work profile, as stated in the provenance disclaimer.",
+        "- The frozen validation Pareto SVG has dense annotations at its native viewport; the immediately preceding table is the canonical readable listing of every point identity, sample size, interval, and status. The plot was not revised after test access.",
         "",
         "## Exact reproduction commands",
         "",

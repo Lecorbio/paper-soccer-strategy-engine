@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+<title id="title">Validation strength versus p95 latency</title>
+<desc id="desc">Validation-only constrained Pareto frontier with candidate pair-bootstrap intervals, sample sizes, a fifty millisecond gate, and the Rank5DerivedBot — fixed 50k demo profile reference point.</desc>
+<rect width="1200" height="760" fill="#FFFFFF"/>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#202124}.title{font-size:28px;font-weight:700}.subtitle{font-size:15px;fill:#5F6368}.axis{font-size:14px;fill:#5F6368}.label{font-size:16px}.small{font-size:13px}.legend{font-size:14px}</style>
+<text class="title" x="60" y="58">Validation strength vs latency</text>
+<text class="subtitle" x="60" y="88">Common-opponent pair score; native single-thread p95</text>
+<line x1="120.00" y1="155.0" x2="120.00" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="120.00" y="668.0" text-anchor="middle">0</text>
+<line x1="286.67" y1="155.0" x2="286.67" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="286.67" y="668.0" text-anchor="middle">25</text>
+<line x1="453.33" y1="155.0" x2="453.33" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="453.33" y="668.0" text-anchor="middle">51</text>
+<line x1="620.00" y1="155.0" x2="620.00" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="620.00" y="668.0" text-anchor="middle">76</text>
+<line x1="786.67" y1="155.0" x2="786.67" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="786.67" y="668.0" text-anchor="middle">102</text>
+<line x1="953.33" y1="155.0" x2="953.33" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="953.33" y="668.0" text-anchor="middle">127</text>
+<line x1="1120.00" y1="155.0" x2="1120.00" y2="640.0" stroke="#D9D9D9"/>
+<text class="axis" x="1120.00" y="668.0" text-anchor="middle">153</text>
+<line x1="120.0" y1="640.00" x2="1120.0" y2="640.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="645.00" text-anchor="end">6%</text>
+<line x1="120.0" y1="543.00" x2="1120.0" y2="543.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="548.00" text-anchor="end">19%</text>
+<line x1="120.0" y1="446.00" x2="1120.0" y2="446.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="451.00" text-anchor="end">31%</text>
+<line x1="120.0" y1="349.00" x2="1120.0" y2="349.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="354.00" text-anchor="end">43%</text>
+<line x1="120.0" y1="252.00" x2="1120.0" y2="252.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="257.00" text-anchor="end">55%</text>
+<line x1="120.0" y1="155.00" x2="1120.0" y2="155.00" stroke="#D9D9D9"/>
+<text class="axis" x="108.0" y="160.00" text-anchor="end">68%</text>
+<line x1="447.33" y1="155.0" x2="447.33" y2="640.0" stroke="#E69F00" stroke-width="3" stroke-dasharray="8 6"/>
+<text class="small" x="455.33" y="173.0">50 ms gate</text>
+<path d="M 206.95 381.73 L 278.91 350.18 L 283.74 342.30 L 325.45 294.98 L 353.83 251.61" fill="none" stroke="#666666" stroke-width="2"/>
+<line class="strength-ci" x1="283.74" y1="375.81" x2="283.74" y2="308.78" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="278.74" y1="375.81" x2="288.74" y2="375.81" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="278.74" y1="308.78" x2="288.74" y2="308.78" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<circle cx="283.74" cy="342.30" r="7" fill="#0072B2" fill-opacity="1" stroke="#FFFFFF" stroke-width="2"/>
+<text class="small" x="295.74" y="333.30">Hand-evaluated AlphaBetaBot (100k nodes)</text>
+<text class="small" x="295.74" y="352.30">strength n=200 pairs; latency n=31290 decisions</text>
+<line class="strength-ci" x1="206.95" y1="415.24" x2="206.95" y2="348.21" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="201.95" y1="415.24" x2="211.95" y2="415.24" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="201.95" y1="348.21" x2="211.95" y2="348.21" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<circle cx="206.95" cy="381.73" r="7" fill="#0072B2" fill-opacity="1" stroke="#FFFFFF" stroke-width="2"/>
+<text class="small" x="218.95" y="372.73">Hand-evaluated AlphaBetaBot (20k nodes)</text>
+<text class="small" x="218.95" y="391.73">strength n=200 pairs; latency n=31733 decisions</text>
+<line class="strength-ci" x1="278.91" y1="385.67" x2="278.91" y2="314.70" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="273.91" y1="385.67" x2="283.91" y2="385.67" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="273.91" y1="314.70" x2="283.91" y2="314.70" stroke="#0072B2" stroke-opacity="1" stroke-width="2"/>
+<circle cx="278.91" cy="350.18" r="11" fill="#0072B2" fill-opacity="1" stroke="#FFFFFF" stroke-width="2"/>
+<text class="small" x="290.91" y="341.18">Hand-evaluated AlphaBetaBot (50k nodes)</text>
+<text class="small" x="290.91" y="360.18">strength n=200 pairs; latency n=31120 decisions</text>
+<line class="strength-ci" x1="504.42" y1="324.55" x2="504.42" y2="249.63" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="499.42" y1="324.55" x2="509.42" y2="324.55" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="499.42" y1="249.63" x2="509.42" y2="249.63" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<circle cx="504.42" cy="287.09" r="7" fill="#D55E00" fill-opacity="0.42" stroke="#555555" stroke-width="2"/>
+<text class="small" x="516.42" y="278.09">Neural alpha-beta (JacekInspiredBot) (100k nodes)</text>
+<text class="small" x="516.42" y="297.09">strength n=200 pairs; latency n=33224 decisions</text>
+<line class="strength-ci" x1="353.83" y1="287.09" x2="353.83" y2="218.09" stroke="#D55E00" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="348.83" y1="287.09" x2="358.83" y2="287.09" stroke="#D55E00" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="348.83" y1="218.09" x2="358.83" y2="218.09" stroke="#D55E00" stroke-opacity="1" stroke-width="2"/>
+<circle cx="353.83" cy="251.61" r="11" fill="#D55E00" fill-opacity="1" stroke="#FFFFFF" stroke-width="2"/>
+<text class="small" x="365.83" y="242.61">Neural alpha-beta (JacekInspiredBot) (20k nodes)</text>
+<text class="small" x="365.83" y="261.61">strength n=200 pairs; latency n=33161 decisions</text>
+<line class="strength-ci" x1="501.22" y1="312.72" x2="501.22" y2="233.86" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="496.22" y1="312.72" x2="506.22" y2="312.72" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="496.22" y1="233.86" x2="506.22" y2="233.86" stroke="#D55E00" stroke-opacity="0.42" stroke-width="2"/>
+<circle cx="501.22" cy="273.29" r="7" fill="#D55E00" fill-opacity="0.42" stroke="#555555" stroke-width="2"/>
+<text class="small" x="513.22" y="264.29">Neural alpha-beta (JacekInspiredBot) (50k nodes)</text>
+<text class="small" x="513.22" y="283.29">strength n=200 pairs; latency n=33369 decisions</text>
+<line class="strength-ci" x1="353.61" y1="576.91" x2="353.61" y2="521.71" stroke="#009E73" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="348.61" y1="576.91" x2="358.61" y2="576.91" stroke="#009E73" stroke-opacity="1" stroke-width="2"/>
+<line class="strength-ci-cap" x1="348.61" y1="521.71" x2="358.61" y2="521.71" stroke="#009E73" stroke-opacity="1" stroke-width="2"/>
+<circle cx="353.61" cy="551.28" r="11" fill="#009E73" fill-opacity="1" stroke="#555555" stroke-width="2"/>
+<text class="small" x="365.61" y="542.28">Tactical MctsBot (1000 iter)</text>
+<text class="small" x="365.61" y="561.28">strength n=200 pairs; latency n=11089 decisions</text>
+<line class="strength-ci" x1="577.98" y1="503.96" x2="577.98" y2="438.90" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="572.98" y1="503.96" x2="582.98" y2="503.96" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="572.98" y1="438.90" x2="582.98" y2="438.90" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<circle cx="577.98" cy="472.42" r="7" fill="#009E73" fill-opacity="0.42" stroke="#555555" stroke-width="2"/>
+<text class="small" x="589.98" y="463.42">Tactical MctsBot (2000 iter)</text>
+<text class="small" x="589.98" y="482.42">strength n=200 pairs; latency n=14554 decisions</text>
+<line class="strength-ci" x1="1012.86" y1="421.16" x2="1012.86" y2="352.15" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="1007.86" y1="421.16" x2="1017.86" y2="421.16" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<line class="strength-ci-cap" x1="1007.86" y1="352.15" x2="1017.86" y2="352.15" stroke="#009E73" stroke-opacity="0.42" stroke-width="2"/>
+<circle cx="1012.86" cy="385.67" r="7" fill="#009E73" fill-opacity="0.42" stroke="#555555" stroke-width="2"/>
+<text class="small" x="1024.86" y="376.67">Tactical MctsBot (4000 iter)</text>
+<text class="small" x="1024.86" y="395.67">strength n=200 pairs; latency n=16964 decisions</text>
+<circle cx="325.45" cy="294.98" r="11" fill="#CC79A7" fill-opacity="1" stroke="#111111" stroke-width="2"/>
+<text class="small" x="337.45" y="285.98">Rank5DerivedBot — fixed 50k demo profile</text>
+<text class="small" x="337.45" y="304.98">defined reference; strength n=N/A; fresh-root latency n=65605 decisions</text>
+<text class="axis" x="620.00" y="704" text-anchor="middle">Validation p95 decision latency (ms; Rank5DerivedBot — fixed 50k demo profile uses fresh-root searches)</text>
+<text class="axis" x="28" y="397.50" transform="rotate(-90 28 397.50)" text-anchor="middle">Mean color-swapped pair score vs Rank5DerivedBot — fixed 50k demo profile</text>
+<text class="subtitle" x="60" y="738">Vertical bars are pair-bootstrap 95% intervals; large points are selected; black outlines mark fixed; faded points miss the gate; the line is the constrained frontier.</text></svg>

@@ -521,6 +521,40 @@ class ReportTests(unittest.TestCase):
         self.assertIn("(data/test.json)", report)
         self.assertNotRegex(report, re.compile(r"random[\s_-]*bot", re.IGNORECASE))
 
+    def test_prospective_recovery_lineage_and_hashes_are_published(self) -> None:
+        fixture = list(_fixture())
+        fixture[0]["supersession"] = {
+            "failure_record_path": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+            "failure_record_sha256": "d" * 64,
+            "fresh_opening_phases": ["validation"],
+            "fresh_validation_exclusion_scope": "all_predecessor_opening_banks",
+            "predecessor_manifest_path": (
+                "benchmarks/flagship_study/superseded/manifest-predecessor.json"
+            ),
+            "predecessor_manifest_sha256": "e" * 64,
+            "predecessor_status": (
+                "stopped_before_test_calibration_implementation_defect"
+            ),
+            "predecessor_test_outcomes_accessed": False,
+            "predecessor_validation_results_used_for_v4_selection_or_calibration": False,
+            "reused_opening_phases": ["development", "test"],
+        }
+
+        rendered = render_report(*fixture)
+
+        lineage = rendered.split("## Prospective recovery lineage", 1)[1].split(
+            "## Candidate grids", 1
+        )[0]
+        self.assertIn("stopped before test", lineage)
+        self.assertIn("No version-3 test outcomes were accessed", lineage)
+        self.assertIn("fresh validation banks", lineage)
+        self.assertIn("development and test banks byte-for-byte", lineage)
+        self.assertIn("[benchmarks/flagship_study/V3_VALIDATION_FAILURE.md]", rendered)
+        self.assertIn(
+            "[benchmarks/flagship_study/superseded/manifest-predecessor.json]",
+            rendered,
+        )
+
     def test_material_tables_and_reproduction_contract_are_rendered(self) -> None:
         manifest, selection, *rest = _fixture()
         report = render_report(manifest, selection, *rest)
