@@ -9,15 +9,20 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <utility>
 
 #include "papersoccer/arena.hpp"
+
+#ifndef __EMSCRIPTEN__
+#include "opening_bank_internal.hpp"
+#endif
 
 namespace ps = papersoccer;
 namespace arena = papersoccer::arena;
 
 namespace {
 
-enum class Mode { Matches, Positions };
+enum class Mode { Matches, Positions, Provenance };
 
 struct CliConfig {
   Mode mode{Mode::Matches};
@@ -27,8 +32,11 @@ struct CliConfig {
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
   std::size_t pairs{200};
   std::size_t opening_plies{0};
+  bool opening_plies_seen{false};
+  std::string opening_bank_path{};
   std::size_t max_plies{512};
   std::size_t bootstrap_samples{10000};
+  std::size_t warmup_decisions{0};
   std::size_t positions{16};
   std::size_t generation_plies{24};
 };
@@ -37,13 +45,14 @@ void print_usage(std::ostream &out) {
   out <<
       "Usage:\n"
       "  papersoccer_arena matches [options]\n"
-      "  papersoccer_arena positions [options]\n\n"
+      "  papersoccer_arena positions [options]\n"
+      "  papersoccer_arena provenance\n\n"
       "Common options:\n"
       "  --seed N                         Base seed (default: 828927513140)\n"
       "  --width N --height N             Board dimensions (default: 8x10)\n"
-      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired\n"
+      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived\n"
       "                                     Candidate bot (default: mcts)\n"
-      "  --reference-kind random|mcts|alpha-beta|jacek-inspired\n"
+      "  --reference-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived\n"
       "                                     Reference bot (default: mcts)\n"
       "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
@@ -78,8 +87,10 @@ void print_usage(std::ostream &out) {
       "Match options:\n"
       "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
       "  --opening-plies N                Shared random opening length (default: 0)\n"
+      "  --opening-bank PATH              Frozen uniform-legal-move transcript bank\n"
       "  --max-plies N                    Total per-game limit, opening included (default: 512)\n"
-      "  --bootstrap-samples N            Paired resamples (default: 10000)\n\n"
+      "  --bootstrap-samples N            Paired resamples (default: 10000)\n"
+      "  --warmup-decisions N             Untimed calls per entrant (default: 0)\n\n"
       "Position options:\n"
       "  --positions N                    Positions to measure (default: 16)\n"
       "  --generation-plies N             Random plies per position (default: 24)\n"
@@ -152,9 +163,12 @@ ps::BotKind parse_kind(std::string_view value, std::string_view option) {
   if (value == "jacek-inspired") {
     return ps::BotKind::JacekInspired;
   }
+  if (value == "rank5-derived") {
+    return ps::BotKind::Rank5Derived;
+  }
   throw std::invalid_argument(std::string(option) +
-                              " requires random, mcts, alpha-beta, or "
-                              "jacek-inspired");
+                              " requires random, mcts, alpha-beta, "
+                              "jacek-inspired, or rank5-derived");
 }
 
 ps::MctsRolloutPolicy parse_policy(std::string_view value,
@@ -201,8 +215,14 @@ CliConfig parse_cli(int argc, char **argv) {
     config.mode = Mode::Matches;
   } else if (mode == "positions") {
     config.mode = Mode::Positions;
+  } else if (mode == "provenance") {
+    if (argc != 2) {
+      throw std::invalid_argument("provenance mode accepts no options");
+    }
+    config.mode = Mode::Provenance;
+    return config;
   } else {
-    throw std::invalid_argument("mode must be matches or positions");
+    throw std::invalid_argument("mode must be matches, positions, or provenance");
   }
 
   for (int index = 2; index < argc; ++index) {
@@ -225,13 +245,27 @@ CliConfig parse_cli(int argc, char **argv) {
       config.pairs = parse_unsigned<std::size_t>(value(), option);
     } else if (option == "--opening-plies") {
       require_mode(config.mode, Mode::Matches, option);
+      config.opening_plies_seen = true;
       config.opening_plies = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--opening-bank") {
+      require_mode(config.mode, Mode::Matches, option);
+      if (!config.opening_bank_path.empty()) {
+        throw std::invalid_argument(
+            "--opening-bank may be specified only once");
+      }
+      config.opening_bank_path = value();
+      if (config.opening_bank_path.empty()) {
+        throw std::invalid_argument("--opening-bank requires a nonempty path");
+      }
     } else if (option == "--max-plies") {
       require_mode(config.mode, Mode::Matches, option);
       config.max_plies = parse_unsigned<std::size_t>(value(), option);
     } else if (option == "--bootstrap-samples") {
       require_mode(config.mode, Mode::Matches, option);
       config.bootstrap_samples = parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--warmup-decisions") {
+      require_mode(config.mode, Mode::Matches, option);
+      config.warmup_decisions = parse_unsigned<std::size_t>(value(), option);
     } else if (option == "--positions") {
       require_mode(config.mode, Mode::Positions, option);
       config.positions = parse_unsigned<std::size_t>(value(), option);
@@ -308,8 +342,36 @@ CliConfig parse_cli(int argc, char **argv) {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }
   }
+  if (!config.opening_bank_path.empty() && config.opening_plies_seen) {
+    throw std::invalid_argument(
+        "--opening-bank is incompatible with --opening-plies");
+  }
   return config;
 }
+
+#ifndef __EMSCRIPTEN__
+std::vector<arena::FrozenOpening> load_frozen_openings(
+    const std::string &path) {
+  const papersoccer::opening_bank::Bank bank =
+      papersoccer::opening_bank::load_bank(path);
+  std::vector<arena::FrozenOpening> openings;
+  openings.reserve(bank.records.size());
+  for (const papersoccer::opening_bank::OpeningRecord &record : bank.records) {
+    arena::FrozenOpening opening;
+    opening.opening_id = record.opening_id;
+    opening.phase = record.phase;
+    opening.depth = record.depth;
+    opening.generation_seed = record.generation_seed;
+    opening.state_hash = record.state_hash;
+    opening.canonical_key = record.canonical_key;
+    opening.transcript = record.moves;
+    opening.state =
+        papersoccer::opening_bank::replay_transcript(record.moves);
+    openings.push_back(std::move(opening));
+  }
+  return openings;
+}
+#endif
 
 }  // namespace
 
@@ -324,7 +386,9 @@ int main(int argc, char **argv) {
 
   try {
     const CliConfig cli = parse_cli(argc, argv);
-    if (cli.mode == Mode::Matches) {
+    if (cli.mode == Mode::Provenance) {
+      std::cout << arena::build_provenance_json() << '\n';
+    } else if (cli.mode == Mode::Matches) {
       arena::MatchesConfig config;
       config.rules = cli.rules;
       config.candidate = cli.candidate;
@@ -334,6 +398,16 @@ int main(int argc, char **argv) {
       config.opening_plies = cli.opening_plies;
       config.max_plies = cli.max_plies;
       config.bootstrap_samples = cli.bootstrap_samples;
+      config.warmup_decisions = cli.warmup_decisions;
+      if (!cli.opening_bank_path.empty()) {
+#ifndef __EMSCRIPTEN__
+        config.frozen_openings =
+            load_frozen_openings(cli.opening_bank_path);
+#else
+        throw std::invalid_argument(
+            "--opening-bank is available only in the native arena");
+#endif
+      }
       std::cout << arena::run_matches_json(config) << '\n';
     } else {
       arena::PositionsConfig config;

@@ -2,6 +2,30 @@ cmake_minimum_required(VERSION 3.20)
 
 project(papersoccer LANGUAGES CXX)
 
+execute_process(
+  COMMAND git rev-parse HEAD
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE PAPERSOCCER_SOURCE_COMMIT
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+string(LENGTH "${PAPERSOCCER_SOURCE_COMMIT}"
+  PAPERSOCCER_SOURCE_COMMIT_LENGTH)
+if(NOT PAPERSOCCER_SOURCE_COMMIT_LENGTH EQUAL 40 OR
+   NOT PAPERSOCCER_SOURCE_COMMIT MATCHES "^[0-9a-f]+$")
+  set(PAPERSOCCER_SOURCE_COMMIT "unknown")
+endif()
+execute_process(
+  COMMAND git status --porcelain --untracked-files=all
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE PAPERSOCCER_SOURCE_STATUS
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+if(PAPERSOCCER_SOURCE_STATUS STREQUAL "")
+  set(PAPERSOCCER_SOURCE_DIRTY false)
+else()
+  set(PAPERSOCCER_SOURCE_DIRTY true)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -30,6 +54,9 @@ if(PAPERSOCCER_ENABLE_SANITIZERS)
     -fsanitize=address,undefined
     -fno-omit-frame-pointer
     -fno-sanitize-recover=all)
+  set(PAPERSOCCER_SANITIZERS_ENABLED true)
+else()
+  set(PAPERSOCCER_SANITIZERS_ENABLED false)
 endif()
 
 add_library(papersoccer_core
@@ -69,6 +96,27 @@ add_library(papersoccer_arena_support
 )
 target_include_directories(papersoccer_arena_support PUBLIC include)
 target_link_libraries(papersoccer_arena_support PUBLIC papersoccer_core)
+set(PAPERSOCCER_ARENA_CONFIGURED_FLAGS
+  "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELEASE} -std=c++20")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  string(APPEND PAPERSOCCER_ARENA_CONFIGURED_FLAGS
+    " -Wall -Wextra -Wpedantic")
+endif()
+if(PAPERSOCCER_ENABLE_SANITIZERS)
+  string(APPEND PAPERSOCCER_ARENA_CONFIGURED_FLAGS
+    " -O1 -fsanitize=address,undefined -fno-omit-frame-pointer"
+    " -fno-sanitize-recover=all")
+endif()
+string(STRIP "${PAPERSOCCER_ARENA_CONFIGURED_FLAGS}"
+  PAPERSOCCER_ARENA_CONFIGURED_FLAGS)
+target_compile_definitions(papersoccer_arena_support PRIVATE
+  PAPERSOCCER_BUILD_TYPE="$<CONFIG>"
+  PAPERSOCCER_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+  PAPERSOCCER_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+  PAPERSOCCER_CONFIGURED_FLAGS="${PAPERSOCCER_ARENA_CONFIGURED_FLAGS}"
+  PAPERSOCCER_SANITIZERS_ENABLED=${PAPERSOCCER_SANITIZERS_ENABLED}
+  PAPERSOCCER_SOURCE_COMMIT="${PAPERSOCCER_SOURCE_COMMIT}"
+  PAPERSOCCER_SOURCE_DIRTY=${PAPERSOCCER_SOURCE_DIRTY})
 
 add_executable(papersoccer_arena src/arena/main.cpp)
 target_link_libraries(papersoccer_arena PRIVATE papersoccer_arena_support)
@@ -117,6 +165,16 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_jacek_neural_model.py
             --check
   )
+  add_test(
+    NAME papersoccer_flagship_study_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/flagship_study
+            -p test_*.py
+  )
+  set_tests_properties(papersoccer_flagship_study_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
@@ -132,6 +190,48 @@ function(papersoccer_codingame_target_prefix output_variable bot_name)
 endfunction()
 
 if(NOT EMSCRIPTEN)
+  add_library(papersoccer_opening_bank_support
+    src/opening_bank/opening_bank.cpp)
+  target_include_directories(papersoccer_opening_bank_support
+    PRIVATE src/opening_bank)
+  target_link_libraries(papersoccer_opening_bank_support
+    PUBLIC papersoccer_core)
+
+  target_include_directories(papersoccer_arena
+    PRIVATE src/opening_bank)
+  target_link_libraries(papersoccer_arena
+    PRIVATE papersoccer_opening_bank_support)
+
+  add_executable(papersoccer_opening_bank
+    tools/opening_bank.cpp)
+  target_include_directories(papersoccer_opening_bank
+    PRIVATE src/opening_bank)
+  target_link_libraries(papersoccer_opening_bank
+    PRIVATE papersoccer_opening_bank_support)
+
+  add_executable(papersoccer_opening_bank_test
+    tests/opening_bank/opening_bank_test.cpp)
+  target_include_directories(papersoccer_opening_bank_test
+    PRIVATE src/opening_bank)
+  target_link_libraries(papersoccer_opening_bank_test
+    PRIVATE papersoccer_opening_bank_support)
+  add_test(NAME papersoccer_opening_bank_test
+    COMMAND papersoccer_opening_bank_test)
+
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME papersoccer_flagship_study_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/flagship_study/run_smoke.py
+              --arena $<TARGET_FILE:papersoccer_arena>
+              --manifest
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/flagship_study/smoke_manifest.json)
+    set_tests_properties(papersoccer_flagship_study_smoke PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
+
   add_executable(papersoccer_rank5_derived_gate
     tools/rank5_derived_evaluator_gate.cpp)
   target_link_libraries(papersoccer_rank5_derived_gate
@@ -271,6 +371,8 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
         NAME papersoccer_arena_cli_tests
         COMMAND ${CMAKE_COMMAND} -E env
                 PAPERSOCCER_ARENA=$<TARGET_FILE:papersoccer_arena>
+                PAPERSOCCER_OPENING_BANK=$<TARGET_FILE:papersoccer_opening_bank>
+                PAPERSOCCER_SANITIZERS_ENABLED=$<BOOL:${PAPERSOCCER_ENABLE_SANITIZERS}>
                 ${PAPERSOCCER_NODE_EXECUTABLE} --test
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/arena/arena_cli_test.mjs
       )
