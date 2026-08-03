@@ -11,6 +11,13 @@ import numpy as np
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
+DEFAULT_OUTPUT = (
+    ROOT.parents[3]
+    / "results"
+    / "codingame"
+    / "selfplay_nn"
+    / "neural_model.json"
+)
 WIDTH = 8
 HEIGHT = 10
 DIRECTIONS = (
@@ -533,7 +540,9 @@ def main():
             "usage: train_selfplay_model.py SELFPLAY.jsonl [neural_model.json]"
         )
     input_path = pathlib.Path(sys.argv[1])
-    output_path = pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else ROOT / "neural_model.json"
+    output_path = (
+        pathlib.Path(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_OUTPUT
+    )
     dataset, game_counts, overlap_removed, corpus_hash = load_dataset(input_path)
     parameters, best_epoch = train_network(
         dataset["train"], dataset["validation"]
@@ -575,6 +584,7 @@ def main():
             "bp": [float(value) for value in parameters["bp"]],
         },
     }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, indent=2) + "\n")
     summary = {key: value for key, value in report.items() if key != "model"}
     print(json.dumps(summary, indent=2))

@@ -57,16 +57,25 @@ cmake --build build -j4
 ctest --test-dir build --output-on-failure
 ```
 
-Reproduce the teacher artifact with the bundled NumPy runtime:
+Use the pinned research environment and keep regenerated artifacts under the
+ignored `results/` tree:
 
 ```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+mkdir -p results/codingame/selfplay_nn_v2
 ./build/papersoccer_codingame_selfplay_nn_v2_teacher_sample_generator \
-  submissions/codingame/bots/selfplay_nn_v2/teacher_samples.jsonl \
+  results/codingame/selfplay_nn_v2/teacher_samples.jsonl \
   384 16000 160 8549009122462926626
-/Users/lecorbio/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
+.venv/bin/python \
   submissions/codingame/bots/selfplay_nn_v2/train_teacher_residual.py \
+  results/codingame/selfplay_nn_v2/teacher_samples.jsonl \
+  results/codingame/selfplay_nn_v2/teacher_residual_model.json
+cmp results/codingame/selfplay_nn_v2/teacher_samples.jsonl \
   submissions/codingame/bots/selfplay_nn_v2/teacher_samples.jsonl
-node submissions/codingame/bots/selfplay_nn_v2/generate_teacher_residual_header.mjs
+cmp results/codingame/selfplay_nn_v2/teacher_residual_model.json \
+  submissions/codingame/bots/selfplay_nn_v2/teacher_residual_model.json
+node submissions/codingame/bots/selfplay_nn_v2/generate_teacher_residual_header.mjs --check
 ```
 
 Run a fixed-node paired gate against the full incumbent:

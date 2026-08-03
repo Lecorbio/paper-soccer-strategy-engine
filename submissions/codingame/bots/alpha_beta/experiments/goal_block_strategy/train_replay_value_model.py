@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import base64
 import concurrent.futures
 import json
@@ -12,6 +13,14 @@ import numpy as np
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
+DEFAULT_OUTPUT = (
+    ROOT.parents[5]
+    / "results"
+    / "codingame"
+    / "alpha_beta"
+    / "goal_block_strategy"
+    / "replay_value_model.json"
+)
 AGENT_ID = 6_273_433
 WIDTH = 8
 HEIGHT = 10
@@ -325,6 +334,12 @@ def metrics(parameters, x, y):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Train a replay-value model from public arena games."
+    )
+    parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
+    arguments = parser.parse_args()
+
     battles = post(
         "gamesPlayersRankingRemoteService/findLastBattlesByAgentId",
         [AGENT_ID, None],
@@ -398,7 +413,8 @@ def main():
         ),
         "model": quantized_parameters,
     }
-    output = ROOT / "replay_value_model.json"
+    output = arguments.output
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({key: value for key, value in report.items() if key != "model"}, indent=2))
     print(f"wrote {output} ({output.stat().st_size} bytes)")

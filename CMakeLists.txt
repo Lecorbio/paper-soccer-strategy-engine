@@ -10,6 +10,28 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+option(PAPERSOCCER_ENABLE_SANITIZERS
+  "Build native targets with AddressSanitizer and UndefinedBehaviorSanitizer"
+  OFF)
+if(PAPERSOCCER_ENABLE_SANITIZERS)
+  if(EMSCRIPTEN)
+    message(FATAL_ERROR "PAPERSOCCER_ENABLE_SANITIZERS is for native builds only")
+  endif()
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(FATAL_ERROR
+      "PAPERSOCCER_ENABLE_SANITIZERS requires GCC or a Clang-family compiler")
+  endif()
+  add_compile_options(
+    -O1
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+  add_link_options(
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+endif()
+
 add_library(papersoccer_core
   src/bots/alpha_beta/alpha_beta.cpp
   src/bots/bot.cpp
@@ -71,11 +93,17 @@ add_executable(papersoccer_tests
 )
 target_link_libraries(papersoccer_tests PRIVATE papersoccer_core)
 target_include_directories(papersoccer_tests PRIVATE src/bots)
-target_compile_definitions(papersoccer_tests PRIVATE
-  PAPERSOCCER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 if(EMSCRIPTEN)
+  target_compile_definitions(papersoccer_tests PRIVATE
+    PAPERSOCCER_SOURCE_DIR="")
   target_compile_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
-  target_link_options(papersoccer_tests PRIVATE -sDISABLE_EXCEPTION_CATCHING=0)
+  target_link_options(papersoccer_tests PRIVATE
+    -sDISABLE_EXCEPTION_CATCHING=0
+    --embed-file
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rank5_derived_vs_mcts_path.txt@/tests/fixtures/rank5_derived_vs_mcts_path.txt")
+else()
+  target_compile_definitions(papersoccer_tests PRIVATE
+    PAPERSOCCER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 enable_testing()

@@ -68,17 +68,23 @@ cmake --build build -j4
 ctest --test-dir build --output-on-failure
 ```
 
-Recreate the training artifact with the bundled NumPy runtime:
+Create the pinned research environment once, then recreate raw artifacts under
+the ignored `results/` tree:
 
 ```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+mkdir -p results/codingame/selfplay_nn
 ./build/papersoccer_codingame_selfplay_nn_selfplay_generator \
-  submissions/codingame/bots/selfplay_nn/selfplay_bootstrap.jsonl \
+  results/codingame/selfplay_nn/selfplay_bootstrap.jsonl \
   1024 4000 180 6789347283849021
-/Users/lecorbio/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
+.venv/bin/python \
   submissions/codingame/bots/selfplay_nn/train_selfplay_model.py \
-  submissions/codingame/bots/selfplay_nn/selfplay_bootstrap.jsonl \
+  results/codingame/selfplay_nn/selfplay_bootstrap.jsonl \
+  results/codingame/selfplay_nn/neural_model.json
+cmp results/codingame/selfplay_nn/neural_model.json \
   submissions/codingame/bots/selfplay_nn/neural_model.json
-node submissions/codingame/bots/selfplay_nn/generate_neural_model_header.mjs
+node submissions/codingame/bots/selfplay_nn/generate_neural_model_header.mjs --check
 ```
 
 Run the deterministic comparison gate against the full rank-5 control:

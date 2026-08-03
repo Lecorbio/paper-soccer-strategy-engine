@@ -3,6 +3,14 @@
 #include "../rank_5/bot.cpp"
 #undef turn_action_v2
 
+#if defined(__GNUC__) && !defined(__clang__)
+namespace papersoccer::candidate_engine {
+namespace replay_book = ::papersoccer::rank5_engine::replay_book;
+namespace replay_value_model =
+    ::papersoccer::rank5_engine::replay_value_model;
+}
+#endif
+
 #include "arena_loss_regressions.hpp"
 #include "observed_arena_loss_regressions.hpp"
 

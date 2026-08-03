@@ -3,6 +3,13 @@
 #include "../rank_5/bot.cpp"
 #undef turn_action_v2
 
+#if defined(__GNUC__) && !defined(__clang__)
+namespace papersoccer::challenger_engine {
+namespace replay_value_model =
+    ::papersoccer::rank5_engine::replay_value_model;
+}
+#endif
+
 #define turn_action_v2 challenger_engine
 #include "bot.cpp"
 #undef turn_action_v2

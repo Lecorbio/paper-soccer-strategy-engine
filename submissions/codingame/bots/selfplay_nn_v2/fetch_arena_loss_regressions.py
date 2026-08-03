@@ -9,6 +9,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 TOOLS = ROOT.parents[1] / "tools"
+RESULTS_ROOT = ROOT.parents[3] / "results" / "codingame" / "selfplay_nn_v2"
 sys.path.insert(0, str(TOOLS))
 
 from analyze_arena import fetch_games, record  # noqa: E402
@@ -100,7 +101,8 @@ def main():
         "loss_records": losses,
         "regression_cases": cases,
     }
-    output = arguments.output or ROOT / f"arena_batch_{arguments.agent_id}.json"
+    output = arguments.output or RESULTS_ROOT / f"arena_batch_{arguments.agent_id}.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(
         f"wrote {output}: {len(records)} games, {len(losses)} losses, "

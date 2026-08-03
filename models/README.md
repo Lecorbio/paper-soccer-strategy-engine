@@ -75,23 +75,28 @@ target. Correlation, sign agreement, paired games, and legal/timing gates are mo
 ## Reproduction
 
 NumPy is required only to train. The game and checked-in model have no Python or NumPy runtime
-dependency.
+dependency. Create the pinned environment once and keep regenerated data under the ignored
+`results/` tree. From the repository root:
 
 ```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+mkdir -p results/research/jacek_article
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target papersoccer_jacek_training_data
 
 ./build/papersoccer_jacek_training_data \
-  build/jacek_demo_training_v2.jsonl 1024 73194721 4000
+  results/research/jacek_article/training_v2.jsonl 1024 73194721 4000
 
-python3 tools/train_jacek_neural.py \
-  build/jacek_demo_training_v2.jsonl \
-  --output models/jacek_article_value_model.json \
+.venv/bin/python tools/train_jacek_neural.py \
+  results/research/jacek_article/training_v2.jsonl \
+  --output results/research/jacek_article/value_model.json \
   --seed 20260723 \
   --epochs 50
 
-python3 tools/generate_jacek_neural_model.py
-python3 tools/generate_jacek_neural_model.py --check
+cmp results/research/jacek_article/value_model.json \
+  models/jacek_article_value_model.json
+.venv/bin/python tools/generate_jacek_neural_model.py --check
 ```
 
 The corpus is intentionally a generated build artifact rather than a checked-in multi-megabyte

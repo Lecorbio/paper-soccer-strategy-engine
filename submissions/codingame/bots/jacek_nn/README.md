@@ -58,13 +58,14 @@ Validation selected 50% strength: anchor/50%-corrected teacher MAE was
 strength is 62.74%; these metrics screen the fit, while paired games determine
 promotion.
 
-The 159 MiB corpus is deliberately untracked, but it is reproducible. Build
-the teacher generator, run 14 deterministic shards with base budget 16,000,
-maximum 160 turns, and root seed
+The 159 MiB corpus is deliberately untracked, but it is reproducible under
+`results/codingame/jacek_nn/`. Build the teacher generator, run 14 deterministic
+shards with base budget 16,000, maximum 160 turns, and root seed
 `725138164020260722 + shard * 1000000000000`. Shards 0-3 contain 715 games;
 shards 4-13 contain 714. Concatenate in shard order while adding the cumulative
-prior line count to each JSON record's `game` field. The result must contain
-10,000 lines, occupy 166,576,824 bytes, and match the corpus hash above.
+prior line count to each JSON record's `game` field. Save the merged file as
+`results/codingame/jacek_nn/teacher-10000.jsonl`; it must contain 10,000 lines,
+occupy 166,576,824 bytes, and match the corpus hash above.
 
 ## Retained local validation
 
@@ -119,15 +120,20 @@ cmake --build build -j8
 ctest --test-dir build --output-on-failure -j8
 ```
 
-After recreating the corpus described above, reproduce the checked model with
-Python 3 plus NumPy:
+After recreating the corpus described above, use the pinned research
+environment and write the candidate model under the ignored `results/` tree:
 
 ```sh
-python3 \
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+mkdir -p results/codingame/jacek_nn
+.venv/bin/python \
   submissions/codingame/bots/jacek_nn/train_rank5_residual.py \
-  build/jacek-training-r0/teacher-10000.jsonl \
+  results/codingame/jacek_nn/teacher-10000.jsonl \
+  results/codingame/jacek_nn/teacher_residual_model.json
+cmp results/codingame/jacek_nn/teacher_residual_model.json \
   submissions/codingame/bots/jacek_nn/teacher_residual_model.json
-node submissions/codingame/tools/generate_submission.mjs jacek_nn
+node submissions/codingame/tools/generate_submission.mjs jacek_nn --check
 ```
 
 The model JSON is the auditable training result; the header and

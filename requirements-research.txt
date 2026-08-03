@@ -1,0 +1,2 @@
+# Research and model-training tools. NumPy 2.5.1 supports Python 3.12-3.14.
+numpy==2.5.1

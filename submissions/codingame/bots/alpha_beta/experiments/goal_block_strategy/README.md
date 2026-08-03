@@ -67,12 +67,24 @@ to the live state.
 
 ## Reproduce
 
-Run the trainer with Python and NumPy, then regenerate and verify the submission:
+Run the trainer in the pinned research environment, keeping regenerated files
+under the ignored `results/` tree, then compare them with the curated snapshot.
+Run these commands from the repository root:
 
 ```sh
-python3 submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/train_replay_value_model.py
-node submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/generate_replay_value_header.mjs
-node submissions/codingame/tools/generate_submission.mjs alpha_beta
-cmake --build build
-ctest --test-dir build --output-on-failure
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+mkdir -p results/codingame/alpha_beta/goal_block_strategy
+.venv/bin/python \
+  submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/train_replay_value_model.py \
+  --output results/codingame/alpha_beta/goal_block_strategy/replay_value_model.json
+node submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/generate_replay_value_header.mjs \
+  results/codingame/alpha_beta/goal_block_strategy/replay_value_model.json \
+  results/codingame/alpha_beta/goal_block_strategy/replay_value_model.hpp
+cmp results/codingame/alpha_beta/goal_block_strategy/replay_value_model.json \
+  submissions/codingame/bots/alpha_beta/experiments/goal_block_strategy/replay_value_model.json
+cmp results/codingame/alpha_beta/goal_block_strategy/replay_value_model.hpp \
+  submissions/codingame/bots/alpha_beta/replay_value_model.hpp
+node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
+./scripts/build-and-test.sh
 ```
