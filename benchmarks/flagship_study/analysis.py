@@ -724,8 +724,8 @@ def _calibration_rows(
 def _logistic_log_likelihood(scores: Sequence[float], outcomes: Sequence[int],
                              intercept: float, slope: float) -> float:
     return sum(
-        outcome * _log_sigmoid(intercept + slope * score)
-        + (1 - outcome) * _log_sigmoid(-(intercept + slope * score))
+        (_log_sigmoid(intercept + slope * score) if outcome
+         else _log_sigmoid(-(intercept + slope * score)))
         for score, outcome in zip(scores, outcomes, strict=True)
     )
 
@@ -763,8 +763,10 @@ def fit_logistic_calibration(
              if outcome == 0]
     ones = [score for score, outcome in zip(standardized, outcomes, strict=True)
             if outcome == 1]
-    if max(zeros) < min(ones) or max(ones) < min(zeros):
-        raise SeparationError("calibration scores completely separate the outcomes")
+    if max(zeros) <= min(ones) or max(ones) <= min(zeros):
+        raise SeparationError(
+            "calibration scores completely or quasi-completely separate the outcomes"
+        )
     tolerance, max_iterations = _convergence_parameters(
         tolerance, max_iterations
     )
@@ -805,7 +807,7 @@ def fit_logistic_calibration(
             break
         determinant = information_00 * information_11 - information_01 ** 2
         if determinant <= 1e-15:
-            raise SeparationError("calibration information matrix is singular")
+            raise ConvergenceError("calibration information matrix is singular")
         step_intercept = (
             information_11 * gradient_intercept
             - information_01 * gradient_slope
@@ -817,22 +819,29 @@ def fit_logistic_calibration(
         current = _logistic_log_likelihood(
             standardized, outcomes, intercept, slope
         )
+        if not math.isfinite(current):
+            raise ConvergenceError("calibration log likelihood became non-finite")
         multiplier = 1.0
         accepted = False
         for _ in range(60):
             next_intercept = intercept + multiplier * step_intercept
             next_slope = slope + multiplier * step_slope
+            if not math.isfinite(next_intercept) or not math.isfinite(next_slope):
+                multiplier *= 0.5
+                continue
             candidate = _logistic_log_likelihood(
                 standardized, outcomes, next_intercept, next_slope
             )
-            if candidate >= current - 1e-12:
+            if math.isfinite(candidate) and candidate >= current - 1e-12:
                 intercept = next_intercept
                 slope = next_slope
                 accepted = True
                 break
             multiplier *= 0.5
-        if not accepted or max(abs(intercept), abs(slope)) > 50.0:
-            raise SeparationError("calibration coefficients diverged")
+        if not accepted:
+            raise ConvergenceError(
+                "calibration Newton step did not improve a finite log likelihood"
+            )
     raise ConvergenceError(
         f"logistic calibration did not converge within {max_iterations} iterations"
     )

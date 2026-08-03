@@ -167,7 +167,12 @@ evaluation.
 The binary target is whether the player to move at the prediction eventually
 wins that game. Each mapping stores the validation score mean and population
 standard deviation plus fitted intercept and slope. Coefficients are frozen in
-the committed selection lock. Test reports apply them without refitting and
+the committed selection lock. Deterministic Newton iteration accepts finite
+coefficients of any magnitude when the gradient tolerance, finite likelihood,
+and nonsingular information checks pass; it has no scale-dependent coefficient
+cap. Complete and quasi-complete separation, non-finite steps, singular
+information, failed line search, and iteration-limit exhaustion fail closed.
+Test reports apply the frozen mappings without refitting and
 give Brier score, clipped log loss, and ten equal-width probability bins with
 prediction count, contributing pair-cluster count, mean prediction, and
 observed frequency. Uncertainty uses 10,000 deterministic percentile

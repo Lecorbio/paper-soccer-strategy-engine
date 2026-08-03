@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import unittest
+from unittest import mock
 
 from benchmarks.flagship_study.analysis import (
     AnalysisError,
@@ -279,6 +280,59 @@ class CalibrationTests(unittest.TestCase):
             })
         with self.assertRaises(SeparationError):
             fit_logistic_calibration(observations, phase="validation")
+
+    def test_logistic_quasi_separation_is_rejected(self) -> None:
+        observations = []
+        for score, outcome in (
+            (-2.0, 0), (-1.0, 0), (0.0, 0),
+            (0.0, 1), (1.0, 1), (2.0, 1),
+        ):
+            observations.append({
+                "phase": "validation",
+                "bot_id": "bot",
+                "raw_score": score,
+                "outcome": outcome,
+                "player_to_move": 1,
+                "completed_depth": 1,
+            })
+        with self.assertRaisesRegex(SeparationError, "quasi-completely"):
+            fit_logistic_calibration(observations, phase="validation")
+
+    def test_finite_standardized_slope_above_fifty_converges(self) -> None:
+        observations = []
+        frequencies = (
+            (-1.0, 0, 2),
+            (1.0, 1, 2),
+            (-0.001, 0, 60),
+            (-0.001, 1, 40),
+            (0.001, 0, 40),
+            (0.001, 1, 60),
+        )
+        for score, outcome, count in frequencies:
+            observations.extend({
+                "phase": "validation",
+                "bot_id": "bot",
+                "raw_score": score,
+                "outcome": outcome,
+                "player_to_move": 1,
+                "completed_depth": 1,
+            } for _ in range(count))
+
+        mapping = fit_logistic_calibration(observations, phase="validation")
+
+        self.assertTrue(mapping.converged)
+        self.assertGreater(mapping.slope, 50.0)
+        self.assertLess(mapping.iterations, 20)
+        self.assertGreater(mapping.predict(0.001), mapping.predict(-0.001))
+
+    def test_singular_information_is_a_convergence_error(self) -> None:
+        with mock.patch(
+            "benchmarks.flagship_study.analysis._sigmoid", return_value=0.0
+        ):
+            with self.assertRaisesRegex(ConvergenceError, "singular"):
+                fit_logistic_calibration(
+                    _calibration_observations(), phase="validation"
+                )
 
     def test_frozen_mapping_round_trip_and_metrics(self) -> None:
         mapping = fit_logistic_calibration(
