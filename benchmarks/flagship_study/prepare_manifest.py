@@ -213,8 +213,8 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
     return {
         "schema_version": studylib.MANIFEST_SCHEMA_VERSION,
         "study": {
-            "id": "competitive-demo-bots-flagship-2026-v2",
-            "version": "1.1.0",
+            "id": "competitive-demo-bots-flagship-2026-v3",
+            "version": "1.2.0",
             "title": "Competitive demo-rule Paper Soccer bot study",
             "study_class": "flagship",
             "preregistered_at_utc": preregistered_at,

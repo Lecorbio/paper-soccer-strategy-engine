@@ -14,3 +14,11 @@ are reused byte-for-byte with unchanged paths, seeds, and SHA-256 hashes; no
 opening was regenerated in response to an outcome. Raw results from the
 superseded manifest remain isolated under its ignored manifest-hash namespace
 and are not inputs to the replacement study.
+
+`manifest-0031a81c.json` records an intermediate corrected preregistration
+(SHA-256 `0031a81c193a63fe503d153e9fd4922e2cc8f4e6d64448752502805f0e4d8f41`).
+It was superseded before executing any unit because the final fail-closed
+review found that unavailable or malformed `pmset` output was not yet rejected
+as an unknown Low Power Mode state. No raw-result namespace exists for that
+manifest. The v3 runner accepts only an explicit disabled value and rejects
+missing, malformed, unavailable, enabled, or conflicting mode records.

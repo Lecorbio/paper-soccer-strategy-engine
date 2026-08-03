@@ -1792,14 +1792,19 @@ def capture_execution_environment(arena_path: pathlib.Path,
     }
 
 
-def _low_power_mode_enabled(power_settings: Any) -> bool:
+def _low_power_mode_state(power_settings: Any) -> str:
     text = _string(power_settings, "power settings").lower()
     tokens = text.split()
-    return any(
-        tokens[index] in {"lowpowermode", "powermode"} and
-        tokens[index + 1] == "1"
+    values = {
+        tokens[index + 1]
         for index in range(len(tokens) - 1)
-    )
+        if tokens[index] in {"lowpowermode", "powermode"}
+    }
+    if values == {"0"}:
+        return "disabled"
+    if values == {"1"}:
+        return "enabled"
+    return "unknown"
 
 
 def _thermal_status_is_nominal(thermal_status: Any) -> bool:
@@ -1817,9 +1822,11 @@ def _require_validation_gate_snapshot(
             f"validation latency gate requires AC power {where}; "
             f"observed {environment.get('power_source')!r}"
         )
-    if _low_power_mode_enabled(environment.get("power_settings")):
+    low_power_state = _low_power_mode_state(environment.get("power_settings"))
+    if low_power_state != "disabled":
         raise StudyError(
-            f"validation latency gate requires Low Power Mode disabled {where}"
+            "validation latency gate requires an explicit Low Power Mode disabled "
+            f"record {where}; observed {low_power_state!r}"
         )
     if not _thermal_status_is_nominal(environment.get("thermal_status")):
         raise StudyError(

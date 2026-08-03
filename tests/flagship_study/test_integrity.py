@@ -317,6 +317,27 @@ class ExecutionEnvironmentTests(unittest.TestCase):
                 "Low Power Mode",
             ),
             (
+                "power settings unavailable",
+                lambda value: value.update(
+                    {"power_settings": "unavailable"}
+                ),
+                "explicit Low Power Mode disabled",
+            ),
+            (
+                "power settings malformed",
+                lambda value: value.update(
+                    {"power_settings": "powermode unknown"}
+                ),
+                "explicit Low Power Mode disabled",
+            ),
+            (
+                "power settings conflicting",
+                lambda value: value.update(
+                    {"power_settings": "powermode 0 lowpowermode 1"}
+                ),
+                "explicit Low Power Mode disabled",
+            ),
+            (
                 "thermal unavailable after",
                 lambda value: value["gate_conditions_after"].update(
                     {"thermal_status": "unavailable"}
