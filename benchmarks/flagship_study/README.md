@@ -41,12 +41,18 @@ replace an existing bank or manifest.
 ```sh
 python3 benchmarks/flagship_study/prepare_manifest.py \
   --opening-tool build/release/papersoccer_opening_bank \
-  --source-commit "$(git rev-parse HEAD)"
+  --source-commit "$(git rev-parse HEAD)" \
+  --reuse-frozen-openings
 python3 benchmarks/flagship_study/run_study.py validate
 ```
 
 Commit `manifest.json` and `openings/` before running configuration selection.
 The manifest hash is the namespace for every raw result.
+
+The reuse flag is specific to the audited v2 preregistration: its twelve banks
+were already committed by the superseded pre-test manifest and are validated
+and reused byte-for-byte. See `superseded/README.md`; no validation or test
+outcome was accessed under the superseded manifest.
 
 ## Development and validation
 

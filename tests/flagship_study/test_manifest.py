@@ -63,6 +63,18 @@ class ManifestValidationTests(unittest.TestCase):
     def test_frozen_flagship_manifest_contract_is_valid(self) -> None:
         self.validate(copy.deepcopy(self.manifest))
 
+    def test_audited_supersession_reuses_committed_banks_byte_for_byte(self) -> None:
+        banks = prepare_manifest.reuse_frozen_banks(REPOSITORY)
+        self.assertEqual(len(banks), 12)
+        self.assertEqual(sum(bank["pairs"] for bank in banks), 700)
+        for bank in banks:
+            path = REPOSITORY / bank["path"]
+            self.assertEqual(bank["sha256"], studylib.sha256_file(path))
+            self.assertEqual(
+                bank["seed"],
+                prepare_manifest.OPENING_SEEDS[bank["phase"]][bank["depth"]],
+            )
+
     def test_missing_and_unknown_fields_are_rejected(self) -> None:
         missing = copy.deepcopy(self.manifest)
         del missing["rules"]

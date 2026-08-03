@@ -156,6 +156,52 @@ def write_json_atomic(path: pathlib.Path, value: Any, *, replace: bool) -> None:
             temporary.unlink()
 
 
+def _publish_raw_shard_atomic(path: pathlib.Path, value: Any) -> bool:
+    """Publish a complete raw shard without ever replacing an existing path.
+
+    Returns ``True`` for the process that claimed the destination and ``False``
+    when a concurrent process published byte-identical data. A different
+    concurrent result is a hard conflict and the winning file is preserved.
+    """
+
+    data = canonical_json_bytes(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            # A same-directory hard link is an atomic create-if-absent claim.
+            # Unlike os.replace(), it cannot overwrite a concurrent winner.
+            os.link(temporary, path)
+        except FileExistsError as error:
+            try:
+                existing = path.read_bytes()
+            except OSError as read_error:
+                raise StudyError(
+                    f"could not inspect concurrent raw shard publication: {path}"
+                ) from read_error
+            if existing == data:
+                return False
+            raise StudyError(
+                f"conflicting concurrent raw shard publication; "
+                f"existing result preserved: {path}"
+            ) from error
+        except OSError as error:
+            raise StudyError(
+                f"could not atomically publish raw shard {path}: {error}"
+            ) from error
+        return True
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def _object(value: Any, where: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise StudyError(f"{where} must be an object")
@@ -1075,6 +1121,13 @@ def verify_flagship_source_checkout(manifest: Mapping[str, Any],
 
     if manifest["study"]["study_class"] != "flagship":
         return
+    expected_python = manifest["environment"]["python_version"]
+    observed_python = platform.python_version()
+    if observed_python != expected_python:
+        raise StudyError(
+            "flagship analysis requires the frozen Python interpreter version: "
+            f"observed {observed_python!r}, expected {expected_python!r}"
+        )
     source_commit = manifest["source"]["git_commit"]
     exists = subprocess.run(
         ["git", "cat-file", "-e", f"{source_commit}^{{commit}}"],
@@ -1725,6 +1778,7 @@ def capture_execution_environment(arena_path: pathlib.Path,
         "physical_cores": int(physical) if physical.isdecimal() else os.cpu_count() or 1,
         "logical_cores": int(logical) if logical.isdecimal() else os.cpu_count() or 1,
         "memory_bytes": int(memory) if memory.isdecimal() else manifest["environment"]["memory_bytes"],
+        "python_version": platform.python_version(),
         "power_source": power_source,
         "power_status": power,
         "power_settings": command_output(["pmset", "-g"]),
@@ -1736,6 +1790,65 @@ def capture_execution_environment(arena_path: pathlib.Path,
         "build_flags": provenance["configured_flags"],
         "single_threaded": True,
     }
+
+
+def _low_power_mode_enabled(power_settings: Any) -> bool:
+    text = _string(power_settings, "power settings").lower()
+    tokens = text.split()
+    return any(
+        tokens[index] in {"lowpowermode", "powermode"} and
+        tokens[index + 1] == "1"
+        for index in range(len(tokens) - 1)
+    )
+
+
+def _thermal_status_is_nominal(thermal_status: Any) -> bool:
+    text = _string(thermal_status, "thermal status").lower()
+    return (
+        "no thermal warning level has been recorded" in text and
+        "no performance warning level has been recorded" in text
+    )
+
+
+def _require_validation_gate_snapshot(
+        environment: Mapping[str, Any], where: str) -> None:
+    if environment.get("power_source") != "ac":
+        raise StudyError(
+            f"validation latency gate requires AC power {where}; "
+            f"observed {environment.get('power_source')!r}"
+        )
+    if _low_power_mode_enabled(environment.get("power_settings")):
+        raise StudyError(
+            f"validation latency gate requires Low Power Mode disabled {where}"
+        )
+    if not _thermal_status_is_nominal(environment.get("thermal_status")):
+        raise StudyError(
+            f"validation latency gate requires a recorded nominal thermal state {where}"
+        )
+
+
+def _gate_conditions_snapshot(environment: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "observed_at_utc": environment["observed_at_utc"],
+        "power_source": environment["power_source"],
+        "power_status": environment["power_status"],
+        "power_settings": environment["power_settings"],
+        "thermal_status": environment["thermal_status"],
+    }
+
+
+def _validate_recorded_validation_environment(
+        environment: Mapping[str, Any], where: str) -> None:
+    _require_validation_gate_snapshot(environment, f"at the start of {where}")
+    after = _exact_keys(
+        environment.get("gate_conditions_after"),
+        {
+            "observed_at_utc", "power_source", "power_status",
+            "power_settings", "thermal_status",
+        },
+        f"{where}.gate_conditions_after",
+    )
+    _require_validation_gate_snapshot(after, f"at the end of {where}")
 
 
 def _verify_flagship_execution_environment(
@@ -1772,6 +1885,7 @@ def _verify_flagship_execution_environment(
             environment.get("logical_cores"), expected["logical_cores"]
         ),
         "memory": (environment.get("memory_bytes"), expected["memory_bytes"]),
+        "Python": (environment.get("python_version"), expected["python_version"]),
         "kernel/platform": (environment.get("platform"), expected["kernel"]),
     }
     mismatches = [
@@ -1832,15 +1946,13 @@ def run_phase(manifest_path: pathlib.Path, arena_path: pathlib.Path, phase: str,
     units = units_for_phase(manifest, phase, selection)
     configs = configurations_by_id(manifest)
     selected_units = deterministic_shard(units, shard_count, shard_index)
-    if (manifest["study"]["study_class"] == "flagship" and phase == "validation" and
-            execution_environment["power_source"] != "ac"):
-        raise StudyError(
-            "validation latency gate requires the preregistered AC-power condition; "
-            f"observed {execution_environment['power_source']}"
+    is_flagship_validation = (
+        manifest["study"]["study_class"] == "flagship" and phase == "validation"
+    )
+    if is_flagship_validation:
+        _require_validation_gate_snapshot(
+            execution_environment, "before acquiring the serialized gate"
         )
-    if (manifest["study"]["study_class"] == "flagship" and phase == "validation" and
-            "lowpowermode 1" in execution_environment["power_settings"].lower()):
-        raise StudyError("validation latency gate requires Low Power Mode to be disabled")
     gate_lock = (
         _acquire_validation_gate_lock(manifest, repository, manifest_hash)
         if phase == "validation" else None
@@ -1858,6 +1970,13 @@ def run_phase(manifest_path: pathlib.Path, arena_path: pathlib.Path, phase: str,
                 raise StudyError(f"refusing to overwrite incompatible completed shard: {output}")
             resumed += 1
             continue
+        unit_environment = execution_environment
+        if is_flagship_validation:
+            unit_environment = capture_execution_environment(arena_path, manifest)
+            _verify_flagship_execution_environment(manifest, unit_environment)
+            _require_validation_gate_snapshot(
+                unit_environment, f"at the start of {unit.unit_id}"
+            )
         bank_path = repository / unit.bank_path
         bank_records = parse_opening_bank(bank_path)
         base_seed = _derived_seed(
@@ -1878,6 +1997,16 @@ def run_phase(manifest_path: pathlib.Path, arena_path: pathlib.Path, phase: str,
         process = subprocess.run(command, cwd=repository, capture_output=True, text=True,
                                  check=False)
         wall_seconds = time.perf_counter() - wall_start
+        if is_flagship_validation:
+            ending_environment = capture_execution_environment(arena_path, manifest)
+            _verify_flagship_execution_environment(manifest, ending_environment)
+            _require_validation_gate_snapshot(
+                ending_environment, f"at the end of {unit.unit_id}"
+            )
+            unit_environment = dict(unit_environment)
+            unit_environment["gate_conditions_after"] = (
+                _gate_conditions_snapshot(ending_environment)
+            )
         if process.returncode != 0:
             raise StudyError(
                 f"arena failed for {unit.unit_id} with exit {process.returncode}:\n"
@@ -1892,12 +2021,14 @@ def run_phase(manifest_path: pathlib.Path, arena_path: pathlib.Path, phase: str,
             raise StudyError(f"operational defect: truncation in {unit.unit_id}")
         _annotate_report(
             report, unit, manifest_hash, run_id, bank_records,
-            execution_environment,
+            unit_environment,
         )
         report["study"]["wall_seconds"] = wall_seconds
         report["study"]["arena_command"] = command
-        write_json_atomic(output, report, replace=False)
-        completed += 1
+        if _publish_raw_shard_atomic(output, report):
+            completed += 1
+        else:
+            resumed += 1
     result = {
         "phase": phase,
         "manifest_sha256": manifest_hash,
@@ -2586,11 +2717,12 @@ def _build_curated_phase(
 
     expected_games = sum(unit.pairs * 2 for unit, _ in reports)
     if manifest["study"]["study_class"] == "flagship" and phase == "validation":
-        if not execution_environments or any(
-            environment.get("power_source") != "ac"
-            for environment in execution_environments.values()
-        ):
-            raise StudyError("validation shards violate the preregistered AC-power gate condition")
+        if not execution_environments:
+            raise StudyError("validation shards lack gate execution environments")
+        for key, environment in execution_environments.items():
+            _validate_recorded_validation_environment(
+                environment, f"validation environment {key}"
+            )
     curated = {
         "schema_version": CURATED_SCHEMA_VERSION,
         "phase": phase,

@@ -85,6 +85,11 @@ Decision time is the native single-thread wall duration of `choose_move` using
 `apply_move` are outside the timer. Internal state preparation or copying done
 by `choose_move` remains inside. The manifest records the discarded warm-up,
 release flags, machine, compiler, operating system, and power conditions.
+Every validation unit is accepted only when both immediately-before and
+immediately-after snapshots show AC power, Low Power Mode disabled, and a
+nominal macOS thermal/performance-warning state. An unavailable or
+non-nominal thermal snapshot invalidates the unit. The validation report and
+selection lock retain both raw power-setting and thermal snapshots.
 
 For MCTS and both alpha-beta families, validation p95 uses every returned edge.
 For **Rank5DerivedBot — fixed 50k demo profile**, the gate uses only decisions
@@ -176,6 +181,15 @@ its successful-replicate count remains explicit. Per-entrant seeds are domain
 derived from the frozen test analysis seed. Decision counts describe
 prediction opportunities, not independent samples; pair counts are the
 uncertainty units.
+For every entrant, the report gives retained predictions over total decision
+opportunities and separately discloses exclusions caused by cached
+continuations, truncations, and searches with no completed depth.
+
+The analysis implementation uses only the Python standard library. The exact
+Python interpreter version serialized in the manifest is enforced for every
+flagship command, including aggregation, selection locking, and test analysis;
+an interpreter-version mismatch stops execution rather than accepting
+potentially different deterministic bootstrap, float, or JSON behavior.
 
 ## Pareto frontier and negative findings
 

@@ -30,6 +30,9 @@ PHASE_SEEDS = {
     "bootstrap": {"development": "5100001", "validation": "5200001", "test": "5300001"},
     "analysis": {"development": "7100001", "validation": "7200001", "test": "7300001"},
 }
+SUPERSEDED_MANIFEST_SHA256 = (
+    "eab2728f4f5915926639ab67f20ab94137afe0275543f8eafd34b8047ab4ecf3"
+)
 
 
 def run_text(command: list[str], repository: pathlib.Path) -> str:
@@ -210,8 +213,8 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
     return {
         "schema_version": studylib.MANIFEST_SCHEMA_VERSION,
         "study": {
-            "id": "competitive-demo-bots-flagship-2026",
-            "version": "1.0.0",
+            "id": "competitive-demo-bots-flagship-2026-v2",
+            "version": "1.1.0",
             "title": "Competitive demo-rule Paper Soccer bot study",
             "study_class": "flagship",
             "preregistered_at_utc": preregistered_at,
@@ -478,6 +481,69 @@ def generate_banks(repository: pathlib.Path, opening_tool: pathlib.Path) -> list
     return manifests
 
 
+def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
+    """Load the committed banks without regenerating a single opening."""
+
+    superseded_path = (
+        repository / "benchmarks/flagship_study/superseded" /
+        "manifest-eab2728f.json"
+    )
+    if not superseded_path.is_file() or \
+       studylib.sha256_file(superseded_path) != SUPERSEDED_MANIFEST_SHA256:
+        raise studylib.StudyError(
+            "audited superseded-manifest identity is missing or changed"
+        )
+    superseded = studylib.load_json(superseded_path)
+    previous_banks = {
+        (bank["phase"], bank["depth"]): bank
+        for bank in superseded["openings"]["banks"]
+    }
+    if set(previous_banks) != {
+        (phase, depth)
+        for phase in studylib.FULL_PHASES
+        for depth in studylib.EXPECTED_OPENING_DEPTHS
+    }:
+        raise studylib.StudyError("superseded manifest has the wrong opening design")
+
+    manifests: list[dict[str, Any]] = []
+    for phase in studylib.FULL_PHASES:
+        for depth in studylib.EXPECTED_OPENING_DEPTHS:
+            pairs = studylib.EXPECTED_PAIR_COUNTS[phase]
+            path = (
+                repository / "benchmarks/flagship_study/openings" /
+                f"{phase}_d{depth:02d}.tsv"
+            )
+            if not path.is_file():
+                raise studylib.StudyError(f"frozen opening bank is missing: {path}")
+            records = studylib.parse_opening_bank(path)
+            metadata = studylib.opening_bank_metadata(path)
+            if len(records) != pairs or metadata.get("phase") != phase or \
+               metadata.get("depth") != str(depth) or \
+               metadata.get("pairs") != str(pairs) or \
+               metadata.get("generator_seed") != OPENING_SEEDS[phase][depth]:
+                raise studylib.StudyError(
+                    f"frozen opening bank differs from the preregistered design: {path}"
+                )
+            previous = previous_banks[(phase, depth)]
+            if previous.get("path") != str(path.relative_to(repository)) or \
+               previous.get("seed") != OPENING_SEEDS[phase][depth] or \
+               previous.get("pairs") != pairs or \
+               previous.get("sha256") != studylib.sha256_file(path):
+                raise studylib.StudyError(
+                    f"frozen opening bank changed after the pre-test audit: {path}"
+                )
+            manifests.append({
+                "id": f"openings-{phase}-d{depth:02d}",
+                "phase": phase,
+                "depth": depth,
+                "pairs": pairs,
+                "path": str(path.relative_to(repository)),
+                "sha256": previous["sha256"],
+                "seed": OPENING_SEEDS[phase][depth],
+            })
+    return manifests
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--opening-tool", type=pathlib.Path, required=True)
@@ -487,6 +553,13 @@ def main() -> int:
                         default=pathlib.Path("benchmarks/flagship_study/manifest.json"))
     parser.add_argument("--preregistered-at-utc",
                         default=dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat())
+    parser.add_argument(
+        "--reuse-frozen-openings", action="store_true",
+        help=(
+            "reuse and verify the existing committed banks byte-for-byte; "
+            "intended only for an audited pre-test manifest supersession"
+        ),
+    )
     args = parser.parse_args()
     repository = pathlib.Path(__file__).resolve().parents[2]
     if len(args.source_commit) != 40 or any(c not in "0123456789abcdef" for c in args.source_commit):
@@ -522,7 +595,10 @@ def main() -> int:
         )
     except (json.JSONDecodeError, studylib.StudyError) as error:
         raise studylib.StudyError("arena returned invalid build provenance") from error
-    banks = generate_banks(repository, opening_tool)
+    banks = (
+        reuse_frozen_banks(repository)
+        if args.reuse_frozen_openings else generate_banks(repository, opening_tool)
+    )
     manifest = build_manifest(
         repository, args.source_commit, banks, args.preregistered_at_utc,
         build_provenance, studylib.sha256_file(arena_path),

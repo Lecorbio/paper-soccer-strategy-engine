@@ -431,6 +431,9 @@ def render_markdown_report(
         bootstrap.get("resamples"), "bootstrap resamples", minimum=1
     )
     environment = _mapping(manifest.get("environment"), "manifest.environment")
+    python_version = _string(
+        environment.get("python_version"), "manifest Python version"
+    )
     source = _mapping(manifest.get("source"), "manifest.source")
     source_commit = _string(source.get("git_commit"), "source commit")
     arena_sha256 = _hash(source.get("arena_sha256"), "arena SHA-256")
@@ -787,6 +790,32 @@ def render_markdown_report(
     for identifier in selected_ids:
         metrics = _mapping(calibration[identifier], f"calibration {identifier}")
         samples = _integer(metrics.get("samples"), f"{identifier} calibration samples", minimum=1)
+        decisions = _integer(
+            metrics.get("decision_count"),
+            f"{identifier} calibration decision opportunities",
+            minimum=samples,
+        )
+        excluded = _mapping(
+            metrics.get("excluded"), f"{identifier} calibration exclusions"
+        )
+        if set(excluded) != {
+                "cached_continuations", "truncations", "invalid_depths"}:
+            raise ReportError(f"{identifier} calibration exclusion schema changed")
+        excluded_cached = _integer(
+            excluded.get("cached_continuations"),
+            f"{identifier} cached-continuation exclusions",
+        )
+        excluded_truncations = _integer(
+            excluded.get("truncations"), f"{identifier} truncation exclusions"
+        )
+        excluded_invalid = _integer(
+            excluded.get("invalid_depths"),
+            f"{identifier} invalid-depth exclusions",
+        )
+        if samples + excluded_cached + excluded_truncations + excluded_invalid != decisions:
+            raise ReportError(
+                f"{identifier} retained and excluded calibration counts do not total decisions"
+            )
         pair_clusters = _integer(
             metrics.get("pair_clusters"), f"{identifier} calibration pair clusters",
             minimum=1,
@@ -821,7 +850,8 @@ def render_markdown_report(
             raise ReportError(f"{identifier} calibration must contain ten bins")
         label = _string(configs[identifier].get("public_label"), f"{identifier} label")
         calibration_rows.append([
-            label, str(samples), str(pair_clusters),
+            label, f"{samples}/{decisions}", str(excluded_cached),
+            str(excluded_invalid), str(excluded_truncations), str(pair_clusters),
             f"{brier:.4f} [{brier_lower:.4f}, {brier_upper:.4f}]",
             f"{log_loss:.4f} [{log_lower:.4f}, {log_upper:.4f}]",
         ])
@@ -884,8 +914,9 @@ def render_markdown_report(
                 mean_text, observed_text, interval_text,
             ])
     lines.extend(_table(
-        ("Entrant", "Predictions", "Pair clusters", "Brier [pair 95% CI]",
-         "Log loss [pair 95% CI]"),
+        ("Entrant", "Retained/decision opportunities", "Excluded cached",
+         "Excluded invalid depth", "Excluded truncation", "Pair clusters",
+         "Brier [pair 95% CI]", "Log loss [pair 95% CI]"),
         calibration_rows,
     ))
     lines.extend([
@@ -1073,6 +1104,7 @@ def render_markdown_report(
         "",
         "```bash",
         f"git switch -c reproduce-flagship-study {source_commit}",
+        f"test \"$(python3 -c 'import platform; print(platform.python_version())')\" = \"{python_version}\"",
         "cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release \\",
         "  -DPAPERSOCCER_ENABLE_SANITIZERS=OFF",
         "cmake --build build/release --parallel",
@@ -1081,7 +1113,8 @@ def render_markdown_report(
         "python3 benchmarks/flagship_study/prepare_manifest.py \\",
         "  --opening-tool build/release/papersoccer_opening_bank \\",
         f"  --source-commit {source_commit} \\",
-        f"  --preregistered-at-utc {preregistered_at}",
+        f"  --preregistered-at-utc {preregistered_at} \\",
+        "  --reuse-frozen-openings",
         "python3 benchmarks/flagship_study/run_study.py validate",
         "git add benchmarks/flagship_study/manifest.json benchmarks/flagship_study/openings",
         "git commit -m 'Freeze flagship manifest and opening banks'",
@@ -1158,16 +1191,34 @@ def render_markdown_report(
         environment_rows.append([
             str(index + 1),
             _string(observed.get("observed_at_utc"), "validation observation time"),
+            _string(
+                _mapping(
+                    observed.get("gate_conditions_after"),
+                    "validation ending gate conditions",
+                ).get("observed_at_utc"),
+                "validation ending observation time",
+            ),
             _string(observed.get("processor"), "validation processor"),
             _string(observed.get("platform"), "validation platform"),
+            _string(observed.get("python_version"), "validation Python version"),
             f"{_string(provenance.get('compiler_id'), 'validation compiler')} "
             f"{_string(provenance.get('compiler_version'), 'validation compiler version')}",
             _string(provenance.get("configured_flags"), "validation build flags"),
-            _string(observed.get("power_source"), "validation power source"),
+            (
+                f"start: {_string(observed.get('power_source'), 'validation power source')}; "
+                f"{_string(observed.get('power_settings'), 'validation power settings')}; "
+                f"end: {_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('power_source'), 'ending power source')}; "
+                f"{_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('power_settings'), 'ending power settings')}"
+            ),
+            (
+                f"start: {_string(observed.get('thermal_status'), 'validation thermal status')}; "
+                f"end: {_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('thermal_status'), 'ending thermal status')}"
+            ),
         ])
     lines.extend(_table(
-        ("Run environment", "Observed UTC", "CPU", "OS/kernel", "Compiler",
-         "Build flags", "Power"),
+        ("Run environment", "Start UTC", "End UTC", "CPU", "OS/kernel",
+         "Python", "Compiler", "Build flags", "Power/settings start → end",
+         "Thermal start → end"),
         environment_rows,
     ))
     lines.append("")

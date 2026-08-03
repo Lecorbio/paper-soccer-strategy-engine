@@ -80,6 +80,12 @@ def _calibration_metrics() -> dict[str, object]:
         })
     return {
         "samples": 100,
+        "decision_count": 114,
+        "excluded": {
+            "cached_continuations": 10,
+            "truncations": 0,
+            "invalid_depths": 4,
+        },
         "pair_clusters": 50,
         "brier_score": 0.2,
         "log_loss": 0.6,
@@ -287,6 +293,7 @@ def _fixture() -> tuple[dict, dict, dict, dict, dict, dict]:
             "machine_id": "synthetic-gate",
             "os": "Synthetic OS",
             "cpu": "Synthetic CPU",
+            "python_version": "3.14.6",
             "compiler_version": "Synthetic compiler 1.0",
             "build_flags": "-O3 -DNDEBUG",
         },
@@ -401,6 +408,16 @@ def _fixture() -> tuple[dict, dict, dict, dict, dict, dict]:
             "platform": "Synthetic OS",
             "arena_sha256": "a" * 64,
             "power_source": "ac",
+            "power_settings": "powermode 0",
+            "thermal_status": "No thermal warning level has been recorded",
+            "python_version": "3.14.6",
+            "gate_conditions_after": {
+                "observed_at_utc": "2026-08-03T01:01:00+00:00",
+                "power_source": "ac",
+                "power_status": "Now drawing from AC Power",
+                "power_settings": "powermode 0",
+                "thermal_status": "No thermal warning level has been recorded",
+            },
             "build_provenance": {
                 "sanitizers_enabled": False,
                 "compiler_id": "Clang",
@@ -548,6 +565,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn("[0.000, 0.150] (10,000 populated replicates)",
                       reliability_section)
 
+        calibration_summary = report.split("## Calibration", 1)[1].split(
+            "### Ten-bin reliability summaries", 1
+        )[0]
+        self.assertIn("Retained/decision opportunities", calibration_summary)
+        self.assertIn("| 100/114 | 10 | 4 | 0 | 50 |", calibration_summary)
+
         pareto_section = report.split("## Validation Pareto frontier", 1)[1].split(
             "## Negative and statistically unresolved findings", 1
         )[0]
@@ -561,6 +584,9 @@ class ReportTests(unittest.TestCase):
             "## Artifact hashes", 1
         )[0]
         self.assertIn("prepare_manifest.py", reproduction)
+        self.assertIn("--reuse-frozen-openings", reproduction)
+        self.assertIn("platform.python_version()", reproduction)
+        self.assertIn('= \"3.14.6\"', reproduction)
         self.assertIn("Freeze flagship manifest and opening banks", reproduction)
         self.assertIn("Lock flagship validation selection", reproduction)
         self.assertIn(
@@ -572,6 +598,9 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("--allow-test-override", reproduction)
         self.assertIn("Native arena", report)
         self.assertIn("Opening-bank generator", report)
+        self.assertIn("Thermal start → end", report)
+        self.assertIn("powermode 0", report)
+        self.assertIn("No thermal warning level has been recorded", report)
         self.assertIn("[benchmarks/flagship_study/runtime_projection.json]", report)
         self.assertIn("`" + "a" * 64 + "`", report)
         self.assertIn("`" + "b" * 64 + "`", report)

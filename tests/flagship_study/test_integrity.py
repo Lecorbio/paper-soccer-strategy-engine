@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import json
 import pathlib
 import re
 import subprocess
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from benchmarks.flagship_study import analysis, studylib
 
@@ -257,6 +260,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
                 "logical_cores": 8,
                 "memory_bytes": 16_000_000_000,
                 "kernel": "test kernel",
+                "python_version": studylib.platform.python_version(),
             },
         }
         environment = {
@@ -267,6 +271,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
             "logical_cores": 8,
             "memory_bytes": 16_000_000_000,
             "platform": "test kernel",
+            "python_version": studylib.platform.python_version(),
             "build_provenance": valid_build_provenance(source_commit),
         }
         studylib._verify_flagship_execution_environment(manifest, environment)
@@ -278,6 +283,54 @@ class ExecutionEnvironmentTests(unittest.TestCase):
             studylib._verify_flagship_execution_environment(
                 manifest, environment
             )
+
+    def test_validation_gate_requires_nominal_start_and_end_snapshots(self) -> None:
+        nominal = {
+            "observed_at_utc": "2026-08-03T01:00:00+00:00",
+            "power_source": "ac",
+            "power_status": "Now drawing from AC Power",
+            "power_settings": "Currently in use: powermode 0",
+            "thermal_status": (
+                "No thermal warning level has been recorded "
+                "No performance warning level has been recorded"
+            ),
+        }
+        recorded = {
+            **nominal,
+            "gate_conditions_after": copy.deepcopy(nominal),
+        }
+        studylib._validate_recorded_validation_environment(recorded, "fixture")
+
+        for name, mutate, message in (
+            (
+                "battery after",
+                lambda value: value["gate_conditions_after"].update(
+                    {"power_source": "battery"}
+                ),
+                "AC power",
+            ),
+            (
+                "low power before",
+                lambda value: value.update(
+                    {"power_settings": "Currently in use: powermode 1"}
+                ),
+                "Low Power Mode",
+            ),
+            (
+                "thermal unavailable after",
+                lambda value: value["gate_conditions_after"].update(
+                    {"thermal_status": "unavailable"}
+                ),
+                "nominal thermal state",
+            ),
+        ):
+            with self.subTest(name=name):
+                invalid = copy.deepcopy(recorded)
+                mutate(invalid)
+                with self.assertRaisesRegex(studylib.StudyError, message):
+                    studylib._validate_recorded_validation_environment(
+                        invalid, "fixture"
+                    )
 
 
 class CalibrationCurationTests(unittest.TestCase):
@@ -433,6 +486,49 @@ class CalibrationCurationTests(unittest.TestCase):
 
 
 class ShardAndResumptionTests(unittest.TestCase):
+    def test_concurrent_raw_shard_publish_never_replaces_the_winner(self) -> None:
+        def race(path: pathlib.Path, payloads: tuple[dict, dict]) -> list[object]:
+            real_link = studylib.os.link
+            barrier = threading.Barrier(2)
+
+            def synchronized_link(source: object, destination: object) -> None:
+                barrier.wait(timeout=5.0)
+                real_link(source, destination)
+
+            def publish(payload: dict) -> object:
+                try:
+                    return studylib._publish_raw_shard_atomic(path, payload)
+                except studylib.StudyError as error:
+                    return error
+
+            with mock.patch.object(
+                    studylib.os, "link", side_effect=synchronized_link), \
+                    concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(publish, payload) for payload in payloads]
+                return [future.result(timeout=10.0) for future in futures]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            path = directory / "unit.json"
+            payloads = ({"writer": "first"}, {"writer": "second"})
+            results = race(path, payloads)
+            self.assertEqual(sum(result is True for result in results), 1)
+            conflicts = [
+                result for result in results
+                if isinstance(result, studylib.StudyError)
+            ]
+            self.assertEqual(len(conflicts), 1)
+            self.assertIn("existing result preserved", str(conflicts[0]))
+            self.assertIn(studylib.load_json(path), payloads)
+            self.assertEqual(list(directory.glob(".unit.json.*.tmp")), [])
+
+            path.unlink()
+            identical = ({"writer": "same"}, {"writer": "same"})
+            identical_results = race(path, identical)
+            self.assertCountEqual(identical_results, [True, False])
+            self.assertEqual(studylib.load_json(path), identical[0])
+            self.assertEqual(list(directory.glob(".unit.json.*.tmp")), [])
+
     def test_deterministic_shards_partition_without_overlap(self) -> None:
         units = [studylib.StudyUnit(
             "development", f"m{index}", "a", "b", "bank", "path", 4, 1
@@ -659,9 +755,18 @@ class FrozenSourceBoundaryTests(unittest.TestCase):
             manifest = {
                 "study": {"study_class": "flagship"},
                 "source": {"git_commit": source_commit},
+                "environment": {
+                    "python_version": studylib.platform.python_version(),
+                },
             }
 
             studylib.verify_flagship_source_checkout(manifest, repository)
+            wrong_python = copy.deepcopy(manifest)
+            wrong_python["environment"]["python_version"] = "0.0.0"
+            with self.assertRaisesRegex(studylib.StudyError, "Python interpreter"):
+                studylib.verify_flagship_source_checkout(
+                    wrong_python, repository
+                )
             adapter_dependency.write_text("// changed adapter\n", encoding="utf-8")
 
             with self.assertRaisesRegex(
