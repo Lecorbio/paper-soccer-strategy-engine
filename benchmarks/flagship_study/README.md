@@ -32,87 +32,22 @@ python3 tests/flagship_study/run_smoke.py \
 The smoke study is deliberately tiny and writes only ignored smoke outputs. It
 is not evidence about comparative strength or latency.
 
-## Freeze the full study
+## Validate the published study
 
-Manifest generation is allowed only from a clean, committed framework tree.
-For the published v4 identity, the command below validates every replay and
-refuses to replace an existing artifact.
+The checked-in manifest is the immutable identity used by every published
+result. Validate its current files from the repository root:
 
 ```sh
-python3 benchmarks/flagship_study/prepare_manifest.py \
-  --opening-tool build/release/papersoccer_opening_bank \
-  --source-commit "$(git rev-parse HEAD)" \
-  --fresh-validation-keep-frozen-test
 python3 benchmarks/flagship_study/run_study.py validate
 ```
 
-Commit `manifest.json` and `openings/` before running configuration selection.
-The manifest hash is the namespace for every raw result.
+## Published artifacts
 
-## Development and validation
+Start with [`REPORT.md`](REPORT.md) for the bot-performance results. The
+machine-readable development, validation, and test results are under `data/`;
+`selection_lock.json` records the selected configurations, and `charts/`
+contains the generated figures.
 
-There are 36 deterministic units in each tuning phase (nine configurations by
-four opening depths). A shard index owns units whose stable position modulo
-`--shard-count` equals that index. Reissuing the same command safely resumes
-completed unit files.
-
-```sh
-# First run the preregistered depth-4/depth-20 projection units on the frozen
-# manifest machine and arena: two exact-budget units for every candidate.
-for index in 0 3 4 7 8 11 12 15 16 19 20 23 24 27 28 31 32 35; do
-  python3 benchmarks/flagship_study/run_study.py run \
-    --phase development --arena build/release/papersoccer_arena \
-    --shard-count 36 --shard-index "$index"
-done
-python3 benchmarks/flagship_study/run_study.py project-runtime --write
-# Then complete the depth-8/depth-12 development units on that same machine.
-for index in 1 2 5 6 9 10 13 14 17 18 21 22 25 26 29 30 33 34; do
-  python3 benchmarks/flagship_study/run_study.py run \
-    --phase development --arena build/release/papersoccer_arena \
-    --shard-count 36 --shard-index "$index"
-done
-python3 benchmarks/flagship_study/run_study.py aggregate --phase development
-
-# Run all validation indices serially on the frozen machine under the gate conditions.
-for index in $(seq 0 35); do
-  python3 benchmarks/flagship_study/run_study.py run \
-    --phase validation --arena build/release/papersoccer_arena \
-    --shard-count 36 --shard-index "$index"
-done
-python3 benchmarks/flagship_study/run_study.py aggregate --phase validation
-python3 benchmarks/flagship_study/run_study.py lock-selection
-```
-
-Full validation refuses to run unless the gate machine is on AC power with Low
-Power Mode disabled. If any tunable family has no configuration at or below the
-50 ms validation p95 limit, selection stops before test.
-
-Review and commit `runtime_projection.json`, the development/validation curated
-data, and `selection_lock.json` before any test command. The lock freezes
-selected IDs, validation metrics, opening and manifest hashes, validation-only
-calibration mappings, and the validation Pareto classification.
-
-## Frozen test and publication
-
-The test schedule has 24 units (six matchups by four depths) and exactly 4,800
-games. A committed manifest, every committed bank, and a committed selection
-lock are hard prerequisites. An incomplete run resumes the same identity; a
-completed marker rejects a second evaluation.
-
-```sh
-for index in $(seq 0 23); do
-  python3 benchmarks/flagship_study/run_study.py run \
-    --phase test --arena build/release/papersoccer_arena \
-    --shard-count 24 --shard-index "$index"
-done
-python3 benchmarks/flagship_study/run_study.py aggregate --phase test
-python3 benchmarks/flagship_study/run_study.py analyze-test
-```
-
-Do not use `--destructive-test-override` for this study. Any truncation is an
-operational defect, never a draw or half-point, and blocks publication. The
-analysis command derives all three deterministic SVGs and the report from the
-curated development, validation, and frozen test artifacts.
-
-Historical execution and supersession records are preserved by the
-`flagship-study-v4-record` tag rather than repeated in the performance report.
+The completed study cannot be rerun from a later framework checkout. Its exact
+execution framework and retired audit attachments remain available in the
+annotated `flagship-study-v4-record` tag.

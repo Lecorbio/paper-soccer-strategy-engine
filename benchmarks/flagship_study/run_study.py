@@ -60,7 +60,6 @@ def main() -> int:
     manifest = studylib.validate_manifest(
         studylib.load_json(manifest_path), repository, verify_files=True
     )
-    studylib.verify_flagship_source_checkout(manifest, repository)
     studylib.verify_opening_phase_disjointness(manifest, repository)
 
     if args.command == "validate":
@@ -71,25 +70,27 @@ def main() -> int:
             "opening_banks": len(manifest["openings"]["banks"]),
             "opening_records": sum(bank["pairs"] for bank in manifest["openings"]["banks"]),
         }
-    elif args.command == "run":
-        arena = args.arena
-        if not arena.is_absolute():
-            arena = repository / arena
-        result = studylib.run_phase(
-            manifest_path, arena, args.phase,
-            shard_count=args.shard_count, shard_index=args.shard_index,
-            destructive_override=args.destructive_test_override,
-        )
-    elif args.command == "aggregate":
-        result = studylib.aggregate_phase(manifest_path, args.phase)
-    elif args.command == "lock-selection":
-        result = studylib.create_selection_lock(manifest_path, replace=args.replace)
-    elif args.command == "analyze-test":
-        result = studylib.analyze_test(manifest_path, replace=args.replace)
     else:
-        result = studylib.project_runtime(
-            manifest_path, write=args.write, replace=args.replace
-        )
+        studylib.verify_flagship_source_checkout(manifest, repository)
+        if args.command == "run":
+            arena = args.arena
+            if not arena.is_absolute():
+                arena = repository / arena
+            result = studylib.run_phase(
+                manifest_path, arena, args.phase,
+                shard_count=args.shard_count, shard_index=args.shard_index,
+                destructive_override=args.destructive_test_override,
+            )
+        elif args.command == "aggregate":
+            result = studylib.aggregate_phase(manifest_path, args.phase)
+        elif args.command == "lock-selection":
+            result = studylib.create_selection_lock(manifest_path, replace=args.replace)
+        elif args.command == "analyze-test":
+            result = studylib.analyze_test(manifest_path, replace=args.replace)
+        else:
+            result = studylib.project_runtime(
+                manifest_path, write=args.write, replace=args.replace
+            )
     print(json.dumps(result, sort_keys=True, indent=2))
     return 0
 

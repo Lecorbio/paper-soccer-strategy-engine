@@ -57,6 +57,7 @@
       }
     },
     "supersession": {
+      "description": "Legacy v4 lineage metadata. Historical attachments are archived in the flagship-study-v4-record tag and are not required in the working tree.",
       "oneOf": [
         {"type": "null"},
         {
@@ -66,13 +67,13 @@
             "predecessor_manifest_path", "predecessor_manifest_sha256",
             "predecessor_status", "predecessor_test_outcomes_accessed",
             "predecessor_validation_results_used_for_v4_selection_or_calibration",
-            "failure_record_path", "failure_record_sha256",
             "reused_opening_phases", "fresh_opening_phases",
             "fresh_validation_exclusion_scope"
           ],
           "properties": {
             "predecessor_manifest_path": {
-              "const": "benchmarks/flagship_study/superseded/manifest-b7553a24.json"
+              "const": "benchmarks/flagship_study/superseded/manifest-b7553a24.json",
+              "description": "Path within the archived flagship-study-v4-record tag."
             },
             "predecessor_manifest_sha256": {
               "const": "b7553a24f618a77162cb256d65fd7cf21a854a10f46726c4a32cd57982ace9fe"
@@ -85,9 +86,14 @@
               "const": false
             },
             "failure_record_path": {
-              "const": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md"
+              "const": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+              "description": "Deprecated path within the archived flagship-study-v4-record tag.",
+              "deprecated": true
             },
-            "failure_record_sha256": {"$ref": "#/$defs/sha256"},
+            "failure_record_sha256": {
+              "const": "e85407700a5280ab40974a53ba436bebedb399488a937f3f38f266c8e68f1cc1",
+              "deprecated": true
+            },
             "reused_opening_phases": {
               "const": ["development", "test"]
             },

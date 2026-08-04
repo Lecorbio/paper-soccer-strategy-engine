@@ -539,36 +539,17 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn(operational_detail, report)
         self.assertNotRegex(report, re.compile(r"random[\s_-]*bot", re.IGNORECASE))
 
-    def test_supersession_history_is_not_rendered_in_performance_report(self) -> None:
+    def test_legacy_metadata_is_not_rendered_in_performance_report(self) -> None:
         fixture = list(_fixture())
-        fixture[0]["study"]["id"] = "competitive-demo-bots-flagship-2026-v4"
-        fixture[0]["supersession"] = {
-            "failure_record_path": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
-            "failure_record_sha256": "d" * 64,
-            "fresh_opening_phases": ["validation"],
-            "fresh_validation_exclusion_scope": "all_predecessor_opening_banks",
-            "predecessor_manifest_path": (
-                "benchmarks/flagship_study/superseded/manifest-predecessor.json"
-            ),
-            "predecessor_manifest_sha256": "e" * 64,
-            "predecessor_status": (
-                "stopped_before_test_calibration_implementation_defect"
-            ),
-            "predecessor_test_outcomes_accessed": False,
-            "predecessor_validation_results_used_for_v4_selection_or_calibration": False,
-            "reused_opening_phases": ["development", "test"],
-        }
+        fixture[0]["supersession"] = {"archived_note": "not report content"}
 
         rendered = render_report(*fixture)
 
         for history_detail in (
-            "flagship-study-v4-record",
+            "not report content",
             "## Prospective recovery lineage",
             "stopped before test",
-            "V3_VALIDATION_FAILURE.md",
-            "manifest-predecessor.json",
             "Presentation-only correction",
-            "31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813",
         ):
             self.assertNotIn(history_detail, rendered)
 

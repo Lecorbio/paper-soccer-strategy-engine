@@ -25,6 +25,16 @@ V3_OPENING_SEEDS = {
     "validation": {4: "2004101", 8: "2008101", 12: "2012101", 20: "2020101"},
     "test": {4: "3004101", 8: "3008101", 12: "3012101", 20: "3020101"},
 }
+V3_PHASE_SEEDS = {
+    "bot": {"development": "4100001", "validation": "4200001", "test": "4300001"},
+    "bootstrap": {
+        "development": "5100001", "validation": "5200001", "test": "5300001",
+    },
+    "analysis": {
+        "development": "7100001", "validation": "7200001", "test": "7300001",
+    },
+}
+V3_CALIBRATION_SEED = "6100001"
 OPENING_SEEDS = {
     "development": dict(V3_OPENING_SEEDS["development"]),
     "validation": {4: "8004101", 8: "8008101", 12: "8012101", 20: "8020101"},
@@ -239,11 +249,6 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
             "predecessor_test_outcomes_accessed": False,
             "predecessor_validation_results_used_for_v4_selection_or_calibration":
                 False,
-            "failure_record_path":
-                "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
-            "failure_record_sha256": studylib.sha256_file(
-                repository / "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md"
-            ),
             "reused_opening_phases": ["development", "test"],
             "fresh_opening_phases": ["validation"],
             "fresh_validation_exclusion_scope": "all_predecessor_opening_banks",
@@ -464,19 +469,134 @@ def build_manifest(repository: pathlib.Path, source_commit: str,
     }
 
 
-def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
-    """Load all v3 banks as an immutable audit input without regenerating them."""
+def archived_audit_file(
+    repository: pathlib.Path, path: str, expected_sha256: str
+) -> bytes:
+    """Read a retired audit attachment from the immutable publication tag."""
 
-    manifest_path = (
-        repository / "benchmarks/flagship_study/superseded/manifest-b7553a24.json"
+    process = subprocess.run(
+        ["git", "show", f"{studylib.V4_AUDIT_TAG}:{path}"],
+        cwd=repository,
+        capture_output=True,
+        check=False,
     )
-    if not manifest_path.is_file() or \
-       studylib.sha256_file(manifest_path) != \
-       studylib.V4_PREDECESSOR_MANIFEST_SHA256:
+    if process.returncode != 0:
         raise studylib.StudyError(
-            "failed v3 manifest identity is missing or changed"
+            f"archived audit input is unavailable; fetch tag "
+            f"{studylib.V4_AUDIT_TAG!r}: {path}"
         )
-    superseded = studylib.load_json(manifest_path)
+    if studylib.sha256_bytes(process.stdout) != expected_sha256:
+        raise studylib.StudyError(f"archived audit input changed: {path}")
+    return process.stdout
+
+
+def archived_predecessor_manifest(repository: pathlib.Path) -> dict[str, Any]:
+    """Load and identify the predecessor manifest stored in the audit tag."""
+
+    manifest_bytes = archived_audit_file(
+        repository,
+        studylib.V4_PREDECESSOR_MANIFEST_PATH,
+        studylib.V4_PREDECESSOR_MANIFEST_SHA256,
+    )
+    try:
+        predecessor = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        raise studylib.StudyError(
+            "archived predecessor manifest is not valid JSON"
+        ) from error
+    if not isinstance(predecessor, dict) or \
+       predecessor.get("schema_version") != \
+            "papersoccer.flagship-study-manifest.v1" or \
+       not isinstance(predecessor.get("study"), dict) or \
+       predecessor["study"].get("id") != \
+            "competitive-demo-bots-flagship-2026-v3":
+        raise studylib.StudyError("archived predecessor identity is invalid")
+    return predecessor
+
+
+def validate_archived_lineage(
+    manifest: dict[str, Any], predecessor: dict[str, Any]
+) -> None:
+    """Check the cross-version claims kept in the immutable audit snapshot."""
+
+    try:
+        previous_banks = {
+            (bank["phase"], bank["depth"]): bank
+            for bank in predecessor["openings"]["banks"]
+        }
+        current_banks = {
+            (bank["phase"], bank["depth"]): bank
+            for bank in manifest["openings"]["banks"]
+        }
+        predecessor_seeds = predecessor["seeds"]
+        current_seeds = manifest["seeds"]
+    except (KeyError, TypeError) as error:
+        raise studylib.StudyError(
+            "archived predecessor lineage is incomplete"
+        ) from error
+
+    expected_keys = {
+        (phase, depth)
+        for phase in studylib.FULL_PHASES
+        for depth in studylib.EXPECTED_OPENING_DEPTHS
+    }
+    if set(previous_banks) != expected_keys or set(current_banks) != expected_keys:
+        raise studylib.StudyError("archived predecessor opening design is incomplete")
+    for phase in ("development", "test"):
+        for depth in studylib.EXPECTED_OPENING_DEPTHS:
+            if current_banks[(phase, depth)] != previous_banks[(phase, depth)]:
+                raise studylib.StudyError(
+                    f"v4 changed the frozen {phase} bank at depth {depth}"
+                )
+
+    previous_hashes = {bank["sha256"] for bank in previous_banks.values()}
+    previous_paths = {bank["path"] for bank in previous_banks.values()}
+    for depth in studylib.EXPECTED_OPENING_DEPTHS:
+        current = current_banks[("validation", depth)]
+        previous = previous_banks[("validation", depth)]
+        if current["path"] == previous["path"] or \
+           current["sha256"] in previous_hashes or \
+           current["path"] in previous_paths:
+            raise studylib.StudyError(
+                f"v4 validation bank at depth {depth} is not fresh"
+            )
+
+    def seed_values(value: Any) -> set[str]:
+        if isinstance(value, dict):
+            result: set[str] = set()
+            for child in value.values():
+                result.update(seed_values(child))
+            return result
+        if not isinstance(value, str) or not value.isdecimal():
+            raise studylib.StudyError("archived predecessor seed is invalid")
+        return {value}
+
+    old_seed_values = seed_values(predecessor_seeds)
+    new_validation_seed_values = {
+        *(current_seeds["opening"]["validation"][str(depth)]
+          for depth in studylib.EXPECTED_OPENING_DEPTHS),
+        *(current_seeds[category]["validation"]
+          for category in ("bot", "bootstrap", "analysis")),
+        current_seeds["calibration"]["validation"],
+    }
+    if new_validation_seed_values & old_seed_values:
+        raise studylib.StudyError(
+            "v4 validation-specific seeds are not fresh versus v3"
+        )
+    for phase in ("development", "test"):
+        if current_seeds["opening"][phase] != predecessor_seeds["opening"][phase]:
+            raise studylib.StudyError(f"v4 changed frozen {phase} opening seeds")
+        for category in ("bot", "bootstrap", "analysis"):
+            if current_seeds[category][phase] != predecessor_seeds[category][phase]:
+                raise studylib.StudyError(
+                    f"v4 changed frozen {phase} {category} seed"
+                )
+
+
+def reuse_frozen_banks(repository: pathlib.Path) -> list[dict[str, Any]]:
+    """Load v3 bank metadata from the immutable audit tag."""
+
+    superseded = archived_predecessor_manifest(repository)
     previous_banks = {
         (bank["phase"], bank["depth"]): bank
         for bank in superseded["openings"]["banks"]
@@ -695,6 +815,9 @@ def main() -> int:
         repository, args.source_commit, banks, args.preregistered_at_utc,
         build_provenance, studylib.sha256_file(arena_path),
         studylib.sha256_file(opening_tool),
+    )
+    validate_archived_lineage(
+        manifest, archived_predecessor_manifest(repository)
     )
     manifest_path = args.manifest
     if not manifest_path.is_absolute():
