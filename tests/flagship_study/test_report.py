@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+import pathlib
 import re
 import unittest
 
@@ -14,6 +16,7 @@ from benchmarks.flagship_study.report import ReportError, render_report
 
 
 HASH = "a" * 64
+REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def _completeness(*, units: int, games: int) -> dict[str, object]:
@@ -497,7 +500,7 @@ class ReportTests(unittest.TestCase):
         headings = (
             "## Research question and hypotheses",
             "## Entrants",
-            "## Controls and frozen openings",
+            "## Benchmark setup",
             "## Candidate grids",
             "## Latency protocol",
             "## Selection rule",
@@ -509,9 +512,7 @@ class ReportTests(unittest.TestCase):
             "## Validation Pareto frontier",
             "## Negative and statistically unresolved findings",
             "## Limitations and threats to validity",
-            "## Exact reproduction commands",
-            "## Artifact hashes",
-            "## Integrity",
+            "## Machine-readable results",
         )
         for heading in headings:
             self.assertIn(heading, report)
@@ -519,9 +520,26 @@ class ReportTests(unittest.TestCase):
         self.assertIn("zero truncations", report)
         self.assertIn("(charts/test_bt.svg)", report)
         self.assertIn("(data/test.json)", report)
+        self.assertIn("native Release", report)
+        self.assertIn("50 ms p95 gate", report)
+        self.assertIn("measured on Synthetic CPU", report)
+        for operational_detail in (
+            "## Prospective recovery lineage",
+            "## Exact reproduction commands",
+            "## Artifact hashes",
+            "Observed validation execution environment",
+            "Start UTC",
+            "End UTC",
+            "OS/kernel",
+            "Power/settings start → end",
+            "Thermal start → end",
+            "Power conditions:",
+            "Build flags:",
+        ):
+            self.assertNotIn(operational_detail, report)
         self.assertNotRegex(report, re.compile(r"random[\s_-]*bot", re.IGNORECASE))
 
-    def test_prospective_recovery_lineage_and_hashes_are_published(self) -> None:
+    def test_supersession_history_is_not_rendered_in_performance_report(self) -> None:
         fixture = list(_fixture())
         fixture[0]["study"]["id"] = "competitive-demo-bots-flagship-2026-v4"
         fixture[0]["supersession"] = {
@@ -543,32 +561,29 @@ class ReportTests(unittest.TestCase):
 
         rendered = render_report(*fixture)
 
-        lineage = rendered.split("## Prospective recovery lineage", 1)[1].split(
-            "## Candidate grids", 1
-        )[0]
-        self.assertIn("stopped before test", lineage)
-        self.assertIn("No version-3 test outcomes were accessed", lineage)
-        self.assertIn("fresh validation banks", lineage)
-        self.assertIn("development and test banks byte-for-byte", lineage)
-        self.assertIn("[benchmarks/flagship_study/V3_VALIDATION_FAILURE.md]", rendered)
-        self.assertIn(
-            "[benchmarks/flagship_study/superseded/manifest-predecessor.json]",
-            rendered,
-        )
-        self.assertIn("Presentation-only correction (2026-08-04)", rendered)
-        self.assertIn("collision-free keyed callouts", rendered)
-        self.assertIn("Plotted data values, uncertainty intervals", rendered)
-        self.assertIn("flagship-study-v4-record", rendered)
-        self.assertIn(
+        for history_detail in (
+            "flagship-study-v4-record",
+            "## Prospective recovery lineage",
+            "stopped before test",
+            "V3_VALIDATION_FAILURE.md",
+            "manifest-predecessor.json",
+            "Presentation-only correction",
             "31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813",
-            rendered,
-        )
-        self.assertIn(
-            "no arena, test, calibration, or statistical analysis was rerun",
-            rendered,
-        )
+        ):
+            self.assertNotIn(history_detail, rendered)
 
-    def test_material_tables_and_reproduction_contract_are_rendered(self) -> None:
+    def test_execution_environment_log_is_not_required_or_rendered(self) -> None:
+        fixture = list(_fixture())
+        fixture[1].pop("validation_execution_environments")
+
+        rendered = render_report(*fixture)
+
+        self.assertNotIn("Observed validation execution environment", rendered)
+        self.assertNotIn("Start UTC", rendered)
+        self.assertNotIn("Synthetic OS", rendered)
+        self.assertIn("measured on Synthetic CPU", rendered)
+
+    def test_material_performance_tables_are_rendered(self) -> None:
         manifest, selection, *rest = _fixture()
         report = render_report(manifest, selection, *rest)
 
@@ -627,30 +642,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn(studylib.PUBLIC_RANK5_LABEL, pareto_section)
         self.assertNotIn("| rank5-fixed-50k |", pareto_section)
 
-        reproduction = report.split("## Exact reproduction commands", 1)[1].split(
-            "## Artifact hashes", 1
-        )[0]
-        self.assertIn("prepare_manifest.py", reproduction)
-        self.assertIn("--fresh-validation-keep-frozen-test", reproduction)
-        self.assertIn("platform.python_version()", reproduction)
-        self.assertIn('= \"3.14.6\"', reproduction)
-        self.assertIn("Freeze flagship manifest and opening banks", reproduction)
-        self.assertIn("Lock flagship validation selection", reproduction)
-        self.assertIn(
-            "for index in 0 3 4 7 8 11 12 15 16 19 20 23 24 27 28 31 32 35; do",
-            reproduction,
-        )
-        self.assertEqual(reproduction.count("for index in $(seq 0 35); do"), 2)
-        self.assertIn("for index in $(seq 0 23); do", reproduction)
-        self.assertNotIn("--allow-test-override", reproduction)
-        self.assertIn("Native arena", report)
-        self.assertIn("Opening-bank generator", report)
-        self.assertIn("Thermal start → end", report)
-        self.assertIn("powermode 0", report)
-        self.assertIn("No thermal warning level has been recorded", report)
-        self.assertIn("[benchmarks/flagship_study/runtime_projection.json]", report)
-        self.assertIn("`" + "a" * 64 + "`", report)
-        self.assertIn("`" + "b" * 64 + "`", report)
+        self.assertIn("Absolute latency is machine-specific", report)
+        self.assertNotIn("prepare_manifest.py", report)
+        self.assertNotIn("--fresh-validation-keep-frozen-test", report)
+        self.assertNotIn("powermode 0", report)
+        self.assertNotIn("No thermal warning level has been recorded", report)
+        self.assertNotIn("runtime_projection.json", report)
 
     def test_percentile_intervals_need_not_contain_point_estimates(self) -> None:
         fixture = list(_fixture())
@@ -765,6 +762,20 @@ class ReportTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertTrue(first.endswith(b"\n"))
+
+    def test_checked_in_production_report_matches_the_generator(self) -> None:
+        benchmark = REPOSITORY_ROOT / "benchmarks/flagship_study"
+        manifest = json.loads((benchmark / "manifest.json").read_text())
+        selection = json.loads((benchmark / "selection_lock.json").read_text())
+        development = json.loads((benchmark / "data/development.json").read_text())
+        validation = json.loads((benchmark / "data/validation.json").read_text())
+        test = json.loads((benchmark / "data/test.json").read_text())
+
+        rendered = render_report(
+            manifest, selection, development, validation, test, {}
+        )
+
+        self.assertEqual(rendered, (benchmark / "REPORT.md").read_text())
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ evaluate the authentic ranked submission.
 
 `analysis_contract.md` is the human-readable statistical contract. The frozen
 `manifest.json`, opening banks, selection lock, curated data, SVG charts, and
-`REPORT.md` appear here as the study advances. Raw per-unit arena reports stay
-under the ignored `results/` tree, keyed by manifest hash.
+`REPORT.md` are retained here. `REPORT.md` is the performance-focused result;
+raw per-unit arena reports stay under the ignored `results/` tree.
 
 ## Framework and CI checks
 
@@ -35,9 +35,8 @@ is not evidence about comparative strength or latency.
 ## Freeze the full study
 
 Manifest generation is allowed only from a clean, committed framework tree.
-For v4 it verifies and reuses the development and never-accessed test banks
-byte-for-byte, creates four fresh validation banks disjoint from every v3
-opening, validates every replay, and refuses to replace an existing artifact.
+For the published v4 identity, the command below validates every replay and
+refuses to replace an existing artifact.
 
 ```sh
 python3 benchmarks/flagship_study/prepare_manifest.py \
@@ -49,12 +48,6 @@ python3 benchmarks/flagship_study/run_study.py validate
 
 Commit `manifest.json` and `openings/` before running configuration selection.
 The manifest hash is the namespace for every raw result.
-
-The v4 flag is specific to the audited v3 stop: v3 completed validation but
-stopped before test when a scale-dependent calibration guard falsely rejected
-a finite fit. V4 uses new validation seeds, bot/bootstrap/analysis/calibration
-seeds, and filenames. The test banks and their hashes remain unchanged. See
-`V3_VALIDATION_FAILURE.md` and `superseded/README.md`.
 
 ## Development and validation
 
@@ -120,3 +113,6 @@ Do not use `--destructive-test-override` for this study. Any truncation is an
 operational defect, never a draw or half-point, and blocks publication. The
 analysis command derives all three deterministic SVGs and the report from the
 curated development, validation, and frozen test artifacts.
+
+Historical execution and supersession records are preserved by the
+`flagship-study-v4-record` tag rather than repeated in the performance report.

@@ -329,55 +329,6 @@ def _hash(value: Any, where: str) -> str:
     return text
 
 
-def _artifact_rows(manifest: Mapping[str, Any],
-                   artifact_hashes: Mapping[str, Any]) -> list[tuple[str, str]]:
-    result: dict[str, str] = {}
-    for path, digest in artifact_hashes.items():
-        result[_string(path, "artifact path")] = _hash(digest, f"artifact hash {path}")
-    source = _mapping(manifest.get("source"), "manifest.source")
-    protected = _mapping(source.get("protected_artifacts"), "source.protected_artifacts")
-    fixed = {
-        _string(protected.get("rank5_submission_path"), "rank5 path"):
-            _hash(protected.get("rank5_submission_sha256"), "rank5 SHA-256"),
-        _string(protected.get("jacek_model_path"), "model path"):
-            _hash(protected.get("jacek_model_sha256"), "model SHA-256"),
-        _string(source.get("analysis_contract_path"), "analysis contract path"):
-            _hash(source.get("analysis_contract_sha256"), "analysis contract SHA-256"),
-    }
-    supersession_value = manifest.get("supersession")
-    if supersession_value is not None:
-        supersession = _mapping(supersession_value, "manifest.supersession")
-        fixed.update({
-            _string(
-                supersession.get("failure_record_path"),
-                "supersession failure record path",
-            ): _hash(
-                supersession.get("failure_record_sha256"),
-                "supersession failure record SHA-256",
-            ),
-            _string(
-                supersession.get("predecessor_manifest_path"),
-                "predecessor manifest path",
-            ): _hash(
-                supersession.get("predecessor_manifest_sha256"),
-                "predecessor manifest SHA-256",
-            ),
-        })
-    for path, digest in fixed.items():
-        if path in result and result[path] != digest:
-            raise ReportError(f"artifact hash disagrees with manifest: {path}")
-        result[path] = digest
-    openings = _mapping(manifest.get("openings"), "manifest.openings")
-    for index, value in enumerate(_sequence(openings.get("banks"), "openings.banks")):
-        bank = _mapping(value, f"openings.banks[{index}]")
-        path = _string(bank.get("path"), f"opening bank {index} path")
-        digest = _hash(bank.get("sha256"), f"opening bank {index} SHA-256")
-        if path in result and result[path] != digest:
-            raise ReportError(f"artifact hash disagrees with opening bank: {path}")
-        result[path] = digest
-    return sorted(result.items())
-
-
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
     lines = [
         "| " + " | ".join(_markdown(value) for value in headers) + " |",
@@ -405,7 +356,7 @@ def render_markdown_report(
     development = _mapping(development, "development curated data")
     validation = _mapping(validation, "validation curated data")
     test = _mapping(test, "test curated data")
-    artifact_hashes = _mapping(artifact_hashes, "artifact hashes")
+    _mapping(artifact_hashes, "artifact hashes")
     study = _mapping(manifest.get("study"), "manifest.study")
     disclaimer = _string(study.get("rank5_disclaimer"), "study.rank5_disclaimer")
     if disclaimer != studylib.RANK5_DISCLAIMER:
@@ -450,38 +401,6 @@ def render_markdown_report(
         bootstrap.get("resamples"), "bootstrap resamples", minimum=1
     )
     environment = _mapping(manifest.get("environment"), "manifest.environment")
-    python_version = _string(
-        environment.get("python_version"), "manifest Python version"
-    )
-    source = _mapping(manifest.get("source"), "manifest.source")
-    source_commit = _string(source.get("git_commit"), "source commit")
-    arena_sha256 = _hash(source.get("arena_sha256"), "arena SHA-256")
-    opening_tool_sha256 = _hash(
-        source.get("opening_tool_sha256"), "opening tool SHA-256"
-    )
-    preregistered_at = _string(
-        study.get("preregistered_at_utc"), "study.preregistered_at_utc"
-    )
-    supersession_value = manifest.get("supersession")
-    supersession = (
-        _mapping(supersession_value, "manifest.supersession")
-        if supersession_value is not None else None
-    )
-    if supersession is not None:
-        if (
-            supersession.get("predecessor_status")
-            != "stopped_before_test_calibration_implementation_defect"
-            or supersession.get("predecessor_test_outcomes_accessed") is not False
-            or supersession.get(
-                "predecessor_validation_results_used_for_v4_selection_or_calibration"
-            ) is not False
-            or supersession.get("fresh_opening_phases") != ["validation"]
-            or supersession.get("fresh_validation_exclusion_scope")
-            != "all_predecessor_opening_banks"
-            or supersession.get("reused_opening_phases")
-            != ["development", "test"]
-        ):
-            raise ReportError("unsupported prospective recovery lineage")
     ablations = _mapping(
         selection.get("development_validation_ablations"),
         "selection.development_validation_ablations",
@@ -619,12 +538,11 @@ def render_markdown_report(
         "",
         disclaimer,
         "",
-        "## Controls and frozen openings",
+        "## Benchmark setup",
         "",
     ]
     rules = _mapping(manifest.get("rules"), "manifest.rules")
     openings = _mapping(manifest.get("openings"), "manifest.openings")
-    generator = _mapping(openings.get("generator"), "openings.generator")
     depths = [_integer(value, "opening depth", minimum=1)
               for value in _sequence(openings.get("depths"), "openings.depths")]
     lines.extend([
@@ -634,28 +552,11 @@ def render_markdown_report(
         f"and a {_integer(rules.get('max_game_plies'), 'rules.max_game_plies')}-ply safety limit. "
         "The engine has no draw status.",
         "",
-        f"Openings at {', '.join(map(str, depths))} physical plies were produced by "
-        f"**{_markdown(generator.get('description'))}**. It was solely a data-generation "
-        "mechanism, never an entrant or strength baseline. Transcripts were replay-validated, "
-        "phase-disjoint, duplicate-screened, color-swapped, and frozen by the hashes below.",
-        "",
-        f"Opening ply: {_markdown(rules.get('opening_ply_definition'))}",
+        f"Every entrant used the same replay-validated, color-swapped opening banks at "
+        f"{', '.join(map(str, depths))} physical plies. Development, validation, and "
+        "test openings were kept separate.",
         "",
     ])
-    if supersession is not None:
-        lines.extend([
-            "## Prospective recovery lineage",
-            "",
-            "Version 4 prospectively superseded version 3 after the predecessor "
-            "stopped before test because of a validation calibration implementation "
-            "defect. No version-3 test outcomes were accessed, and no version-3 "
-            "validation results were used for version-4 selection or calibration. "
-            "Version 4 used fresh validation banks excluded from every predecessor "
-            "opening bank while reusing the development and test banks byte-for-byte. "
-            "The predecessor manifest and failure record are bound by SHA-256 in the "
-            "artifact table.",
-            "",
-        ])
     lines.extend([
         "## Candidate grids",
         "",
@@ -678,21 +579,16 @@ def render_markdown_report(
         "",
         "## Latency protocol",
         "",
-        f"Validation used a native {_markdown(latency.get('build_type'))}, one foreground "
-        f"thread, and a {_number(latency.get('gate_ms'), 'latency gate'):g} ms p95 gate. "
-        f"Timer boundary: {_markdown(latency.get('timer_boundary'))}. "
-        f"Warm-up: {_markdown(latency.get('warmup'))}.",
-        "",
-        f"State/setup policy: {_markdown(latency.get('state_copying'))}. "
-        f"Power conditions: {_markdown(latency.get('power_conditions'))}.",
+        f"Validation latency used a native {_markdown(latency.get('build_type'))} build, "
+        f"one foreground thread, and a "
+        f"{_number(latency.get('gate_ms'), 'latency gate'):g} ms p95 gate. Times cover "
+        "each decision call, including bot-internal setup and copying.",
         "",
         f"{studylib.PUBLIC_RANK5_LABEL} eligibility uses fresh-root p95; all returned edges, including cached "
         "continuations, are reported separately.",
         "",
-        f"Gate machine: {_markdown(environment.get('machine_id'))}; "
-        f"{_markdown(environment.get('os'))}; {_markdown(environment.get('cpu'))}; "
-        f"{_markdown(environment.get('compiler_version'))}. Build flags: "
-        f"{_markdown(environment.get('build_flags'))}.",
+        f"Absolute latency is machine-specific; all latency values shown here were "
+        f"measured on {_markdown(environment.get('cpu'))}.",
         "",
         "## Selection rule",
         "",
@@ -1140,173 +1036,20 @@ def render_markdown_report(
     else:
         lines.append("- No additional preregistered negative finding was recorded.")
 
-    pareto_layout_note = (
-        "- The validation Pareto SVG uses compact plot keys and a structured detail "
-        "panel; the immediately preceding table remains the canonical textual listing "
-        "of every point identity, sample size, interval, and status."
-    )
-    if (
-        study.get("id") == "competitive-demo-bots-flagship-2026-v4"
-        and supersession is not None
-    ):
-        pareto_layout_note = (
-            "- Presentation-only correction (2026-08-04): the validation Pareto "
-            "chart moved annotations into collision-free keyed callouts and a "
-            "structured detail panel. Plotted data values, uncertainty intervals, "
-            "selection, and constrained/unconstrained classifications are unchanged. "
-            "The original frozen SVG remains recoverable from tag "
-            "`flagship-study-v4-record` (SHA-256 "
-            "`31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813`); "
-            "no arena, test, calibration, or statistical analysis was rerun."
-        )
     lines.extend([
         "",
         "## Limitations and threats to validity",
         "",
-        "- Latency is machine-, compiler-, power-, and thermal-state-specific; fixed work improves reproducibility but not cross-machine timing equivalence.",
+        "- Absolute latency is machine-specific and should only be compared within this study.",
         "- Frozen opening banks control color and opening variation but do not enumerate every reachable position.",
         "- Bradley–Terry abilities are relative to this four-entrant comparison graph and ruleset.",
         "- Calibration decisions within a game are dependent; prediction counts are not independent-game sample sizes.",
         "- The hand-versus-neural comparison changes the evaluator within a shared search family and does not isolate every implementation interaction.",
         f"- {studylib.PUBLIC_RANK5_LABEL} is measured only under demo rules and its fixed-work profile, as stated in the provenance disclaimer.",
-        pareto_layout_note,
         "",
-        "## Exact reproduction commands",
+        "## Machine-readable results",
         "",
-        "From a clean clone, the following launches a new from-source rerun with the "
-        "same preregistered inputs. It does not reuse or overwrite the completed frozen "
-        "test identity reported above:",
-        "",
-        "```bash",
-        f"git switch -c reproduce-flagship-study {source_commit}",
-        f"test \"$(python3 -c 'import platform; print(platform.python_version())')\" = \"{python_version}\"",
-        "cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release \\",
-        "  -DPAPERSOCCER_ENABLE_SANITIZERS=OFF",
-        "cmake --build build/release --parallel",
-        f"test \"$(shasum -a 256 build/release/papersoccer_arena | awk '{{print $1}}')\" = \"{arena_sha256}\"",
-        f"test \"$(shasum -a 256 build/release/papersoccer_opening_bank | awk '{{print $1}}')\" = \"{opening_tool_sha256}\"",
-        "python3 benchmarks/flagship_study/prepare_manifest.py \\",
-        "  --opening-tool build/release/papersoccer_opening_bank \\",
-        f"  --source-commit {source_commit} \\",
-        f"  --preregistered-at-utc {preregistered_at} \\",
-        "  --fresh-validation-keep-frozen-test",
-        "python3 benchmarks/flagship_study/run_study.py validate",
-        "git add benchmarks/flagship_study/manifest.json benchmarks/flagship_study/openings",
-        "git commit -m 'Freeze flagship manifest and opening banks'",
-        "for index in 0 3 4 7 8 11 12 15 16 19 20 23 24 27 28 31 32 35; do",
-        "  python3 benchmarks/flagship_study/run_study.py run --phase development \\",
-        "    --arena build/release/papersoccer_arena --shard-count 36 --shard-index \"$index\"",
-        "done",
-        "python3 benchmarks/flagship_study/run_study.py project-runtime --write",
-        "for index in $(seq 0 35); do",
-        "  python3 benchmarks/flagship_study/run_study.py run --phase development \\",
-        "    --arena build/release/papersoccer_arena --shard-count 36 --shard-index \"$index\"",
-        "done",
-        "python3 benchmarks/flagship_study/run_study.py aggregate --phase development",
-        "for index in $(seq 0 35); do",
-        "  python3 benchmarks/flagship_study/run_study.py run --phase validation \\",
-        "    --arena build/release/papersoccer_arena --shard-count 36 --shard-index \"$index\"",
-        "done",
-        "python3 benchmarks/flagship_study/run_study.py aggregate --phase validation",
-        "python3 benchmarks/flagship_study/run_study.py lock-selection",
-        "git add benchmarks/flagship_study/data/development.json \\",
-        "  benchmarks/flagship_study/data/validation.json \\",
-        "  benchmarks/flagship_study/runtime_projection.json \\",
-        "  benchmarks/flagship_study/selection_lock.json",
-        "git commit -m 'Lock flagship validation selection'",
-        "for index in $(seq 0 23); do",
-        "  python3 benchmarks/flagship_study/run_study.py run --phase test \\",
-        "    --arena build/release/papersoccer_arena --shard-count 24 --shard-index \"$index\"",
-        "done",
-        "python3 benchmarks/flagship_study/run_study.py aggregate --phase test",
-        "python3 benchmarks/flagship_study/run_study.py analyze-test",
-        "git add benchmarks/flagship_study/data/test.json \\",
-        "  benchmarks/flagship_study/charts benchmarks/flagship_study/REPORT.md",
-        "git commit -m 'Publish frozen flagship test analysis'",
-        "```",
-        "",
-        "Each indexed test command resumes the same frozen run identity and refuses a "
-        "second completed evaluation. No destructive override is used.",
-        "",
-        "## Artifact hashes",
-        "",
-        f"Source commit: `{source_commit}`",
-        "",
-    ])
-    lines.extend(_table(
-        ("Build executable", "SHA-256"),
-        (
-            ("Native arena", f"`{arena_sha256}`"),
-            ("Opening-bank generator", f"`{opening_tool_sha256}`"),
-        ),
-    ))
-    lines.extend([
-        "",
-        "### Observed validation execution environment",
-        "",
-    ])
-    validation_environments = _sequence(
-        selection.get("validation_execution_environments"),
-        "selection.validation_execution_environments",
-    )
-    if not validation_environments:
-        raise ReportError("selection lock lacks validation execution provenance")
-    environment_rows = []
-    for index, raw_environment in enumerate(validation_environments):
-        observed = _mapping(raw_environment, f"validation environment {index}")
-        provenance = _mapping(
-            observed.get("build_provenance"),
-            f"validation environment {index} build provenance",
-        )
-        if (_hash(observed.get("arena_sha256"), "observed arena SHA-256") !=
-                arena_sha256):
-            raise ReportError("validation arena hash differs from the manifest")
-        if provenance.get("sanitizers_enabled") is not False:
-            raise ReportError("validation provenance is sanitized or incomplete")
-        environment_rows.append([
-            str(index + 1),
-            _string(observed.get("observed_at_utc"), "validation observation time"),
-            _string(
-                _mapping(
-                    observed.get("gate_conditions_after"),
-                    "validation ending gate conditions",
-                ).get("observed_at_utc"),
-                "validation ending observation time",
-            ),
-            _string(observed.get("processor"), "validation processor"),
-            _string(observed.get("platform"), "validation platform"),
-            _string(observed.get("python_version"), "validation Python version"),
-            f"{_string(provenance.get('compiler_id'), 'validation compiler')} "
-            f"{_string(provenance.get('compiler_version'), 'validation compiler version')}",
-            _string(provenance.get("configured_flags"), "validation build flags"),
-            (
-                f"start: {_string(observed.get('power_source'), 'validation power source')}; "
-                f"{_string(observed.get('power_settings'), 'validation power settings')}; "
-                f"end: {_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('power_source'), 'ending power source')}; "
-                f"{_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('power_settings'), 'ending power settings')}"
-            ),
-            (
-                f"start: {_string(observed.get('thermal_status'), 'validation thermal status')}; "
-                f"end: {_string(_mapping(observed.get('gate_conditions_after'), 'ending gate').get('thermal_status'), 'ending thermal status')}"
-            ),
-        ])
-    lines.extend(_table(
-        ("Run environment", "Start UTC", "End UTC", "CPU", "OS/kernel",
-         "Python", "Compiler", "Build flags", "Power/settings start → end",
-         "Thermal start → end"),
-        environment_rows,
-    ))
-    lines.append("")
-    hash_rows = []
-    for path, digest in _artifact_rows(manifest, artifact_hashes):
-        hash_rows.append([
-            f"[{path}]({_relative_link(manifest, path)})",
-            f"`{digest}`",
-        ])
-    lines.extend(_table(("Artifact", "SHA-256"), hash_rows))
-    lines.extend([
-        "",
-        "Curated inputs:",
+        "The performance tables and charts above are generated from:",
         "",
     ])
     for phase in ("development", "validation", "test"):
@@ -1315,9 +1058,7 @@ def render_markdown_report(
     lines.extend([
         f"- [Selection lock]({_relative_link(manifest, _string(outputs.get('selection_lock'), 'selection lock path'))})",
         "",
-        "## Integrity",
-        "",
-        "Development, validation, and frozen test aggregation each report zero truncations and complete unique game sets. No truncated game entered paired strength, Bradley–Terry, or calibration calculations.",
+        "All published phases completed with zero truncations; no truncated game entered the reported statistics.",
         "",
     ])
     result = "\n".join(lines)
