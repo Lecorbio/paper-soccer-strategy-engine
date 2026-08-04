@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "papersoccer/bot.hpp"
 #include "papersoccer/types.hpp"
@@ -29,6 +30,17 @@ struct ArenaBotConfig {
       Rank5DerivedConfig::default_replay_value_blend_percent};
 };
 
+struct FrozenOpening {
+  std::string opening_id{};
+  std::string phase{};
+  std::size_t depth{};
+  std::uint64_t generation_seed{};
+  std::string state_hash{};
+  std::string canonical_key{};
+  std::vector<Move> transcript{};
+  GameState state{};
+};
+
 struct MatchesConfig {
   RulesConfig rules{};
   ArenaBotConfig candidate{
@@ -44,6 +56,8 @@ struct MatchesConfig {
   std::size_t max_plies{512};
   std::size_t bootstrap_samples{10000};
   std::size_t opening_plies{0};
+  std::size_t warmup_decisions{0};
+  std::vector<FrozenOpening> frozen_openings{};
 };
 
 struct PositionsConfig {
@@ -64,5 +78,7 @@ struct PositionsConfig {
 // Both functions return a complete papersoccer.arena.v1 JSON document.
 std::string run_matches_json(const MatchesConfig &config);
 std::string run_positions_json(const PositionsConfig &config);
+// Returns compile-time provenance without constructing a bot or game state.
+std::string build_provenance_json();
 
 }  // namespace papersoccer::arena

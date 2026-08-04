@@ -64,6 +64,15 @@ void write_uint64_string(std::ostream &out, std::uint64_t value) {
   write_string(out, std::to_string(value));
 }
 
+void write_optional_double(std::ostream &out,
+                           const std::optional<double> &value) {
+  if (value.has_value()) {
+    out << *value;
+  } else {
+    out << "null";
+  }
+}
+
 void write_point(std::ostream &out, Point point) {
   out << "{\"x\":" << point.x << ",\"y\":" << point.y << '}';
 }
@@ -108,9 +117,15 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
     case BotKind::Rank5Derived:
       out << ",\"profile\":";
       write_string(out, Rank5DerivedBot::profile_name());
-      out << ",\"max_nodes\":" << Rank5DerivedConfig::profile_max_nodes
+      out << ",\"max_turn_depth\":"
+          << Rank5DerivedConfig::maximum_turn_depth
+          << ",\"max_nodes\":" << Rank5DerivedConfig::profile_max_nodes
+          << ",\"transposition_table_entries\":65536"
+          << ",\"evaluation_cache_entries\":32768"
+          << ",\"max_time_ms\":0"
           << ",\"model_blend_percent\":"
           << config.rank5_derived_model_blend_percent
+          << ",\"replay_corrections\":false"
           << ",\"replay_book_enabled\":false,\"original_sha256\":";
       write_string(out, Rank5DerivedBot::original_sha256());
       break;
@@ -185,6 +200,45 @@ void write_alpha_beta_stats(std::ostream &out,
   out << "]}";
 }
 
+void write_rank5_derived_stats(std::ostream &out,
+                               const Rank5DerivedSearchStats &stats) {
+  const std::uint64_t requested_nodes =
+      stats.cached_continuation ? 0 : Rank5DerivedConfig::profile_max_nodes;
+  out << "{\"profile_node_budget\":"
+      << Rank5DerivedConfig::profile_max_nodes
+      << ",\"requested_nodes\":" << requested_nodes
+      << ",\"visited_nodes\":" << stats.nodes
+      << ",\"completed_turn_depth\":" << stats.completed_turn_depth
+      << ",\"attempted_turn_depth\":" << stats.attempted_turn_depth
+      << ",\"root_score\":" << stats.root_score
+      << ",\"budget_exhausted\":";
+  write_bool(out, stats.budget_exhausted);
+  out << ",\"planned_action_length\":" << stats.planned_action_length
+      << ",\"current_edge_index\":" << stats.current_edge_index
+      << ",\"cached_continuation\":";
+  write_bool(out, stats.cached_continuation);
+  out << ",\"cached_moves_remaining\":" << stats.cached_moves_remaining
+      << ",\"search_ordinal_in_game\":" << stats.searches
+      << ",\"leaf_evaluations\":" << stats.leaf_evaluations
+      << ",\"terminal_nodes\":" << stats.terminal_nodes
+      << ",\"completed_actions\":" << stats.completed_actions
+      << ",\"cutoffs\":" << stats.cutoffs
+      << ",\"transposition_probes\":" << stats.transposition_probes
+      << ",\"transposition_hits\":" << stats.transposition_hits
+      << ",\"transposition_cutoffs\":" << stats.transposition_cutoffs
+      << ",\"transposition_stores\":" << stats.transposition_stores
+      << ",\"continuation_transposition_hits\":"
+      << stats.continuation_transposition_hits
+      << ",\"evaluation_cache_probes\":" << stats.evaluation_cache_probes
+      << ",\"evaluation_cache_hits\":" << stats.evaluation_cache_hits
+      << ",\"terminal_bound_cutoffs\":" << stats.terminal_bound_cutoffs
+      << ",\"forced_edges\":" << stats.forced_edges
+      << ",\"root_seed_actions\":" << stats.root_seed_actions
+      << ",\"root_transposition_reuses\":"
+      << stats.root_transposition_reuses
+      << ",\"max_action_edges\":" << stats.max_action_edges << '}';
+}
+
 void write_participant(std::ostream &out, const Participant &participant) {
   out << "{\"bot\":";
   write_string(out, entrant_name(participant.entrant));
@@ -216,23 +270,39 @@ void write_decision(std::ostream &out, const DecisionReport &decision) {
   } else {
     out << "null";
   }
+  out << ",\"rank5_derived\":";
+  if (decision.rank5_derived_stats.has_value()) {
+    write_rank5_derived_stats(out, *decision.rank5_derived_stats);
+  } else {
+    out << "null";
+  }
   out << '}';
 }
 
 void write_opening(std::ostream &out, const OpeningReport &opening,
                    std::size_t requested_plies) {
-  const std::size_t actual_plies = opening.state.path.size() - 1;
+  const std::size_t actual_plies = opening.transcript.size();
   out << "{\"pair_index\":" << opening.pair_index
       << ",\"generation_seed\":";
   write_uint64_string(out, opening.generation_seed);
-  out << ",\"attempts\":" << opening.attempts
-      << ",\"requested_plies\":" << requested_plies
+  out << ",\"attempts\":" << opening.attempts;
+  if (!opening.opening_id.empty()) {
+    out << ",\"opening_id\":";
+    write_string(out, opening.opening_id);
+    out << ",\"phase\":";
+    write_string(out, opening.phase);
+    out << ",\"state_hash\":";
+    write_string(out, opening.state_hash);
+    out << ",\"canonical_key\":";
+    write_string(out, opening.canonical_key);
+  }
+  out << ",\"requested_plies\":" << requested_plies
       << ",\"actual_plies\":" << actual_plies << ",\"moves\":[";
-  for (std::size_t index = 1; index < opening.state.path.size(); ++index) {
-    if (index != 1) {
+  for (std::size_t index = 0; index < opening.transcript.size(); ++index) {
+    if (index != 0) {
       out << ',';
     }
-    write_point(out, opening.state.path[index]);
+    write_point(out, opening.transcript[index].to);
   }
   out << "],\"state\":{\"ball\":";
   write_point(out, opening.state.ball);
@@ -242,11 +312,13 @@ void write_opening(std::ostream &out, const OpeningReport &opening,
 }
 
 void write_record(std::ostream &out, const Record &record) {
+  const std::size_t scored_games = record.scored_games();
   const double percent =
-      record.games == 0 ? 0.0 : 100.0 * record.score() / record.games;
+      scored_games == 0 ? 0.0 : 100.0 * record.score() / scored_games;
   out << "{\"games\":" << record.games << ",\"wins\":" << record.wins
       << ",\"losses\":" << record.losses
       << ",\"truncations\":" << record.truncations
+      << ",\"scored_games\":" << scored_games
       << ",\"score_points\":" << record.score()
       << ",\"score_percent\":" << percent << '}';
 }
@@ -256,7 +328,9 @@ void write_timing(std::ostream &out, const TimingSummary &summary) {
       << ",\"total_ns\":" << summary.total_ns
       << ",\"min_ns\":" << summary.min_ns
       << ",\"median_ns\":" << summary.median_ns
+      << ",\"p90_ns\":" << summary.p90_ns
       << ",\"p95_ns\":" << summary.p95_ns
+      << ",\"p99_ns\":" << summary.p99_ns
       << ",\"max_ns\":" << summary.max_ns
       << ",\"median_iterations_per_second\":"
       << summary.median_iterations_per_second
@@ -358,6 +432,81 @@ void write_alpha_beta_summary(std::ostream &out,
   out << "}}";
 }
 
+void write_rank5_derived_summary(std::ostream &out,
+                                 const Rank5DerivedSummary &summary) {
+  out << "{\"decisions\":" << summary.decisions
+      << ",\"fresh_root_searches\":" << summary.fresh_root_searches
+      << ",\"cached_continuation_edges\":"
+      << summary.cached_continuation_edges
+      << ",\"requested_nodes_per_fresh_search\":"
+      << Rank5DerivedConfig::profile_max_nodes
+      << ",\"requested_nodes_sum\":" << summary.requested_nodes_sum
+      << ",\"visited_nodes_sum\":" << summary.visited_nodes_sum
+      << ",\"budget_exhausted_fresh_searches\":"
+      << summary.budget_exhausted_fresh_searches
+      << ",\"maximum_current_edge_index\":"
+      << summary.maximum_current_edge_index
+      << ",\"minimum_root_score\":";
+  if (summary.minimum_root_score.has_value()) {
+    out << *summary.minimum_root_score;
+  } else {
+    out << "null";
+  }
+  out << ",\"maximum_root_score\":";
+  if (summary.maximum_root_score.has_value()) {
+    out << *summary.maximum_root_score;
+  } else {
+    out << "null";
+  }
+  auto write_histogram = [&](const auto &histogram) {
+    out << '{';
+    bool first = true;
+    for (const auto &[value, count] : histogram) {
+      if (!first) {
+        out << ',';
+      }
+      first = false;
+      write_string(out, std::to_string(value));
+      out << ':' << count;
+    }
+    out << '}';
+  };
+  out << ",\"completed_turn_depth_histogram\":";
+  write_histogram(summary.completed_depth_histogram);
+  out << ",\"attempted_turn_depth_histogram\":";
+  write_histogram(summary.attempted_depth_histogram);
+  out << ",\"planned_action_length_histogram\":";
+  write_histogram(summary.planned_action_length_histogram);
+  auto write_counter = [&](std::string_view name,
+                           const Rank5DerivedCounterSummary &counter) {
+    out << ",\"" << name << "_sum\":" << counter.sum << ",\"" << name
+        << "_max\":" << counter.max;
+  };
+  write_counter("leaf_evaluations", summary.leaf_evaluations);
+  write_counter("terminal_nodes", summary.terminal_nodes);
+  write_counter("completed_actions", summary.completed_actions);
+  write_counter("cutoffs", summary.cutoffs);
+  write_counter("transposition_probes", summary.transposition_probes);
+  write_counter("transposition_hits", summary.transposition_hits);
+  write_counter("transposition_cutoffs", summary.transposition_cutoffs);
+  write_counter("transposition_stores", summary.transposition_stores);
+  write_counter("continuation_transposition_hits",
+                summary.continuation_transposition_hits);
+  write_counter("evaluation_cache_probes", summary.evaluation_cache_probes);
+  write_counter("evaluation_cache_hits", summary.evaluation_cache_hits);
+  write_counter("terminal_bound_cutoffs", summary.terminal_bound_cutoffs);
+  write_counter("forced_edges", summary.forced_edges);
+  write_counter("root_seed_actions", summary.root_seed_actions);
+  write_counter("root_transposition_reuses",
+                summary.root_transposition_reuses);
+  write_counter("max_action_edges", summary.max_action_edges);
+  out << ",\"fresh_root_timing\":";
+  write_timing(out, summary.fresh_root_timing);
+  out << ",\"all_edge_timing\":";
+  write_timing(out, summary.all_edge_timing);
+  out << '}';
+}
+
 void write_entrant_summary(std::ostream &out, Entrant entrant,
                            const std::vector<GameReport> &games) {
   const std::vector<const DecisionReport *> decisions = decisions_for(games, entrant);
@@ -373,6 +522,8 @@ void write_entrant_summary(std::ostream &out, Entrant entrant,
   write_mcts_summary(out, summarize_mcts(decisions));
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
+  out << ",\"rank5_derived\":";
+  write_rank5_derived_summary(out, summarize_rank5_derived(decisions));
   out << '}';
 }
 
@@ -387,23 +538,56 @@ void write_position_entrant_summary(std::ostream &out, Entrant entrant,
   write_mcts_summary(out, summarize_mcts(decisions));
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
+  out << ",\"rank5_derived\":";
+  write_rank5_derived_summary(out, summarize_rank5_derived(decisions));
   out << '}';
 }
 
 }  // namespace detail
 
+std::string build_provenance_json() {
+  using namespace detail;
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << "{\"schema\":\"papersoccer.arena-build.v1\",\"runtime\":";
+#ifdef __EMSCRIPTEN__
+  write_string(out, "wasm");
+#else
+  write_string(out, "native");
+#endif
+  out << ",\"build_type\":";
+  write_string(out, PAPERSOCCER_BUILD_TYPE);
+  out << ",\"ndebug\":";
+#ifdef NDEBUG
+  write_bool(out, true);
+#else
+  write_bool(out, false);
+#endif
+  out << ",\"sanitizers_enabled\":";
+  write_bool(out, PAPERSOCCER_SANITIZERS_ENABLED);
+  out << ",\"compiler_id\":";
+  write_string(out, PAPERSOCCER_COMPILER_ID);
+  out << ",\"compiler_version\":";
+  write_string(out, PAPERSOCCER_COMPILER_VERSION);
+  out << ",\"configured_flags\":";
+  write_string(out, PAPERSOCCER_CONFIGURED_FLAGS);
+  out << ",\"cxx_standard\":" << __cplusplus << ",\"source_commit\":";
+  write_string(out, PAPERSOCCER_SOURCE_COMMIT);
+  out << ",\"source_dirty\":";
+  write_bool(out, PAPERSOCCER_SOURCE_DIRTY);
+  out << '}';
+  return out.str();
+}
+
 std::string run_matches_json(const MatchesConfig &config) {
   using namespace detail;
   validate_common(config.rules, config.candidate, config.reference);
+  const bool frozen_opening_mode = !config.frozen_openings.empty();
   if (config.seed_pairs == 0) {
     throw std::invalid_argument("arena seed pair count must be greater than zero");
   }
   if (config.max_plies == 0) {
     throw std::invalid_argument("arena max plies must be greater than zero");
-  }
-  if (config.opening_plies >= config.max_plies && config.opening_plies != 0) {
-    throw std::invalid_argument(
-        "arena opening plies must be less than max plies");
   }
   if (config.bootstrap_samples == 0) {
     throw std::invalid_argument("arena bootstrap samples must be greater than zero");
@@ -412,10 +596,32 @@ std::string run_matches_json(const MatchesConfig &config) {
     throw std::invalid_argument("arena seed pair count is too large");
   }
 
+  std::vector<OpeningReport> openings;
+  std::size_t effective_opening_plies = config.opening_plies;
+  if (frozen_opening_mode) {
+    if (config.opening_plies != 0) {
+      throw std::invalid_argument(
+          "arena frozen openings are incompatible with generated opening plies");
+    }
+    if (config.frozen_openings.size() != config.seed_pairs) {
+      throw std::invalid_argument(
+          "arena frozen opening count must equal the seed pair count");
+    }
+    openings = validate_frozen_openings(config.rules, config.frozen_openings);
+    effective_opening_plies = openings.front().transcript.size();
+  }
+  if (effective_opening_plies >= config.max_plies &&
+      effective_opening_plies != 0) {
+    throw std::invalid_argument(
+        "arena opening plies must be less than max plies");
+  }
+
+  warm_up_match_entrants(config.rules, config.candidate, config.reference,
+                         config.base_seed, config.warmup_decisions);
+
   SplitMix64 seeds{config.base_seed};
   SplitMix64 opening_pair_seeds{config.base_seed ^ kOpeningSeedSalt};
-  std::vector<OpeningReport> openings;
-  if (config.opening_plies != 0) {
+  if (!frozen_opening_mode && effective_opening_plies != 0) {
     openings.reserve(config.seed_pairs);
   }
   std::vector<GameReport> games;
@@ -424,9 +630,12 @@ std::string run_matches_json(const MatchesConfig &config) {
     const std::uint64_t candidate_seed = seeds.next();
     const std::uint64_t reference_seed = seeds.next();
     GameState initial_state = make_initial_state(config.rules);
-    if (config.opening_plies != 0) {
+    if (frozen_opening_mode) {
+      initial_state = openings[pair].state;
+    } else if (effective_opening_plies != 0) {
       OpeningReport opening = generate_opening(
-          pair, config.rules, opening_pair_seeds.next(), config.opening_plies);
+          pair, config.rules, opening_pair_seeds.next(),
+          effective_opening_plies);
       initial_state = opening.state;
       openings.push_back(std::move(opening));
     }
@@ -446,7 +655,7 @@ std::string run_matches_json(const MatchesConfig &config) {
         initial_state, config.max_plies));
   }
 
-  const std::vector<double> pair_scores =
+  const std::vector<std::optional<double>> pair_scores =
       candidate_pair_scores(games, config.seed_pairs);
   const BootstrapInterval interval = bootstrap_interval(
       pair_scores, config.base_seed, config.bootstrap_samples);
@@ -467,12 +676,25 @@ std::string run_matches_json(const MatchesConfig &config) {
   out << ",\"seed_derivation\":\"splitmix64\""
       << ",\"seed_pairs\":" << config.seed_pairs
       << ",\"games\":" << games.size()
-      << ",\"opening_plies\":" << config.opening_plies
-      << ",\"opening_generator\":\"uniform_random\""
-      << ",\"opening_seed_derivation\":"
-         "\"domain_separated_splitmix64\""
-      << ",\"max_plies\":" << config.max_plies
+      << ",\"opening_plies\":" << effective_opening_plies
+      << ",\"opening_generator\":";
+  write_string(out, frozen_opening_mode
+                        ? "frozen_uniform_legal_move_data_generation_bank"
+                        : "uniform_random");
+  out << ",\"opening_seed_derivation\":";
+  write_string(out, frozen_opening_mode
+                        ? "committed_bank_accepted_generation_seeds"
+                        : "domain_separated_splitmix64");
+  out << ",\"max_plies\":" << config.max_plies
       << ",\"bootstrap_samples\":" << config.bootstrap_samples
+      << ",\"warmup\":{\"decisions_per_entrant\":"
+      << config.warmup_decisions
+      << ",\"timed\":false,\"generation_plies\":"
+      << kWarmupGenerationPlies
+      << ",\"position_generator\":"
+         "\"uniform_legal_move_generator\",\"seed_derivation\":"
+         "\"domain_separated_splitmix64\",\"bot_instances\":"
+         "\"separate_from_measured_games\"}"
       << ",\"candidate\":";
   write_bot_config(out, config.candidate);
   out << ",\"reference\":";
@@ -482,7 +704,7 @@ std::string run_matches_json(const MatchesConfig &config) {
     if (index != 0) {
       out << ',';
     }
-    write_opening(out, openings[index], config.opening_plies);
+    write_opening(out, openings[index], effective_opening_plies);
   }
   out << "],\"games\":[";
   for (std::size_t index = 0; index < games.size(); ++index) {
@@ -528,15 +750,19 @@ std::string run_matches_json(const MatchesConfig &config) {
     if (index != 0) {
       out << ',';
     }
-    out << pair_scores[index];
+    write_optional_double(out, pair_scores[index]);
   }
   out << "],\"pair_bootstrap_95\":{\"method\":"
          "\"deterministic_pair_resampling\",\"seed\":";
   write_uint64_string(out, interval.seed);
   out << ",\"samples\":" << interval.samples
-      << ",\"confidence\":0.95,\"lower_percent\":"
-      << interval.lower_percent << ",\"upper_percent\":"
-      << interval.upper_percent << "}}}";
+      << ",\"confidence\":0.95,\"valid_pairs\":"
+      << interval.valid_pairs << ",\"invalid_pairs\":"
+      << interval.invalid_pairs << ",\"lower_percent\":";
+  write_optional_double(out, interval.lower_percent);
+  out << ",\"upper_percent\":";
+  write_optional_double(out, interval.upper_percent);
+  out << "}}}";
   return out.str();
 }
 
@@ -644,6 +870,12 @@ std::string run_positions_json(const PositionsConfig &config) {
       out << ",\"alpha_beta\":";
       if (evaluation.alpha_beta_stats.has_value()) {
         write_alpha_beta_stats(out, *evaluation.alpha_beta_stats);
+      } else {
+        out << "null";
+      }
+      out << ",\"rank5_derived\":";
+      if (evaluation.rank5_derived_stats.has_value()) {
+        write_rank5_derived_stats(out, *evaluation.rank5_derived_stats);
       } else {
         out << "null";
       }

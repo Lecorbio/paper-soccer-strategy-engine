@@ -3,7 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -13,7 +15,9 @@ namespace papersoccer::arena::detail {
 
 constexpr std::uint64_t kBootstrapSeedSalt = 0x4152454e414349ULL;
 constexpr std::uint64_t kOpeningSeedSalt = 0x4f50454e494e4753ULL;
+constexpr std::uint64_t kWarmupSeedSalt = 0x5741524d555053ULL;
 constexpr std::size_t kMaxPositionGenerationAttempts = 4096;
+constexpr std::size_t kWarmupGenerationPlies = 24;
 
 constexpr std::string_view runtime_name() noexcept {
 #ifdef __EMSCRIPTEN__
@@ -63,6 +67,7 @@ struct DecisionReport {
   std::uint64_t elapsed_ns{};
   std::optional<SearchStats> stats{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
+  std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
 };
 
 struct GameReport {
@@ -81,6 +86,11 @@ struct OpeningReport {
   std::size_t pair_index{};
   std::uint64_t generation_seed{};
   std::size_t attempts{};
+  std::string opening_id{};
+  std::string phase{};
+  std::string state_hash{};
+  std::string canonical_key{};
+  std::vector<Move> transcript{};
   GameState state{};
 };
 
@@ -91,6 +101,7 @@ struct PositionEvaluation {
   std::uint64_t elapsed_ns{};
   std::optional<SearchStats> stats{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
+  std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
 };
 
 struct PositionReport {
@@ -107,9 +118,8 @@ struct Record {
   std::size_t losses{};
   std::size_t truncations{};
 
-  double score() const noexcept {
-    return static_cast<double>(wins) + 0.5 * static_cast<double>(truncations);
-  }
+  std::size_t scored_games() const noexcept { return wins + losses; }
+  double score() const noexcept { return static_cast<double>(wins); }
 };
 
 struct TimingSummary {
@@ -117,11 +127,51 @@ struct TimingSummary {
   std::uint64_t total_ns{};
   std::uint64_t min_ns{};
   std::uint64_t median_ns{};
+  std::uint64_t p90_ns{};
   std::uint64_t p95_ns{};
+  std::uint64_t p99_ns{};
   std::uint64_t max_ns{};
   double median_iterations_per_second{};
   double median_simulated_plies_per_second{};
   double median_nodes_per_second{};
+};
+
+struct Rank5DerivedCounterSummary {
+  std::uint64_t sum{};
+  std::uint64_t max{};
+};
+
+struct Rank5DerivedSummary {
+  std::size_t decisions{};
+  std::size_t fresh_root_searches{};
+  std::size_t cached_continuation_edges{};
+  std::uint64_t visited_nodes_sum{};
+  std::uint64_t requested_nodes_sum{};
+  std::size_t budget_exhausted_fresh_searches{};
+  std::map<std::uint32_t, std::size_t> completed_depth_histogram{};
+  std::map<std::uint32_t, std::size_t> attempted_depth_histogram{};
+  std::map<std::size_t, std::size_t> planned_action_length_histogram{};
+  std::size_t maximum_current_edge_index{};
+  std::optional<int> minimum_root_score{};
+  std::optional<int> maximum_root_score{};
+  Rank5DerivedCounterSummary leaf_evaluations{};
+  Rank5DerivedCounterSummary terminal_nodes{};
+  Rank5DerivedCounterSummary completed_actions{};
+  Rank5DerivedCounterSummary cutoffs{};
+  Rank5DerivedCounterSummary transposition_probes{};
+  Rank5DerivedCounterSummary transposition_hits{};
+  Rank5DerivedCounterSummary transposition_cutoffs{};
+  Rank5DerivedCounterSummary transposition_stores{};
+  Rank5DerivedCounterSummary continuation_transposition_hits{};
+  Rank5DerivedCounterSummary evaluation_cache_probes{};
+  Rank5DerivedCounterSummary evaluation_cache_hits{};
+  Rank5DerivedCounterSummary terminal_bound_cutoffs{};
+  Rank5DerivedCounterSummary forced_edges{};
+  Rank5DerivedCounterSummary root_seed_actions{};
+  Rank5DerivedCounterSummary root_transposition_reuses{};
+  Rank5DerivedCounterSummary max_action_edges{};
+  TimingSummary fresh_root_timing{};
+  TimingSummary all_edge_timing{};
 };
 
 struct MctsSummary {
@@ -171,8 +221,10 @@ struct AlphaBetaSummary {
 struct BootstrapInterval {
   std::uint64_t seed{};
   std::size_t samples{};
-  double lower_percent{};
-  double upper_percent{};
+  std::size_t valid_pairs{};
+  std::size_t invalid_pairs{};
+  std::optional<double> lower_percent{};
+  std::optional<double> upper_percent{};
 };
 
 std::string_view entrant_name(Entrant entrant) noexcept;
@@ -193,8 +245,16 @@ OpeningReport generate_opening(std::size_t pair_index,
                                const RulesConfig &rules,
                                std::uint64_t pair_seed,
                                std::size_t opening_plies);
+std::vector<OpeningReport> validate_frozen_openings(
+    const RulesConfig &rules,
+    const std::vector<FrozenOpening> &frozen_openings);
 GameState generate_position(const RulesConfig &rules, std::uint64_t seed,
                             std::size_t generation_plies);
+void warm_up_match_entrants(const RulesConfig &rules,
+                            const ArenaBotConfig &candidate,
+                            const ArenaBotConfig &reference,
+                            std::uint64_t base_seed,
+                            std::size_t decisions_per_entrant);
 PositionEvaluation evaluate_position(const ArenaBotConfig &config,
                                      Entrant entrant, std::uint64_t seed,
                                      const GameState &state);
@@ -205,6 +265,8 @@ MctsSummary summarize_mcts(
     const std::vector<const DecisionReport *> &decisions);
 AlphaBetaSummary summarize_alpha_beta(
     const std::vector<const DecisionReport *> &decisions);
+Rank5DerivedSummary summarize_rank5_derived(
+    const std::vector<const DecisionReport *> &decisions);
 Record record_for(const std::vector<GameReport> &games, Entrant entrant,
                   std::optional<Player> color = std::nullopt);
 std::vector<const DecisionReport *> decisions_for(
@@ -212,10 +274,11 @@ std::vector<const DecisionReport *> decisions_for(
 std::vector<const DecisionReport *> decisions_for(
     const std::vector<PositionReport> &positions, Entrant entrant,
     std::vector<DecisionReport> &storage);
-std::vector<double> candidate_pair_scores(
+std::vector<std::optional<double>> candidate_pair_scores(
     const std::vector<GameReport> &games, std::size_t pair_count);
 BootstrapInterval bootstrap_interval(
-    const std::vector<double> &pair_scores, std::uint64_t base_seed,
+    const std::vector<std::optional<double>> &pair_scores,
+    std::uint64_t base_seed,
     std::size_t samples);
 
 }  // namespace papersoccer::arena::detail

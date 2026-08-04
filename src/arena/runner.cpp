@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "papersoccer/rules.hpp"
@@ -13,6 +14,34 @@
 namespace papersoccer::arena::detail {
 
 using Clock = std::chrono::steady_clock;
+
+namespace {
+
+bool same_rules(const RulesConfig &left, const RulesConfig &right) noexcept {
+  return left.width == right.width && left.height == right.height &&
+         left.goal_rule == right.goal_rule &&
+         left.blocked_rule == right.blocked_rule;
+}
+
+bool same_state(const GameState &left, const GameState &right) {
+  return same_rules(left.config, right.config) && left.ball == right.ball &&
+         left.to_move == right.to_move && left.status == right.status &&
+         left.path == right.path &&
+         left.used_segments == right.used_segments &&
+         left.visit_count == right.visit_count;
+}
+
+std::string frozen_context(std::size_t index) {
+  return "arena frozen opening " + std::to_string(index);
+}
+
+void add_rank5_counter(Rank5DerivedCounterSummary &summary,
+                       std::uint64_t value) noexcept {
+  summary.sum += value;
+  summary.max = std::max(summary.max, value);
+}
+
+}  // namespace
 
 std::string_view entrant_name(Entrant entrant) noexcept {
   return entrant == Entrant::Candidate ? "candidate" : "reference";
@@ -214,6 +243,13 @@ std::optional<AlphaBetaSearchStats> alpha_beta_search_stats(Bot &bot) {
   return std::nullopt;
 }
 
+std::optional<Rank5DerivedSearchStats> rank5_derived_search_stats(Bot &bot) {
+  if (auto *rank5_derived = dynamic_cast<Rank5DerivedBot *>(&bot)) {
+    return rank5_derived->last_search_stats();
+  }
+  return std::nullopt;
+}
+
 bool contains_move(const std::vector<Move> &moves, Move move) {
   return std::find(moves.begin(), moves.end(), move) != moves.end();
 }
@@ -244,7 +280,8 @@ DecisionReport choose_and_measure(Bot &bot, Entrant entrant, std::size_t ply,
                         move,
                         elapsed_nanoseconds(start, end),
                         search_stats(bot),
-                        alpha_beta_search_stats(bot)};
+                        alpha_beta_search_stats(bot),
+                        rank5_derived_search_stats(bot)};
 }
 
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
@@ -312,12 +349,95 @@ OpeningReport generate_opening(std::size_t pair_index,
     GameState state = generate_position(rules, generation_seed, opening_plies);
     const std::size_t actual_plies = state.path.empty() ? 0 : state.path.size() - 1;
     if (!is_terminal(state) && actual_plies == opening_plies) {
-      return OpeningReport{pair_index, generation_seed, attempt + 1,
-                           std::move(state)};
+      OpeningReport report;
+      report.pair_index = pair_index;
+      report.generation_seed = generation_seed;
+      report.attempts = attempt + 1;
+      report.transcript.reserve(actual_plies);
+      for (std::size_t index = 1; index < state.path.size(); ++index) {
+        report.transcript.push_back(Move{state.path[index]});
+      }
+      report.state = std::move(state);
+      return report;
     }
   }
   throw std::runtime_error(
       "could not generate a non-terminal arena opening at the requested ply");
+}
+
+std::vector<OpeningReport> validate_frozen_openings(
+    const RulesConfig &rules,
+    const std::vector<FrozenOpening> &frozen_openings) {
+  std::vector<OpeningReport> reports;
+  if (frozen_openings.empty()) {
+    return reports;
+  }
+
+  const std::size_t expected_depth = frozen_openings.front().depth;
+  const std::string &expected_phase = frozen_openings.front().phase;
+  if (expected_depth == 0 || expected_phase.empty()) {
+    throw std::invalid_argument(
+        "arena frozen openings require a nonzero depth and phase");
+  }
+  std::unordered_set<std::string> opening_ids;
+  std::unordered_set<std::string> state_hashes;
+  std::unordered_set<std::string> canonical_keys;
+  reports.reserve(frozen_openings.size());
+  for (std::size_t index = 0; index < frozen_openings.size(); ++index) {
+    const FrozenOpening &opening = frozen_openings[index];
+    const std::string context = frozen_context(index);
+    if (opening.opening_id.empty() || opening.state_hash.empty() ||
+        opening.canonical_key.empty()) {
+      throw std::invalid_argument(context + " is missing identity metadata");
+    }
+    if (opening.phase != expected_phase || opening.depth != expected_depth ||
+        opening.transcript.size() != expected_depth) {
+      throw std::invalid_argument(context +
+                                  " has mismatched phase, depth, or transcript");
+    }
+    if (!opening_ids.insert(opening.opening_id).second ||
+        !state_hashes.insert(opening.state_hash).second ||
+        !canonical_keys.insert(opening.canonical_key).second) {
+      throw std::invalid_argument(context + " duplicates frozen-bank metadata");
+    }
+    if (!same_rules(rules, opening.state.config)) {
+      throw std::invalid_argument(context +
+                                  " uses rules that differ from the arena");
+    }
+
+    GameState replayed = make_initial_state(rules);
+    for (std::size_t ply = 0; ply < opening.transcript.size(); ++ply) {
+      if (is_terminal(replayed)) {
+        throw std::invalid_argument(context +
+                                    " continues after a terminal position");
+      }
+      const std::vector<Move> moves = legal_moves(replayed);
+      if (!contains_move(moves, opening.transcript[ply])) {
+        throw std::invalid_argument(context + " has an illegal transcript edge at ply " +
+                                    std::to_string(ply + 1));
+      }
+      replayed = apply_move(replayed, opening.transcript[ply]);
+    }
+    if (is_terminal(replayed) || legal_moves(replayed).empty()) {
+      throw std::invalid_argument(context + " ends in a terminal position");
+    }
+    if (!same_state(replayed, opening.state)) {
+      throw std::invalid_argument(context +
+                                  " state does not match its exact transcript");
+    }
+
+    OpeningReport report;
+    report.pair_index = index;
+    report.generation_seed = opening.generation_seed;
+    report.opening_id = opening.opening_id;
+    report.phase = opening.phase;
+    report.state_hash = opening.state_hash;
+    report.canonical_key = opening.canonical_key;
+    report.transcript = opening.transcript;
+    report.state = opening.state;
+    reports.push_back(std::move(report));
+  }
+  return reports;
 }
 
 GameState generate_position(const RulesConfig &rules, std::uint64_t seed,
@@ -333,6 +453,72 @@ GameState generate_position(const RulesConfig &rules, std::uint64_t seed,
   return state;
 }
 
+namespace {
+
+GameState generate_uniform_warmup_position(const RulesConfig &rules,
+                                           std::uint64_t seed) {
+  GameState state = make_initial_state(rules);
+  SplitMix64 generator{seed};
+  for (std::size_t ply = 0; ply < kWarmupGenerationPlies; ++ply) {
+    if (is_terminal(state)) {
+      return state;
+    }
+    const std::vector<Move> moves = legal_moves(state);
+    if (moves.empty()) {
+      return state;
+    }
+    state = apply_move(state, moves[generator.index(moves.size())]);
+  }
+  return state;
+}
+
+}  // namespace
+
+void warm_up_match_entrants(const RulesConfig &rules,
+                            const ArenaBotConfig &candidate_config,
+                            const ArenaBotConfig &reference_config,
+                            std::uint64_t base_seed,
+                            std::size_t decisions_per_entrant) {
+  if (decisions_per_entrant == 0) {
+    return;
+  }
+
+  SplitMix64 seeds{base_seed ^ kWarmupSeedSalt};
+  std::unique_ptr<Bot> candidate =
+      make_arena_bot(candidate_config, seeds.next());
+  std::unique_ptr<Bot> reference =
+      make_arena_bot(reference_config, seeds.next());
+  for (std::size_t index = 0; index < decisions_per_entrant; ++index) {
+    SplitMix64 attempt_seeds{seeds.next()};
+    std::optional<GameState> generated;
+    for (std::size_t attempt = 0; attempt < kMaxPositionGenerationAttempts;
+         ++attempt) {
+      GameState state =
+          generate_uniform_warmup_position(rules, attempt_seeds.next());
+      if (!is_terminal(state) && !legal_moves(state).empty()) {
+        generated = std::move(state);
+        break;
+      }
+    }
+    if (!generated.has_value()) {
+      throw std::runtime_error(
+          "could not generate a non-terminal arena warm-up position");
+    }
+
+    const std::vector<Move> moves = legal_moves(*generated);
+    const Move candidate_move = candidate->choose_move(*generated);
+    if (!contains_move(moves, candidate_move)) {
+      throw std::logic_error(
+          "candidate bot returned an illegal move during arena warm-up");
+    }
+    const Move reference_move = reference->choose_move(*generated);
+    if (!contains_move(moves, reference_move)) {
+      throw std::logic_error(
+          "reference bot returned an illegal move during arena warm-up");
+    }
+  }
+}
+
 PositionEvaluation evaluate_position(const ArenaBotConfig &config, Entrant entrant,
                                      std::uint64_t seed,
                                      const GameState &state) {
@@ -343,7 +529,8 @@ PositionEvaluation evaluate_position(const ArenaBotConfig &config, Entrant entra
                             decision.move,
                             decision.elapsed_ns,
                             decision.stats,
-                            decision.alpha_beta_stats};
+                            decision.alpha_beta_stats,
+                            decision.rank5_derived_stats};
 }
 
 std::uint64_t median_unsigned(std::vector<std::uint64_t> values) {
@@ -370,6 +557,16 @@ double median_double(std::vector<double> values) {
     return values[middle];
   }
   return (values[middle - 1] + values[middle]) / 2.0;
+}
+
+std::uint64_t nearest_rank_percentile(
+    const std::vector<std::uint64_t> &sorted_values, double fraction) {
+  if (sorted_values.empty()) {
+    return 0;
+  }
+  const std::size_t index =
+      static_cast<std::size_t>(std::ceil(fraction * sorted_values.size())) - 1;
+  return sorted_values[std::min(index, sorted_values.size() - 1)];
 }
 
 TimingSummary summarize_timing(
@@ -406,14 +603,20 @@ TimingSummary summarize_timing(
       node_throughput.push_back(
           static_cast<double>(decision->alpha_beta_stats->nodes) *
           1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
+    } else if (decision->rank5_derived_stats.has_value() &&
+               !decision->rank5_derived_stats->cached_continuation &&
+               decision->elapsed_ns > 0) {
+      node_throughput.push_back(
+          static_cast<double>(decision->rank5_derived_stats->nodes) *
+          1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
     }
   }
   std::sort(elapsed.begin(), elapsed.end());
   summary.min_ns = elapsed.front();
   summary.median_ns = median_unsigned(elapsed);
-  const std::size_t p95_index =
-      static_cast<std::size_t>(std::ceil(0.95 * elapsed.size())) - 1;
-  summary.p95_ns = elapsed[p95_index];
+  summary.p90_ns = nearest_rank_percentile(elapsed, 0.90);
+  summary.p95_ns = nearest_rank_percentile(elapsed, 0.95);
+  summary.p99_ns = nearest_rank_percentile(elapsed, 0.99);
   summary.max_ns = elapsed.back();
   summary.median_iterations_per_second = median_double(std::move(throughput));
   summary.median_simulated_plies_per_second =
@@ -484,6 +687,79 @@ AlphaBetaSummary summarize_alpha_beta(
   return summary;
 }
 
+Rank5DerivedSummary summarize_rank5_derived(
+    const std::vector<const DecisionReport *> &decisions) {
+  Rank5DerivedSummary summary;
+  std::vector<const DecisionReport *> all_edges;
+  std::vector<const DecisionReport *> fresh_roots;
+  all_edges.reserve(decisions.size());
+  fresh_roots.reserve(decisions.size());
+  for (const DecisionReport *decision : decisions) {
+    if (!decision->rank5_derived_stats.has_value()) {
+      continue;
+    }
+    const Rank5DerivedSearchStats &stats = *decision->rank5_derived_stats;
+    ++summary.decisions;
+    all_edges.push_back(decision);
+    summary.maximum_current_edge_index =
+        std::max(summary.maximum_current_edge_index, stats.current_edge_index);
+    if (stats.cached_continuation) {
+      ++summary.cached_continuation_edges;
+      continue;
+    }
+    ++summary.fresh_root_searches;
+    summary.requested_nodes_sum += Rank5DerivedConfig::profile_max_nodes;
+    summary.visited_nodes_sum += stats.nodes;
+    summary.budget_exhausted_fresh_searches +=
+        stats.budget_exhausted ? 1U : 0U;
+    ++summary.completed_depth_histogram[stats.completed_turn_depth];
+    ++summary.attempted_depth_histogram[stats.attempted_turn_depth];
+    ++summary.planned_action_length_histogram[stats.planned_action_length];
+    summary.minimum_root_score = summary.minimum_root_score.has_value()
+                                     ? std::min(*summary.minimum_root_score,
+                                                stats.root_score)
+                                     : stats.root_score;
+    summary.maximum_root_score = summary.maximum_root_score.has_value()
+                                     ? std::max(*summary.maximum_root_score,
+                                                stats.root_score)
+                                     : stats.root_score;
+    add_rank5_counter(summary.leaf_evaluations, stats.leaf_evaluations);
+    add_rank5_counter(summary.terminal_nodes, stats.terminal_nodes);
+    add_rank5_counter(summary.completed_actions, stats.completed_actions);
+    add_rank5_counter(summary.cutoffs, stats.cutoffs);
+    add_rank5_counter(summary.transposition_probes,
+                      stats.transposition_probes);
+    add_rank5_counter(summary.transposition_hits, stats.transposition_hits);
+    add_rank5_counter(summary.transposition_cutoffs,
+                      stats.transposition_cutoffs);
+    add_rank5_counter(summary.transposition_stores,
+                      stats.transposition_stores);
+    add_rank5_counter(summary.continuation_transposition_hits,
+                      stats.continuation_transposition_hits);
+    add_rank5_counter(summary.evaluation_cache_probes,
+                      stats.evaluation_cache_probes);
+    add_rank5_counter(summary.evaluation_cache_hits,
+                      stats.evaluation_cache_hits);
+    add_rank5_counter(summary.terminal_bound_cutoffs,
+                      stats.terminal_bound_cutoffs);
+    add_rank5_counter(summary.forced_edges, stats.forced_edges);
+    add_rank5_counter(summary.root_seed_actions, stats.root_seed_actions);
+    add_rank5_counter(summary.root_transposition_reuses,
+                      stats.root_transposition_reuses);
+    add_rank5_counter(summary.max_action_edges, stats.max_action_edges);
+    fresh_roots.push_back(decision);
+  }
+  summary.fresh_root_timing = summarize_timing(fresh_roots);
+  summary.all_edge_timing = summarize_timing(all_edges);
+  if (summary.decisions !=
+          summary.fresh_root_searches + summary.cached_continuation_edges ||
+      summary.fresh_root_timing.decisions != summary.fresh_root_searches ||
+      summary.all_edge_timing.decisions != summary.decisions) {
+    throw std::logic_error("inconsistent Rank5Derived arena summary");
+  }
+  return summary;
+}
+
 Record record_for(const std::vector<GameReport> &games, Entrant entrant,
                   std::optional<Player> color) {
   Record record;
@@ -528,7 +804,8 @@ std::vector<const DecisionReport *> decisions_for(
         entrant == Entrant::Candidate ? position.candidate : position.reference;
     storage.push_back(DecisionReport{
         1, entrant, position.state.to_move, position.state.ball, evaluation.move,
-        evaluation.elapsed_ns, evaluation.stats, evaluation.alpha_beta_stats});
+        evaluation.elapsed_ns, evaluation.stats, evaluation.alpha_beta_stats,
+        evaluation.rank5_derived_stats});
   }
   std::vector<const DecisionReport *> result;
   result.reserve(storage.size());
@@ -538,34 +815,58 @@ std::vector<const DecisionReport *> decisions_for(
   return result;
 }
 
-std::vector<double> candidate_pair_scores(const std::vector<GameReport> &games,
-                                          std::size_t pair_count) {
-  std::vector<double> scores(pair_count, 0.0);
+std::vector<std::optional<double>> candidate_pair_scores(
+    const std::vector<GameReport> &games, std::size_t pair_count) {
+  std::vector<double> completed_scores(pair_count, 0.0);
+  std::vector<std::size_t> games_per_pair(pair_count, 0);
+  std::vector<bool> invalid(pair_count, false);
   for (const GameReport &game : games) {
+    if (game.pair_index >= pair_count) {
+      throw std::logic_error("arena game has an out-of-range pair index");
+    }
+    ++games_per_pair[game.pair_index];
     if (game.truncated) {
-      scores[game.pair_index] += 0.25;
+      invalid[game.pair_index] = true;
     } else if (game.winning_entrant == Entrant::Candidate) {
-      scores[game.pair_index] += 0.5;
+      completed_scores[game.pair_index] += 0.5;
+    }
+  }
+  std::vector<std::optional<double>> scores(pair_count);
+  for (std::size_t pair = 0; pair < pair_count; ++pair) {
+    if (!invalid[pair] && games_per_pair[pair] == 2) {
+      scores[pair] = completed_scores[pair];
     }
   }
   return scores;
 }
 
-BootstrapInterval bootstrap_interval(const std::vector<double> &pair_scores,
-                                     std::uint64_t base_seed,
-                                     std::size_t samples) {
+BootstrapInterval bootstrap_interval(
+    const std::vector<std::optional<double>> &pair_scores,
+    std::uint64_t base_seed, std::size_t samples) {
   BootstrapInterval interval;
   interval.seed = base_seed ^ kBootstrapSeedSalt;
   interval.samples = samples;
+  std::vector<double> valid_scores;
+  valid_scores.reserve(pair_scores.size());
+  for (const std::optional<double> score : pair_scores) {
+    if (score.has_value()) {
+      valid_scores.push_back(*score);
+    }
+  }
+  interval.valid_pairs = valid_scores.size();
+  interval.invalid_pairs = pair_scores.size() - valid_scores.size();
+  if (valid_scores.empty()) {
+    return interval;
+  }
   SplitMix64 random{interval.seed};
   std::vector<double> means;
   means.reserve(samples);
   for (std::size_t sample = 0; sample < samples; ++sample) {
     double total = 0.0;
-    for (std::size_t draw = 0; draw < pair_scores.size(); ++draw) {
-      total += pair_scores[random.index(pair_scores.size())];
+    for (std::size_t draw = 0; draw < valid_scores.size(); ++draw) {
+      total += valid_scores[random.index(valid_scores.size())];
     }
-    means.push_back(100.0 * total / static_cast<double>(pair_scores.size()));
+    means.push_back(100.0 * total / static_cast<double>(valid_scores.size()));
   }
   std::sort(means.begin(), means.end());
   const std::size_t lower = static_cast<std::size_t>(

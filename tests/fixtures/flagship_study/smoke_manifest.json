@@ -1,0 +1,301 @@
+{
+  "candidate_grids": {
+    "alpha_beta": [
+      "smoke-alpha-beta-256"
+    ],
+    "jacek_inspired": [],
+    "mcts": [
+      "smoke-mcts-8"
+    ],
+    "rank5_derived": []
+  },
+  "configurations": [
+    {
+      "family": "mcts",
+      "id": "smoke-mcts-8",
+      "kind": "mcts",
+      "public_label": "Tactical MctsBot — CI smoke 8 iterations",
+      "role": "candidate",
+      "settings": {
+        "exploration": 1.4142135623730951,
+        "iterations": 8,
+        "leaf_policy": "rollout_only",
+        "node_capacity": 64,
+        "quiescence_enabled": false,
+        "quiescence_max_depth": 8,
+        "quiescence_max_nodes": 256,
+        "reuse_tree": true,
+        "rollout_policy": "tactical",
+        "seed_derivation": "sha256-domain-separated-uint64/v1",
+        "wall_clock_limit_ms": 0
+      }
+    },
+    {
+      "family": "alpha_beta",
+      "id": "smoke-alpha-beta-256",
+      "kind": "alpha-beta",
+      "public_label": "Hand-evaluated AlphaBetaBot — CI smoke 256 nodes",
+      "role": "candidate",
+      "settings": {
+        "max_nodes": 256,
+        "max_search_plies": 8,
+        "max_turn_depth": 2,
+        "seed_ignored": true,
+        "transposition_table_entries": 64,
+        "wall_clock_limit_ms": 0
+      }
+    }
+  ],
+  "environment": {
+    "architecture": "native",
+    "build_flags": "Release",
+    "cmake_version": "CI-provided CMake 3.20 or newer",
+    "compiler": "CI-provided C++20 compiler",
+    "compiler_version": "recorded by CI logs",
+    "cpu": "CI smoke runner",
+    "kernel": "CI-provided kernel",
+    "logical_cores": 1,
+    "machine_id": "flagship-study-ci-smoke",
+    "memory_bytes": 1,
+    "os": "CI-provided operating system",
+    "physical_cores": 1,
+    "power_measurement": "Not used for smoke-test claims",
+    "python_version": "Python 3 standard-library runtime"
+  },
+  "latency_protocol": {
+    "build_type": "Release",
+    "gate_ms": 50,
+    "measurement_phase": "validation",
+    "power_conditions": "Smoke execution does not publish latency claims",
+    "quantiles": [
+      "median",
+      "p90",
+      "p95",
+      "p99",
+      "maximum"
+    ],
+    "rank5_gate_distribution": "fresh_root_only",
+    "runtime": "native",
+    "single_threaded": true,
+    "state_copying": "Caller passes const state by reference; bot-internal setup/copying is timed",
+    "timer_boundary": "steady_clock immediately around Bot::choose_move(state)",
+    "warmup": "Eight untimed deterministic decisions per entrant in each arena process"
+  },
+  "openings": {
+    "banks": [
+      {
+        "depth": 4,
+        "id": "smoke-openings-development-d04",
+        "pairs": 1,
+        "path": "tests/fixtures/flagship_study/development_d04.tsv",
+        "phase": "development",
+        "seed": "9100401",
+        "sha256": "41e0508a9361f54b2560ded502d62ae226d7ed21c9f1f3fa70e06eb63454b9db"
+      },
+      {
+        "depth": 4,
+        "id": "smoke-openings-validation-d04",
+        "pairs": 1,
+        "path": "tests/fixtures/flagship_study/validation_d04.tsv",
+        "phase": "validation",
+        "seed": "9200401",
+        "sha256": "b95cc2297b9db6047bf1ad131b101c5b452cfcbe743094e5b7a9d0251f6e1ebb"
+      },
+      {
+        "depth": 4,
+        "id": "smoke-openings-test-d04",
+        "pairs": 1,
+        "path": "tests/fixtures/flagship_study/test_d04.tsv",
+        "phase": "test",
+        "seed": "9300401",
+        "sha256": "fcf4cf307ea65f5fbc08aae2bc5390d4a65c6813596773687283493b4bc84965"
+      }
+    ],
+    "depths": [
+      4
+    ],
+    "generator": {
+      "canonical_equivalence": "Horizontal reflection about x=width/2",
+      "description": "Separate deterministic uniform legal-edge data-generation mechanism",
+      "duplicate_policy": "Reject duplicate canonical game states across all phases",
+      "id": "uniform-legal-move-generator/v1",
+      "selection": "SplitMix64 with unbiased rejection-sampled legal-edge index",
+      "state_hash_algorithm": "sha256-canonical-game-state/v1",
+      "terminal_rejection": "Reject and advance deterministic candidate seed stream"
+    }
+  },
+  "outputs": {
+    "charts": {
+      "bradley_terry": "results/flagship_study_smoke/charts/bradley_terry.svg",
+      "calibration": "results/flagship_study_smoke/charts/calibration.svg",
+      "pareto": "results/flagship_study_smoke/charts/pareto.svg"
+    },
+    "curated_data": {
+      "development": "results/flagship_study_smoke/curated/development.json",
+      "test": "results/flagship_study_smoke/curated/test.json",
+      "validation": "results/flagship_study_smoke/curated/validation.json"
+    },
+    "curated_root": "results/flagship_study_smoke",
+    "raw_results_root": "results/flagship_study_smoke/raw",
+    "report": "results/flagship_study_smoke/report.md",
+    "runtime_projection": "results/flagship_study_smoke/runtime_projection.json",
+    "selection_lock": "results/flagship_study_smoke/selection_lock.json"
+  },
+  "rules": {
+    "blocked_rule": "player_to_move_loses",
+    "goal_rule": "opponent_goal_only",
+    "height": 10,
+    "max_game_plies": 512,
+    "maximum_game_length_policy": "Stop at 512 total physical plies; any nonterminal stop is a truncation and invalidates strength/calibration publication.",
+    "natural_draws": false,
+    "opening_ply_definition": "One physical legal edge application, including same-player rebound edges; opening plies count toward the 512-ply safety limit.",
+    "playable_edges": 316,
+    "width": 8
+  },
+  "samples": {
+    "development": {
+      "color_swapped_pairs_per_depth_matchup": 1,
+      "games_per_pair": 2
+    },
+    "test": {
+      "color_swapped_pairs_per_depth_matchup": 1,
+      "games_per_pair": 2
+    },
+    "validation": {
+      "color_swapped_pairs_per_depth_matchup": 1,
+      "games_per_pair": 2
+    }
+  },
+  "schedule": {
+    "test": [],
+    "tuning": [
+      {
+        "candidate": "smoke-mcts-8",
+        "id": "smoke-mcts-vs-alpha-beta",
+        "opponent": "smoke-alpha-beta-256",
+        "phases": [
+          "development",
+          "validation"
+        ]
+      }
+    ]
+  },
+  "schema_version": "papersoccer.flagship-study-manifest.v2",
+  "seeds": {
+    "analysis": {
+      "development": "9600001",
+      "test": "9600003",
+      "validation": "9600002"
+    },
+    "bootstrap": {
+      "development": "9500001",
+      "test": "9500003",
+      "validation": "9500002"
+    },
+    "bot": {
+      "development": "9400001",
+      "test": "9400003",
+      "validation": "9400002"
+    },
+    "calibration": {
+      "validation": "9700001"
+    },
+    "opening": {
+      "development": {
+        "4": "9100401"
+      },
+      "test": {
+        "4": "9300401"
+      },
+      "validation": {
+        "4": "9200401"
+      }
+    }
+  },
+  "selection_rule": {
+    "no_eligible_family_policy": "stop_before_test",
+    "phase": "validation",
+    "practical_tie_percentage_points": 1.0,
+    "rank5_policy": "Fixed flagship comparator policy retained but not exercised by CI smoke",
+    "strength_metric": "mean depth-stratified color-swapped pair score versus common opponent",
+    "tie_break_order": [
+      "lower_p95_latency",
+      "smaller_budget",
+      "stable_config_id"
+    ]
+  },
+  "source": {
+    "analysis_contract_path": "benchmarks/flagship_study/analysis_contract.md",
+    "analysis_contract_sha256": "e37f0706cc10d337401f8d459a2f47182681bffa046c80013d4fa1f3ab341115",
+    "arena_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "dirty_worktree": false,
+    "git_commit": "69533ceaf008ea8cf82fa33927cbcf741b2b762a",
+    "opening_tool_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "protected_artifacts": {
+      "jacek_model_path": "models/jacek_article_value_model.json",
+      "jacek_model_sha256": "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084",
+      "rank5_submission_path": "submissions/codingame/bots/rank_5/submission.cpp",
+      "rank5_submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+    }
+  },
+  "statistics": {
+    "bootstrap": {
+      "confidence": 0.95,
+      "resamples": 10000,
+      "stratify_by": "opening_depth",
+      "unit": "color_swapped_pair"
+    },
+    "bradley_terry": {
+      "bootstrap_unit": "color_swapped_pair_stratified_by_matchup_and_opening_depth",
+      "convergence_policy": "fail_without_finite_estimate",
+      "identifiability": "sum_to_zero",
+      "minimum_bootstrap_success_fraction": 1.0,
+      "outcomes": "binary_games_only",
+      "separation_policy": "fail_without_finite_estimate"
+    },
+    "calibration": {
+      "bins": 10,
+      "fit_phase": "validation",
+      "link": "logistic_with_validation_score_standardization",
+      "outcome_perspective": "eventual binary winner from prediction player-to-move perspective",
+      "rank5_predictions": "fresh_root_only",
+      "test_metrics": [
+        "brier_score",
+        "log_loss",
+        "ten_bin_reliability"
+      ]
+    },
+    "claim_rule": "CI smoke produces no comparative strength claims",
+    "pair_score": {
+      "split": 0.5,
+      "two_losses": 0.0,
+      "two_wins": 1.0
+    },
+    "pareto": {
+      "latency_source": "validation",
+      "maximize": "paired_strength",
+      "minimize": "p95_latency",
+      "strength_source": [
+        "development",
+        "validation"
+      ]
+    },
+    "truncations": "reject_strength_and_calibration"
+  },
+  "supersession": null,
+  "study": {
+    "frozen": true,
+    "id": "competitive-demo-bots-ci-smoke",
+    "preregistered_at_utc": "2026-08-03T00:00:00+00:00",
+    "public_labels": {
+      "alpha_beta": "Hand-evaluated AlphaBetaBot",
+      "jacek_inspired": "Neural alpha-beta (JacekInspiredBot)",
+      "mcts": "Tactical MctsBot",
+      "rank5_derived": "Rank5DerivedBot — fixed 50k demo profile"
+    },
+    "rank5_disclaimer": "Rank5DerivedBot adapts search code from the rank 5/206 CodinGame submission to different demo rules and a fixed-work profile. These measurements do not evaluate the authentic ranked submission.",
+    "study_class": "ci_smoke",
+    "title": "Manifest-driven CI smoke for competitive Paper Soccer engines",
+    "version": "1.0.0"
+  }
+}
