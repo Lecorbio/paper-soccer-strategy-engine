@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+import pathlib
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -9,6 +11,7 @@ from benchmarks.flagship_study import charts
 
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 SVG = {"svg": SVG_NAMESPACE}
+REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 LABELS = {
     "mcts-2000": "Tactical MctsBot",
@@ -120,6 +123,7 @@ def _selection_fixture() -> dict[str, object]:
                 "validation_latency_decisions": 4_200,
                 "pareto_optimal": True,
                 "constrained_pareto_optimal": True,
+                "unconstrained_pareto_optimal": True,
                 "gate_eligible": True,
                 "selected": True,
                 "fixed": False,
@@ -133,6 +137,7 @@ def _selection_fixture() -> dict[str, object]:
                 "validation_latency_decisions": 3_900,
                 "pareto_optimal": True,
                 "constrained_pareto_optimal": True,
+                "unconstrained_pareto_optimal": True,
                 "gate_eligible": True,
                 "selected": False,
                 "fixed": False,
@@ -146,6 +151,7 @@ def _selection_fixture() -> dict[str, object]:
                 "validation_latency_decisions": 3_700,
                 "pareto_optimal": False,
                 "constrained_pareto_optimal": False,
+                "unconstrained_pareto_optimal": False,
                 "gate_eligible": False,
                 "selected": False,
                 "fixed": False,
@@ -159,6 +165,7 @@ def _selection_fixture() -> dict[str, object]:
                 "validation_latency_decisions": 2_100,
                 "pareto_optimal": False,
                 "constrained_pareto_optimal": False,
+                "unconstrained_pareto_optimal": False,
                 "gate_eligible": False,
                 "selected": True,
                 "fixed": True,
@@ -186,6 +193,55 @@ def _parse(svg: str) -> ET.Element:
 def _visible_labels(root: ET.Element) -> str:
     return " ".join(
         "".join(element.itertext()) for element in root.findall(".//svg:text", SVG)
+    )
+
+
+def _production_pareto_fixture() -> tuple[dict[str, object], dict[str, str]]:
+    selection = json.loads(
+        (REPOSITORY_ROOT / "benchmarks/flagship_study/selection_lock.json")
+        .read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (REPOSITORY_ROOT / "benchmarks/flagship_study/manifest.json")
+        .read_text(encoding="utf-8")
+    )
+    labels: dict[str, str] = {}
+    for configuration in manifest["configurations"]:
+        settings = configuration["settings"]
+        if configuration["kind"] == "mcts":
+            suffix = f" ({settings['iterations']} iter)"
+        elif configuration["kind"] in ("alpha-beta", "jacek-inspired"):
+            suffix = f" ({settings['max_nodes'] // 1000}k nodes)"
+        else:
+            suffix = ""
+        labels[configuration["id"]] = configuration["public_label"] + suffix
+    return selection, labels
+
+
+def _rectangle(element: ET.Element) -> tuple[float, float, float, float]:
+    return tuple(
+        float(element.attrib[name]) for name in ("x", "y", "width", "height")
+    )
+
+
+def _point_rectangle(element: ET.Element) -> tuple[float, float, float, float]:
+    center_x = float(element.attrib["cx"])
+    center_y = float(element.attrib["cy"])
+    radius = float(element.attrib["r"])
+    return center_x - radius, center_y - radius, 2 * radius, 2 * radius
+
+
+def _overlap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> bool:
+    first_x, first_y, first_width, first_height = first
+    second_x, second_y, second_width, second_height = second
+    return not (
+        first_x + first_width <= second_x
+        or second_x + second_width <= first_x
+        or first_y + first_height <= second_y
+        or second_y + second_height <= first_y
     )
 
 
@@ -217,6 +273,37 @@ class DeterministicSvgTests(unittest.TestCase):
             with self.subTest(chart=name):
                 for color in charts.PALETTE:
                     self.assertIn(color, svg)
+
+    def test_pareto_only_styles_do_not_change_the_other_chart_documents(self) -> None:
+        rendered = _render_all()
+
+        self.assertIn(".point-key{", rendered["pareto"])
+        self.assertIn(".status{", rendered["pareto"])
+        for name in ("bradley_terry", "calibration"):
+            with self.subTest(chart=name):
+                self.assertNotIn(".point-key{", rendered[name])
+                self.assertNotIn(".status{", rendered[name])
+
+    def test_checked_in_production_charts_match_the_generator(self) -> None:
+        selection, labels = _production_pareto_fixture()
+        manifest = json.loads(
+            (REPOSITORY_ROOT / "benchmarks/flagship_study/manifest.json")
+            .read_text(encoding="utf-8")
+        )
+        test = json.loads(
+            (REPOSITORY_ROOT / "benchmarks/flagship_study/data/test.json")
+            .read_text(encoding="utf-8")
+        )
+        rendered = {
+            "bradley_terry": charts.bradley_terry_svg(test, labels),
+            "pareto": charts.pareto_svg(selection, labels),
+            "calibration": charts.calibration_svg(test, labels),
+        }
+
+        for name, svg in rendered.items():
+            with self.subTest(chart=name):
+                path = REPOSITORY_ROOT / manifest["outputs"]["charts"][name]
+                self.assertEqual(svg, path.read_text(encoding="utf-8"))
 
     def test_no_chart_bytes_or_visible_labels_name_a_random_benchmark(self) -> None:
         for name, svg in _render_all().items():
@@ -280,19 +367,25 @@ class ParetoChartTests(unittest.TestCase):
     def test_selected_fixed_ineligible_and_frontier_encodings_are_distinct(self) -> None:
         svg = charts.pareto_svg(_selection_fixture(), LABELS)
         root = _parse(svg)
-        circles = root.findall(".//svg:circle", SVG)
-        by_fill = {circle.attrib["fill"]: circle.attrib for circle in circles}
+        circles = root.findall(".//svg:circle[@class='pareto-point']", SVG)
+        by_identifier = {
+            circle.attrib["data-config-id"]: circle.attrib for circle in circles
+        }
 
         self.assertEqual(len(circles), 4)
-        self.assertEqual(by_fill[charts.PALETTE[0]]["r"], "11")
-        self.assertEqual(by_fill[charts.PALETTE[0]]["stroke"], "#FFFFFF")
-        self.assertEqual(by_fill[charts.PALETTE[1]]["r"], "7")
-        self.assertEqual(by_fill[charts.PALETTE[1]]["stroke"], "#FFFFFF")
-        self.assertEqual(by_fill[charts.PALETTE[2]]["fill-opacity"], "0.42")
-        self.assertEqual(by_fill[charts.PALETTE[2]]["stroke"], "#555555")
-        self.assertEqual(by_fill[charts.PALETTE[3]]["r"], "11")
-        self.assertEqual(by_fill[charts.PALETTE[3]]["fill-opacity"], "0.42")
-        self.assertEqual(by_fill[charts.PALETTE[3]]["stroke"], "#111111")
+        self.assertEqual(by_identifier["mcts-2000"]["fill"], charts.PALETTE[2])
+        self.assertEqual(by_identifier["mcts-2000"]["r"], "11")
+        self.assertEqual(by_identifier["mcts-2000"]["stroke"], "#FFFFFF")
+        self.assertEqual(by_identifier["alpha-beta-50k"]["fill"], charts.PALETTE[0])
+        self.assertEqual(by_identifier["alpha-beta-50k"]["r"], "7")
+        self.assertEqual(by_identifier["alpha-beta-50k"]["stroke"], "#FFFFFF")
+        self.assertEqual(by_identifier["jacek-50k"]["fill"], charts.PALETTE[1])
+        self.assertEqual(by_identifier["jacek-50k"]["fill-opacity"], "0.42")
+        self.assertEqual(by_identifier["jacek-50k"]["stroke"], "#555555")
+        self.assertEqual(by_identifier["rank5-fixed-50k"]["fill"], charts.PALETTE[3])
+        self.assertEqual(by_identifier["rank5-fixed-50k"]["r"], "11")
+        self.assertEqual(by_identifier["rank5-fixed-50k"]["fill-opacity"], "0.42")
+        self.assertEqual(by_identifier["rank5-fixed-50k"]["stroke"], "#111111")
 
         frontier = [
             element for element in root.findall(".//svg:path", SVG)
@@ -306,14 +399,150 @@ class ParetoChartTests(unittest.TestCase):
         self.assertIn("faded points miss the gate", svg)
         self.assertIn("line is the constrained frontier", svg)
         self.assertIn("Vertical bars are pair-bootstrap 95% intervals", svg)
-        self.assertIn("strength n=200 pairs; latency n=4200 decisions", svg)
         self.assertIn(
-            "defined reference; strength n=N/A; fresh-root latency n=2100 decisions",
+            "score 63.0% [57.0%, 69.0%] · p95 31.0 ms · "
+            "n=200 pairs / 4,200 decisions",
             svg,
         )
+        self.assertIn(
+            "defined score 50.0% (strength n=N/A) · fresh-root p95 52.0 ms · "
+            "n=2,100 decisions",
+            svg,
+        )
+        for status in (
+            "constrained Pareto",
+            "unconstrained Pareto",
+            "gate rejected",
+            "unconstrained dominated",
+            "selected",
+            "fixed",
+        ):
+            self.assertIn(status, svg)
         self.assertEqual(
             len(root.findall(".//svg:line[@class='strength-ci']", SVG)), 3
         )
+
+    def test_rendering_is_invariant_to_pareto_input_order(self) -> None:
+        selection = _selection_fixture()
+        reversed_selection = copy.deepcopy(selection)
+        reversed_selection["validation_pareto"].reverse()
+
+        self.assertEqual(
+            charts.pareto_svg(selection, LABELS),
+            charts.pareto_svg(reversed_selection, LABELS),
+        )
+
+    def test_production_callouts_and_detail_rows_are_collision_free(self) -> None:
+        selection, labels = _production_pareto_fixture()
+        svg = charts.pareto_svg(selection, labels)
+        root = _parse(svg)
+
+        self.assertEqual(root.attrib["width"], "1600")
+        self.assertEqual(root.attrib["height"], "860")
+        self.assertEqual(root.attrib["viewBox"], "0 0 1600 860")
+        callouts = root.findall(".//svg:rect[@class='pareto-callout']", SVG)
+        details = root.findall(".//svg:rect[@class='pareto-detail-row']", SVG)
+        detail_groups = root.findall(".//svg:g[@class='pareto-detail']", SVG)
+        points = root.findall(".//svg:circle[@class='pareto-point']", SVG)
+        self.assertEqual(len(callouts), 10)
+        self.assertEqual(len(details), 10)
+        self.assertEqual(len(detail_groups), 10)
+        self.assertEqual(len(points), 10)
+
+        callout_rectangles = [_rectangle(element) for element in callouts]
+        detail_rectangles = [_rectangle(element) for element in details]
+        point_rectangles = [_point_rectangle(element) for element in points]
+        for rectangle in callout_rectangles:
+            x, y, width, height = rectangle
+            self.assertGreaterEqual(x, 120.0)
+            self.assertGreaterEqual(y, 155.0)
+            self.assertLessEqual(x + width, 920.0)
+            self.assertLessEqual(y + height, 690.0)
+        for rectangle in detail_rectangles:
+            x, y, width, height = rectangle
+            self.assertGreaterEqual(x, 980.0)
+            self.assertLessEqual(x + width, 1570.0)
+            self.assertGreaterEqual(y, 0.0)
+            self.assertLessEqual(y + height, 860.0)
+        for rectangles in (callout_rectangles, detail_rectangles):
+            for index, first in enumerate(rectangles):
+                for second in rectangles[index + 1:]:
+                    self.assertFalse(_overlap(first, second))
+        for callout in callout_rectangles:
+            for point in point_rectangles:
+                self.assertFalse(_overlap(callout, point))
+
+        point_identifiers = {point.attrib["data-config-id"] for point in points}
+        expected_identifiers = {
+            point["id"] for point in selection["validation_pareto"]
+        }
+        self.assertEqual(point_identifiers, expected_identifiers)
+        details_by_identifier = {
+            group.attrib["data-config-id"]: "".join(group.itertext())
+            for group in detail_groups
+        }
+        for point in selection["validation_pareto"]:
+            row = details_by_identifier[point["id"]]
+            self.assertIn(labels[point["id"]], row)
+            self.assertIn(
+                f"{point['validation_latency_decisions']:,} decisions", row
+            )
+            if point["fixed"]:
+                self.assertIn("strength n=N/A", row)
+                self.assertIn("fresh-root p95", row)
+            else:
+                interval = point["validation_strength_pair_bootstrap_95"]
+                self.assertIn(
+                    f"score {100 * point['validation_strength']:.1f}% "
+                    f"[{100 * interval['lower']:.1f}%, "
+                    f"{100 * interval['upper']:.1f}%]",
+                    row,
+                )
+                self.assertIn(
+                    f"n={point['validation_strength_pairs']:,} pairs", row
+                )
+            expected_status = (
+                "constrained Pareto" if point["constrained_pareto_optimal"]
+                else "constrained dominated" if point["gate_eligible"]
+                else "gate rejected"
+            )
+            expected_status += " · " + (
+                "unconstrained Pareto" if point["unconstrained_pareto_optimal"]
+                else "unconstrained dominated"
+            )
+            if point["selected"]:
+                expected_status += " · selected"
+            if point["fixed"]:
+                expected_status += " · fixed"
+            self.assertTrue(row.endswith(expected_status), row)
+
+    def test_dense_points_still_receive_distinct_in_bounds_callouts(self) -> None:
+        selection = _selection_fixture()
+        for index, point in enumerate(selection["validation_pareto"]):
+            point["validation_p95_ms"] = 49.5 + index * 0.05
+            point["validation_strength"] = 0.60 + index * 0.001
+            if not point["fixed"]:
+                point["validation_strength_pair_bootstrap_95"] = {
+                    "lower": 0.55,
+                    "upper": 0.65,
+                }
+        root = _parse(charts.pareto_svg(selection, LABELS))
+        callouts = root.findall(".//svg:rect[@class='pareto-callout']", SVG)
+        points = root.findall(".//svg:circle[@class='pareto-point']", SVG)
+        rectangles = [_rectangle(element) for element in callouts]
+        point_rectangles = [_point_rectangle(element) for element in points]
+
+        self.assertEqual(len(rectangles), 4)
+        for index, first in enumerate(rectangles):
+            x, y, width, height = first
+            self.assertGreaterEqual(x, 120.0)
+            self.assertGreaterEqual(y, 155.0)
+            self.assertLessEqual(x + width, 920.0)
+            self.assertLessEqual(y + height, 690.0)
+            for second in rectangles[index + 1:]:
+                self.assertFalse(_overlap(first, second))
+            for point in point_rectangles:
+                self.assertFalse(_overlap(first, point))
 
 
 class CalibrationChartTests(unittest.TestCase):

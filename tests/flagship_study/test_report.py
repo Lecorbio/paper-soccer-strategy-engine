@@ -523,6 +523,7 @@ class ReportTests(unittest.TestCase):
 
     def test_prospective_recovery_lineage_and_hashes_are_published(self) -> None:
         fixture = list(_fixture())
+        fixture[0]["study"]["id"] = "competitive-demo-bots-flagship-2026-v4"
         fixture[0]["supersession"] = {
             "failure_record_path": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
             "failure_record_sha256": "d" * 64,
@@ -552,6 +553,18 @@ class ReportTests(unittest.TestCase):
         self.assertIn("[benchmarks/flagship_study/V3_VALIDATION_FAILURE.md]", rendered)
         self.assertIn(
             "[benchmarks/flagship_study/superseded/manifest-predecessor.json]",
+            rendered,
+        )
+        self.assertIn("Presentation-only correction (2026-08-04)", rendered)
+        self.assertIn("collision-free keyed callouts", rendered)
+        self.assertIn("Plotted data values, uncertainty intervals", rendered)
+        self.assertIn("flagship-study-v4-record", rendered)
+        self.assertIn(
+            "31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813",
+            rendered,
+        )
+        self.assertIn(
+            "no arena, test, calibration, or statistical analysis was rerun",
             rendered,
         )
 

@@ -1140,6 +1140,25 @@ def render_markdown_report(
     else:
         lines.append("- No additional preregistered negative finding was recorded.")
 
+    pareto_layout_note = (
+        "- The validation Pareto SVG uses compact plot keys and a structured detail "
+        "panel; the immediately preceding table remains the canonical textual listing "
+        "of every point identity, sample size, interval, and status."
+    )
+    if (
+        study.get("id") == "competitive-demo-bots-flagship-2026-v4"
+        and supersession is not None
+    ):
+        pareto_layout_note = (
+            "- Presentation-only correction (2026-08-04): the validation Pareto "
+            "chart moved annotations into collision-free keyed callouts and a "
+            "structured detail panel. Plotted data values, uncertainty intervals, "
+            "selection, and constrained/unconstrained classifications are unchanged. "
+            "The original frozen SVG remains recoverable from tag "
+            "`flagship-study-v4-record` (SHA-256 "
+            "`31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813`); "
+            "no arena, test, calibration, or statistical analysis was rerun."
+        )
     lines.extend([
         "",
         "## Limitations and threats to validity",
@@ -1150,7 +1169,7 @@ def render_markdown_report(
         "- Calibration decisions within a game are dependent; prediction counts are not independent-game sample sizes.",
         "- The hand-versus-neural comparison changes the evaluator within a shared search family and does not isolate every implementation interaction.",
         f"- {studylib.PUBLIC_RANK5_LABEL} is measured only under demo rules and its fixed-work profile, as stated in the provenance disclaimer.",
-        "- The frozen validation Pareto SVG has dense annotations at its native viewport; the immediately preceding table is the canonical readable listing of every point identity, sample size, interval, and status. The plot was not revised after test access.",
+        pareto_layout_note,
         "",
         "## Exact reproduction commands",
         "",

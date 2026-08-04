@@ -38,7 +38,8 @@ def _positive_integer(value: Any, name: str) -> int:
 
 
 def _document(title: str, description: str, content: str,
-              *, width: int = 1200, height: int = 760) -> str:
+              *, width: int = 1200, height: int = 760,
+              extra_style: str = "") -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
@@ -49,7 +50,8 @@ def _document(title: str, description: str, content: str,
         '<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
         f'fill:{TEXT}}}.title{{font-size:28px;font-weight:700}}.subtitle{{font-size:15px;'
         f'fill:{MUTED}}}.axis{{font-size:14px;fill:{MUTED}}}.label{{font-size:16px}}'
-        '.small{font-size:13px}.legend{font-size:14px}</style>\n'
+        '.small{font-size:13px}.legend{font-size:14px}'
+        f'{extra_style}</style>\n'
         f'{content}</svg>\n'
     )
 
@@ -124,6 +126,63 @@ def bradley_terry_svg(analysis: Mapping[str, Any],
     )
 
 
+_PARETO_FAMILY_ORDER = {"mcts": 0, "alpha-beta": 1, "jacek": 2, "rank5": 3}
+_PARETO_FAMILY_COLORS = {
+    "alpha-beta": PALETTE[0],
+    "jacek": PALETTE[1],
+    "mcts": PALETTE[2],
+    "rank5": PALETTE[3],
+}
+
+
+def _pareto_family(identifier: str) -> str:
+    if identifier.startswith("alpha-beta-"):
+        return "alpha-beta"
+    if identifier.startswith("jacek-"):
+        return "jacek"
+    if identifier.startswith("mcts-"):
+        return "mcts"
+    if identifier.startswith("rank5-"):
+        return "rank5"
+    raise ChartError(f"unsupported Pareto configuration family: {identifier}")
+
+
+def _pareto_budget(identifier: str) -> int:
+    suffix = identifier.rsplit("-", 1)[-1]
+    digits = "".join(character for character in suffix if character.isdigit())
+    if not digits:
+        raise ChartError(f"Pareto configuration lacks a numeric budget: {identifier}")
+    value = int(digits)
+    return value * 1000 if suffix.endswith("k") else value
+
+
+def _pareto_key(identifier: str) -> str:
+    prefix = {
+        "mcts": "M",
+        "alpha-beta": "H",
+        "jacek": "N",
+        "rank5": "R",
+    }[_pareto_family(identifier)]
+    budget = _pareto_budget(identifier)
+    return f"{prefix}{budget // 1000}k" if budget >= 1000 else f"{prefix}{budget}"
+
+
+def _rectangles_overlap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+    *,
+    padding: float = 0.0,
+) -> bool:
+    first_x, first_y, first_width, first_height = first
+    second_x, second_y, second_width, second_height = second
+    return not (
+        first_x + first_width + padding <= second_x
+        or second_x + second_width + padding <= first_x
+        or first_y + first_height + padding <= second_y
+        or second_y + second_height + padding <= first_y
+    )
+
+
 def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
     points = selection.get("validation_pareto")
     if not isinstance(points, Sequence) or not points:
@@ -132,6 +191,7 @@ def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
     for point in points:
         if not isinstance(point, Mapping):
             raise ChartError("invalid Pareto point")
+        identifier = str(point["id"])
         fixed = bool(point["fixed"])
         strength = 100.0 * _finite(
             point["validation_strength"], "validation_strength"
@@ -163,17 +223,24 @@ def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
                 raise ChartError("Pareto strength interval is invalid")
             interval = (lower, upper)
         normalized.append({
-            "id": str(point["id"]),
+            "id": identifier,
+            "family": _pareto_family(identifier),
+            "budget": _pareto_budget(identifier),
             "latency": _finite(point["validation_p95_ms"], "validation_p95_ms"),
             "strength": strength,
             "interval": interval,
             "pairs": pairs,
             "latency_decisions": latency_decisions,
             "optimal": bool(point["constrained_pareto_optimal"]),
+            "unconstrained": bool(point["unconstrained_pareto_optimal"]),
             "eligible": bool(point["gate_eligible"]),
             "selected": bool(point["selected"]),
             "fixed": fixed,
         })
+    normalized.sort(key=lambda point: (
+        _PARETO_FAMILY_ORDER[point["family"]], point["budget"], point["id"]
+    ))
+
     x_max = max(60.0, max(point["latency"] for point in normalized) * 1.12)
     strengths = [
         bound
@@ -188,7 +255,9 @@ def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
     if y_max - y_min < 20.0:
         center = (y_min + y_max) / 2.0
         y_min, y_max = max(0.0, center - 10.0), min(100.0, center + 10.0)
-    left, right, top, bottom = 120.0, 1120.0, 155.0, 640.0
+    width, height = 1600, 860
+    left, right, top, bottom = 120.0, 920.0, 155.0, 690.0
+    detail_left, detail_right = 980.0, 1570.0
 
     def x(value: float) -> float:
         return left + value / x_max * (right - left)
@@ -196,21 +265,84 @@ def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
     def y(value: float) -> float:
         return bottom - (value - y_min) / (y_max - y_min) * (bottom - top)
 
+    def point_status(point: Mapping[str, Any]) -> str:
+        constrained = (
+            "constrained Pareto"
+            if point["optimal"] else (
+                "constrained dominated" if point["eligible"] else "gate rejected"
+            )
+        )
+        values = [
+            constrained,
+            "unconstrained Pareto"
+            if point["unconstrained"] else "unconstrained dominated",
+        ]
+        if point["selected"]:
+            values.append("selected")
+        if point["fixed"]:
+            values.append("fixed")
+        return " · ".join(values)
+
+    def point_metrics(point: Mapping[str, Any]) -> str:
+        if point["fixed"]:
+            return (
+                f"defined score {point['strength']:.1f}% (strength n=N/A) · "
+                f"fresh-root p95 {point['latency']:.1f} ms · "
+                f"n={point['latency_decisions']:,} decisions"
+            )
+        lower, upper = point["interval"]
+        return (
+            f"score {point['strength']:.1f}% [{lower:.1f}%, {upper:.1f}%] · "
+            f"p95 {point['latency']:.1f} ms · n={point['pairs']:,} pairs / "
+            f"{point['latency_decisions']:,} decisions"
+        )
+
+    geometry: dict[str, dict[str, Any]] = {}
+    for point in normalized:
+        color = _PARETO_FAMILY_COLORS[point["family"]]
+        geometry[point["id"]] = {
+            "x": x(point["latency"]),
+            "y": y(point["strength"]),
+            "color": color,
+            "opacity": "1" if point["eligible"] else "0.42",
+            "radius": 11 if point["selected"] else 7,
+            "stroke": (
+                "#111111" if point["fixed"]
+                else ("#FFFFFF" if point["optimal"] else "#555555")
+            ),
+        }
+
     parts = [
         '<text class="title" x="60" y="58">Validation strength vs latency</text>',
         '<text class="subtitle" x="60" y="88">Common-opponent pair score; native single-thread p95</text>',
     ]
     for index in range(7):
         value = index * x_max / 6
-        parts.append(f'<line x1="{x(value):.2f}" y1="{top}" x2="{x(value):.2f}" y2="{bottom}" stroke="{GRID}"/>')
-        parts.append(f'<text class="axis" x="{x(value):.2f}" y="{bottom + 28}" text-anchor="middle">{value:.0f}</text>')
+        parts.append(
+            f'<line x1="{x(value):.2f}" y1="{top}" x2="{x(value):.2f}" '
+            f'y2="{bottom}" stroke="{GRID}"/>'
+        )
+        parts.append(
+            f'<text class="axis" x="{x(value):.2f}" y="{bottom + 28}" '
+            f'text-anchor="middle">{value:.0f}</text>'
+        )
     for index in range(6):
         value = y_min + index * (y_max - y_min) / 5
-        parts.append(f'<line x1="{left}" y1="{y(value):.2f}" x2="{right}" y2="{y(value):.2f}" stroke="{GRID}"/>')
-        parts.append(f'<text class="axis" x="{left - 12}" y="{y(value) + 5:.2f}" text-anchor="end">{value:.0f}%</text>')
-    parts.append(f'<line x1="{x(50):.2f}" y1="{top}" x2="{x(50):.2f}" y2="{bottom}" '
-                 'stroke="#E69F00" stroke-width="3" stroke-dasharray="8 6"/>')
-    parts.append(f'<text class="small" x="{x(50) + 8:.2f}" y="{top + 18}">50 ms gate</text>')
+        parts.append(
+            f'<line x1="{left}" y1="{y(value):.2f}" x2="{right}" '
+            f'y2="{y(value):.2f}" stroke="{GRID}"/>'
+        )
+        parts.append(
+            f'<text class="axis" x="{left - 12}" y="{y(value) + 5:.2f}" '
+            f'text-anchor="end">{value:.0f}%</text>'
+        )
+    parts.append(
+        f'<line x1="{x(50):.2f}" y1="{top}" x2="{x(50):.2f}" y2="{bottom}" '
+        'stroke="#E69F00" stroke-width="3" stroke-dasharray="8 6"/>'
+    )
+    parts.append(
+        f'<text class="small" x="{x(50) + 8:.2f}" y="{top + 18}">50 ms gate</text>'
+    )
     frontier = sorted(
         (point for point in normalized if point["optimal"]),
         key=lambda point: point["latency"],
@@ -221,67 +353,191 @@ def pareto_svg(selection: Mapping[str, Any], labels: Mapping[str, str]) -> str:
             + f" {x(point['latency']):.2f} {y(point['strength']):.2f}"
             for index, point in enumerate(frontier)
         )
-        parts.append(f'<path d="{path}" fill="none" stroke="#666666" stroke-width="2"/>')
-    family_colors: dict[str, str] = {}
+        parts.append(
+            f'<path d="{path}" fill="none" stroke="#666666" stroke-width="2"/>'
+        )
+
     for point in normalized:
-        identifier = point["id"]
-        latency = point["latency"]
-        strength = point["strength"]
-        optimal = point["optimal"]
-        eligible = point["eligible"]
-        selected = point["selected"]
-        fixed = point["fixed"]
-        family = identifier.split("-")[0]
-        if identifier.startswith("alpha-beta"):
-            family = "alpha-beta"
-        if identifier.startswith("rank5"):
-            family = "rank5"
-        if family not in family_colors:
-            family_colors[family] = PALETTE[len(family_colors) % len(PALETTE)]
-        color = family_colors[family]
-        opacity = "1" if eligible else "0.42"
-        radius = 11 if selected else 7
-        stroke = "#111111" if fixed else ("#FFFFFF" if optimal else "#555555")
-        if point["interval"] is not None:
-            lower, upper = point["interval"]
-            interval_x = x(latency)
+        if point["interval"] is None:
+            continue
+        lower, upper = point["interval"]
+        marker = geometry[point["id"]]
+        parts.append(
+            f'<line class="strength-ci" x1="{marker["x"]:.2f}" '
+            f'y1="{y(lower):.2f}" x2="{marker["x"]:.2f}" y2="{y(upper):.2f}" '
+            f'stroke="{marker["color"]}" stroke-opacity="{marker["opacity"]}" '
+            'stroke-width="2"/>'
+        )
+        for bound in (lower, upper):
             parts.append(
-                f'<line class="strength-ci" x1="{interval_x:.2f}" y1="{y(lower):.2f}" '
-                f'x2="{interval_x:.2f}" y2="{y(upper):.2f}" stroke="{color}" '
-                f'stroke-opacity="{opacity}" stroke-width="2"/>'
+                f'<line class="strength-ci-cap" x1="{marker["x"] - 5:.2f}" '
+                f'y1="{y(bound):.2f}" x2="{marker["x"] + 5:.2f}" '
+                f'y2="{y(bound):.2f}" stroke="{marker["color"]}" '
+                f'stroke-opacity="{marker["opacity"]}" stroke-width="2"/>'
             )
-            for bound in (lower, upper):
-                parts.append(
-                    f'<line class="strength-ci-cap" x1="{interval_x - 5:.2f}" '
-                    f'y1="{y(bound):.2f}" x2="{interval_x + 5:.2f}" '
-                    f'y2="{y(bound):.2f}" stroke="{color}" '
-                    f'stroke-opacity="{opacity}" stroke-width="2"/>'
-                )
-        parts.append(f'<circle cx="{x(latency):.2f}" cy="{y(strength):.2f}" r="{radius}" '
-                     f'fill="{color}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="2"/>')
-        label = labels.get(identifier, identifier)
-        parts.append(f'<text class="small" x="{x(latency) + 12:.2f}" y="{y(strength) - 9:.2f}">{_escape(label)}</text>')
-        sample_label = (
-            f"defined reference; strength n=N/A; fresh-root latency "
-            f"n={point['latency_decisions']} decisions"
-            if fixed else (
-                f"strength n={point['pairs']} pairs; latency "
-                f"n={point['latency_decisions']} decisions"
+
+    point_obstacles = {
+        identifier: (
+            marker["x"] - marker["radius"] - 4,
+            marker["y"] - marker["radius"] - 4,
+            2 * marker["radius"] + 8,
+            2 * marker["radius"] + 8,
+        )
+        for identifier, marker in geometry.items()
+    }
+    callouts: dict[str, tuple[float, float, float, float]] = {}
+    occupied: list[tuple[float, float, float, float]] = []
+    placement_order = sorted(normalized, key=lambda point: (
+        not (point["selected"] or point["fixed"]), point["id"]
+    ))
+    for point in placement_order:
+        marker = geometry[point["id"]]
+        key = _pareto_key(point["id"])
+        callout_width = max(34.0, 14.0 + 7.0 * len(key))
+        callout_height = 22.0
+        candidates = [
+            (marker["x"] + 14, marker["y"] - 30),
+            (marker["x"] + 14, marker["y"] + 8),
+            (marker["x"] - callout_width - 14, marker["y"] - 30),
+            (marker["x"] - callout_width - 14, marker["y"] + 8),
+            (marker["x"] + 30, marker["y"] - 54),
+            (marker["x"] + 30, marker["y"] + 32),
+            (marker["x"] - callout_width - 30, marker["y"] - 54),
+            (marker["x"] - callout_width - 30, marker["y"] + 32),
+        ]
+        grid_candidates = [
+            (column_x, grid_y)
+            for column_x in (left + 8, right - callout_width - 8)
+            for grid_y in (
+                top + 8 + index * (callout_height + 6)
+                for index in range(int((bottom - top - 16) // (callout_height + 6)))
             )
+        ]
+        grid_candidates.sort(key=lambda value: (
+            (value[0] - marker["x"]) ** 2 + (value[1] - marker["y"]) ** 2,
+            value[1], value[0],
+        ))
+        candidates.extend(grid_candidates)
+        chosen: tuple[float, float, float, float] | None = None
+        for candidate_x, candidate_y in candidates:
+            candidate = (
+                candidate_x, candidate_y, callout_width, callout_height
+            )
+            if (
+                candidate_x < left + 2
+                or candidate_y < top + 2
+                or candidate_x + callout_width > right - 2
+                or candidate_y + callout_height > bottom - 2
+            ):
+                continue
+            if any(
+                _rectangles_overlap(candidate, existing, padding=4)
+                for existing in occupied
+            ):
+                continue
+            if any(
+                _rectangles_overlap(candidate, obstacle, padding=2)
+                for obstacle in point_obstacles.values()
+            ):
+                continue
+            chosen = candidate
+            break
+        if chosen is None:
+            raise ChartError(f"cannot place Pareto callout for {point['id']}")
+        callouts[point["id"]] = chosen
+        occupied.append(chosen)
+
+    for point in normalized:
+        marker = geometry[point["id"]]
+        callout_x, callout_y, callout_width, callout_height = callouts[point["id"]]
+        callout_center_x = callout_x + callout_width / 2
+        callout_center_y = callout_y + callout_height / 2
+        if marker["x"] < callout_x:
+            line_x, line_y = callout_x, callout_center_y
+        elif marker["x"] > callout_x + callout_width:
+            line_x, line_y = callout_x + callout_width, callout_center_y
+        elif marker["y"] < callout_y:
+            line_x, line_y = callout_center_x, callout_y
+        else:
+            line_x, line_y = callout_center_x, callout_y + callout_height
+        parts.append(
+            f'<line class="pareto-callout-leader" x1="{marker["x"]:.2f}" '
+            f'y1="{marker["y"]:.2f}" x2="{line_x:.2f}" y2="{line_y:.2f}" '
+            f'stroke="{marker["color"]}" stroke-opacity="{marker["opacity"]}" '
+            'stroke-width="1.5"/>'
+        )
+
+    for point in normalized:
+        marker = geometry[point["id"]]
+        title = (
+            f"{labels.get(point['id'], point['id'])}; {point_metrics(point)}; "
+            f"{point_status(point)}"
         )
         parts.append(
-            f'<text class="small" x="{x(latency) + 12:.2f}" '
-            f'y="{y(strength) + 10:.2f}">{_escape(sample_label)}</text>'
+            f'<circle class="pareto-point" data-config-id="{_escape(point["id"])}" '
+            f'cx="{marker["x"]:.2f}" cy="{marker["y"]:.2f}" '
+            f'r="{marker["radius"]}" fill="{marker["color"]}" '
+            f'fill-opacity="{marker["opacity"]}" stroke="{marker["stroke"]}" '
+            f'stroke-width="2"><title>{_escape(title)}</title></circle>'
         )
+        callout_x, callout_y, callout_width, callout_height = callouts[point["id"]]
+        parts.append(
+            f'<rect class="pareto-callout" data-config-id="{_escape(point["id"])}" '
+            f'x="{callout_x:.2f}" y="{callout_y:.2f}" width="{callout_width:.2f}" '
+            f'height="{callout_height:.2f}" rx="4" fill="{BACKGROUND}" '
+            f'fill-opacity="0.96" stroke="{marker["color"]}" stroke-width="2"/>'
+        )
+        parts.append(
+            f'<text class="point-key" x="{callout_x + callout_width / 2:.2f}" '
+            f'y="{callout_y + 15:.2f}" text-anchor="middle">'
+            f'{_escape(_pareto_key(point["id"]))}</text>'
+        )
+
+    parts.extend([
+        '<line x1="955" y1="120" x2="955" y2="705" stroke="#B8B8B8"/>',
+        f'<text class="label" x="{detail_left}" y="140">Configuration details</text>',
+        f'<text class="axis" x="{detail_left}" y="162">Validation score, 95% interval, p95, sample sizes, and status</text>',
+    ])
+    for index, point in enumerate(normalized):
+        row_y = 190.0 + index * 52.0
+        marker = geometry[point["id"]]
+        row_fill = "#F7F8F9" if index % 2 == 0 else BACKGROUND
+        parts.append(
+            f'<g class="pareto-detail" data-config-id="{_escape(point["id"])}">'
+            f'<rect class="pareto-detail-row" x="{detail_left}" y="{row_y - 17:.2f}" '
+            f'width="{detail_right - detail_left:.2f}" height="52" fill="{row_fill}"/>'
+            f'<rect x="{detail_left + 8:.2f}" y="{row_y - 15:.2f}" width="44" '
+            f'height="20" rx="4" fill="{BACKGROUND}" stroke="{marker["color"]}" '
+            f'stroke-width="2"/>'
+            f'<text class="point-key" x="{detail_left + 30:.2f}" y="{row_y:.2f}" '
+            f'text-anchor="middle">{_escape(_pareto_key(point["id"]))}</text>'
+            f'<text class="legend" x="{detail_left + 62:.2f}" y="{row_y:.2f}">'
+            f'{_escape(labels.get(point["id"], point["id"]))}</text>'
+            f'<text class="small" x="{detail_left + 62:.2f}" y="{row_y + 17:.2f}">'
+            f'{_escape(point_metrics(point))}</text>'
+            f'<text class="status" x="{detail_left + 62:.2f}" y="{row_y + 34:.2f}">'
+            f'{_escape(point_status(point))}</text></g>'
+        )
+
     parts += [
-        f'<text class="axis" x="{(left + right) / 2:.2f}" y="704" text-anchor="middle">Validation p95 decision latency (ms; Rank5DerivedBot — fixed 50k demo profile uses fresh-root searches)</text>',
-        f'<text class="axis" x="28" y="{(top + bottom) / 2:.2f}" transform="rotate(-90 28 {(top + bottom) / 2:.2f})" text-anchor="middle">Mean color-swapped pair score vs Rank5DerivedBot — fixed 50k demo profile</text>',
-        '<text class="subtitle" x="60" y="738">Vertical bars are pair-bootstrap 95% intervals; large points are selected; black outlines mark fixed; faded points miss the gate; the line is the constrained frontier.</text>',
+        f'<text class="axis" x="{(left + right) / 2:.2f}" y="748" '
+        'text-anchor="middle">Validation p95 decision latency (ms; Rank5DerivedBot — fixed 50k demo profile uses fresh-root searches)</text>',
+        f'<text class="axis" x="28" y="{(top + bottom) / 2:.2f}" '
+        f'transform="rotate(-90 28 {(top + bottom) / 2:.2f})" text-anchor="middle">'
+        'Mean color-swapped pair score vs Rank5DerivedBot — fixed 50k demo profile</text>',
+        '<text class="subtitle" x="60" y="810">Vertical bars are pair-bootstrap 95% intervals; large points are selected; black outlines mark fixed; faded points miss the gate; the line is the constrained frontier.</text>',
+        '<text class="subtitle" x="60" y="835">Compact plot keys map to the collision-free detail panel; all values and classifications use development/validation data only.</text>',
     ]
     return _document(
         "Validation strength versus p95 latency",
-        "Validation-only constrained Pareto frontier with candidate pair-bootstrap intervals, sample sizes, a fifty millisecond gate, and the Rank5DerivedBot — fixed 50k demo profile reference point.",
+        "Validation-only constrained Pareto frontier with collision-free keyed callouts, detailed side-panel metrics, pair-bootstrap intervals, sample sizes, a fifty millisecond gate, and the Rank5DerivedBot — fixed 50k demo profile reference point.",
         "\n".join(parts),
+        width=width,
+        height=height,
+        extra_style=(
+            '.point-key{font-size:11px;font-weight:700}'
+            f'.status{{font-size:12px;fill:{MUTED}}}'
+        ),
     )
 
 

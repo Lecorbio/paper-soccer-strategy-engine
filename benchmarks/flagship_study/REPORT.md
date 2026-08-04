@@ -239,7 +239,7 @@ The constrained frontier includes only configurations at or below the 50 ms gate
 - Calibration decisions within a game are dependent; prediction counts are not independent-game sample sizes.
 - The hand-versus-neural comparison changes the evaluator within a shared search family and does not isolate every implementation interaction.
 - Rank5DerivedBot — fixed 50k demo profile is measured only under demo rules and its fixed-work profile, as stated in the provenance disclaimer.
-- The frozen validation Pareto SVG has dense annotations at its native viewport; the immediately preceding table is the canonical readable listing of every point identity, sample size, interval, and status. The plot was not revised after test access.
+- Presentation-only correction (2026-08-04): the validation Pareto chart moved annotations into collision-free keyed callouts and a structured detail panel. Plotted data values, uncertainty intervals, selection, and constrained/unconstrained classifications are unchanged. The original frozen SVG remains recoverable from tag `flagship-study-v4-record` (SHA-256 `31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813`); no arena, test, calibration, or statistical analysis was rerun.
 
 ## Exact reproduction commands
 
@@ -351,7 +351,7 @@ Source commit: `2c023167e4ed8b3d7b887c363b6ec4b431db2dd9`
 | [benchmarks/flagship_study/analysis_contract.md](analysis_contract.md) | `e37f0706cc10d337401f8d459a2f47182681bffa046c80013d4fa1f3ab341115` |
 | [benchmarks/flagship_study/charts/test_bradley_terry.svg](charts/test_bradley_terry.svg) | `4f0a701c2f980599618682fd436a441f21c2de86e3eb3faaf1f89cf780257e18` |
 | [benchmarks/flagship_study/charts/test_calibration.svg](charts/test_calibration.svg) | `8db847675af20365ba7fdca6fd087064761d9f474df34ab5efba2413dc6f6097` |
-| [benchmarks/flagship_study/charts/validation_pareto.svg](charts/validation_pareto.svg) | `31e33102f42cbedfb9059b2a9b1c7dd44d97e0906098c7bf778422d3db5c7813` |
+| [benchmarks/flagship_study/charts/validation_pareto.svg](charts/validation_pareto.svg) | `a5c525f838b24f3f41582efbb94e75862b647c3007c0d0a14fdf068006eaa482` |
 | [benchmarks/flagship_study/data/development.json](data/development.json) | `8fbe8db7d139790dec05f6475e5f668868050dd5d3dd752de57d9e01505aa44b` |
 | [benchmarks/flagship_study/data/test.json](data/test.json) | `3c966d24ad594dc53172efcea48ba532451b9777c784a126ab95ae54d05430ba` |
 | [benchmarks/flagship_study/data/validation.json](data/validation.json) | `12d16cf3f6a942de5779465aa3b8043cc102961a50b89e79bfeaca36e59b3de8` |
