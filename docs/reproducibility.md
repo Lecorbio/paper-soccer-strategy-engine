@@ -143,6 +143,30 @@ generated JavaScript is expected to be marked as generated for repository
 language statistics; the C++ and hand-written JavaScript around it remain
 maintained source.
 
+## Benchmark website snapshot
+
+`web/benchmarks/benchmark-results.js` is a compact, deterministic publication
+of the frozen flagship study. It is generated from the study manifest,
+selection lock, and curated test data, and contains bot-performance results
+only. It deliberately excludes individual games, execution environments,
+timestamps, and hashes.
+
+Check that the published snapshot is current without changing it:
+
+```bash
+python3 benchmarks/flagship_study/web_summary.py --check
+```
+
+After intentionally changing the source benchmark artifacts or the publication
+contract, regenerate the snapshot with:
+
+```bash
+python3 benchmarks/flagship_study/web_summary.py --write
+```
+
+The generator validates that the study is frozen, complete, and tied to the
+selected configurations before it publishes anything.
+
 ## Jacek-inspired model
 
 The checked-in model JSON and generated C++ header are bound by hashes and a
@@ -234,11 +258,12 @@ Before publishing documentation or code that changes evidence paths:
 1. Run `./scripts/build-and-test.sh`.
 2. Run the rank-5 generator `--check` and verify the expected SHA-256.
 3. With Emscripten 6.0.2, run `check_papersoccer_web` if browser C++ changed.
-4. Run the Python import validation and model generator check if research code
+4. Run `web_summary.py --check` if benchmark inputs or presentation changed.
+5. Run the Python import validation and model generator check if research code
    or dependencies changed.
-5. Confirm raw outputs remain under ignored `results/` and curated reports
+6. Confirm raw outputs remain under ignored `results/` and curated reports
    remain tracked under `benchmarks/`.
-6. Recheck Markdown links from their containing file; paths inside `docs/`
+7. Recheck Markdown links from their containing file; paths inside `docs/`
    require `../` to reach repository-root artifacts.
-7. Review claims against [Experiments](experiments.md) and the specialized
+8. Review claims against [Experiments](experiments.md) and the specialized
    source records, preserving limitations and bot provenance.

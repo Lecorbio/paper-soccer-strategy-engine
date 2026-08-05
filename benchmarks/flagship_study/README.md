@@ -43,10 +43,21 @@ python3 benchmarks/flagship_study/run_study.py validate
 
 ## Published artifacts
 
-Start with [`REPORT.md`](REPORT.md) for the bot-performance results. The
-machine-readable development, validation, and test results are under `data/`;
-`selection_lock.json` records the selected configurations, and `charts/`
-contains the generated figures.
+Start with the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)
+for a concise presentation, or [`REPORT.md`](REPORT.md) for the full technical
+analysis. The machine-readable development, validation, and test results are
+under `data/`; `selection_lock.json` records the selected configurations, and
+`charts/` contains the generated figures.
+
+The website reads the checked-in `web/benchmarks/benchmark-results.js`
+snapshot. It publishes bot-performance results only and excludes individual
+games, execution environments, timestamps, and hashes. Verify or intentionally
+regenerate it from the frozen study inputs with:
+
+```sh
+python3 benchmarks/flagship_study/web_summary.py --check
+python3 benchmarks/flagship_study/web_summary.py --write
+```
 
 The completed study cannot be rerun from a later framework checkout. Its exact
 execution framework and retired audit attachments remain available in the

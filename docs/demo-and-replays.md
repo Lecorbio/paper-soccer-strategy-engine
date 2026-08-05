@@ -4,6 +4,8 @@ The [live GitHub Pages demo](https://lecorbio.github.io/paper-soccer-strategy-en
 is a static browser application backed by the same C++ rules and bot code as
 the native tools. It supports human-versus-bot games, takebacks, diagnostics,
 bot-versus-bot replay generation, and imported replay inspection.
+The separate **[Benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
+link opens a static overview of the frozen flagship study.
 
 ## Run the browser locally
 
@@ -67,15 +69,17 @@ The exported human match can be opened through the normal replay loader.
 
 ## Watch or generate a replay
 
-Select **Watch replay** to open the built-in game or generate a bot-versus-bot
-match. Each player has an independent bot and seed, plus an MCTS iteration or
-alpha-beta depth setting when relevant. Either player can use Rank5Derived; its
-fixed profile and provenance are retained in the replay metadata.
+Select **Watch replay**, then choose **Generate replay** to create a
+bot-versus-bot match with the settings below, or **Open existing** to load a
+replay JSON file from disk. Each player has an independent bot and seed, plus
+an MCTS iteration or alpha-beta depth setting when relevant. Either player can
+use Rank5Derived; its fixed profile and provenance are retained in the replay
+metadata.
 
 Generation advances one edge at a time so controls and diagnostics can update
 between searches. It stops after 512 plies if no winner has been reached,
 reports progress during longer matches, and opens the result directly in the
-viewer. **Open replay** loads a replay from disk.
+viewer.
 
 The browser remains a presentation layer. C++ owns state, legal moves,
 rebounds, winners, bot RNG, and history. JavaScript owns canvas drawing,

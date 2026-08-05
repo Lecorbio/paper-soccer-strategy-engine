@@ -7,10 +7,11 @@ for paper soccer.
 [![MIT License](https://img.shields.io/github/license/Lecorbio/paper-soccer-strategy-engine)](LICENSE)
 
 **[Play in your browser](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
+· [View benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)
 · [Learn how it works](docs/algorithms.md)
 · [Explore the documentation](#documentation)
 
-[![Paper Soccer browser demo with Rank5DerivedBot selected](docs/assets/demo-rank5-derived.jpg)](https://lecorbio.github.io/paper-soccer-strategy-engine/)
+[![Paper Soccer browser game with the Benchmark results link and Rank5DerivedBot selected](docs/assets/demo-rank5-derived.jpg)](https://lecorbio.github.io/paper-soccer-strategy-engine/)
 
 ## What is this?
 
@@ -37,7 +38,9 @@ crowding this overview.
 
 The [live demo](https://lecorbio.github.io/paper-soccer-strategy-engine/) needs
 no installation. You can play against a bot, inspect its search diagnostics,
-undo moves, or generate and replay bot-versus-bot games.
+undo moves, or use **Watch replay** to generate a bot match or open an existing
+replay. **[Benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
+opens the frozen four-bot study.
 
 To run the checked-in browser build locally, open `web/index.html` in a modern
 browser. No local server is required.
@@ -81,8 +84,9 @@ sanitizer configurations, WebAssembly verification, and research dependencies.
   frontends, WebAssembly boundary, and repository layout.
 - [Experiments and benchmark evidence](docs/experiments.md) records the arena
   methodology, historical results, promotion decisions, and limitations. The
-  [flagship study report](benchmarks/flagship_study/REPORT.md) presents the
-  current comparative evaluation of the demo bots.
+  [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)
+  presents the current result interactively; the [flagship study
+  report](benchmarks/flagship_study/REPORT.md) contains the full analysis.
 - [Reproducibility](docs/reproducibility.md) contains build variants, artifact
   verification, hashes, and clean-environment checks.
 - [CodinGame submissions](submissions/codingame/README.md) documents the

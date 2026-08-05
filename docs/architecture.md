@@ -95,6 +95,13 @@ are not compatible with every direct-file browser. See
 [Reproducibility](reproducibility.md#webassembly-artifact) for the pinned build
 and freshness check.
 
+The benchmark overview is a separate direct-file-compatible static page at
+`web/benchmarks/index.html`. It reads the compact checked-in
+`benchmark-results.js` snapshot and loads neither the game client nor the Wasm
+module. The snapshot contains public bot-performance results only; its source
+and freshness workflow are documented in
+[Reproducibility](reproducibility.md#benchmark-website-snapshot).
+
 Undo is a frontend command, not a mutation hidden inside a bot. Restoring a
 state and asking a bot to continue can invalidate retained work. The browser
 therefore pauses after undoing a bot edge and requires an explicit **Continue
@@ -142,7 +149,7 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 │   ├── cli/                    Interactive terminal frontend
 │   ├── replay/                 Seeded replay exporter
 │   └── web/                    C++ browser sessions and Wasm bridge
-├── web/                        Static UI and checked-in Wasm module
+├── web/                        Static game/benchmark UIs and checked-in Wasm
 ├── tests/
 │   ├── core/                   Rule and match behavior
 │   ├── bots/                   Bot correctness and determinism

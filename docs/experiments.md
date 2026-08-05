@@ -10,6 +10,11 @@ reports that support repository claims remain tracked under `benchmarks/`.
 Verified CodinGame artifacts and their historical results stay under
 `submissions/codingame/`; they are never moved into ignored output.
 
+For a reader-focused presentation of the current frozen four-bot result, see
+the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/).
+The [flagship study report](../benchmarks/flagship_study/REPORT.md) retains the
+full technical analysis.
+
 ## Arena methodology
 
 The native arena has two JSON-report modes:
