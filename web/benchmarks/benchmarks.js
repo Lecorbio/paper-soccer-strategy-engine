@@ -97,6 +97,72 @@
       values.findIndex((candidate) => Math.abs(candidate - value) < 0.000001) === index);
   }
 
+  function niceStep(value) {
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1;
+    }
+    const magnitude = 10 ** Math.floor(Math.log10(value));
+    const fraction = value / magnitude;
+    const niceFraction = fraction <= 1
+      ? 1
+      : fraction <= 2
+        ? 2
+        : fraction <= 2.5
+          ? 2.5
+          : fraction <= 5 ? 5 : 10;
+    return niceFraction * magnitude;
+  }
+
+  function axisNumber(value) {
+    return String(Number(Number(value).toPrecision(12)));
+  }
+
+  function axisPercent(value) {
+    const percentage = Number(Number(value * 100).toPrecision(12));
+    return `${percentage}%`;
+  }
+
+  function niceAxis(maximum, targetIntervals, formatter) {
+    const intervalTarget = Math.max(1, Math.round(targetIntervals));
+    const step = niceStep(maximum / intervalTarget);
+    const intervalCount = Math.max(1, Math.ceil((maximum / step) - 0.000000001));
+    const niceMaximum = Number((step * intervalCount).toPrecision(12));
+    const ticks = Array.from({length: intervalCount + 1}, (_, index) => {
+      const value = Number((step * index).toPrecision(12));
+      return {
+        value,
+        label: formatter(value),
+        position: (index / intervalCount) * 100,
+        anchor: index === 0 ? "start" : index === intervalCount ? "end" : "middle"
+      };
+    });
+    return {maximum: niceMaximum, step: Number(step.toPrecision(12)), ticks};
+  }
+
+  function paretoAxisModel(results) {
+    const candidates = Array.isArray(results.validationCandidates)
+      ? results.validationCandidates
+      : [];
+    const maximumLatency = candidates.length > 0
+      ? Math.max(...candidates.map((candidate) => Number(candidate.p95LatencyMs)))
+      : Number(results.study.latencyGateMs);
+    const maximumStrength = candidates.length > 0
+      ? Math.max(...candidates.map((candidate) => Number(candidate.strength)))
+      : 0.6;
+    const xAxis = niceAxis(
+      Math.max(Number(results.study.latencyGateMs) * 1.2, maximumLatency),
+      6,
+      axisNumber
+    );
+    const yAxis = niceAxis(Math.max(0.6, maximumStrength), 6, axisPercent);
+    return {
+      xMaximum: xAxis.maximum,
+      yMaximum: yAxis.maximum,
+      xTicks: xAxis.ticks,
+      yTicks: yAxis.ticks
+    };
+  }
+
   function validateResults(results) {
     if (!results || results.schema !== EXPECTED_SCHEMA) {
       throw new Error("Unsupported or missing benchmark summary.");
@@ -328,14 +394,8 @@
     }
     const candidates = [...results.validationCandidates].sort((left, right) =>
       left.p95LatencyMs - right.p95LatencyMs);
-    const xMaximum = Math.max(
-      results.study.latencyGateMs * 1.2,
-      Math.ceil(Math.max(...candidates.map((candidate) => candidate.p95LatencyMs)) / 10) * 10
-    );
-    const yMaximum = Math.max(
-      0.6,
-      Math.ceil(Math.max(...candidates.map((candidate) => candidate.strength)) * 10) / 10
-    );
+    const axisModel = paretoAxisModel(results);
+    const {xMaximum, yMaximum} = axisModel;
     const families = [...new Set(candidates.map((candidate) => candidate.family))];
     const familyIndex = new Map(families.map((family, index) => [family, index]));
 
@@ -343,6 +403,18 @@
     chart.setAttribute("aria-hidden", "true");
     chart.append(createElement(doc, "div", "pareto-y-title", "Validation paired score"));
     const area = createElement(doc, "div", "pareto-area");
+
+    for (const tick of axisModel.xTicks.slice(1, -1)) {
+      const line = createElement(doc, "span", "pareto-grid-line grid-x");
+      setPercent(line, "--position", tick.position);
+      area.append(line);
+    }
+    for (const tick of axisModel.yTicks.slice(1, -1)) {
+      const line = createElement(doc, "span", "pareto-grid-line grid-y");
+      setPercent(line, "--position", tick.position);
+      area.append(line);
+    }
+
     const gate = createElement(doc, "div", "pareto-gate");
     setPercent(gate, "--gate", position(results.study.latencyGateMs, 0, xMaximum));
     gate.append(createElement(doc, "span", "", `${results.study.latencyGateMs} ms gate`));
@@ -361,19 +433,24 @@
       area.append(marker);
     }
 
-    const xTicks = uniqueNumbers([0, results.study.latencyGateMs, xMaximum / 2, xMaximum])
-      .sort((left, right) => left - right);
-    for (const value of xTicks) {
-      const label = createElement(doc, "span", "pareto-axis-label axis-x", String(Math.round(value)));
-      setPercent(label, "--position", position(value, 0, xMaximum));
+    for (const tick of axisModel.xTicks) {
+      const label = createElement(
+        doc,
+        "span",
+        `pareto-axis-label axis-x is-${tick.anchor}`,
+        tick.label
+      );
+      setPercent(label, "--position", tick.position);
       area.append(label);
     }
-    for (const value of uniqueNumbers([0, 0.25, 0.5, yMaximum]).sort((a, b) => a - b)) {
-      if (value > yMaximum) {
-        continue;
-      }
-      const label = createElement(doc, "span", "pareto-axis-label axis-y", formatPercent(value, 0));
-      setPercent(label, "--position", position(value, 0, yMaximum));
+    for (const tick of axisModel.yTicks) {
+      const label = createElement(
+        doc,
+        "span",
+        `pareto-axis-label axis-y is-${tick.anchor}`,
+        tick.label
+      );
+      setPercent(label, "--position", tick.position);
       area.append(label);
     }
     chart.append(area, createElement(doc, "div", "pareto-x-title", "Validation p95 decision latency (ms)"));
@@ -674,6 +751,7 @@
     invertMatchup,
     matchupStatus,
     pairwiseLookup,
+    paretoAxisModel,
     validationStrengthLabel,
     render
   });

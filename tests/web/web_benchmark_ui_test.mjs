@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const gameHtmlUrl = new URL("../../web/index.html", import.meta.url);
+const gameCssUrl = new URL("../../web/styles.css", import.meta.url);
 const benchmarkHtmlUrl = new URL(
   "../../web/benchmarks/index.html",
   import.meta.url,
@@ -16,9 +17,10 @@ const benchmarkSourceUrl = new URL(
   import.meta.url,
 );
 
-const [gameHtml, benchmarkHtml, benchmarkCss, benchmarkSource] =
+const [gameHtml, gameCss, benchmarkHtml, benchmarkCss, benchmarkSource] =
   await Promise.all([
     readFile(gameHtmlUrl, "utf8"),
+    readFile(gameCssUrl, "utf8"),
     readFile(benchmarkHtmlUrl, "utf8"),
     readFile(benchmarkCssUrl, "utf8"),
     readFile(benchmarkSourceUrl, "utf8"),
@@ -48,20 +50,28 @@ function assertApproximately(actual, expected) {
   );
 }
 
-test("the game header links to benchmarks outside the mode group", () => {
+test("benchmark results is the first game-header action", () => {
   const modeGroup = gameHtml.match(
     /<div class="mode-switch"[^>]*>[\s\S]*?<\/div>/,
   )?.[0];
   assert.ok(modeGroup, "the game header should contain its mode group");
-  assert.doesNotMatch(modeGroup, />\s*Benchmarks\s*</);
+  assert.doesNotMatch(modeGroup, /Benchmark results/);
 
   const benchmarkLink = gameHtml.match(
-    /<a\b(?=[^>]*\bclass="[^"]*\btopbar-link\b[^"]*")(?=[^>]*\bhref="benchmarks\/index\.html")[^>]*>\s*Benchmarks\s*<\/a>/,
+    /<a\b(?=[^>]*\bclass="[^"]*\bbenchmark-link\b[^"]*")(?=[^>]*\bhref="benchmarks\/index\.html")[^>]*>[\s\S]*?Benchmark results\s*<\/a>/,
   )?.[0];
   assert.ok(benchmarkLink, "the game header should link to the benchmark overview");
   assert.ok(
-    gameHtml.indexOf(benchmarkLink) > gameHtml.indexOf(modeGroup),
-    "the benchmark link should be a sibling action after the mode group",
+    gameHtml.indexOf(benchmarkLink) < gameHtml.indexOf(modeGroup),
+    "the benchmark link should appear before the mode group",
+  );
+  const header = gameHtml.match(/<header\b[^>]*>[\s\S]*?<\/header>/)?.[0];
+  assert.ok(header, "the game page should have a header");
+  assert.doesNotMatch(header, /Open (?:existing|replay)|id="fileInput"/);
+  assert.match(benchmarkLink, /aria-hidden="true"/);
+  assert.match(
+    gameCss,
+    /\.benchmark-link\s*\{[^}]*background:\s*#fff0b8[^}]*font-weight:\s*750/s,
   );
 });
 
@@ -162,6 +172,49 @@ test("Rank5 validation strength is labeled as a defined reference", () => {
   assert.match(
     `${benchmarkHtml}\n${benchmarkSource}\n${results.caveats.validationReference}`,
     /defined(?: common-opponent)? reference[^.]*not (?:an )?(?:independently )?observed/i,
+  );
+});
+
+test("the Pareto plot uses aligned, readable axis scales", () => {
+  assert.equal(typeof renderer.paretoAxisModel, "function");
+  const axes = renderer.paretoAxisModel(results);
+
+  assert.equal(axes.xMaximum, 150);
+  assert.deepEqual(
+    axes.xTicks.map((tick) => tick.label),
+    ["0", "25", "50", "75", "100", "125", "150"],
+  );
+  assert.equal(axes.yMaximum, 0.6);
+  assert.deepEqual(
+    axes.yTicks.map((tick) => tick.label),
+    ["0%", "10%", "20%", "30%", "40%", "50%", "60%"],
+  );
+
+  for (const ticks of [axes.xTicks, axes.yTicks]) {
+    assert.equal(ticks[0].position, 0);
+    assert.equal(ticks[0].anchor, "start");
+    assert.equal(ticks.at(-1).position, 100);
+    assert.equal(ticks.at(-1).anchor, "end");
+    assert.ok(ticks.slice(1).every((tick, index) =>
+      tick.position > ticks[index].position));
+  }
+
+  assert.match(benchmarkSource, /pareto-grid-line grid-x/);
+  assert.match(benchmarkSource, /pareto-grid-line grid-y/);
+  const paretoAreaCss = benchmarkCss.match(/\.pareto-area\s*\{[^}]*\}/s)?.[0];
+  assert.ok(paretoAreaCss);
+  assert.doesNotMatch(paretoAreaCss, /background-(?:image|size)/);
+  assert.match(
+    benchmarkCss,
+    /\.pareto-chart\s*\{[^}]*grid-template-columns:\s*18px 30px minmax\(0,\s*1fr\)/s,
+  );
+  assert.match(
+    benchmarkCss,
+    /\.pareto-area\s*\{[^}]*grid-column:\s*3/s,
+  );
+  assert.match(
+    benchmarkCss,
+    /\.pareto-axis-label\.axis-y\.is-start\s*\{[^}]*translate\(-100%,\s*0\)/s,
   );
 });
 

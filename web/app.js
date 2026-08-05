@@ -763,7 +763,8 @@
       if (control !== replayOneIterationsInput &&
           control !== replayTwoIterationsInput &&
           control !== replayOneDepthInput &&
-          control !== replayTwoDepthInput) {
+          control !== replayTwoDepthInput &&
+          control !== fileInput) {
         control.disabled = isGeneratingReplay;
       }
     }
@@ -781,7 +782,7 @@
       replayTwoBotSelect.value === BotKind.Rank5Derived;
     generateReplayButton.textContent = isGeneratingReplay
       ? "Generating…"
-      : "Generate";
+      : "Generate replay";
     replaySetup.setAttribute("aria-busy", String(isGeneratingReplay));
   }
 
