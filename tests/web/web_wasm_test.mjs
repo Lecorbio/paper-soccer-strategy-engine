@@ -146,6 +146,12 @@ test("stale and wrong-turn commands are rejected without changing the session", 
 
 test("the browser bot move is selected by the compiled C++ RandomBot", () => {
   const initial = gameEngine.startGame("17", Player.Two);
+
+  assert.equal(initial.humanPlayer, Player.Two);
+  assert.equal(initial.state.toMove, Player.One);
+  assert.equal(initial.replay.players.one.kind, "RandomBot");
+  assert.equal(initial.replay.players.two.kind, "Human");
+
   const afterBot = gameEngine.playBot(initial.sessionId, initial.revision);
 
   assert.equal(afterBot.revision, 1);

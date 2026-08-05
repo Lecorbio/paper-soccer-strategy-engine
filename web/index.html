@@ -16,7 +16,7 @@
     <header class="topbar">
       <div>
         <h1>Paper Soccer</h1>
-        <p id="replayTitle">Replay Viewer</p>
+        <p id="replayTitle">Choose who takes the opening move</p>
       </div>
       <div class="topbar-actions">
         <div class="mode-switch" role="group" aria-label="Mode">
@@ -54,7 +54,8 @@
               <h2>New game</h2>
             </div>
             <div class="setup-actions">
-              <button id="newGameButton" class="primary-control" type="submit">Start</button>
+              <button id="newGameButton" class="primary-control" type="submit"
+                disabled>Start</button>
               <button id="changeSettingsButton" type="button" hidden>Change settings</button>
             </div>
           </div>
@@ -71,10 +72,10 @@
           </label>
 
           <label class="form-field" for="sideSelect">
-            <span>Your side</span>
-            <select id="sideSelect">
-              <option value="one" selected>Player 1 · attacks top</option>
-              <option value="two">Player 2 · attacks bottom</option>
+            <span>Turn order</span>
+            <select id="sideSelect" aria-describedby="turnOrderHelp">
+              <option value="one" selected>Move first · Player 1 · attacks top</option>
+              <option value="two">Move second · Player 2 · attacks bottom</option>
             </select>
           </label>
 
@@ -100,7 +101,9 @@
             Complete-turn search derived from the rank 5/206 CodinGame submission, adapted to demo rules and deterministic 50,000-node work.
           </p>
 
-          <p class="setup-help">Player 1 moves first. Reuse the same settings to repeat the bot.</p>
+          <p id="turnOrderHelp" class="setup-help">
+            Moving second lets the bot take the opening move. Reuse the same settings to repeat the bot.
+          </p>
           <p id="setupError" class="form-error" role="alert" aria-atomic="true"></p>
 
           <section id="liveDiagnostics" class="live-diagnostics" aria-labelledby="activeGameHeading"
@@ -235,9 +238,11 @@
         </form>
 
         <div class="replay-summary" aria-live="polite" aria-atomic="true">
-          <p id="plyLabel" class="summary-position">Move 0 of 0</p>
-          <h2 id="statusLabel" class="summary-title">Your turn</h2>
-          <p id="moveLabel" class="summary-detail">Click a highlighted point to move.</p>
+          <p id="plyLabel" class="summary-position">New game</p>
+          <h2 id="statusLabel" class="summary-title">Ready to start</h2>
+          <p id="moveLabel" class="summary-detail">
+            Choose whether to move first or second, then select Start.
+          </p>
         </div>
 
         <div id="liveHistoryControls" class="live-history-controls"

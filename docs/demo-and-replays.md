@@ -24,8 +24,8 @@ The app starts in **Play vs bot** mode:
 
 1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, `JacekInspiredBot`, or
    `Rank5DerivedBot — 50k demo profile`.
-2. Choose Player 1 to move first and attack the top goal, or Player 2 to let the
-   bot move first and attack the bottom goal.
+2. Choose **Move first** to play as Player 1 and attack the top goal, or **Move
+   second** to play as Player 2, let the bot open, and attack the bottom goal.
 3. Configure the opponent where applicable. MCTS exposes a seed and a fixed
    number of new simulations per move. Alpha-beta and Jacek-inspired profiles
    expose possession-handoff depth. They are deterministic, so their recorded
@@ -40,10 +40,12 @@ rank-5 submission under different game rules. It is not the ranked entrant, and
 its demo measurements must not be attributed to that entrant. The precise
 differences are in [Rules and algorithms](algorithms.md#rank5derivedbot).
 
-Once play begins, the opponent, side, seed, and search setting remain visible
-and locked. Search opponents expose their latest diagnostics. Depending on the
-bot, these include MCTS visits and reuse, alpha-beta depth and pruning, neural
-model identity, or Rank5Derived complete-action and cached-edge details.
+The setup remains unlocked on first load so the turn order can be chosen before
+the game starts. Once play begins, the opponent, turn order, seed, and search
+setting remain visible and locked. Search opponents expose their latest
+diagnostics. Depending on the bot, these include MCTS visits and reuse,
+alpha-beta depth and pruning, neural model identity, or Rank5Derived
+complete-action and cached-edge details.
 
 ## Takebacks and exports
 

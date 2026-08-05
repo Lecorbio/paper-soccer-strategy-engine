@@ -128,6 +128,60 @@ test("successful games lock every configuration control", () => {
   assert.equal(elements.exportButton.hidden, false);
 });
 
+test("fresh games leave the turn-order choice available before start", () => {
+  const elements = controls();
+  const state = support.liveGameControlState({
+    hasGame: false,
+    movesEnabled: false,
+    isTerminal: false,
+    usesMcts: false,
+    usesDepth: false,
+  });
+
+  support.syncConfigurationControls(elements, state);
+
+  assert.equal(state.locked, false);
+  assert.equal(elements.sideSelect.disabled, false);
+  assert.equal(elements.startButton.hidden, false);
+  assert.equal(elements.startButton.textContent, "Start");
+  assert.equal(elements.changeSettingsButton.hidden, true);
+  assert.equal(elements.exportButton.hidden, true);
+});
+
+test("turn order maps to the human player and schedules only a bot opener", () => {
+  const players = { One: "one", Two: "two" };
+  assert.equal(
+    support.humanPlayerForTurnOrder("one", players),
+    players.One,
+  );
+  assert.equal(
+    support.humanPlayerForTurnOrder("two", players),
+    players.Two,
+  );
+  assert.equal(
+    support.humanPlayerForTurnOrder("unexpected", players),
+    players.One,
+  );
+
+  let scheduled = 0;
+  const schedule = function () { scheduled += 1; };
+  assert.equal(support.scheduleOpeningBotTurn({
+    snapshot: { humanPlayer: players.One, state: { toMove: players.One } },
+    movesEnabled: true,
+    gameError: "",
+    schedule,
+  }), false);
+  assert.equal(scheduled, 0);
+
+  assert.equal(support.scheduleOpeningBotTurn({
+    snapshot: { humanPlayer: players.Two, state: { toMove: players.One } },
+    movesEnabled: true,
+    gameError: "",
+    schedule,
+  }), true);
+  assert.equal(scheduled, 1);
+});
+
 test("changing settings unlocks controls while retaining export access", () => {
   const elements = controls();
   const game = support.createLiveGameLifecycle({

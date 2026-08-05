@@ -40,6 +40,20 @@
     elements.exportButton.hidden = !state.hasGame;
   }
 
+  function humanPlayerForTurnOrder(turnOrder, players) {
+    return turnOrder === players.Two ? players.Two : players.One;
+  }
+
+  function scheduleOpeningBotTurn(options) {
+    const snapshot = options.snapshot;
+    if (!options.movesEnabled || options.gameError || !snapshot?.state ||
+        snapshot.state.toMove === snapshot.humanPlayer) {
+      return false;
+    }
+    options.schedule();
+    return true;
+  }
+
   function createStaleSafeTimer(timerHost) {
     let handle = null;
     let generation = 0;
@@ -155,8 +169,10 @@
     alphaBetaRootScoreText,
     createLiveGameLifecycle,
     createStaleSafeTimer,
+    humanPlayerForTurnOrder,
     humanMatchFilename,
     liveGameControlState,
+    scheduleOpeningBotTurn,
     syncConfigurationControls,
     unwrapReplayDocument,
   });

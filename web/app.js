@@ -15,6 +15,9 @@
   }
 
   const { BotKind, Player, Status, samePoint } = engine;
+  const gameSetup = document.querySelector("#gameSetup");
+  const preventSetupSubmit = function (event) { event.preventDefault(); };
+  gameSetup.addEventListener("submit", preventSetupSubmit);
   const gameEngine = await engine.ready;
 
   const canvas = document.querySelector("#boardCanvas");
@@ -37,7 +40,6 @@
   const fileInput = document.querySelector("#fileInput");
   const playModeButton = document.querySelector("#playModeButton");
   const replayModeButton = document.querySelector("#replayModeButton");
-  const gameSetup = document.querySelector("#gameSetup");
   const playSetupEyebrow = document.querySelector("#playSetupEyebrow");
   const botSelect = document.querySelector("#botSelect");
   const sideSelect = document.querySelector("#sideSelect");
@@ -114,9 +116,10 @@
   const MAX_REPLAY_PLIES = 512;
   const MAX_UINT64 = (1n << 64n) - 1n;
 
+  const defaultReplay = normalizeReplay(readDefaultReplay());
   let mode = MODE_PLAY;
-  let replay = normalizeReplay(readDefaultReplay());
-  let replaySession = { replay: replay, currentPly: 0 };
+  let replay = newGamePreviewReplay(defaultReplay);
+  let replaySession = { replay: defaultReplay, currentPly: 0 };
   let liveSession = null;
   let currentPly = 0;
   let isPlaying = false;
@@ -155,6 +158,19 @@
   function readDefaultReplay() {
     const raw = document.querySelector("#default-replay").textContent;
     return JSON.parse(raw);
+  }
+
+  function newGamePreviewReplay(source) {
+    return {
+      schema: "papersoccer.replay.v2",
+      rules: { width: source.rules.width, height: source.rules.height },
+      players: {},
+      start: { x: source.start.x, y: source.start.y },
+      status: Status.InProgress,
+      winner: null,
+      truncated: false,
+      moves: [],
+    };
   }
 
   function normalizeReplay(raw) {
@@ -481,7 +497,17 @@
     replaySession = { replay: replay, currentPly: currentPly };
     stopPlayback();
     if (!liveSession) {
-      startNewGame();
+      mode = MODE_PLAY;
+      replay = newGamePreviewReplay(defaultReplay);
+      currentPly = 0;
+      liveSnapshot = null;
+      gameError = "";
+      lastLiveMove = null;
+      botPausedAfterUndo = false;
+      boardView.resetHover();
+      plyRange.max = "0";
+      plyRange.value = "0";
+      renderInterface();
       return;
     }
 
@@ -533,9 +559,10 @@
     botPausedAfterUndo = false;
     mode = MODE_PLAY;
     liveSession = null;
-    const selectedHuman = sideSelect.value === Player.Two
-      ? Player.Two
-      : Player.One;
+    const selectedHuman = support.humanPlayerForTurnOrder(
+      sideSelect.value,
+      Player,
+    );
 
     try {
       adoptLiveSnapshot(gameEngine.startGame(
@@ -551,10 +578,12 @@
     }
     renderInterface();
 
-    if (liveGame.movesEnabled && !gameError &&
-        liveState().toMove !== humanPlayer) {
-      scheduleBotTurn();
-    }
+    support.scheduleOpeningBotTurn({
+      snapshot: liveSnapshot,
+      movesEnabled: liveGame.movesEnabled,
+      gameError: gameError,
+      schedule: scheduleBotTurn,
+    });
   }
 
   function changeSettings() {
@@ -1056,6 +1085,19 @@
   }
 
   function updatePlayText() {
+    if (!liveSnapshot) {
+      replayTitle.textContent = "Choose who takes the opening move";
+      plyLabel.textContent = "New game";
+      statusLabel.textContent = gameError ? "Game could not start" : "Ready to start";
+      moveLabel.textContent = gameError ||
+        "Choose whether to move first or second, then select Start.";
+      boardTurnBadge.textContent = gameError ? "Game unavailable" : "Ready to start";
+      boardDescription.textContent = statusLabel.textContent + ". Ball at row " +
+        currentBall().y + ", column " + currentBall().x +
+        ". Choose the game settings before starting.";
+      return;
+    }
+
     const attackDirection = humanPlayer === Player.One ? "top" : "bottom";
     replayTitle.textContent = "You are " + playerName(humanPlayer) +
       " · Attack the " + attackDirection + " goal";
@@ -1274,6 +1316,8 @@
       message.className = "empty-moves";
       if (gameError) {
         message.textContent = "Start a new game to continue.";
+      } else if (!liveSnapshot) {
+        message.textContent = "Choose your settings, then start the game.";
       } else if (isLiveTerminal()) {
         message.textContent = "The game is finished.";
       } else if (!liveGame.movesEnabled) {
@@ -1443,6 +1487,7 @@
   speedSelect.addEventListener("change", function () {
     speed = Number(speedSelect.value);
   });
+  gameSetup.removeEventListener("submit", preventSetupSubmit);
   gameSetup.addEventListener("submit", startNewGame);
   changeSettingsButton.addEventListener("click", changeSettings);
   exportGameButton.addEventListener("click", exportHumanMatch);
@@ -1521,7 +1566,8 @@
     }
   });
 
-  startNewGame();
+  newGameButton.disabled = false;
+  renderInterface();
   window.requestAnimationFrame(tick);
 }()).catch(function (error) {
   const status = document.querySelector("#statusLabel");
