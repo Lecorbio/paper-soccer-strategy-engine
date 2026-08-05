@@ -347,6 +347,11 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_play_setup_test.mjs
     )
+    add_test(
+      NAME papersoccer_web_benchmark_ui_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_benchmark_ui_test.mjs
+    )
     if(NOT EMSCRIPTEN)
       foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
         papersoccer_codingame_target_prefix(

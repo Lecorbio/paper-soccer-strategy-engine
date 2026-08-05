@@ -95,6 +95,7 @@ h2 {
 }
 
 .file-button,
+.topbar-link,
 button,
 input[type="text"],
 input[type="number"],
@@ -107,9 +108,18 @@ select {
 }
 
 .file-button,
+.topbar-link,
 button {
   cursor: pointer;
   padding: 8px 12px;
+}
+
+.topbar-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 select {
@@ -124,6 +134,7 @@ input[type="number"] {
 }
 
 .file-button:hover,
+.topbar-link:hover,
 button:not(:disabled):hover,
 select:not(:disabled):hover {
   background: #fffdf7;
@@ -134,6 +145,7 @@ button:not(:disabled):active {
 }
 
 button:focus-visible,
+.topbar-link:focus-visible,
 input[type="text"]:focus-visible,
 input[type="number"]:focus-visible,
 select:focus-visible,

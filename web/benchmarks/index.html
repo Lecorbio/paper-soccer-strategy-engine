@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A concise overview of the Paper Soccer flagship bot benchmark.">
+    <title>Bot benchmarks · Paper Soccer</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="benchmarks.css">
+    <script defer src="benchmark-results.js"></script>
+    <script defer src="benchmarks.js"></script>
+  </head>
+  <body>
+    <header class="benchmark-topbar">
+      <a class="site-name" href="../index.html">
+        <span>Paper Soccer</span>
+        <small>Bot benchmarks</small>
+      </a>
+      <a class="back-link" href="../index.html">
+        <span aria-hidden="true">←</span>
+        Back to game
+      </a>
+    </header>
+
+    <main id="benchmarkOverview" class="benchmark-shell">
+      <section class="hero" aria-labelledby="pageTitle">
+        <div class="hero-copy">
+          <p class="eyebrow">Flagship bot study</p>
+          <h1 id="pageTitle">Which strategy plays strongest?</h1>
+          <p id="benchmarkHeadline" class="hero-lede">
+            Neural alpha-beta has the highest relative-strength estimate, but its direct
+            matchup with Rank5Derived remains statistically unresolved.
+          </p>
+          <div class="hero-links">
+            <span class="result-badge"><span aria-hidden="true">●</span> Frozen results</span>
+            <a id="heroReportLink"
+              href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">
+              Read the full report <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </div>
+        <div class="hero-mark" aria-hidden="true">
+          <span class="pitch-line pitch-line-one"></span>
+          <span class="pitch-line pitch-line-two"></span>
+          <span class="pitch-ball"></span>
+        </div>
+      </section>
+
+      <dl id="benchmarkStats" class="stat-grid" aria-label="Study scale">
+        <div class="stat-card">
+          <dt>Bots compared</dt>
+          <dd>4</dd>
+        </div>
+        <div class="stat-card">
+          <dt>Decisive games</dt>
+          <dd>4,800</dd>
+        </div>
+        <div class="stat-card">
+          <dt>Color-swapped pairs</dt>
+          <dd>2,400</dd>
+        </div>
+        <div class="stat-card">
+          <dt>Latency gate</dt>
+          <dd>50 <span>ms p95</span></dd>
+        </div>
+      </dl>
+
+      <div id="benchmarkError" class="data-message data-message-error" role="alert" hidden>
+        <h2>The detailed results could not be loaded.</h2>
+        <p>
+          The summary above is still available. You can also
+          <a href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">read the complete study report</a>.
+        </p>
+      </div>
+      <div id="benchmarkLoadState" class="data-message">
+        <p>
+          Loading the detailed comparison. If it does not appear, the
+          <a href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">full report</a>
+          contains the same results.
+        </p>
+      </div>
+
+      <section class="result-section" aria-labelledby="abilityHeading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Tournament result</p>
+            <h2 id="abilityHeading">Relative playing strength</h2>
+          </div>
+          <p>
+            Bradley–Terry estimates from the frozen test tournament. Farther right means
+            stronger within this field; the thin bars are 95% intervals.
+          </p>
+        </div>
+        <div id="abilityChart" class="ability-chart" aria-live="polite">
+          <p class="placeholder-copy">The relative-strength chart requires JavaScript.</p>
+        </div>
+        <p class="chart-note">
+          These values are relative—not absolute skill ratings. Zero is an arbitrary reference point.
+        </p>
+      </section>
+
+      <section class="result-section" aria-labelledby="matchupHeading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Direct matchups</p>
+            <h2 id="matchupHeading">Head to head</h2>
+          </div>
+          <p>
+            Each cell is the row bot’s mean score across paired games, with colors swapped
+            on every opening. Above 50% favors the row bot.
+          </p>
+        </div>
+        <div class="table-scroll" tabindex="0" aria-label="Scrollable head-to-head results">
+          <table id="headToHeadTable" class="matchup-table">
+            <caption>Paired score for the bot named in each row</caption>
+            <thead>
+              <tr><th scope="col">Bot</th><th scope="col">Results loading…</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">—</th><td>See the full report if results do not load.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-key">
+          <span class="status-swatch status-lead">Lead</span>
+          <span class="status-swatch status-deficit">Deficit</span>
+          <span class="status-swatch status-unresolved">Unresolved</span>
+          Status is based on whether the 95% interval clears 50%.
+        </p>
+      </section>
+
+      <section class="result-section" aria-labelledby="paretoHeading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Validation selection</p>
+            <h2 id="paretoHeading">Strength within the latency budget</h2>
+          </div>
+          <p>
+            Profiles balance common-opponent validation score against single-thread p95
+            decision latency. Point labels live below the plot so they never collide.
+          </p>
+        </div>
+        <div id="paretoPlot" class="pareto-plot-wrap" aria-live="polite">
+          <p class="placeholder-copy">The strength-and-latency plot requires JavaScript.</p>
+        </div>
+        <details id="paretoDetails" class="disclosure">
+          <summary>See every validation profile</summary>
+          <div id="paretoDetailsContent" class="disclosure-content">
+            <p>The detailed profile table requires JavaScript.</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="takeaway-section" aria-labelledby="takeawayHeading">
+        <div class="section-heading compact-heading">
+          <div>
+            <p class="eyebrow">What the results say</p>
+            <h2 id="takeawayHeading">Three useful takeaways</h2>
+          </div>
+        </div>
+        <div id="takeaways" class="takeaway-grid">
+          <article class="takeaway-card">
+            <span class="takeaway-number">1</span>
+            <h3>Neural search leads the model</h3>
+            <p>Its relative-strength estimate is the highest of the four entrants.</p>
+          </article>
+          <article class="takeaway-card">
+            <span class="takeaway-number">2</span>
+            <h3>The top pair remains close</h3>
+            <p>Neural alpha-beta versus Rank5Derived is statistically unresolved.</p>
+          </article>
+          <article class="takeaway-card">
+            <span class="takeaway-number">3</span>
+            <h3>Latency changes the choice</h3>
+            <p>The selected profile must stay at or below the 50 ms p95 gate.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="detail-section" aria-labelledby="detailHeading">
+        <div class="section-heading compact-heading">
+          <div>
+            <p class="eyebrow">Study details</p>
+            <h2 id="detailHeading">How to read the benchmark</h2>
+          </div>
+        </div>
+        <div class="disclosure-grid">
+          <details id="calibrationDetails" class="disclosure">
+            <summary>Calibration checks</summary>
+            <div id="calibrationContent" class="disclosure-content">
+              <p>Calibration details require JavaScript.</p>
+            </div>
+          </details>
+          <details id="methodologyDetails" class="disclosure">
+            <summary>Methodology in brief</summary>
+            <div id="methodologyContent" class="disclosure-content">
+              <p>
+                The test tournament uses disjoint frozen openings at four depths. Each
+                opening is played twice with colors swapped, and profile selection is frozen
+                before the final tournament.
+              </p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="caveat-panel" aria-labelledby="caveatHeading">
+        <div>
+          <p class="eyebrow">Important context</p>
+          <h2 id="caveatHeading">Read the numbers correctly</h2>
+        </div>
+        <ul id="caveatList">
+          <li>Rank5Derived is an adaptation of the original submission to the demo rules.</li>
+          <li>Its 50% validation strength is a defined reference, not an observed score.</li>
+          <li>Relative-strength estimates only compare entrants in this tournament.</li>
+          <li>Latency depends on the benchmark machine and build.</li>
+        </ul>
+      </section>
+
+      <section class="report-cta" aria-labelledby="reportHeading">
+        <div>
+          <p class="eyebrow">Want the full analysis?</p>
+          <h2 id="reportHeading">Read the flagship study report</h2>
+          <p>The report contains the complete tables, intervals, protocol, and calibration analysis.</p>
+        </div>
+        <div class="report-actions">
+          <a id="reportLink" class="primary-link"
+            href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">
+            Open full report <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="benchmark-footer">
+      <a href="../index.html">Paper Soccer</a>
+      <span>Frozen flagship benchmark overview</span>
+    </footer>
+  </body>
+</html>
