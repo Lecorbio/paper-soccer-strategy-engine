@@ -1,101 +1,70 @@
 # Paper Soccer Strategy Engine
 
-A deterministic C++20 playground for playing, studying, and building game AI
-for paper soccer.
+A deterministic C++20/WebAssembly game-AI engine whose authentic CodinGame submission ranked **5th of 206**, backed by a preregistered **4,800-game** evaluation.
 
 [![CI and Pages](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/workflows/pages.yml/badge.svg)](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/workflows/pages.yml)
 [![MIT License](https://img.shields.io/github/license/Lecorbio/paper-soccer-strategy-engine)](LICENSE)
 
-**[Play in your browser](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
-· [View benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)
-· [Learn how it works](docs/algorithms.md)
-· [Explore the documentation](#documentation)
+**[Play the live demo](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
+· **[Explore the benchmark](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
+· [Read the frozen study](benchmarks/flagship_study/REPORT.md)
 
-[![Paper Soccer browser game with the Benchmark results link and Rank5DerivedBot selected](docs/assets/demo-rank5-derived.jpg)](https://lecorbio.github.io/paper-soccer-strategy-engine/)
+- **[5/206](submissions/codingame/bots/rank_5/README.md):** verified authentic CodinGame result, tied to an immutable generated submission and SHA-256.
+- **[4,800 decisive test games](benchmarks/flagship_study/REPORT.md#frozen-test-results):** 2,400 color-swapped opening pairs with zero truncations.
+- **[60.4% neural-versus-hand score](benchmarks/flagship_study/REPORT.md#pairwise-results):** 95% CI 57.4%–63.5%; the selected neural profile measured **[35.7 ms validation p95](benchmarks/flagship_study/REPORT.md#development-and-validation-findings)** on the study machine.
 
-## What is this?
+> **Provenance matters:** `rank_5` is the authentic ranked CodinGame artifact. `Rank5DerivedBot` adapts its search code to different demo rules and a fixed 50,000-node profile; demo measurements do not evaluate the ranked submission.
 
-Paper soccer is a pencil-and-paper strategy game played by drawing unused
-segments on a grid. Rebounds can extend a turn, and a match ends when a player
-scores or the player to move has no legal move. Those simple rules create a
-compact but surprisingly rich search problem.
+[![Paper Soccer browser game with Rank5DerivedBot selected and search diagnostics available](docs/assets/demo-rank5-derived.jpg)](https://lecorbio.github.io/paper-soccer-strategy-engine/)
 
-This project puts one authoritative rules engine behind every way of exploring
-the game: the browser demo, terminal play, search bots, replay tools, and the
-experiment arena. The included opponents range from seeded random play to MCTS,
-alpha-beta search, neural-evaluated search, and a contest-derived search adapter.
+## Why this project?
 
-The project grew out of the [CodinGame Paper Soccer
-contest](https://www.codingame.com/multiplayer/bot-programming/paper-soccer).
-Competing in its arena and iterating on its match results played a major role in
-improving the bot's search and evaluation. The preserved submissions and their
-development history are documented in [CodinGame
-submissions](submissions/codingame/README.md); benchmark results and research
-notes remain in their own documentation so they can be studied without
-crowding this overview.
+Paper soccer is a compact adversarial game in which rebounds can extend one possession across several edges. That makes a conventional edge-by-edge search horizon misleading: the engine instead searches complete turns, while deterministic work budgets make bot comparisons replayable.
 
-## Try the game
+One authoritative rules model powers native play, WebAssembly, replay tooling, and the experiment arena. The project combines MCTS, possession-aware alpha-beta, hand-crafted and neural evaluation, compact make/unmake search state, diagnostics, and frozen statistical evidence.
 
-The [live demo](https://lecorbio.github.io/paper-soccer-strategy-engine/) needs
-no installation. You can play against a bot, inspect its search diagnostics,
-undo moves, or use **Watch replay** to generate a bot match or open an existing
-replay. **[Benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
-opens the frozen four-bot study.
+## Architecture
 
-To run the checked-in browser build locally, open `web/index.html` in a modern
-browser. No local server is required.
+```mermaid
+flowchart LR
+    Browser["Browser UI"] --> Wasm["Versioned WebAssembly bridge"]
+    CLI["CLI + replay tools"] --> API["Shared C++20 API"]
+    Wasm --> API
+    Arena["Paired experiment arena"] --> API
+    API --> Core["Rules + match state"]
+    API --> Search["MCTS + alpha-beta + neural search"]
+    Search --> Core
+    Arena --> Evidence["Frozen study artifacts"]
+```
+
+C++ owns move legality, rebounds, terminal detection, bot state, and replay history. JavaScript only schedules commands and renders complete snapshots. See the [full architecture](docs/architecture.md) and [algorithm notes](docs/algorithms.md).
+
+## Evaluation design
+
+The flagship study compared four competitive demo-rule entrants: tactical MCTS, hand-evaluated alpha-beta, neural alpha-beta, and the fixed Rank5Derived profile. It froze disjoint development, validation, and test openings before test evaluation; played both colors from every opening; selected configurations under a 50 ms validation-p95 gate; and resampled whole opening pairs 10,000 times.
+
+The strongest supported head-to-head finding was neural alpha-beta over hand alpha-beta. Neural alpha-beta versus Rank5Derived remained statistically unresolved at 51.4% with a 95% CI of 48.2%–54.5%—a negative result reported rather than tuned away. The [manifest](benchmarks/flagship_study/manifest.json), [selection lock](benchmarks/flagship_study/selection_lock.json), [curated data](benchmarks/flagship_study/data/test.json), and [report](benchmarks/flagship_study/REPORT.md) are checked in.
 
 ## Build and test
 
-The native build needs CMake 3.20 or newer and a C++20 compiler. Node.js 18 or
-newer and Python 3 are needed to run the complete test suite.
+Requires CMake 3.20+, a C++20 compiler, Node.js 18+, and Python 3.
 
 ```bash
 ./scripts/build-and-test.sh
 ```
 
-The script creates a release build in `build/native`, compiles the native
-tools, and runs the registered test suite. Afterward, start the terminal game
-with:
-
-```bash
-./build/native/papersoccer_cli
-```
-
-See [Reproducibility](docs/reproducibility.md) for manual build commands,
-sanitizer configurations, WebAssembly verification, and research dependencies.
-
-## What is included?
-
-- A shared C++ rules and match engine used by native and WebAssembly frontends.
-- Random, MCTS, alpha-beta, neural-evaluated, and contest-derived opponents.
-- A terminal game, browser game, replay exporter, and paired experiment arena.
-- Deterministic seeds, fixed-work search options, diagnostics, and artifact
-  checks for repeatable investigation.
-- Preserved CodinGame submissions and the tooling that generates them.
+This creates a Release build in `build/native`, compiles the native tools, verifies generated artifacts, and runs the registered tests. Then launch the terminal game with `./build/native/papersoccer_cli`.
 
 ## Documentation
 
-- [Demo, CLI, and replays](docs/demo-and-replays.md) explains how to play,
-  configure bots, import or export games, and use the native tools.
-- [Rules and algorithms](docs/algorithms.md) covers the game contract and the
-  design of each search opponent.
-- [Architecture](docs/architecture.md) maps the C++ API, rules engine,
-  frontends, WebAssembly boundary, and repository layout.
-- [Experiments and benchmark evidence](docs/experiments.md) records the arena
-  methodology, historical results, promotion decisions, and limitations. The
-  [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)
-  presents the current result interactively; the [flagship study
-  report](benchmarks/flagship_study/REPORT.md) contains the full analysis.
-- [Reproducibility](docs/reproducibility.md) contains build variants, artifact
-  verification, hashes, and clean-environment checks.
-- [CodinGame submissions](submissions/codingame/README.md) documents the
-  preserved contest bots, provenance, and generation workflow.
-- [Neural model card](models/README.md) describes the learned evaluator,
-  training data, validation, and model contract.
+- [Demo, CLI, and replays](docs/demo-and-replays.md)
+- [Rules and algorithms](docs/algorithms.md)
+- [Architecture](docs/architecture.md)
+- [Experiments and benchmark evidence](docs/experiments.md)
+- [Reproducibility and artifact hashes](docs/reproducibility.md)
+- [CodinGame submission archive](submissions/codingame/README.md)
+- [Neural model card](models/README.md)
 
 ## License
 
-Owner-authored source and documentation are available under the [MIT
-License](LICENSE). See [NOTICE](NOTICE.md) for attribution and the status of
-generated or external material.
+Owner-authored source and documentation are available under the [MIT License](LICENSE). See [NOTICE](NOTICE.md) for attribution and the status of generated or external material.

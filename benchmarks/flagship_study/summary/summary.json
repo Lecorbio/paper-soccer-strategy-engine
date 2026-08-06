@@ -1,0 +1,266 @@
+{
+  "locked_configurations": [
+    {
+      "all_edge_p95_ms": null,
+      "config_id": "mcts-1000",
+      "family": "mcts",
+      "fixed": false,
+      "gate_eligible": true,
+      "public_label": "Tactical MctsBot",
+      "settings": {
+        "exploration": 1.4142135623730951,
+        "iterations": 1000,
+        "leaf_policy": "rollout_only",
+        "node_capacity": 65536,
+        "quiescence_enabled": false,
+        "quiescence_max_depth": 8,
+        "quiescence_max_nodes": 256,
+        "reuse_tree": true,
+        "rollout_policy": "tactical",
+        "seed_derivation": "sha256-domain-separated-uint64/v1",
+        "wall_clock_limit_ms": 0
+      },
+      "validation_p95_ms": 35.683625,
+      "work_budget": 1000,
+      "work_kind": "iterations"
+    },
+    {
+      "all_edge_p95_ms": null,
+      "config_id": "alpha-beta-50k",
+      "family": "alpha_beta",
+      "fixed": false,
+      "gate_eligible": true,
+      "public_label": "Hand-evaluated AlphaBetaBot",
+      "settings": {
+        "max_nodes": 50000,
+        "max_search_plies": 12,
+        "max_turn_depth": 6,
+        "seed_ignored": true,
+        "transposition_table_entries": 65536,
+        "wall_clock_limit_ms": 0
+      },
+      "validation_p95_ms": 24.273083,
+      "work_budget": 50000,
+      "work_kind": "nodes"
+    },
+    {
+      "all_edge_p95_ms": null,
+      "config_id": "jacek-20k",
+      "family": "jacek_inspired",
+      "fixed": false,
+      "gate_eligible": true,
+      "public_label": "Neural alpha-beta (JacekInspiredBot)",
+      "settings": {
+        "max_nodes": 20000,
+        "max_search_plies": 12,
+        "max_turn_depth": 6,
+        "model_path": "models/jacek_article_value_model.json",
+        "model_sha256": "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084",
+        "seed_ignored": true,
+        "transposition_table_entries": 65536,
+        "wall_clock_limit_ms": 0
+      },
+      "validation_p95_ms": 35.718084,
+      "work_budget": 20000,
+      "work_kind": "nodes"
+    },
+    {
+      "all_edge_p95_ms": 27.236708,
+      "config_id": "rank5-fixed-50k",
+      "family": "rank5_derived",
+      "fixed": true,
+      "gate_eligible": true,
+      "public_label": "Rank5DerivedBot — fixed 50k demo profile",
+      "settings": {
+        "evaluation_cache_entries": 32768,
+        "learned_value_blend_percent": 0,
+        "max_nodes": 50000,
+        "max_turn_depth": 32,
+        "original_artifact_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+        "replay_corrections": false,
+        "rules_profile": "standard-8x10-demo",
+        "seed_ignored": true,
+        "transposition_table_entries": 65536,
+        "wall_clock_limit_ms": 0
+      },
+      "validation_p95_ms": 31.383417,
+      "work_budget": 50000,
+      "work_kind": "nodes"
+    }
+  ],
+  "pairwise_results": [
+    {
+      "ci_lower": 0.1575,
+      "ci_upper": 0.2075,
+      "classification": "right_stronger",
+      "conclusion": "Hand-evaluated AlphaBetaBot is stronger than Tactical MctsBot.",
+      "games": 800,
+      "left_config_id": "mcts-1000",
+      "left_label": "Tactical MctsBot",
+      "left_losses": 654,
+      "left_mean_pair_score": 0.1825,
+      "left_wins": 146,
+      "matchup_id": "test-mcts-vs-alpha-beta",
+      "pairs": 400,
+      "pairs_lost_0_2": 260,
+      "pairs_split_1_1": 134,
+      "pairs_won_2_0": 6,
+      "right_config_id": "alpha-beta-50k",
+      "right_label": "Hand-evaluated AlphaBetaBot",
+      "stronger_config_id": "alpha-beta-50k",
+      "stronger_label": "Hand-evaluated AlphaBetaBot"
+    },
+    {
+      "ci_lower": 0.125,
+      "ci_upper": 0.17375,
+      "classification": "right_stronger",
+      "conclusion": "Neural alpha-beta (JacekInspiredBot) is stronger than Tactical MctsBot.",
+      "games": 800,
+      "left_config_id": "mcts-1000",
+      "left_label": "Tactical MctsBot",
+      "left_losses": 681,
+      "left_mean_pair_score": 0.14875,
+      "left_wins": 119,
+      "matchup_id": "test-mcts-vs-jacek",
+      "pairs": 400,
+      "pairs_lost_0_2": 289,
+      "pairs_split_1_1": 103,
+      "pairs_won_2_0": 8,
+      "right_config_id": "jacek-20k",
+      "right_label": "Neural alpha-beta (JacekInspiredBot)",
+      "stronger_config_id": "jacek-20k",
+      "stronger_label": "Neural alpha-beta (JacekInspiredBot)"
+    },
+    {
+      "ci_lower": 0.17,
+      "ci_upper": 0.2225,
+      "classification": "right_stronger",
+      "conclusion": "Rank5DerivedBot — fixed 50k demo profile is stronger than Tactical MctsBot.",
+      "games": 800,
+      "left_config_id": "mcts-1000",
+      "left_label": "Tactical MctsBot",
+      "left_losses": 643,
+      "left_mean_pair_score": 0.19625,
+      "left_wins": 157,
+      "matchup_id": "test-mcts-vs-rank5",
+      "pairs": 400,
+      "pairs_lost_0_2": 251,
+      "pairs_split_1_1": 141,
+      "pairs_won_2_0": 8,
+      "right_config_id": "rank5-fixed-50k",
+      "right_label": "Rank5DerivedBot — fixed 50k demo profile",
+      "stronger_config_id": "rank5-fixed-50k",
+      "stronger_label": "Rank5DerivedBot — fixed 50k demo profile"
+    },
+    {
+      "ci_lower": 0.365,
+      "ci_upper": 0.42625,
+      "classification": "right_stronger",
+      "conclusion": "Neural alpha-beta (JacekInspiredBot) is stronger than Hand-evaluated AlphaBetaBot.",
+      "games": 800,
+      "left_config_id": "alpha-beta-50k",
+      "left_label": "Hand-evaluated AlphaBetaBot",
+      "left_losses": 483,
+      "left_mean_pair_score": 0.39625,
+      "left_wins": 317,
+      "matchup_id": "test-alpha-beta-vs-jacek",
+      "pairs": 400,
+      "pairs_lost_0_2": 129,
+      "pairs_split_1_1": 225,
+      "pairs_won_2_0": 46,
+      "right_config_id": "jacek-20k",
+      "right_label": "Neural alpha-beta (JacekInspiredBot)",
+      "stronger_config_id": "jacek-20k",
+      "stronger_label": "Neural alpha-beta (JacekInspiredBot)"
+    },
+    {
+      "ci_lower": 0.3925,
+      "ci_upper": 0.45,
+      "classification": "right_stronger",
+      "conclusion": "Rank5DerivedBot — fixed 50k demo profile is stronger than Hand-evaluated AlphaBetaBot.",
+      "games": 800,
+      "left_config_id": "alpha-beta-50k",
+      "left_label": "Hand-evaluated AlphaBetaBot",
+      "left_losses": 463,
+      "left_mean_pair_score": 0.42125,
+      "left_wins": 337,
+      "matchup_id": "test-alpha-beta-vs-rank5",
+      "pairs": 400,
+      "pairs_lost_0_2": 110,
+      "pairs_split_1_1": 243,
+      "pairs_won_2_0": 47,
+      "right_config_id": "rank5-fixed-50k",
+      "right_label": "Rank5DerivedBot — fixed 50k demo profile",
+      "stronger_config_id": "rank5-fixed-50k",
+      "stronger_label": "Rank5DerivedBot — fixed 50k demo profile"
+    },
+    {
+      "ci_lower": 0.4825,
+      "ci_upper": 0.545,
+      "classification": "statistically_unresolved",
+      "conclusion": "Neural alpha-beta (JacekInspiredBot) versus Rank5DerivedBot — fixed 50k demo profile is statistically unresolved.",
+      "games": 800,
+      "left_config_id": "jacek-20k",
+      "left_label": "Neural alpha-beta (JacekInspiredBot)",
+      "left_losses": 389,
+      "left_mean_pair_score": 0.51375,
+      "left_wins": 411,
+      "matchup_id": "test-jacek-vs-rank5",
+      "pairs": 400,
+      "pairs_lost_0_2": 75,
+      "pairs_split_1_1": 239,
+      "pairs_won_2_0": 86,
+      "right_config_id": "rank5-fixed-50k",
+      "right_label": "Rank5DerivedBot — fixed 50k demo profile",
+      "stronger_config_id": null,
+      "stronger_label": null
+    }
+  ],
+  "provenance": {
+    "analysis_contract_sha256": "e37f0706cc10d337401f8d459a2f47182681bffa046c80013d4fa1f3ab341115",
+    "neural_model": {
+      "path": "models/jacek_article_value_model.json",
+      "sha256": "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084"
+    },
+    "rank5_submission": {
+      "path": "submissions/codingame/bots/rank_5/submission.cpp",
+      "sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+    },
+    "source_artifacts": {
+      "manifest": {
+        "path": "benchmarks/flagship_study/manifest.json",
+        "sha256": "7ce58f3e22d7540a7e72eacb11369e337cb359141b6542a3b6da080e9f244b31"
+      },
+      "selection_lock": {
+        "path": "benchmarks/flagship_study/selection_lock.json",
+        "sha256": "19e71e876b808284ebd94f249873625c76fa1fd328fd6da2bd6de5b83db13cdb"
+      },
+      "test_data": {
+        "path": "benchmarks/flagship_study/data/test.json",
+        "sha256": "3c966d24ad594dc53172efcea48ba532451b9777c784a126ab95ae54d05430ba"
+      }
+    },
+    "source_git_commit": "2c023167e4ed8b3d7b887c363b6ec4b431db2dd9"
+  },
+  "schema_version": "papersoccer.flagship-study-release-summary.v1",
+  "study": {
+    "frozen": true,
+    "id": "competitive-demo-bots-flagship-2026-v4",
+    "latency_gate_ms": 50.0,
+    "rank5_disclaimer": "Rank5DerivedBot adapts search code from the rank 5/206 CodinGame submission to different demo rules and a fixed-work profile. These measurements do not evaluate the authentic ranked submission.",
+    "title": "Competitive demo-rule Paper Soccer bot study",
+    "version": "1.3.0"
+  },
+  "test": {
+    "bootstrap_resamples": 10000,
+    "games": 4800,
+    "opening_depths": [
+      4,
+      8,
+      12,
+      20
+    ],
+    "pairs": 2400,
+    "truncations": 0
+  }
+}

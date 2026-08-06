@@ -1,5 +1,11 @@
 # Competitive demo-rule Paper Soccer bot study
 
+## Executive abstract
+
+This study asks which of four competitive demo-rule bots is strongest, best calibrated, and most efficient under a 50 ms validation p95 decision-latency constraint. It froze disjoint development, validation, and test opening banks; selected bot profiles and fitted calibration mappings on validation only; and then evaluated the locked entrants once on 4,800 decisive test games (2,400 color-swapped pairs, zero truncations).
+
+Neural alpha-beta scored 60.4% against hand alpha-beta (pair-clustered 95% CI 57.4%–63.5%), supporting the conclusion that Neural alpha-beta is stronger; its selected profile measured 35.718 ms validation p95. Neural alpha-beta scored 51.4% against Rank5DerivedBot — fixed 50k demo profile (pair-clustered 95% CI 48.2%–54.5%), so the comparison remains statistically unresolved. Results are limited to these frozen openings, demo rules, entrants, and gate machine; calibration decisions within games are dependent, and Rank5DerivedBot is not the authentic ranked submission.
+
 ## Research question and hypotheses
 
 **Question.** Under standard 8×10 demo rules, which of the four competitive entrants has the strongest frozen test performance, the best calibrated predictions, and the most favorable validation strength/latency tradeoff?

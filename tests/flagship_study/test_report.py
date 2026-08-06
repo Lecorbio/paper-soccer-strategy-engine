@@ -498,6 +498,7 @@ class ReportTests(unittest.TestCase):
         report = render_report(*_fixture())
 
         headings = (
+            "## Executive abstract",
             "## Research question and hypotheses",
             "## Entrants",
             "## Benchmark setup",
@@ -523,6 +524,11 @@ class ReportTests(unittest.TestCase):
         self.assertIn("native Release", report)
         self.assertIn("50 ms p95 gate", report)
         self.assertIn("measured on Synthetic CPU", report)
+        self.assertIn(
+            "selected bot profiles and fitted calibration mappings on validation only",
+            report,
+        )
+        self.assertIn("Rank5DerivedBot is not the authentic ranked submission", report)
         for operational_detail in (
             "## Prospective recovery lineage",
             "## Exact reproduction commands",

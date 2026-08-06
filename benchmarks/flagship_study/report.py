@@ -322,6 +322,61 @@ def _analysis(test: Mapping[str, Any]) -> Mapping[str, Any]:
     return _mapping(value, "test.analysis") if value is not None else test
 
 
+def _head_to_head_from_perspective(
+    test: Mapping[str, Any], subject_id: str, opponent_id: str,
+) -> tuple[float, float, float]:
+    """Return paired score and interval from one entrant's perspective."""
+
+    matching: list[Mapping[str, Any]] = []
+    for matchup_id, raw in _mapping(test.get("matchups"), "test.matchups").items():
+        summary = _mapping(raw, f"test.matchups.{matchup_id}")
+        left_id = _string(summary.get("left_config_id"), f"{matchup_id}.left_config_id")
+        right_id = _string(
+            summary.get("right_config_id"), f"{matchup_id}.right_config_id"
+        )
+        if {left_id, right_id} == {subject_id, opponent_id}:
+            matching.append(summary)
+    if len(matching) != 1:
+        raise ReportError(
+            f"expected exactly one test matchup for {subject_id} and {opponent_id}"
+        )
+
+    summary = matching[0]
+    left_id = _string(summary.get("left_config_id"), "head-to-head left ID")
+    mean = _number(summary.get("mean_pair_score"), "head-to-head mean")
+    interval = _mapping(summary.get("pair_bootstrap_95"), "head-to-head interval")
+    lower = _number(interval.get("lower"), "head-to-head interval lower")
+    upper = _number(interval.get("upper"), "head-to-head interval upper")
+    if not (0.0 <= lower <= mean <= upper <= 1.0):
+        raise ReportError("head-to-head estimate and interval are inconsistent")
+    if left_id == subject_id:
+        return mean, lower, upper
+    return 1.0 - mean, 1.0 - upper, 1.0 - lower
+
+
+def _executive_result(
+    subject: str,
+    opponent: str,
+    score: float,
+    lower: float,
+    upper: float,
+) -> str:
+    interval = (
+        f"pair-clustered 95% CI {_percent(lower, 'executive CI lower')}–"
+        f"{_percent(upper, 'executive CI upper')}"
+    )
+    if lower > 0.5:
+        finding = f"supporting the conclusion that {subject} is stronger"
+    elif upper < 0.5:
+        finding = f"supporting the conclusion that {opponent} is stronger"
+    else:
+        finding = "so the comparison remains statistically unresolved"
+    return (
+        f"{subject} scored {_percent(score, 'executive paired score')} against "
+        f"{opponent} ({interval}), {finding}"
+    )
+
+
 def _hash(value: Any, where: str) -> str:
     text = _string(value, where)
     if len(text) != 64 or any(character not in "0123456789abcdef" for character in text):
@@ -401,6 +456,7 @@ def render_markdown_report(
         bootstrap.get("resamples"), "bootstrap resamples", minimum=1
     )
     environment = _mapping(manifest.get("environment"), "manifest.environment")
+    latency = _mapping(manifest.get("latency_protocol"), "manifest.latency_protocol")
     ablations = _mapping(
         selection.get("development_validation_ablations"),
         "selection.development_validation_ablations",
@@ -514,8 +570,55 @@ def render_markdown_report(
     for value in evaluator_ablations:
         append_ablation(value, "Neural minus hand", evaluator=True)
 
+    completed_games = _integer(
+        _mapping(test.get("completeness"), "test.completeness").get("completed_games"),
+        "test completed games",
+        minimum=1,
+    )
+    test_pairs = sum(
+        _integer(
+            _mapping(raw, f"test.matchups.{matchup_id}").get("pairs"),
+            f"test.matchups.{matchup_id}.pairs",
+            minimum=1,
+        )
+        for matchup_id, raw in _mapping(test.get("matchups"), "test.matchups").items()
+    )
+    if completed_games != 2 * test_pairs:
+        raise ReportError("test game total disagrees with color-swapped pair totals")
+    hand_id, neural_id, rank5_id = selected_ids[1], selected_ids[2], selected_ids[3]
+    neural_hand = _head_to_head_from_perspective(test, neural_id, hand_id)
+    neural_rank5 = _head_to_head_from_perspective(test, neural_id, rank5_id)
+    neural_metric = _mapping(
+        selection_metrics.get(neural_id), f"selection metric {neural_id}"
+    )
+    neural_p95 = _number(
+        neural_metric.get("validation_p95_ms"), f"{neural_id} validation p95"
+    )
+    gate_ms = _number(latency.get("gate_ms"), "latency gate")
+
     lines = [
         f"# {_string(study.get('title'), 'study.title')}",
+        "",
+        "## Executive abstract",
+        "",
+        "This study asks which of four competitive demo-rule bots is strongest, "
+        "best calibrated, and most efficient under a "
+        f"{gate_ms:g} ms validation p95 decision-latency constraint. It froze "
+        "disjoint development, validation, and test opening banks; selected bot "
+        "profiles and fitted calibration mappings on validation only; and then "
+        f"evaluated the locked entrants once on {completed_games:,} decisive test "
+        f"games ({test_pairs:,} color-swapped pairs, zero truncations).",
+        "",
+        _executive_result(
+            "Neural alpha-beta", "hand alpha-beta", *neural_hand
+        )
+        + f"; its selected profile measured {neural_p95:.3f} ms validation p95. "
+        + _executive_result(
+            "Neural alpha-beta", studylib.PUBLIC_RANK5_LABEL, *neural_rank5
+        )
+        + ". Results are limited to these frozen openings, demo rules, entrants, "
+        "and gate machine; calibration decisions within games are dependent, and "
+        "Rank5DerivedBot is not the authentic ranked submission.",
         "",
         "## Research question and hypotheses",
         "",
@@ -574,7 +677,6 @@ def render_markdown_report(
             ])
     lines.extend(_table(("Family", "Configuration", "Frozen work/profile"), grid_rows))
 
-    latency = _mapping(manifest.get("latency_protocol"), "manifest.latency_protocol")
     lines.extend([
         "",
         "## Latency protocol",
