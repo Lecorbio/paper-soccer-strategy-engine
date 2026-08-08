@@ -7,9 +7,11 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
     <script defer src="papersoccer-wasm.js"></script>
+    <script defer src="game-review-gate.js"></script>
     <script defer src="game-engine.js"></script>
     <script defer src="app-support.js"></script>
     <script defer src="board-view.js"></script>
+    <script defer src="game-review-client.js"></script>
     <script defer src="app.js"></script>
   </head>
   <body>
@@ -256,6 +258,11 @@
           <p id="moveLabel" class="summary-detail">
             Choose whether to move first or second, then select Start.
           </p>
+          <div class="review-entry-actions">
+            <button id="reviewGameButton" class="primary-control" type="button" hidden>
+              Review game
+            </button>
+          </div>
         </div>
 
         <div id="liveHistoryControls" class="live-history-controls"
@@ -300,6 +307,91 @@
             </select>
           </div>
         </div>
+
+        <section id="gameReviewPanel" class="game-review" aria-labelledby="gameReviewHeading"
+          hidden>
+          <div class="game-review-heading">
+            <div>
+              <p class="eyebrow">Possession-aware analysis</p>
+              <h2 id="gameReviewHeading">Game Review</h2>
+            </div>
+            <button id="closeReviewButton" type="button" aria-label="Close Game Review">Close</button>
+          </div>
+
+          <p class="review-explanation">
+            Grades cover complete possessions, including every rebound edge. Unless marked
+            proven, they are deterministic engine estimates rather than objective truth.
+          </p>
+
+          <div class="review-mode-actions" role="group" aria-label="Review mode">
+            <button id="fastReviewButton" class="primary-control" type="button">
+              Fast preview
+            </button>
+            <button id="deepReviewButton" type="button">Deep refinement</button>
+            <button id="cancelReviewButton" type="button" hidden>Cancel</button>
+          </div>
+          <p id="reviewTransportNotice" class="review-transport"></p>
+          <div id="reviewProgressRegion" class="review-progress" aria-live="polite">
+            <progress id="reviewProgress" max="1" value="0" hidden></progress>
+            <p id="reviewProgressText">Choose Fast preview or Deep refinement.</p>
+          </div>
+
+          <div id="reviewSummary" class="review-summary" hidden>
+            <div>
+              <span>Grade counts</span>
+              <p id="reviewGradeCounts"></p>
+            </div>
+            <div>
+              <span>Best-action rate</span>
+              <p id="reviewBestActionRate"></p>
+            </div>
+            <div>
+              <span>Largest estimated loss</span>
+              <p id="reviewLargestLoss"></p>
+            </div>
+          </div>
+
+          <section id="possessionTimelineSection" class="possession-timeline-section"
+            aria-labelledby="possessionTimelineHeading" hidden>
+            <div class="review-subheading">
+              <h2 id="possessionTimelineHeading">Possession timeline</h2>
+              <span>Edges remain selectable below</span>
+            </div>
+            <div id="possessionTimeline" class="possession-timeline"
+              role="list" aria-label="Reviewed possessions"></div>
+          </section>
+
+          <article id="possessionReviewDetail" class="possession-review-detail" hidden>
+            <div class="possession-review-title-row">
+              <h2 id="possessionReviewTitle">Possession</h2>
+              <span id="possessionGrade" class="possession-grade">Unclear</span>
+            </div>
+            <p id="possessionLoss" class="possession-loss"></p>
+            <p id="possessionProof" class="possession-proof"></p>
+            <p id="possessionBorderline" class="possession-borderline"></p>
+            <p id="possessionDiagnostics" class="possession-diagnostics"></p>
+            <div class="review-path-legend" aria-label="Board path colors">
+              <span class="played-path-key">Played possession</span>
+              <span class="recommended-path-key">Recommended possession</span>
+              <span class="divergence-key">First divergence</span>
+            </div>
+            <div class="try-line-actions">
+              <button id="tryLineButton" class="primary-control" type="button">
+                Try this line
+              </button>
+              <button id="leaveTryLineButton" type="button" hidden>
+                Return to replay
+              </button>
+            </div>
+            <p id="tryLineStatus" class="try-line-status"></p>
+          </article>
+
+          <div class="review-export-actions">
+            <button id="exportReviewButton" type="button" disabled>
+              Export review
+            </button>
+          </div>
+        </section>
 
         <section class="move-list-section" aria-label="Move list">
           <h2 id="moveListHeading">Move history</h2>

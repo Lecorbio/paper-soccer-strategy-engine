@@ -15,14 +15,13 @@
 #include <vector>
 
 #include "papersoccer/bot.hpp"
+#include "papersoccer/game_review.hpp"
 #include "papersoccer/rules.hpp"
 
 namespace ps = papersoccer;
 
 namespace {
 
-constexpr int kCandidateBlend = 15;
-constexpr int kReferenceBlend = 0;
 constexpr std::uint64_t kDefaultNodes = 50'000;
 constexpr std::uint32_t kDefaultDepth = 32;
 constexpr std::size_t kDefaultTranspositionEntries = 65'536;
@@ -162,17 +161,89 @@ bool contains(const std::vector<ps::Move> &moves, ps::Move candidate) {
   return std::find(moves.begin(), moves.end(), candidate) != moves.end();
 }
 
-ps::Rank5DerivedConfig bot_config(const Options &options, int blend) {
-  ps::Rank5DerivedConfig config;
+ps::CompleteTurnAnalysisConfig analysis_config(const Options &options) {
+  ps::CompleteTurnAnalysisConfig config;
   config.max_turn_depth = options.depth;
   config.max_nodes = options.nodes;
   config.transposition_table_entries = kDefaultTranspositionEntries;
   config.evaluation_table_entries = kDefaultEvaluationEntries;
-  config.max_time_ms = 0;
-  config.replay_corrections = false;
-  config.replay_value_blend_percent = blend;
   return config;
 }
+
+bool same_state(const ps::GameState &left, const ps::GameState &right) {
+  return left.config.width == right.config.width &&
+         left.config.height == right.config.height &&
+         left.config.goal_rule == right.config.goal_rule &&
+         left.config.blocked_rule == right.config.blocked_rule &&
+         left.ball == right.ball && left.to_move == right.to_move &&
+         left.status == right.status && left.path == right.path &&
+         left.used_segments == right.used_segments &&
+         left.visit_count == right.visit_count;
+}
+
+// This intentionally is not a Rank5DerivedBot. It keeps the historical gate
+// executable useful for small deterministic regression runs while making
+// configurable work report under the public complete-turn analysis identity.
+class ConfiguredAnalysisBot {
+ public:
+  explicit ConfiguredAnalysisBot(ps::CompleteTurnAnalysisConfig config)
+      : analyzer_(config) {}
+
+  ps::Move choose_move(const ps::GameState &state) {
+    if (expected_state_.has_value() && same_state(state, *expected_state_) &&
+        next_ < action_.size()) {
+      const ps::Move move = action_[next_++];
+      stats_.nodes = 0;
+      stats_.cached_continuation = true;
+      stats_.planned_action_length = action_.size();
+      stats_.current_edge_index = next_ - 1U;
+      stats_.cached_moves_remaining = action_.size() - next_;
+      if (next_ < action_.size()) {
+        expected_state_ = ps::apply_move(state, move);
+      } else {
+        clear_cache();
+      }
+      return move;
+    }
+
+    clear_cache();
+    ps::CompleteTurnAnalysis analysis = analyzer_.analyze(state);
+    action_ = std::move(analysis.action);
+    stats_ = std::move(analysis.stats);
+    ++searches_;
+    stats_.planned_action_length = action_.size();
+    stats_.current_edge_index = 0;
+    stats_.cached_moves_remaining = action_.size() - 1U;
+    stats_.searches = searches_;
+    const ps::Move move = action_.front();
+    next_ = 1;
+    if (next_ < action_.size()) {
+      expected_state_ = ps::apply_move(state, move);
+    } else {
+      clear_cache();
+    }
+    return move;
+  }
+
+  const ps::CompleteTurnSearchStats &last_search_stats() const noexcept {
+    return stats_;
+  }
+
+ private:
+  ps::CompleteTurnAnalyzer analyzer_;
+  ps::CompleteTurnSearchStats stats_{};
+  std::vector<ps::Move> action_{};
+  std::size_t next_{};
+  std::optional<ps::GameState> expected_state_{};
+  std::uint64_t searches_{};
+
+  void clear_cache() noexcept {
+    action_.clear();
+    next_ = 0;
+    expected_state_.reset();
+    stats_.cached_moves_remaining = 0;
+  }
+};
 
 Opening make_opening(int stage, int index) {
   const std::uint64_t requested_seed =
@@ -223,8 +294,8 @@ GameRecord play_game(const Opening &opening, int candidate_player,
   GameRecord record;
   record.candidate_player = candidate_player;
   ps::GameState state = opening.state;
-  ps::Rank5DerivedBot candidate(bot_config(options, kCandidateBlend));
-  ps::Rank5DerivedBot reference(bot_config(options, kReferenceBlend));
+  ConfiguredAnalysisBot candidate(analysis_config(options));
+  ps::Rank5DerivedBot reference;
   std::array<std::size_t, 2> continuation_edges{};
   std::array<std::size_t, 2> planned_action_lengths{};
 
@@ -233,13 +304,15 @@ GameRecord play_game(const Opening &opening, int candidate_player,
            record.physical_plies < options.maximum_physical_plies) {
       const int mover = state.to_move == ps::Player::One ? 0 : 1;
       const bool is_candidate = mover == candidate_player;
-      ps::Rank5DerivedBot &bot = is_candidate ? candidate : reference;
       const std::vector<ps::Move> legal = ps::legal_moves(state);
       if (legal.empty()) {
         throw std::logic_error("in-progress state has no legal moves");
       }
-      const ps::Move move = bot.choose_move(state);
-      const ps::Rank5DerivedSearchStats stats = bot.last_search_stats();
+      const ps::Move move = is_candidate ? candidate.choose_move(state)
+                                         : reference.choose_move(state);
+      const ps::CompleteTurnSearchStats stats =
+          is_candidate ? candidate.last_search_stats()
+                       : reference.last_search_stats();
       if (!contains(legal, move)) {
         ++record.operations.illegal_moves;
         throw std::logic_error("bot returned an illegal move");
@@ -423,7 +496,7 @@ Options parse_options(int argc, char **argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument(argv[index]);
     if (argument == "--help") {
-      std::cout << "usage: rank5_derived_evaluator_gate [--nodes N] "
+      std::cout << "usage: complete_turn_analysis_regression [--nodes N] "
                    "[--depth N] [--pairs-per-stage N] [--bootstrap N] "
                    "[--max-plies N] [--output RAW.json] "
                    "[--summary SUMMARY.json]\n";
@@ -452,7 +525,7 @@ Options parse_options(int argc, char **argv) {
     }
   }
   if (options.depth > ps::Rank5DerivedConfig::maximum_turn_depth) {
-    throw std::invalid_argument("depth exceeds Rank5Derived maximum");
+    throw std::invalid_argument("depth exceeds complete-turn analysis maximum");
   }
   return options;
 }
@@ -469,7 +542,8 @@ int main(int argc, char **argv) {
     std::uint64_t opening_fingerprint = 14695981039346656037ULL;
 
     for (const int stage : kOpeningPhysicalPlies) {
-      std::cerr << "rank5 gate: stage " << stage << " physical plies\n";
+      std::cerr << "complete-turn regression: stage " << stage
+                << " physical plies\n";
       std::vector<PairRecord> pairs;
       pairs.reserve(static_cast<std::size_t>(options.pairs_per_stage));
       for (int index = 0; index < options.pairs_per_stage; ++index) {
@@ -491,7 +565,8 @@ int main(int argc, char **argv) {
           overall_scores.push_back(*pair.candidate_score);
         }
         pairs.push_back(std::move(pair));
-        std::cerr << "rank5 gate: stage=" << stage << " pair=" << index + 1
+        std::cerr << "complete-turn regression: stage=" << stage
+                  << " pair=" << index + 1
                   << '/' << options.pairs_per_stage << '\n';
       }
       stages.push_back(std::move(pairs));
@@ -506,19 +581,23 @@ int main(int argc, char **argv) {
         overall_operations.unexplained_truncations == 0 &&
         overall_operations.incomplete_actions == 0 &&
         overall_scores.size() == expected_pairs;
-    const int selected_blend =
-        operationally_clean && overall_ci.lower > 0.5 ? kCandidateBlend
-                                                       : kReferenceBlend;
+    const bool candidate_selected =
+        operationally_clean && overall_ci.lower > 0.5;
+    const ps::CompleteTurnAnalysisConfig candidate_config =
+        analysis_config(options);
 
     std::ostringstream json;
     json << std::setprecision(17);
-    json << "{\n  \"schema\": \"papersoccer.rank5-derived-evaluator-gate.v1\","
+    json << "{\n  \"schema\": \"papersoccer.complete-turn-regression.v1\","
             "\n  \"config\": {\"rules\":{\"width\":8,\"height\":10,"
             "\"goal_rule\":\"opponent_goal_only\","
             "\"blocked_rule\":\"player_to_move_loses\"},"
-            "\"candidate_blend_percent\":" << kCandidateBlend
-         << ",\"reference_blend_percent\":" << kReferenceBlend
-         << ",\"max_nodes\":" << options.nodes
+            "\"candidate_identity\":\"complete-turn-analysis\","
+            "\"candidate_profile\":"
+         << json_string(candidate_config.profile_name())
+         << ",\"reference_identity\":\"rank5-derived-fixed-50k\","
+            "\"learned_value_blend_percent\":0,\"max_nodes\":"
+         << options.nodes
          << ",\"max_turn_depth\":" << options.depth
          << ",\"transposition_entries\":" << kDefaultTranspositionEntries
          << ",\"evaluation_entries\":" << kDefaultEvaluationEntries
@@ -531,9 +610,9 @@ int main(int argc, char **argv) {
             "\"resamples\":" << options.bootstrap_samples
          << ",\"seed\":\"0x" << hex64(kBootstrapSeed)
          << "\",\"confidence\":0.95},\"selection_rule\":"
-            "\"select 15 only when all operational counts are zero and the "
-            "overall paired-bootstrap lower bound is strictly greater than 0.50; "
-            "otherwise select 0\"},\n"
+            "\"select configurable analysis only when all operational counts "
+            "are zero and the overall paired-bootstrap lower bound is strictly "
+            "greater than 0.50; otherwise retain fixed Rank5Derived\"},\n"
          << "  \"openings\": {\"generator\":\"xorshift64star/legal-index/v1\","
             "\"seed_base\":\"0x" << hex64(kOpeningSeedBase)
          << "\",\"fingerprint\":{\"algorithm\":\"fnv1a64\",\"value\":\""
@@ -612,16 +691,21 @@ int main(int argc, char **argv) {
          << (operationally_clean ? "true" : "false")
          << ",\"lower_bound_strictly_above_half\":"
          << (overall_ci.lower > 0.5 ? "true" : "false")
-         << ",\"selected_replay_value_blend_percent\":" << selected_blend
+         << ",\"selected_identity\":"
+         << json_string(candidate_selected ? "complete-turn-analysis"
+                                           : "rank5-derived-fixed-50k")
          << "}\n}\n";
 
     std::ostringstream summary;
     summary << std::setprecision(17);
     summary << "{\n  \"schema\": "
-               "\"papersoccer.rank5-derived-evaluator-gate-summary.v1\","
-               "\n  \"config\": {\"candidate_blend_percent\":"
-            << kCandidateBlend << ",\"reference_blend_percent\":"
-            << kReferenceBlend << ",\"max_nodes\":" << options.nodes
+               "\"papersoccer.complete-turn-regression-summary.v1\","
+               "\n  \"config\": {\"candidate_identity\":"
+               "\"complete-turn-analysis\",\"candidate_profile\":"
+            << json_string(candidate_config.profile_name())
+            << ",\"reference_identity\":\"rank5-derived-fixed-50k\","
+               "\"learned_value_blend_percent\":0,\"max_nodes\":"
+            << options.nodes
             << ",\"max_turn_depth\":" << options.depth
             << ",\"pairs_per_stage\":" << options.pairs_per_stage
             << ",\"bootstrap_resamples\":" << options.bootstrap_samples
@@ -663,8 +747,10 @@ int main(int argc, char **argv) {
             << (operationally_clean ? "true" : "false")
             << ",\"lower_bound_strictly_above_half\":"
             << (overall_ci.lower > 0.5 ? "true" : "false")
-            << ",\"selected_replay_value_blend_percent\":"
-            << selected_blend << "}\n}\n";
+            << ",\"selected_identity\":"
+            << json_string(candidate_selected ? "complete-turn-analysis"
+                                              : "rank5-derived-fixed-50k")
+            << "}\n}\n";
 
     if (options.output.empty()) {
       std::cout << json.str();
@@ -673,18 +759,20 @@ int main(int argc, char **argv) {
       if (!output) throw std::runtime_error("could not open output file");
       output << json.str();
       if (!output) throw std::runtime_error("could not write output file");
-      std::cerr << "rank5 gate: wrote " << options.output << '\n';
+      std::cerr << "complete-turn regression: wrote " << options.output
+                << '\n';
     }
     if (!options.summary.empty()) {
       std::ofstream output(options.summary);
       if (!output) throw std::runtime_error("could not open summary file");
       output << summary.str();
       if (!output) throw std::runtime_error("could not write summary file");
-      std::cerr << "rank5 gate: wrote " << options.summary << '\n';
+      std::cerr << "complete-turn regression: wrote " << options.summary
+                << '\n';
     }
     return operationally_clean ? 0 : 2;
   } catch (const std::exception &error) {
-    std::cerr << "rank5 gate: " << error.what() << '\n';
+    std::cerr << "complete-turn regression: " << error.what() << '\n';
     return 64;
   }
 }

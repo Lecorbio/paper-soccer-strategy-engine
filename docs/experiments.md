@@ -235,31 +235,95 @@ record, commands, depth histograms, and horizon ablations remain canonical in
 Jacek Dermont's unpublished contest bot or to improve the repository's
 CodinGame rank.
 
+## Game Review strength, calibration, and Expert gate
+
+Game Review has its own frozen study. It neither edits the flagship study nor
+uses any of its openings for development, validation, calibration, or test.
+The manifest freezes horizontal-reflection-aware opening identities at 4,
+8, 12, and 20 physical plies and explicitly excludes every flagship bank.
+
+The three `DeepTurnSearchBot` candidates are depth 32 with 100,000, 200,000, or
+400,000 nodes. Each keeps 65,536 transposition entries, 32,768 evaluation-cache
+entries, no clock, no replay corrections, and a 0% learned-value blend. They
+are evaluated against both references:
+
+- `Rank5DerivedBot`, the immutable 50,000-node demo profile; and
+- the selected `JacekInspiredBot`, depth 6 and 20,000 nodes.
+
+Development uses 25 color-swapped pairs per opening depth, reference, and
+candidate. Validation uses 50 pairs for the same cells. Eligible candidates
+within one percentage point of the validation leader form the selection set;
+the gate chooses lower Wasm p95 latency, then lower node budget. A candidate
+must also measure at most 400 ms p95 and 750 ms maximum in the dedicated Wasm
+artifact. Every Wasm recommendation and deterministic counter in the latency
+sample is checked against the corresponding native validation decision.
+
+Validation decisions fit two separate logistic maps: one for the fixed Fast
+50k profile and one for the selected Deep profile. Scores are oriented to the
+player making the possession and outcomes are eventual binary wins. The fit
+never reads development or held-out test outcomes and never applies one
+profile's coefficients to another profile. Selection, Wasm latency, and both
+calibrations are locked before test.
+
+The selected profile is tested exactly once on 100 color-swapped pairs at each
+opening depth against each reference: 1,600 games total. Each paired interval
+uses 10,000 bootstrap resamples of whole color-swapped pairs. The operational
+gate requires zero illegal moves, incomplete rebound actions, unexplained
+truncations, and native/Wasm parity failures.
+
+The browser may display **Expert — DeepTurnSearch** only if the selected
+profile's paired 95% lower confidence bound is strictly above 50% against each
+reference separately. Failure against either reference is an honest negative
+result: Deep Game Review still ships, but the opponent selector and Expert
+strength claim do not.
+
+**Expert selector status (frozen-test result): Pending final gate result.**
+This single sentence is the release-status field; replace it from the frozen
+test report without changing the method above.
+
+The frozen manifest, opening identities, selection/calibration lock, phase
+summaries, Wasm latency, compact result, and report live under
+`benchmarks/game_review_gate/`. Commands are in
+[Reproducibility](reproducibility.md#game-review-gate). The arena exposes
+`deep-turn-search` and records its diagnostics under that distinct identity;
+custom complete-turn work cannot report as Rank5Derived.
+
 ## Rank5Derived demo gates
 
 The demo profile adapts search from the authentic `rank_5` source to different
 rules and fixed 50,000-node work. Its measurements cannot be assigned to the
 ranked submission.
 
-The evaluator-selection gate compared the original 15% replay-trained value
-blend with 0% search-only evaluation over 60 frozen color-swapped pairs (120
-games): 20 pairs after each of 4, 12, and 20 opening plies. The 15% candidate
-went 70-50 with zero illegal moves, errors, unexplained truncations, or
-incomplete actions, but the 10,000-resample paired 95% interval was
-49.17%–67.50%. Because its lower bound did not strictly exceed 50%, the shipped
-demo profile selected 0%.
+The historical evaluator-selection gate compared the original 15%
+replay-trained value blend with 0% search-only evaluation over 60 frozen
+color-swapped pairs (120 games): 20 pairs after each of 4, 12, and 20 opening
+plies. The 15% candidate went 70-50 with zero illegal moves, errors,
+unexplained truncations, or incomplete actions, but the 10,000-resample paired
+95% interval was 49.17%–67.50%. Because its lower bound did not strictly exceed
+50%, the demo profile selected 0%.
 
 The exact frozen configuration and compact summary are tracked as
 [`evaluator_gate_config.json`](../benchmarks/rank5_derived/evaluator_gate_config.json)
 and
 [`evaluator_gate_result.json`](../benchmarks/rank5_derived/evaluator_gate_result.json).
-To reproduce without overwriting curated evidence:
+These files are archival evidence from the configurable experiment. The
+current `Rank5DerivedBot` identity is strictly fixed and cannot construct a
+replay-blend candidate. Accordingly, `benchmarks/run_rank5_derived_gate.sh`
+now exits with an explanation instead of rerunning configurable work under the
+Rank5Derived name. Exact reproduction requires the source revision recorded
+with the archived artifacts; current configurable regression work uses the
+separately named complete-turn analysis executable.
+
+The intentionally unavailable historical command is retained only as a clear
+pointer to that policy:
 
 ```bash
 benchmarks/run_rank5_derived_gate.sh \
   --output results/rank5-derived-gate-raw.json \
   --summary results/rank5-derived-gate-summary.json
 ```
+
+It exits nonzero by design and does not modify the curated artifacts.
 
 The checked-in browser module was also probed on an Apple M4 Pro with Node
 26.5.0 and Emscripten 6.0.2. Across 80 actual complete-turn searches, the 50k

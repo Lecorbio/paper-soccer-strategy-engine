@@ -13,6 +13,10 @@
   if (!board) {
     throw new Error("Paper soccer board view did not load");
   }
+  const gameReview = globalThis.PaperSoccerGameReview;
+  if (!gameReview) {
+    throw new Error("Paper soccer Game Review client did not load");
+  }
 
   const { BotKind, Player, Status, samePoint } = engine;
   const gameSetup = document.querySelector("#gameSetup");
@@ -94,6 +98,11 @@
   const replayTwoRank5Profile = document.querySelector(
     "#replayTwoRank5Profile",
   );
+  support.installExpertOpponentOptions(
+    [botSelect, replayOneBotSelect, replayTwoBotSelect],
+    globalThis.PaperSoccerGameReviewGate,
+    document,
+  );
   const replaySetupError = document.querySelector("#replaySetupError");
   const replayGenerationStatus = document.querySelector(
     "#replayGenerationStatus",
@@ -104,6 +113,36 @@
   const liveHistoryControls = document.querySelector("#liveHistoryControls");
   const undoMoveButton = document.querySelector("#undoMoveButton");
   const resumeBotButton = document.querySelector("#resumeBotButton");
+  const reviewGameButton = document.querySelector("#reviewGameButton");
+  const gameReviewPanel = document.querySelector("#gameReviewPanel");
+  const closeReviewButton = document.querySelector("#closeReviewButton");
+  const fastReviewButton = document.querySelector("#fastReviewButton");
+  const deepReviewButton = document.querySelector("#deepReviewButton");
+  const cancelReviewButton = document.querySelector("#cancelReviewButton");
+  const reviewTransportNotice = document.querySelector("#reviewTransportNotice");
+  const reviewProgress = document.querySelector("#reviewProgress");
+  const reviewProgressText = document.querySelector("#reviewProgressText");
+  const reviewSummary = document.querySelector("#reviewSummary");
+  const reviewGradeCounts = document.querySelector("#reviewGradeCounts");
+  const reviewBestActionRate = document.querySelector("#reviewBestActionRate");
+  const reviewLargestLoss = document.querySelector("#reviewLargestLoss");
+  const possessionTimelineSection = document.querySelector(
+    "#possessionTimelineSection",
+  );
+  const possessionTimeline = document.querySelector("#possessionTimeline");
+  const possessionReviewDetail = document.querySelector(
+    "#possessionReviewDetail",
+  );
+  const possessionReviewTitle = document.querySelector("#possessionReviewTitle");
+  const possessionGrade = document.querySelector("#possessionGrade");
+  const possessionLoss = document.querySelector("#possessionLoss");
+  const possessionProof = document.querySelector("#possessionProof");
+  const possessionBorderline = document.querySelector("#possessionBorderline");
+  const possessionDiagnostics = document.querySelector("#possessionDiagnostics");
+  const tryLineButton = document.querySelector("#tryLineButton");
+  const leaveTryLineButton = document.querySelector("#leaveTryLineButton");
+  const tryLineStatus = document.querySelector("#tryLineStatus");
+  const exportReviewButton = document.querySelector("#exportReviewButton");
 
   const MODE_PLAY = "play";
   const MODE_REPLAY = "replay";
@@ -116,10 +155,20 @@
   const MAX_REPLAY_PLIES = 512;
   const MAX_UINT64 = (1n << 64n) - 1n;
 
-  const defaultReplay = normalizeReplay(readDefaultReplay());
+  const defaultSourceReplay = gameReview.cloneJson(readDefaultReplay());
+  const defaultReplay = normalizeReplay(defaultSourceReplay);
   let mode = MODE_PLAY;
   let replay = newGamePreviewReplay(defaultReplay);
-  let replaySession = { replay: defaultReplay, currentPly: 0 };
+  let sourceReplay = gameReview.cloneJson(replay);
+  let sourceReplayValidated = true;
+  let importedReviewDocument = null;
+  let replaySession = {
+    replay: defaultReplay,
+    sourceReplay: defaultSourceReplay,
+    sourceReplayValidated: true,
+    importedReviewDocument: null,
+    currentPly: 0,
+  };
   let liveSession = null;
   let currentPly = 0;
   let isPlaying = false;
@@ -139,6 +188,30 @@
   let replayGenerationId = 0;
   let isGeneratingReplay = false;
   let botPausedAfterUndo = false;
+  let reviewPanelOpen = false;
+  let reviewRunning = false;
+  let reviewMode = gameReview.ReviewMode.Fast;
+  let reviewSnapshot = null;
+  let fastReviewSnapshot = null;
+  let deepReviewSnapshot = null;
+  let reviewPrepared = null;
+  let reviewSandboxReady = false;
+  let selectedPossessionIndex = 0;
+  let pendingDeepRefinement = false;
+  let tryLineReplay = null;
+  let tryLinePly = 0;
+  let tryLineSnapshot = null;
+  let tryLinePending = false;
+  let replayImportId = 0;
+  let validatedImportedDocument = null;
+
+  const analysisRunner = gameReview.createAnalysisRunner({
+    globalObject: globalThis,
+    documentObject: document,
+    timerHost: window,
+    protocol: window.location.protocol,
+    onEvent: handleReviewEvent,
+  });
 
   const boardView = board.createBoardView({
     boardTargets: boardTargets,
@@ -146,10 +219,11 @@
     canvas: canvas,
     currentBall: currentBall,
     currentMoveStartIndex: currentMoveStartIndex,
-    getCurrentPly: function () { return currentPly; },
-    getReplay: function () { return replay; },
-    liveLegalMoves: liveLegalMoves,
-    liveState: liveState,
+    getCurrentPly: displayCurrentPly,
+    getReplay: displayReplay,
+    getReviewOverlay: currentReviewOverlay,
+    liveLegalMoves: interactiveLegalMoves,
+    liveState: interactiveState,
     onHumanMove: playHumanMove,
     playerTwo: Player.Two,
     samePoint: samePoint,
@@ -158,6 +232,34 @@
   function readDefaultReplay() {
     const raw = document.querySelector("#default-replay").textContent;
     return JSON.parse(raw);
+  }
+
+  function displayReplay() {
+    return tryLineReplay ?? replay;
+  }
+
+  function displayCurrentPly() {
+    return tryLineReplay ? tryLinePly : currentPly;
+  }
+
+  function invalidateReview(closePanel = true) {
+    analysisRunner.cancel();
+    reviewRunning = false;
+    reviewSnapshot = null;
+    fastReviewSnapshot = null;
+    deepReviewSnapshot = null;
+    reviewPrepared = null;
+    reviewSandboxReady = false;
+    selectedPossessionIndex = 0;
+    pendingDeepRefinement = false;
+    analysisRunner.closeSandbox();
+    tryLineReplay = null;
+    tryLinePly = 0;
+    tryLineSnapshot = null;
+    tryLinePending = false;
+    if (closePanel) {
+      reviewPanelOpen = false;
+    }
   }
 
   function newGamePreviewReplay(source) {
@@ -272,6 +374,7 @@
       return label;
     }
     const hasSeed = player.kind !== "Rank5DerivedBot" &&
+      player.kind !== "DeepTurnSearchBot" &&
       player.seed !== undefined && player.seed !== null &&
       String(player.seed).length > 0;
     const details = [];
@@ -284,7 +387,8 @@
     if (Number.isInteger(player.depth) && player.depth > 0) {
       details.push("possession-handoff depth " + player.depth);
     }
-    if (player.kind === "Rank5DerivedBot" &&
+    if ((player.kind === "Rank5DerivedBot" ||
+         player.kind === "DeepTurnSearchBot") &&
         Number.isInteger(player.maxNodes)) {
       details.push(formatCount(player.maxNodes) + " deterministic nodes");
     }
@@ -307,6 +411,9 @@
     }
     if (kind === BotKind.Rank5Derived) {
       return "Rank5DerivedBot";
+    }
+    if (kind === BotKind.DeepTurnSearch) {
+      return "DeepTurnSearchBot";
     }
     return "UnknownBot";
   }
@@ -361,7 +468,7 @@
   function selectedBotKind(value) {
     if (value === BotKind.Random || value === BotKind.Mcts ||
         value === BotKind.AlphaBeta || value === BotKind.JacekInspired ||
-        value === BotKind.Rank5Derived) {
+        value === BotKind.Rank5Derived || value === BotKind.DeepTurnSearch) {
       return value;
     }
     throw new Error("Unsupported bot kind: " + String(value));
@@ -369,13 +476,15 @@
 
   function readBotConfig(kindSelect, botSeedInput, iterationsInput, depthInput) {
     const kind = selectedBotKind(kindSelect.value);
-    if (kind === BotKind.Rank5Derived) {
+    if (kind === BotKind.Rank5Derived || kind === BotKind.DeepTurnSearch) {
       return {
         kind: kind,
         seed: "0",
         iterations: DEFAULT_MCTS_ITERATIONS,
         depth: DEFAULT_ALPHA_BETA_DEPTH,
-        maxNodes: RANK5_DERIVED_MAX_NODES,
+        maxNodes: kind === BotKind.Rank5Derived
+          ? RANK5_DERIVED_MAX_NODES
+          : undefined,
       };
     }
     let seed;
@@ -418,6 +527,9 @@
     if (config.kind === BotKind.Rank5Derived) {
       return RANK5_DERIVED_MAX_NODES;
     }
+    if (config.kind === BotKind.DeepTurnSearch) {
+      return 0;
+    }
     return isDepthBot(config.kind) ? config.depth : config.iterations;
   }
 
@@ -433,14 +545,26 @@
     return liveSnapshot?.legalMoves ?? [];
   }
 
+  function interactiveState() {
+    return tryLineSnapshot?.state ?? liveState();
+  }
+
+  function interactiveLegalMoves() {
+    return tryLineSnapshot?.legalMoves ?? liveLegalMoves();
+  }
+
   function isLiveTerminal() {
     return !liveSnapshot || liveState().status !== Status.InProgress;
   }
 
   function adoptLiveSnapshot(snapshot) {
+    invalidateReview();
     liveSnapshot = snapshot;
     humanPlayer = snapshot.humanPlayer;
-    replay = normalizeReplay(snapshot.replay);
+    sourceReplay = gameReview.cloneJson(snapshot.replay);
+    sourceReplayValidated = true;
+    importedReviewDocument = null;
+    replay = normalizeReplay(sourceReplay);
     currentPly = replay.moves.length;
     lastLiveMove = replay.moves.at(-1) ?? null;
     boardView.resetHover();
@@ -458,6 +582,9 @@
     clearBotTimer();
     liveSession = {
       replay: replay,
+      sourceReplay: sourceReplay,
+      sourceReplayValidated: sourceReplayValidated,
+      importedReviewDocument: importedReviewDocument,
       currentPly: currentPly,
       snapshot: liveSnapshot,
       humanPlayer: humanPlayer,
@@ -477,6 +604,9 @@
     saveLiveSession();
     mode = MODE_REPLAY;
     replay = replaySession.replay;
+    sourceReplay = replaySession.sourceReplay;
+    sourceReplayValidated = replaySession.sourceReplayValidated;
+    importedReviewDocument = replaySession.importedReviewDocument;
     currentPly = replaySession.currentPly;
     liveSnapshot = null;
     gameError = "";
@@ -494,11 +624,22 @@
     }
 
     cancelReplayGeneration();
-    replaySession = { replay: replay, currentPly: currentPly };
+    replaySession = {
+      replay: replay,
+      sourceReplay: sourceReplay,
+      sourceReplayValidated: sourceReplayValidated,
+      importedReviewDocument: importedReviewDocument,
+      currentPly: currentPly,
+    };
+    invalidateReview();
     stopPlayback();
     if (!liveSession) {
       mode = MODE_PLAY;
       replay = newGamePreviewReplay(defaultReplay);
+      sourceReplay = gameReview.cloneJson(replay);
+      sourceReplayValidated = true;
+      importedReviewDocument = null;
+      invalidateReview();
       currentPly = 0;
       liveSnapshot = null;
       gameError = "";
@@ -515,6 +656,9 @@
     liveSession = null;
     mode = MODE_PLAY;
     replay = session.replay;
+    sourceReplay = session.sourceReplay;
+    sourceReplayValidated = session.sourceReplayValidated;
+    importedReviewDocument = session.importedReviewDocument;
     currentPly = session.currentPly;
     liveSnapshot = session.snapshot;
     humanPlayer = session.humanPlayer;
@@ -623,6 +767,11 @@
   }
 
   function canHumanMove() {
+    if (tryLineSnapshot) {
+      return !tryLinePending &&
+        tryLineSnapshot.state?.status === Status.InProgress &&
+        interactiveLegalMoves().length > 0;
+    }
     return mode === MODE_PLAY && liveSnapshot !== null && !gameError &&
       liveGame.movesEnabled && !liveGame.botThinking && !isLiveTerminal() &&
       liveState().toMove === humanPlayer;
@@ -682,6 +831,11 @@
 
   function playHumanMove(move, keyboardActivated) {
     if (!canHumanMove()) {
+      return;
+    }
+
+    if (tryLineSnapshot) {
+      playSandboxMove(move, keyboardActivated);
       return;
     }
 
@@ -777,9 +931,11 @@
     replayTwoDepthInput.disabled = isGeneratingReplay ||
       !isDepthBot(replayTwoBotSelect.value);
     replayOneSeedInput.disabled = isGeneratingReplay ||
-      replayOneBotSelect.value === BotKind.Rank5Derived;
+      replayOneBotSelect.value === BotKind.Rank5Derived ||
+      replayOneBotSelect.value === BotKind.DeepTurnSearch;
     replayTwoSeedInput.disabled = isGeneratingReplay ||
-      replayTwoBotSelect.value === BotKind.Rank5Derived;
+      replayTwoBotSelect.value === BotKind.Rank5Derived ||
+      replayTwoBotSelect.value === BotKind.DeepTurnSearch;
     generateReplayButton.textContent = isGeneratingReplay
       ? "Generating…"
       : "Generate replay";
@@ -872,7 +1028,7 @@
       }
       isGeneratingReplay = false;
       syncReplayGenerationControls();
-      loadReplay(generated.replay, true);
+      loadReplay(generated.replay, true, { validated: true });
       const moveCount = generated.replay.moves.length;
       replayGenerationStatus.textContent = "Generated " + moveCount +
         (moveCount === 1 ? " move." : " moves.") +
@@ -888,18 +1044,31 @@
     }
   }
 
-  function loadReplay(raw, preserveGeneration = false) {
+  function loadReplay(raw, preserveGeneration = false, options = {}) {
     if (!preserveGeneration) {
       cancelReplayGeneration();
     }
-    const normalized = normalizeReplay(raw);
+    const exactSource = gameReview.cloneJson(support.unwrapReplayDocument(raw));
+    const normalized = normalizeReplay(exactSource);
+    const imported = support.importedReview(raw);
     if (mode === MODE_PLAY) {
       saveLiveSession();
     } else {
       stopPlayback();
     }
+    invalidateReview();
     replay = normalized;
-    replaySession = { replay: replay, currentPly: 0 };
+    sourceReplay = exactSource;
+    sourceReplayValidated = options.validated === true ||
+      raw === validatedImportedDocument;
+    importedReviewDocument = imported ? gameReview.cloneJson(imported) : null;
+    replaySession = {
+      replay: replay,
+      sourceReplay: sourceReplay,
+      sourceReplayValidated: sourceReplayValidated,
+      importedReviewDocument: importedReviewDocument,
+      currentPly: 0,
+    };
     mode = MODE_REPLAY;
     liveSnapshot = null;
     gameError = "";
@@ -909,6 +1078,26 @@
     stopPlayback();
     plyRange.max = String(replay.moves.length);
     setReplayPly(0);
+
+    if (importedReviewDocument) {
+      try {
+        reviewPrepared = gameReview.prepareReplay(sourceReplay);
+        reviewSnapshot = importedReviewDocument;
+        reviewSandboxReady = false;
+        if (String(importedReviewDocument.mode).toLowerCase() === "deep") {
+          deepReviewSnapshot = importedReviewDocument;
+          reviewMode = gameReview.ReviewMode.Deep;
+        } else {
+          fastReviewSnapshot = importedReviewDocument;
+          reviewMode = gameReview.ReviewMode.Fast;
+        }
+        reviewPanelOpen = true;
+        selectedPossessionIndex = 0;
+        renderInterface();
+      } catch (error) {
+        importedReviewDocument = null;
+      }
+    }
   }
 
   function clampPly(ply) {
@@ -919,7 +1108,16 @@
     if (mode !== MODE_REPLAY) {
       return;
     }
+    leaveTryLine();
     currentPly = clampPly(ply);
+    if (reviewSnapshot && currentPly > 0) {
+      const selected = support.possessionForPly(reviewSnapshot, currentPly);
+      const possessions = support.reviewPossessions(reviewSnapshot);
+      const index = possessions.indexOf(selected);
+      if (index >= 0) {
+        selectedPossessionIndex = index;
+      }
+    }
     plyRange.value = String(currentPly);
     if (currentPly >= replay.moves.length) {
       isPlaying = false;
@@ -928,25 +1126,119 @@
   }
 
   function currentBall() {
-    if (currentPly === 0) {
-      return replay.start;
+    const shownReplay = displayReplay();
+    const shownPly = displayCurrentPly();
+    if (shownPly === 0) {
+      return shownReplay.start;
     }
-    return replay.moves[currentPly - 1].to;
+    return shownReplay.moves[shownPly - 1].to;
   }
 
   function currentMoveStartIndex() {
-    if (currentPly === 0) {
+    const shownReplay = displayReplay();
+    const shownPly = displayCurrentPly();
+    if (shownPly === 0) {
       return 0;
     }
 
-    const player = replay.moves[currentPly - 1].player;
-    let startIndex = currentPly - 1;
+    const player = shownReplay.moves[shownPly - 1].player;
+    let startIndex = shownPly - 1;
     while (startIndex > 0 &&
-           replay.moves[startIndex - 1].extraTurn &&
-           replay.moves[startIndex - 1].player === player) {
+           shownReplay.moves[startIndex - 1].extraTurn &&
+           shownReplay.moves[startIndex - 1].player === player) {
       startIndex -= 1;
     }
     return startIndex;
+  }
+
+  function possessionAction(possession, name) {
+    const value = possession?.[name] ??
+      (name === "playedAction" ? possession?.played : possession?.recommended);
+    if (Array.isArray(value)) {
+      return value;
+    }
+    if (Array.isArray(value?.edges)) {
+      return value.edges;
+    }
+    if (Array.isArray(value?.moves)) {
+      return value.moves;
+    }
+    return [];
+  }
+
+  function actionPath(action, fallbackStart) {
+    if (!Array.isArray(action) || action.length === 0) {
+      return [];
+    }
+    if (action[0]?.from && action[0]?.to) {
+      return [action[0].from].concat(action.map(function (edge) { return edge.to; }));
+    }
+    if (action.every(function (point) {
+      return Number.isInteger(point?.x) && Number.isInteger(point?.y);
+    })) {
+      const beginsAtStart = fallbackStart && samePoint(action[0], fallbackStart);
+      return beginsAtStart ? action : [fallbackStart].concat(action);
+    }
+    return [];
+  }
+
+  function selectedPossession() {
+    const possessions = support.reviewPossessions(reviewSnapshot);
+    if (possessions.length === 0) {
+      return null;
+    }
+    selectedPossessionIndex = Math.max(
+      0,
+      Math.min(possessions.length - 1, selectedPossessionIndex),
+    );
+    return possessions[selectedPossessionIndex];
+  }
+
+  function possessionBoundaryPoint(possession) {
+    const played = possessionAction(possession, "playedAction");
+    if (played[0]?.from) {
+      return played[0].from;
+    }
+    const range = support.possessionRange(possession);
+    return range.startPly <= 1
+      ? replay.start
+      : replay.moves[range.startPly - 2]?.to ?? replay.start;
+  }
+
+  function divergenceIndex(possession) {
+    const value = possession?.firstDivergenceEdge ??
+      possession?.firstDivergenceIndex ?? possession?.divergenceIndex ??
+      possession?.divergence?.edgeIndex ?? possession?.divergence;
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+
+  function currentReviewOverlay() {
+    if (!reviewPanelOpen || !reviewSnapshot) {
+      return null;
+    }
+    const possession = selectedPossession();
+    if (!possession) {
+      return null;
+    }
+    const boundary = possessionBoundaryPoint(possession);
+    const playedPath = actionPath(
+      possessionAction(possession, "playedAction"),
+      boundary,
+    );
+    const recommendedPath = actionPath(
+      possessionAction(possession, "recommendedAction"),
+      boundary,
+    );
+    const index = divergenceIndex(possession);
+    const divergence = index !== null && playedPath[index] && playedPath[index + 1]
+      ? { from: playedPath[index], to: playedPath[index + 1] }
+      : null;
+    return {
+      playedPath: tryLineReplay ? [] : playedPath,
+      recommendedPath,
+      divergence: tryLineReplay ? null : divergence,
+      sandbox: Boolean(tryLineReplay),
+    };
   }
 
   function formatCount(value) {
@@ -976,9 +1268,11 @@
     const usesDepth = configuration.kind === "AlphaBetaBot" ||
       configuration.kind === "JacekInspiredBot";
     const usesRank5Profile = configuration.kind === "Rank5DerivedBot";
+    const usesDeepProfile = configuration.kind === "DeepTurnSearchBot";
     activeBotConfiguration.textContent = configuration.kind +
-      (usesRank5Profile
-        ? " — 50k demo profile · deterministic " +
+      (usesRank5Profile || usesDeepProfile
+        ? " — " + (usesRank5Profile ? "50k demo profile" : configuration.profile) +
+          " · deterministic " +
           formatCount(configuration.maxNodes) + "-node work"
         : " · seed " + configuration.seed) + (usesMcts
         ? " · " + formatCount(configuration.iterations) +
@@ -991,7 +1285,8 @@
     const search = diagnostics.lastBotSearch;
     latestSearch.hidden = !search;
     searchPending.hidden = (!usesMcts &&
-      configuration.kind !== "JacekInspiredBot" && !usesRank5Profile) ||
+      configuration.kind !== "JacekInspiredBot" && !usesRank5Profile &&
+      !usesDeepProfile) ||
       Boolean(search);
     if (!search) {
       return;
@@ -1022,7 +1317,8 @@
       return;
     }
 
-    if (search.searchType === "rank5Derived") {
+    if (search.searchType === "rank5Derived" ||
+        search.searchType === "deepTurnSearch") {
       searchVisits.textContent = "Latest completed · depth " +
         formatCount(search.completedDepth) + " · Player 1 score " +
         formatCount(search.rootScore);
@@ -1030,8 +1326,9 @@
         formatCount(search.requestedNodes) + " deterministic nodes · " +
         formatDecisionTime(search.decisionTimeNs);
       searchIndicators.textContent = search.budgetExhausted
-        ? "50,000-node budget reached"
-        : "Search completed within the 50,000-node budget";
+        ? formatCount(search.requestedNodes) + "-node budget reached"
+        : "Search completed within the " + formatCount(search.requestedNodes) +
+          "-node budget";
       searchDetails.textContent = "Move " + formatCount(search.ply) +
         " · attempted depth " + formatCount(search.attemptedDepth) +
         " · planned complete turn: " +
@@ -1077,8 +1374,446 @@
     searchDetails.textContent = details;
   }
 
-  function updateText() {
+  function reviewProgressCounts(snapshot) {
+    const completed = Number(
+      snapshot?.completedPossessions ?? snapshot?.completedSteps ??
+      snapshot?.progress?.completed ?? 0,
+    );
+    const total = Number(
+      snapshot?.totalPossessions ?? snapshot?.totalSteps ??
+      snapshot?.progress?.total ?? 0,
+    );
+    return {
+      completed: Number.isFinite(completed) ? Math.max(0, completed) : 0,
+      total: Number.isFinite(total) ? Math.max(0, total) : 0,
+    };
+  }
+
+  function handleReviewEvent(event) {
+    if (event.type === "transport") {
+      reviewTransportNotice.textContent = event.transport === "worker"
+        ? "Analysis runs in a separate browser worker."
+        : "Direct-file fallback: analysis runs on the main thread, one " +
+          "position per event-loop task.";
+      renderInterface();
+      return;
+    }
+    if (event.type === "loading") {
+      if (event.kind === "validate") {
+        return;
+      }
+      reviewRunning = true;
+      reviewSandboxReady = false;
+      reviewMode = event.mode ?? reviewMode;
+      reviewPanelOpen = true;
+      reviewProgressText.textContent = "Loading the dedicated analysis engine…";
+      renderInterface();
+      return;
+    }
+    if (event.type === "validated") {
+      if (reviewRunning) {
+        reviewSnapshot = event.snapshot;
+        reviewProgressText.textContent = "Replay validated. Preparing possession analysis…";
+        renderInterface();
+      }
+      return;
+    }
+    if (event.type === "progress") {
+      reviewSnapshot = event.snapshot;
+      reviewRunning = true;
+      renderInterface();
+      return;
+    }
+    if (event.type === "complete") {
+      reviewSnapshot = event.snapshot;
+      reviewPrepared = event.prepared;
+      reviewRunning = false;
+      reviewSandboxReady = true;
+      reviewMode = event.mode;
+      if (event.mode === gameReview.ReviewMode.Deep) {
+        deepReviewSnapshot = event.snapshot;
+      } else {
+        fastReviewSnapshot = event.snapshot;
+      }
+      selectedPossessionIndex = Math.min(
+        selectedPossessionIndex,
+        Math.max(0, support.reviewPossessions(reviewSnapshot).length - 1),
+      );
+      renderInterface();
+      if (event.mode === gameReview.ReviewMode.Fast && pendingDeepRefinement) {
+        pendingDeepRefinement = false;
+        window.setTimeout(function () {
+          runReview(gameReview.ReviewMode.Deep);
+        }, 0);
+      }
+      return;
+    }
+    if (event.type === "cancelled") {
+      reviewRunning = false;
+      pendingDeepRefinement = false;
+      reviewProgressText.textContent =
+        "Review cancelled. A search already in progress may finish internally; " +
+        "its stale result will be ignored.";
+      renderInterface();
+      return;
+    }
+    if (event.type === "error") {
+      reviewRunning = false;
+      pendingDeepRefinement = false;
+      reviewProgressText.textContent = "Game Review could not continue: " +
+        event.error.message;
+      renderInterface();
+    }
+  }
+
+  function canReviewCurrentGame() {
     if (mode === MODE_PLAY) {
+      return Boolean(liveSnapshot) && !gameError && isLiveTerminal();
+    }
+    return sourceReplayValidated && replay.moves.length > 0;
+  }
+
+  function openGameReview() {
+    if (!canReviewCurrentGame()) {
+      return;
+    }
+    if (mode === MODE_PLAY) {
+      loadReplay(sourceReplay, false, { validated: true });
+    }
+    reviewPanelOpen = true;
+    selectedPossessionIndex = 0;
+    if (!reviewSnapshot) {
+      runReview(gameReview.ReviewMode.Fast);
+    } else {
+      renderInterface();
+    }
+  }
+
+  function runReview(requestedMode) {
+    if (!sourceReplayValidated || reviewRunning) {
+      return;
+    }
+    leaveTryLine();
+    reviewSandboxReady = false;
+    reviewMode = requestedMode;
+    reviewPanelOpen = true;
+    reviewProgressText.textContent = requestedMode === gameReview.ReviewMode.Deep
+      ? "Starting Deep refinement after the Fast preview…"
+      : "Starting deterministic Fast analysis…";
+    try {
+      const request = analysisRunner.start(sourceReplay, requestedMode);
+      reviewPrepared = request.prepared;
+    } catch (error) {
+      reviewRunning = false;
+      reviewProgressText.textContent = "Game Review could not start: " + error.message;
+    }
+    renderInterface();
+  }
+
+  function startFastReview() {
+    pendingDeepRefinement = false;
+    runReview(gameReview.ReviewMode.Fast);
+  }
+
+  function startDeepReview() {
+    if (reviewRunning) {
+      return;
+    }
+    if (!fastReviewSnapshot) {
+      pendingDeepRefinement = true;
+      runReview(gameReview.ReviewMode.Fast);
+      return;
+    }
+    runReview(gameReview.ReviewMode.Deep);
+  }
+
+  function cancelReview() {
+    if (!reviewRunning) {
+      return;
+    }
+    analysisRunner.cancel();
+  }
+
+  function closeGameReview() {
+    analysisRunner.cancel();
+    reviewRunning = false;
+    pendingDeepRefinement = false;
+    reviewPanelOpen = false;
+    leaveTryLine();
+    renderInterface();
+  }
+
+  function formatLoss(loss) {
+    return loss === null ? "Unavailable" : Number(loss).toFixed(1) + " pp";
+  }
+
+  function proofText(possession) {
+    const proof = String(
+      possession?.proofStatus ?? possession?.proof ?? "unknown",
+    ).toLowerCase();
+    if (proof === "provenwin" || proof === "proven_win" || proof === "win") {
+      return "Proven win";
+    }
+    if (proof === "provenloss" || proof === "proven_loss" || proof === "loss") {
+      return "Proven loss";
+    }
+    return "Unknown — heuristic estimate";
+  }
+
+  function diagnosticText(possession) {
+    const diagnostic = possession?.before ?? possession?.diagnostics ??
+      possession?.search ?? {};
+    const search = diagnostic.search ?? diagnostic;
+    const parts = [];
+    const depth = search.completedDepth ?? search.completedTurnDepth ??
+      search.completed_turn_depth;
+    const nodes = search.nodes ?? search.visitedNodes;
+    if (Number.isInteger(depth)) {
+      parts.push("depth " + formatCount(depth));
+    }
+    if (Number.isFinite(Number(nodes))) {
+      parts.push(formatCount(nodes) + " nodes");
+    }
+    if (diagnostic.exact === true) {
+      const reachable = diagnostic.reachableEdgeCount ??
+        diagnostic.reachable_edge_count;
+      parts.push("exact oracle" + (Number.isInteger(reachable)
+        ? " · " + reachable + " reachable edges"
+        : ""));
+    }
+    return parts.length > 0 ? parts.join(" · ") :
+      "No completed search diagnostics are available.";
+  }
+
+  function updateReviewPanel() {
+    gameReviewPanel.hidden = !reviewPanelOpen;
+    reviewGameButton.hidden = reviewPanelOpen || !canReviewCurrentGame();
+    if (!reviewPanelOpen) {
+      return;
+    }
+    gameReviewPanel.dataset.sourceReplaySha256 = gameReview.sha256(
+      gameReview.canonicalJson(sourceReplay),
+    );
+
+    fastReviewButton.disabled = reviewRunning;
+    deepReviewButton.disabled = reviewRunning;
+    cancelReviewButton.hidden = !reviewRunning;
+    exportReviewButton.disabled = reviewRunning || !reviewSnapshot ||
+      !gameReview.reviewDone(reviewSnapshot);
+    reviewProgress.hidden = !reviewRunning;
+
+    const progress = reviewProgressCounts(reviewSnapshot);
+    reviewProgress.max = Math.max(1, progress.total);
+    reviewProgress.value = Math.min(progress.completed, reviewProgress.max);
+    if (reviewRunning && progress.total > 0) {
+      reviewProgressText.textContent = (reviewMode === gameReview.ReviewMode.Deep
+        ? "Deep refinement"
+        : "Fast preview") + ": " + progress.completed + " of " +
+        progress.total + " possession steps complete. Cancellation takes " +
+        "effect after the current synchronous search.";
+    } else if (!reviewRunning && reviewSnapshot && gameReview.reviewDone(reviewSnapshot)) {
+      reviewProgressText.textContent = (reviewMode === gameReview.ReviewMode.Deep
+        ? "Deep refinement complete."
+        : "Fast preview complete. You can refine it with Deep analysis.");
+    }
+
+    const possessions = support.reviewPossessions(reviewSnapshot);
+    const hasResults = possessions.some(function (possession) {
+      return possession.analyzed === true;
+    });
+    reviewSummary.hidden = !hasResults;
+    possessionTimelineSection.hidden = !hasResults;
+    possessionReviewDetail.hidden = !hasResults;
+    possessionTimeline.replaceChildren();
+    if (!hasResults) {
+      return;
+    }
+
+    const summary = support.reviewSummary(reviewSnapshot);
+    reviewGradeCounts.textContent = Object.entries(summary.counts)
+      .filter(function (entry) { return entry[1] > 0; })
+      .map(function (entry) { return entry[0] + " " + entry[1]; })
+      .join(" · ") || "No graded possessions";
+    reviewBestActionRate.textContent = summary.totalActions === 0
+      ? "Unavailable"
+      : summary.bestActions + " of " + summary.totalActions + " (" +
+        Math.round(100 * summary.bestActions / summary.totalActions) + "%)";
+    reviewLargestLoss.textContent = formatLoss(summary.largestLoss);
+
+    possessions.forEach(function (possession, index) {
+      const grade = support.normalizedGrade(possession.grade);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "possession-badge grade-" + grade.toLowerCase();
+      button.textContent = String(index + 1);
+      button.title = "Possession " + (index + 1) + ": " + grade;
+      button.setAttribute("role", "listitem");
+      if (index === selectedPossessionIndex) {
+        button.classList.add("is-active");
+        button.setAttribute("aria-current", "step");
+      }
+      button.addEventListener("click", function () {
+        selectedPossessionIndex = index;
+        leaveTryLine();
+        const range = support.possessionRange(possession);
+        setReplayPly(range.endPly);
+      });
+      possessionTimeline.append(button);
+    });
+
+    const possession = selectedPossession();
+    const range = support.possessionRange(possession);
+    const grade = support.normalizedGrade(possession.grade);
+    possessionReviewTitle.textContent = "Possession " +
+      (selectedPossessionIndex + 1) + " · edges " + range.startPly +
+      (range.endPly === range.startPly ? "" : "–" + range.endPly);
+    possessionGrade.textContent = grade;
+    possessionGrade.className = "possession-grade grade-" + grade.toLowerCase();
+    possessionLoss.textContent = "Estimated win-chance loss: " +
+      formatLoss(support.estimatedLoss(possession));
+    possessionProof.textContent = "Proof status: " + proofText(possession);
+    possessionBorderline.textContent = possession.borderline === true
+      ? "Borderline: within one percentage point of a grade threshold."
+      : "";
+    possessionDiagnostics.textContent = diagnosticText(possession);
+    tryLineButton.disabled = reviewRunning || tryLinePending ||
+      !reviewSandboxReady ||
+      possessionAction(possession, "recommendedAction").length === 0;
+    tryLineButton.hidden = Boolean(tryLineReplay);
+    leaveTryLineButton.hidden = !tryLineReplay;
+    if (!reviewSandboxReady && importedReviewDocument) {
+      tryLineStatus.textContent = "Imported diagnostics are read-only. Run Fast " +
+        "preview or Deep refinement locally to enable an authoritative fork.";
+    } else if (!tryLineReplay && !tryLinePending &&
+               !tryLineStatus.textContent.startsWith("Could not")) {
+      tryLineStatus.textContent = "";
+    }
+  }
+
+  async function tryRecommendedLine() {
+    const possession = selectedPossession();
+    if (!possession || tryLineReplay || tryLinePending) {
+      return;
+    }
+    const recommended = possessionAction(possession, "recommendedAction");
+    if (recommended.length === 0) {
+      return;
+    }
+    const originalFingerprint = gameReview.canonicalJson(sourceReplay);
+    tryLinePending = true;
+    tryLineStatus.textContent = "Creating an authoritative temporary fork…";
+    renderInterface();
+    try {
+      const snapshot = await analysisRunner.startSandbox(
+        selectedPossessionIndex,
+      );
+      if (gameReview.canonicalJson(sourceReplay) !== originalFingerprint) {
+        throw new Error("The try-line sandbox changed the source replay.");
+      }
+      tryLineSnapshot = snapshot;
+      const forkReplay = gameReview.cloneJson(snapshot.replay);
+      forkReplay.players = gameReview.cloneJson(replay.players);
+      tryLineReplay = normalizeReplay(forkReplay);
+      tryLinePly = tryLineReplay.moves.length;
+      tryLineStatus.textContent = "Temporary fork: start at the possession boundary " +
+        "and follow the ghosted recommendation or choose another highlighted legal " +
+        "edge. You control either side; the original replay remains unchanged.";
+    } catch (error) {
+      analysisRunner.closeSandbox();
+      tryLineSnapshot = null;
+      tryLineReplay = null;
+      tryLinePly = 0;
+      tryLineStatus.textContent = "Could not create the temporary fork: " +
+        error.message;
+    } finally {
+      tryLinePending = false;
+      boardView.resetHover();
+      renderInterface();
+    }
+  }
+
+  async function playSandboxMove(move, keyboardActivated) {
+    const legal = interactiveLegalMoves().find(function (candidate) {
+      return candidate.id === move.id && samePoint(candidate.to, move.to);
+    });
+    if (!legal || tryLinePending) {
+      return;
+    }
+    const originalFingerprint = gameReview.canonicalJson(sourceReplay);
+    tryLinePending = true;
+    tryLineStatus.textContent = "Applying the sandbox edge with the C++ rules engine…";
+    renderInterface();
+    try {
+      const snapshot = await analysisRunner.playSandbox(legal.to);
+      if (gameReview.canonicalJson(sourceReplay) !== originalFingerprint) {
+        throw new Error("The try-line sandbox changed the source replay.");
+      }
+      tryLineSnapshot = snapshot;
+      const forkReplay = gameReview.cloneJson(snapshot.replay);
+      forkReplay.players = gameReview.cloneJson(replay.players);
+      tryLineReplay = normalizeReplay(forkReplay);
+      tryLinePly = tryLineReplay.moves.length;
+      if (snapshot.state.status === Status.InProgress) {
+        tryLineStatus.textContent = "Temporary fork: choose another highlighted " +
+          "legal edge. You control both sides; the original replay is unchanged.";
+      } else {
+        tryLineStatus.textContent = "The temporary fork reached " +
+          statusName(snapshot.state.status).toLowerCase() +
+          ". The original replay is unchanged.";
+      }
+      if (keyboardActivated) {
+        canvas.focus();
+      }
+    } catch (error) {
+      tryLineStatus.textContent = "The sandbox move was rejected: " + error.message;
+    } finally {
+      tryLinePending = false;
+      boardView.resetHover();
+      renderInterface();
+    }
+  }
+
+  function leaveTryLine() {
+    if (!tryLineReplay) {
+      analysisRunner.closeSandbox();
+      tryLineSnapshot = null;
+      tryLinePending = false;
+      return;
+    }
+    analysisRunner.closeSandbox();
+    tryLineReplay = null;
+    tryLinePly = 0;
+    tryLineSnapshot = null;
+    tryLinePending = false;
+    tryLineStatus.textContent = "";
+    boardView.resetHover();
+  }
+
+  function exportGameReview() {
+    if (!reviewSnapshot || !reviewPrepared || reviewRunning ||
+        !gameReview.reviewDone(reviewSnapshot)) {
+      return;
+    }
+    const exported = gameReview.buildReviewExport(reviewPrepared, reviewSnapshot);
+    const contents = JSON.stringify(exported, null, 2) + "\n";
+    const blob = new Blob([contents], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = support.gameReviewFilename(
+      exported.replaySha256,
+      exported.mode ?? reviewMode,
+    );
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function updateText() {
+    if (tryLineReplay) {
+      updateReplayText();
+    } else if (mode === MODE_PLAY) {
       updatePlayText();
     } else {
       updateReplayText();
@@ -1162,6 +1897,20 @@
   function updateReplayText() {
     replayTitle.textContent = describePlayers();
 
+    if (tryLineReplay) {
+      plyLabel.textContent = "Temporary recommended line";
+      statusLabel.textContent = "Try this line sandbox";
+      const legalCount = interactiveLegalMoves().length;
+      moveLabel.textContent = tryLineSnapshot?.state?.status === Status.InProgress
+        ? "Continue from the reviewed boundary with " + legalCount +
+          (legalCount === 1 ? " legal edge." : " legal edges.")
+        : "The temporary fork has reached a terminal position.";
+      boardDescription.textContent = statusLabel.textContent + ". Ball at row " +
+        currentBall().y + ", column " + currentBall().x +
+        ". The source replay has not been changed. " + moveLabel.textContent;
+      return;
+    }
+
     if (currentPly === 0) {
       plyLabel.textContent = replay.moves.length + " moves";
       statusLabel.textContent = replay.moves.length === 0 &&
@@ -1193,12 +1942,16 @@
 
   function updateModeControls() {
     const playingGame = mode === MODE_PLAY;
+    const playingSandbox = Boolean(tryLineSnapshot);
     gameSetup.hidden = !playingGame;
     replaySetup.hidden = playingGame;
-    moveChoicesSection.hidden = !playingGame;
+    if (reviewPanelOpen) {
+      replaySetup.hidden = true;
+    }
+    moveChoicesSection.hidden = !playingGame && !playingSandbox;
     liveHistoryControls.hidden = !playingGame;
-    replayControls.hidden = playingGame;
-    boardTargets.hidden = !playingGame;
+    replayControls.hidden = playingGame || playingSandbox;
+    boardTargets.hidden = !playingGame && !playingSandbox;
     boardTurnBadge.hidden = !playingGame;
     playModeButton.setAttribute("aria-pressed", String(playingGame));
     replayModeButton.setAttribute("aria-pressed", String(!playingGame));
@@ -1211,6 +1964,7 @@
       playingGame ? "Game controls" : "Replay controls",
     );
     controlPanel.classList.toggle("is-replay-mode", !playingGame);
+    controlPanel.classList.toggle("is-review-mode", reviewPanelOpen);
     canvas.classList.toggle("is-playable", canHumanMove());
     syncBotSetupFields();
     syncLiveGameControls();
@@ -1237,7 +1991,8 @@
       changeSettingsButton: changeSettingsButton,
       exportButton: exportGameButton,
     }, state);
-    if (botSelect.value === BotKind.Rank5Derived) {
+    if (botSelect.value === BotKind.Rank5Derived ||
+        botSelect.value === BotKind.DeepTurnSearch) {
       seedInput.disabled = true;
     }
     gameSetup.classList.toggle("is-configuration-locked", state.locked);
@@ -1253,8 +2008,10 @@
     const playUsesMcts = botSelect.value === BotKind.Mcts;
     const playUsesDepth = isDepthBot(botSelect.value);
     const playUsesRank5Profile = botSelect.value === BotKind.Rank5Derived;
-    botSeedField.hidden = playUsesRank5Profile;
-    seedInput.disabled = playUsesRank5Profile;
+    const playUsesFixedProfile = playUsesRank5Profile ||
+      botSelect.value === BotKind.DeepTurnSearch;
+    botSeedField.hidden = playUsesFixedProfile;
+    seedInput.disabled = playUsesFixedProfile;
     botIterationsField.hidden = !playUsesMcts;
     botIterationsInput.disabled = !playUsesMcts;
     botDepthField.hidden = !playUsesDepth;
@@ -1270,10 +2027,14 @@
       replayOneBotSelect.value === BotKind.Rank5Derived;
     const playerTwoUsesRank5Profile =
       replayTwoBotSelect.value === BotKind.Rank5Derived;
-    replayOneSeedField.hidden = playerOneUsesRank5Profile;
-    replayTwoSeedField.hidden = playerTwoUsesRank5Profile;
-    replayOneSeedInput.disabled = isGeneratingReplay || playerOneUsesRank5Profile;
-    replayTwoSeedInput.disabled = isGeneratingReplay || playerTwoUsesRank5Profile;
+    const playerOneUsesFixedProfile = playerOneUsesRank5Profile ||
+      replayOneBotSelect.value === BotKind.DeepTurnSearch;
+    const playerTwoUsesFixedProfile = playerTwoUsesRank5Profile ||
+      replayTwoBotSelect.value === BotKind.DeepTurnSearch;
+    replayOneSeedField.hidden = playerOneUsesFixedProfile;
+    replayTwoSeedField.hidden = playerTwoUsesFixedProfile;
+    replayOneSeedInput.disabled = isGeneratingReplay || playerOneUsesFixedProfile;
+    replayTwoSeedInput.disabled = isGeneratingReplay || playerTwoUsesFixedProfile;
     replayOneIterationsField.hidden = !playerOneUsesMcts;
     replayTwoIterationsField.hidden = !playerTwoUsesMcts;
     replayOneIterationsInput.disabled = isGeneratingReplay || !playerOneUsesMcts;
@@ -1308,14 +2069,19 @@
 
   function updateMoveChoices() {
     moveChoices.replaceChildren();
-    if (mode !== MODE_PLAY) {
+    const playingSandbox = Boolean(tryLineSnapshot);
+    if (mode !== MODE_PLAY && !playingSandbox) {
       return;
     }
 
     if (!canHumanMove()) {
       const message = document.createElement("p");
       message.className = "empty-moves";
-      if (gameError) {
+      if (playingSandbox && tryLinePending) {
+        message.textContent = "Applying the sandbox move…";
+      } else if (playingSandbox) {
+        message.textContent = "The temporary fork is finished.";
+      } else if (gameError) {
         message.textContent = "Start a new game to continue.";
       } else if (!liveSnapshot) {
         message.textContent = "Choose your settings, then start the game.";
@@ -1332,7 +2098,7 @@
       return;
     }
 
-    for (const move of liveLegalMoves()) {
+    for (const move of interactiveLegalMoves()) {
       const button = document.createElement("button");
       const extraTurn = move.extraTurn;
       button.type = "button";
@@ -1340,7 +2106,7 @@
       button.textContent = formatPoint(move.to) + (extraTurn ? " ↻" : "");
       button.setAttribute(
         "aria-label",
-        boardView.destinationLabel(liveState().ball, move.to, extraTurn),
+        boardView.destinationLabel(interactiveState().ball, move.to, extraTurn),
       );
       button.dataset.point = boardView.pointId(move.to);
       button.addEventListener("mouseenter", function () {
@@ -1465,6 +2231,7 @@
     updateReplayControls();
     updateMoveChoices();
     updateMoveList();
+    updateReviewPanel();
     boardView.draw();
     boardView.renderTargets();
   }
@@ -1494,6 +2261,17 @@
   exportGameButton.addEventListener("click", exportHumanMatch);
   undoMoveButton.addEventListener("click", undoLastMove);
   resumeBotButton.addEventListener("click", resumeBotTurn);
+  reviewGameButton.addEventListener("click", openGameReview);
+  closeReviewButton.addEventListener("click", closeGameReview);
+  fastReviewButton.addEventListener("click", startFastReview);
+  deepReviewButton.addEventListener("click", startDeepReview);
+  cancelReviewButton.addEventListener("click", cancelReview);
+  tryLineButton.addEventListener("click", tryRecommendedLine);
+  leaveTryLineButton.addEventListener("click", function () {
+    leaveTryLine();
+    renderInterface();
+  });
+  exportReviewButton.addEventListener("click", exportGameReview);
   replaySetup.addEventListener("submit", generateBotReplay);
   botSelect.addEventListener("change", syncBotSetupFields);
   replayOneBotSelect.addEventListener("change", syncBotSetupFields);
@@ -1507,12 +2285,26 @@
       return;
     }
     cancelReplayGeneration();
+    const importId = replayImportId + 1;
+    replayImportId = importId;
     try {
       const raw = JSON.parse(await file.text());
+      replayGenerationStatus.textContent = "Validating replay with the C++ rules engine…";
+      await analysisRunner.validate(raw);
+      if (importId !== replayImportId) {
+        return;
+      }
+      validatedImportedDocument = raw;
       loadReplay(raw);
+      validatedImportedDocument = null;
+      replayGenerationStatus.textContent = "Replay validated and ready for review.";
     } catch (error) {
-      window.alert("Could not load replay: " + error.message);
+      if (importId === replayImportId) {
+        replayGenerationStatus.textContent = "";
+        window.alert("Could not load replay: " + error.message);
+      }
     } finally {
+      validatedImportedDocument = null;
       fileInput.value = "";
     }
   });

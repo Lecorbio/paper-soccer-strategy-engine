@@ -78,9 +78,9 @@ test("all bot selectors offer the adapted profile without changing defaults", as
 test("the UI hides configurable fields and renders Rank5 diagnostics", async () => {
   const source = await readFile(new URL("../../web/app.js", import.meta.url), "utf8");
 
-  assert.match(source, /botSeedField\.hidden = playUsesRank5Profile/);
-  assert.match(source, /replayOneSeedField\.hidden = playerOneUsesRank5Profile/);
-  assert.match(source, /replayTwoSeedField\.hidden = playerTwoUsesRank5Profile/);
+  assert.match(source, /botSeedField\.hidden = playUsesFixedProfile/);
+  assert.match(source, /replayOneSeedField\.hidden = playerOneUsesFixedProfile/);
+  assert.match(source, /replayTwoSeedField\.hidden = playerTwoUsesFixedProfile/);
   assert.match(source, /botRank5Profile\.hidden = !playUsesRank5Profile/);
   assert.match(source, /search\.searchType === "rank5Derived"/);
   assert.match(source, /search\.currentEdgeIndex \+ 1/);

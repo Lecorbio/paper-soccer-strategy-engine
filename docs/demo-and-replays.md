@@ -9,23 +9,26 @@ link opens a static overview of the frozen flagship study.
 
 ## Run the browser locally
 
-The generated single-file WebAssembly module is checked in, so the app does not
-need a local server or compiler:
+Both generated single-file WebAssembly modules are checked in, so the app does
+not need a local server or compiler:
 
 ```bash
 open web/index.html
 ```
 
 On other platforms, open `web/index.html` as a local file in a modern browser.
-See [Reproducibility](reproducibility.md#webassembly-artifact) only when changing
-the C++ browser boundary or verifying the checked-in module.
+See [Reproducibility](reproducibility.md#webassembly-artifacts) only when
+changing a C++ browser boundary or verifying the checked-in modules. Under
+`file://`, Game Review automatically uses its direct-file main-thread fallback
+if the browser refuses to create or load its classic worker.
 
 ## Play against a bot
 
 The app starts in **Play vs bot** mode:
 
 1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, `JacekInspiredBot`, or
-   `Rank5DerivedBot — 50k demo profile`.
+   `Rank5DerivedBot — 50k demo profile`. `Expert — DeepTurnSearch` is present
+   only when the frozen held-out gate supports that exact label.
 2. Choose **Move first** to play as Player 1 and attack the top goal, or **Move
    second** to play as Player 2, let the bot open, and attack the bottom goal.
 3. Configure the opponent where applicable. MCTS exposes a seed and a fixed
@@ -49,6 +52,10 @@ diagnostics. Depending on the bot, these include MCTS visits and reuse,
 alpha-beta depth and pruning, neural model identity, or Rank5Derived
 complete-action and cached-edge details.
 
+The selected Expert profile, if admitted, is a locked 100k, 200k, or 400k
+`DeepTurnSearchBot`; it is not a configurable Rank5Derived profile and does not
+inherit the authentic contest rank. RandomBot remains the default opponent.
+
 ## Takebacks and exports
 
 **Undo move** removes the latest physical edge, whether it belongs to the human
@@ -67,6 +74,62 @@ writes a `papersoccer.human-match.v1` document containing:
 
 The exported human match can be opened through the normal replay loader.
 
+## Review a finished game
+
+**Review game** appears only after a completed live game, a generated bot
+replay, or an imported replay that passes validation. It does not appear as
+a live hint or coaching control during active play. Review accepts
+`papersoccer.replay.v1`, `papersoccer.replay.v2`, and the replay nested in
+`papersoccer.human-match.v1`; a prior `papersoccer.game-review.v1` export can be
+reopened with its analyzed snapshot.
+
+Import preparation checks the schema and standard 8x10 start, then the analysis
+bridge replays every edge through the authoritative C++ `Match`. A wrong ply,
+player, source point, rebound declaration, intermediate status, winner, or
+truncation declaration rejects the import. Existing replay and human-match
+schemas are not changed.
+
+The review controls provide:
+
+- **Fast preview**, the fixed depth-32, 50,000-node `fast-50k` profile;
+- **Deep refinement**, which produces Fast first and then analyzes with the
+  locked depth-32 100k, 200k, or 400k Deep profile;
+- possession-level progress and cancellation between synchronous searches;
+- one badge per complete possession while the ordinary edge controls remain
+  available;
+- distinct played and recommended rebound paths plus the first-divergence
+  marker;
+- grade, estimated loss, borderline or confidence state, proof status, depth,
+  node, cache, and oracle diagnostics; and
+- **Try this line**, which asks the authoritative C++ rules engine to fork at
+  the possession boundary and validate the complete recommendation on a
+  separate reversible state. The recommendation appears as a ghost path; you
+  choose legal edges from the boundary, can follow or deviate from it, and then
+  continue while controlling either side. Closing the sandbox returns to the
+  immutable original replay.
+
+Cancellation may become visible only after the current synchronous search
+finishes. A new or closed session invalidates old session IDs, so late worker
+results cannot overwrite the current review. Hosted pages use a classic worker
+with its own analysis Wasm instance. If that path fails under `file://`, a
+second main-thread module performs one possession search per event-loop task.
+
+The summary deliberately contains grade counts, best-action rate, and the
+largest estimated loss. It has no win-probability graph and no invented overall
+accuracy number. `ProvenWin` and `ProvenLoss` come from the exact endgame oracle;
+all other labels are deterministic estimates tied to the named search profile
+and its own validation calibration.
+
+**Export review** writes `papersoccer.game-review.v1`. It contains an unchanged
+copy of the source replay, its canonical JSON SHA-256, analyzer, search,
+calibration, oracle, and ranked-source identities, and deterministic
+per-possession played and recommended actions, divergence, grade, loss,
+borderline state, proof, and search diagnostics. `confidenceState` is one of
+`exact`, `deterministic-estimate`, `borderline-estimate`, or `unclear`;
+borderline remains a threshold warning, not a confidence interval. Wall-clock
+timing is omitted from this deterministic export. Reimport verifies the replay
+hash before using the analysis data.
+
 ## Watch or generate a replay
 
 Select **Watch replay**, then choose **Generate replay** to create a
@@ -74,7 +137,8 @@ bot-versus-bot match with the settings below, or **Open existing** to load a
 replay JSON file from disk. Each player has an independent bot and seed, plus
 an MCTS iteration or alpha-beta depth setting when relevant. Either player can
 use Rank5Derived; its fixed profile and provenance are retained in the replay
-metadata.
+metadata. An admitted Expert profile is likewise identified as
+DeepTurnSearch—not Rank5Derived—in generated replay metadata.
 
 Generation advances one edge at a time so controls and diagnostics can update
 between searches. It stops after 512 plies if no winner has been reached,
@@ -84,7 +148,7 @@ viewer.
 The browser remains a presentation layer. C++ owns state, legal moves,
 rebounds, winners, bot RNG, and history. JavaScript owns canvas drawing,
 controls, accessibility, timers, and animation. See
-[Architecture](architecture.md#browser-boundary) for the command/snapshot
+[Architecture](architecture.md#browser-and-analysis-boundaries) for the command/snapshot
 boundary.
 
 ## Native replay exporter

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "papersoccer/game_review.hpp"
 #include "papersoccer/rules.hpp"
 
 namespace papersoccer {
@@ -48,6 +49,21 @@ void write_winner(std::ostream &out, const GameState &state) {
 }
 
 void write_bot(std::ostream &out, const BotConfig &config) {
+  if (config.kind == BotKind::DeepTurnSearch) {
+    const CompleteTurnAnalysisConfig profile =
+        GameReviewConfig::locked(ReviewMode::Deep).deep_profile;
+    out << "{\"kind\":\"DeepTurnSearchBot\",\"profile\":\""
+        << profile.profile_name() << "\",\"maxNodes\":"
+        << profile.max_nodes
+        << ",\"maxTurnDepth\":" << profile.max_turn_depth
+        << ",\"transpositionEntries\":"
+        << profile.transposition_table_entries
+        << ",\"evaluationCacheEntries\":"
+        << profile.evaluation_table_entries
+        << ",\"wallClock\":false,\"replayCorrections\":false,"
+           "\"learnedValueBlendPercent\":0}";
+    return;
+  }
   if (config.kind == BotKind::Rank5Derived) {
     out << "{\"kind\":\"Rank5DerivedBot\",\"profile\":\""
         << Rank5DerivedBot::profile_name() << "\",\"maxNodes\":"
@@ -115,6 +131,24 @@ void write_bot_search(std::ostream &out,
   out << ",\"to\":";
   write_point(out, search.chosen_move.to);
   out << "},\"decisionTimeNs\":" << search.decision_time_ns;
+  if (search.deep_turn_search_stats.has_value()) {
+    const CompleteTurnSearchStats &stats = *search.deep_turn_search_stats;
+    const CompleteTurnAnalysisConfig profile =
+        GameReviewConfig::locked(ReviewMode::Deep).deep_profile;
+    out << ",\"searchType\":\"deepTurnSearch\""
+        << ",\"requestedNodes\":" << profile.max_nodes
+        << ",\"visitedNodes\":" << stats.nodes
+        << ",\"completedDepth\":" << stats.completed_turn_depth
+        << ",\"attemptedDepth\":" << stats.attempted_turn_depth
+        << ",\"rootScore\":" << stats.root_score
+        << ",\"budgetExhausted\":"
+        << (stats.budget_exhausted ? "true" : "false")
+        << ",\"plannedActionLength\":" << stats.planned_action_length
+        << ",\"currentEdgeIndex\":" << stats.current_edge_index
+        << ",\"cachedContinuation\":"
+        << (stats.cached_continuation ? "true" : "false") << '}';
+    return;
+  }
   if (search.rank5_derived_stats.has_value()) {
     const Rank5DerivedSearchStats &stats = *search.rank5_derived_stats;
     out << ",\"searchType\":\"rank5Derived\""
@@ -231,6 +265,18 @@ std::optional<WebBotSearchDiagnostic> make_bot_search_diagnostic(
         std::nullopt,
         rank5->last_search_stats(),
     };
+  }
+  if (const auto *deep = dynamic_cast<const DeepTurnSearchBot *>(&bot)) {
+    WebBotSearchDiagnostic diagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        0,
+        elapsed_nanoseconds(start, end),
+    };
+    diagnostic.deep_turn_search_stats = deep->last_search_stats();
+    return diagnostic;
   }
   return std::nullopt;
 }

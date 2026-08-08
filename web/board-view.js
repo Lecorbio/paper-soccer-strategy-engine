@@ -10,6 +10,7 @@
       currentMoveStartIndex,
       getCurrentPly,
       getReplay,
+      getReviewOverlay = function () { return null; },
       liveLegalMoves,
       liveState,
       onHumanMove,
@@ -87,6 +88,7 @@
       drawField(mapper);
       drawWalls(mapper);
       drawPath(mapper);
+      drawReviewOverlay(mapper);
       drawPoints(mapper);
       drawLegalMoveGuides(mapper);
       drawBall(mapper);
@@ -246,6 +248,73 @@
         ctx.lineWidth = Math.max(2, mapper.cell * 0.035);
         drawLine(from, to);
       }
+    }
+
+    function drawReviewOverlay(mapper) {
+      const overlay = getReviewOverlay();
+      if (!overlay) {
+        return;
+      }
+
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      drawOverlayPath(
+        mapper,
+        overlay.playedPath,
+        "rgba(255, 132, 82, 0.96)",
+        Math.max(5, mapper.cell * 0.082),
+        [],
+      );
+      drawOverlayPath(
+        mapper,
+        overlay.recommendedPath,
+        overlay.sandbox ? "rgba(154, 244, 139, 0.98)" :
+          "rgba(103, 224, 255, 0.98)",
+        Math.max(4, mapper.cell * 0.068),
+        [Math.max(5, mapper.cell * 0.1), Math.max(4, mapper.cell * 0.07)],
+      );
+
+      const divergence = overlay.divergence;
+      if (divergence?.from && divergence?.to) {
+        const from = mapper.point(divergence.from);
+        const to = mapper.point(divergence.to);
+        drawDivergenceMarker({
+          x: (from.x + to.x) / 2,
+          y: (from.y + to.y) / 2,
+        }, mapper.cell);
+      } else if (divergence?.point) {
+        drawDivergenceMarker(mapper.point(divergence.point), mapper.cell);
+      }
+      ctx.restore();
+    }
+
+    function drawOverlayPath(mapper, path, color, width, dash) {
+      if (!Array.isArray(path) || path.length < 2) {
+        return;
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      for (let index = 1; index < path.length; index += 1) {
+        drawLine(mapper.point(path[index - 1]), mapper.point(path[index]));
+      }
+      ctx.setLineDash([]);
+    }
+
+    function drawDivergenceMarker(point, cell) {
+      const radius = Math.max(7, cell * 0.13);
+      drawCircle(point, radius, "#fff8dc", "#6a2b00", 2);
+      ctx.strokeStyle = "#9b3500";
+      ctx.lineWidth = Math.max(2, cell * 0.035);
+      drawLine(
+        { x: point.x - radius * 0.48, y: point.y - radius * 0.48 },
+        { x: point.x + radius * 0.48, y: point.y + radius * 0.48 },
+      );
+      drawLine(
+        { x: point.x + radius * 0.48, y: point.y - radius * 0.48 },
+        { x: point.x - radius * 0.48, y: point.y + radius * 0.48 },
+      );
     }
 
     function drawLegalMoveGuides(mapper) {

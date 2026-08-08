@@ -123,12 +123,28 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
           << ",\"transposition_table_entries\":65536"
           << ",\"evaluation_cache_entries\":32768"
           << ",\"max_time_ms\":0"
-          << ",\"model_blend_percent\":"
-          << config.rank5_derived_model_blend_percent
+          << ",\"model_blend_percent\":0"
           << ",\"replay_corrections\":false"
           << ",\"replay_book_enabled\":false,\"original_sha256\":";
       write_string(out, Rank5DerivedBot::original_sha256());
       break;
+    case BotKind::DeepTurnSearch: {
+      const CompleteTurnAnalysisConfig profile =
+          CompleteTurnAnalysisConfig::deep(config.complete_turn_max_nodes);
+      out << ",\"profile\":";
+      write_string(out, profile.profile_name());
+      out << ",\"max_turn_depth\":" << profile.max_turn_depth
+          << ",\"max_nodes\":" << profile.max_nodes
+          << ",\"transposition_table_entries\":"
+          << profile.transposition_table_entries
+          << ",\"evaluation_cache_entries\":"
+          << profile.evaluation_table_entries
+          << ",\"max_time_ms\":0,\"model_blend_percent\":0"
+          << ",\"replay_corrections\":false"
+          << ",\"ranked_source_sha256\":";
+      write_string(out, Rank5DerivedBot::original_sha256());
+      break;
+    }
   }
   out << '}';
 }
@@ -200,12 +216,13 @@ void write_alpha_beta_stats(std::ostream &out,
   out << "]}";
 }
 
-void write_rank5_derived_stats(std::ostream &out,
-                               const Rank5DerivedSearchStats &stats) {
+void write_complete_turn_stats(std::ostream &out,
+                               const CompleteTurnSearchStats &stats,
+                               std::uint64_t profile_node_budget) {
   const std::uint64_t requested_nodes =
-      stats.cached_continuation ? 0 : Rank5DerivedConfig::profile_max_nodes;
+      stats.cached_continuation ? 0 : profile_node_budget;
   out << "{\"profile_node_budget\":"
-      << Rank5DerivedConfig::profile_max_nodes
+      << profile_node_budget
       << ",\"requested_nodes\":" << requested_nodes
       << ",\"visited_nodes\":" << stats.nodes
       << ",\"completed_turn_depth\":" << stats.completed_turn_depth
@@ -237,6 +254,12 @@ void write_rank5_derived_stats(std::ostream &out,
       << ",\"root_transposition_reuses\":"
       << stats.root_transposition_reuses
       << ",\"max_action_edges\":" << stats.max_action_edges << '}';
+}
+
+void write_rank5_derived_stats(std::ostream &out,
+                               const Rank5DerivedSearchStats &stats) {
+  write_complete_turn_stats(out, stats,
+                            Rank5DerivedConfig::profile_max_nodes);
 }
 
 void write_participant(std::ostream &out, const Participant &participant) {
@@ -275,6 +298,15 @@ void write_decision(std::ostream &out, const DecisionReport &decision) {
     write_rank5_derived_stats(out, *decision.rank5_derived_stats);
   } else {
     out << "null";
+  }
+  if (decision.deep_turn_search_stats.has_value()) {
+    if (!decision.deep_turn_search_profile_nodes.has_value()) {
+      throw std::logic_error(
+          "DeepTurnSearch diagnostics are missing their profile node budget");
+    }
+    out << ",\"deep_turn_search\":";
+    write_complete_turn_stats(out, *decision.deep_turn_search_stats,
+                              *decision.deep_turn_search_profile_nodes);
   }
   out << '}';
 }
@@ -432,14 +464,15 @@ void write_alpha_beta_summary(std::ostream &out,
   out << "}}";
 }
 
-void write_rank5_derived_summary(std::ostream &out,
-                                 const Rank5DerivedSummary &summary) {
+void write_complete_turn_summary(std::ostream &out,
+                                 const Rank5DerivedSummary &summary,
+                                 std::uint64_t requested_nodes) {
   out << "{\"decisions\":" << summary.decisions
       << ",\"fresh_root_searches\":" << summary.fresh_root_searches
       << ",\"cached_continuation_edges\":"
       << summary.cached_continuation_edges
       << ",\"requested_nodes_per_fresh_search\":"
-      << Rank5DerivedConfig::profile_max_nodes
+      << requested_nodes
       << ",\"requested_nodes_sum\":" << summary.requested_nodes_sum
       << ",\"visited_nodes_sum\":" << summary.visited_nodes_sum
       << ",\"budget_exhausted_fresh_searches\":"
@@ -507,6 +540,23 @@ void write_rank5_derived_summary(std::ostream &out,
   out << '}';
 }
 
+std::optional<std::uint64_t> deep_profile_nodes(
+    const std::vector<const DecisionReport *> &decisions) {
+  std::optional<std::uint64_t> result;
+  for (const DecisionReport *decision : decisions) {
+    if (!decision->deep_turn_search_profile_nodes.has_value()) {
+      continue;
+    }
+    if (result.has_value() &&
+        *result != *decision->deep_turn_search_profile_nodes) {
+      throw std::logic_error(
+          "arena summary mixes DeepTurnSearch profile node budgets");
+    }
+    result = decision->deep_turn_search_profile_nodes;
+  }
+  return result;
+}
+
 void write_entrant_summary(std::ostream &out, Entrant entrant,
                            const std::vector<GameReport> &games) {
   const std::vector<const DecisionReport *> decisions = decisions_for(games, entrant);
@@ -523,7 +573,13 @@ void write_entrant_summary(std::ostream &out, Entrant entrant,
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
   out << ",\"rank5_derived\":";
-  write_rank5_derived_summary(out, summarize_rank5_derived(decisions));
+  write_complete_turn_summary(out, summarize_rank5_derived(decisions),
+                              Rank5DerivedConfig::profile_max_nodes);
+  if (const auto deep_nodes = deep_profile_nodes(decisions)) {
+    out << ",\"deep_turn_search\":";
+    write_complete_turn_summary(
+        out, summarize_deep_turn_search(decisions, *deep_nodes), *deep_nodes);
+  }
   out << '}';
 }
 
@@ -539,7 +595,13 @@ void write_position_entrant_summary(std::ostream &out, Entrant entrant,
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
   out << ",\"rank5_derived\":";
-  write_rank5_derived_summary(out, summarize_rank5_derived(decisions));
+  write_complete_turn_summary(out, summarize_rank5_derived(decisions),
+                              Rank5DerivedConfig::profile_max_nodes);
+  if (const auto deep_nodes = deep_profile_nodes(decisions)) {
+    out << ",\"deep_turn_search\":";
+    write_complete_turn_summary(
+        out, summarize_deep_turn_search(decisions, *deep_nodes), *deep_nodes);
+  }
   out << '}';
 }
 
@@ -878,6 +940,15 @@ std::string run_positions_json(const PositionsConfig &config) {
         write_rank5_derived_stats(out, *evaluation.rank5_derived_stats);
       } else {
         out << "null";
+      }
+      if (evaluation.deep_turn_search_stats.has_value()) {
+        if (!evaluation.deep_turn_search_profile_nodes.has_value()) {
+          throw std::logic_error(
+              "DeepTurnSearch evaluation is missing its profile node budget");
+        }
+        out << ",\"deep_turn_search\":";
+        write_complete_turn_stats(out, *evaluation.deep_turn_search_stats,
+                                  *evaluation.deep_turn_search_profile_nodes);
       }
       out << '}';
     }

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -17,6 +18,7 @@ enum class BotKind {
   AlphaBeta = 2,
   JacekInspired = 3,
   Rank5Derived = 4,
+  DeepTurnSearch = 5,
 };
 
 std::string_view bot_kind_name(BotKind kind) noexcept;
@@ -115,22 +117,63 @@ class JacekInspiredBot final : public Bot {
   AlphaBetaSearchStats last_search_stats_{};
 };
 
-struct Rank5DerivedConfig {
+struct CompleteTurnAnalysisConfig {
   static constexpr std::uint32_t maximum_turn_depth{32};
-  static constexpr std::uint64_t profile_max_nodes{50'000};
-  static constexpr bool default_replay_corrections{false};
-  static constexpr int default_replay_value_blend_percent{0};
+  static constexpr std::uint64_t fast_nodes{50'000};
+  static constexpr std::size_t fixed_transposition_entries{65'536};
+  static constexpr std::size_t fixed_evaluation_entries{32'768};
 
-  std::uint32_t max_turn_depth{32};
-  std::uint64_t max_nodes{profile_max_nodes};
-  std::size_t transposition_table_entries{65'536};
-  std::size_t evaluation_table_entries{32'768};
-  std::uint32_t max_time_ms{0};
-  bool replay_corrections{default_replay_corrections};
-  int replay_value_blend_percent{default_replay_value_blend_percent};
+  std::uint32_t max_turn_depth{maximum_turn_depth};
+  std::uint64_t max_nodes{fast_nodes};
+  std::size_t transposition_table_entries{fixed_transposition_entries};
+  std::size_t evaluation_table_entries{fixed_evaluation_entries};
+
+  constexpr bool operator==(const CompleteTurnAnalysisConfig &) const noexcept =
+      default;
+
+  static constexpr CompleteTurnAnalysisConfig fast() noexcept { return {}; }
+
+  static CompleteTurnAnalysisConfig deep(std::uint64_t max_nodes) {
+    if (max_nodes != 100'000 && max_nodes != 200'000 &&
+        max_nodes != 400'000) {
+      throw std::invalid_argument(
+          "DeepTurnSearch requires a 100k, 200k, or 400k node profile");
+    }
+    CompleteTurnAnalysisConfig config;
+    config.max_nodes = max_nodes;
+    return config;
+  }
+
+  constexpr bool is_fast_profile() const noexcept {
+    return *this == fast();
+  }
+
+  constexpr bool is_deep_profile() const noexcept {
+    return max_turn_depth == maximum_turn_depth &&
+           (max_nodes == 100'000 || max_nodes == 200'000 ||
+            max_nodes == 400'000) &&
+           transposition_table_entries == fixed_transposition_entries &&
+           evaluation_table_entries == fixed_evaluation_entries;
+  }
+
+  constexpr std::string_view profile_name() const noexcept {
+    if (is_fast_profile()) {
+      return "fast-50k";
+    }
+    if (!is_deep_profile()) {
+      return "custom-analysis";
+    }
+    if (max_nodes == 100'000) {
+      return "deep-100k";
+    }
+    if (max_nodes == 200'000) {
+      return "deep-200k";
+    }
+    return "deep-400k";
+  }
 };
 
-struct Rank5DerivedSearchStats {
+struct CompleteTurnSearchStats {
   std::uint32_t completed_turn_depth{};
   std::uint32_t attempted_turn_depth{};
   std::uint64_t nodes{};
@@ -159,6 +202,20 @@ struct Rank5DerivedSearchStats {
   std::uint64_t searches{};
 };
 
+using Rank5DerivedSearchStats = CompleteTurnSearchStats;
+
+// Compatibility metadata only. Rank5DerivedBot intentionally has no
+// configurable constructor; configurable complete-turn work belongs to the
+// analysis types declared in game_review.hpp.
+struct Rank5DerivedConfig {
+  static constexpr std::uint32_t maximum_turn_depth{
+      CompleteTurnAnalysisConfig::maximum_turn_depth};
+  static constexpr std::uint64_t profile_max_nodes{
+      CompleteTurnAnalysisConfig::fast_nodes};
+  static constexpr bool default_replay_corrections{false};
+  static constexpr int default_replay_value_blend_percent{0};
+};
+
 class Rank5DerivedBot final : public Bot {
  public:
   static constexpr std::string_view profile_name() noexcept {
@@ -176,15 +233,15 @@ class Rank5DerivedBot final : public Bot {
   static constexpr int original_rank{5};
   static constexpr int original_field_size{206};
 
-  explicit Rank5DerivedBot(Rank5DerivedConfig config = {});
+  Rank5DerivedBot();
 
   std::string_view name() const noexcept override;
   Move choose_move(const GameState &state) override;
-  const Rank5DerivedConfig &config() const noexcept;
+  const CompleteTurnAnalysisConfig &config() const noexcept;
   const Rank5DerivedSearchStats &last_search_stats() const noexcept;
 
  private:
-  Rank5DerivedConfig config_;
+  CompleteTurnAnalysisConfig config_{CompleteTurnAnalysisConfig::fast()};
   Rank5DerivedSearchStats last_search_stats_{};
   std::vector<Move> cached_action_{};
   std::size_t next_cached_move_{};

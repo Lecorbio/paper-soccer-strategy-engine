@@ -275,7 +275,6 @@ void rank5_derived_is_measured_with_fresh_root_diagnostics() {
   config.position_count = 1;
   config.generation_plies = 0;
   config.candidate.kind = papersoccer::BotKind::Rank5Derived;
-  config.candidate.rank5_derived_model_blend_percent = 15;
   config.reference.kind = papersoccer::BotKind::Random;
 
   const std::string json = arena::run_positions_json(config);
@@ -284,7 +283,7 @@ void rank5_derived_is_measured_with_fresh_root_diagnostics() {
       "\"profile\":\"50k-demo\",\"max_turn_depth\":32,"
       "\"max_nodes\":50000,\"transposition_table_entries\":65536,"
       "\"evaluation_cache_entries\":32768,\"max_time_ms\":0,"
-      "\"model_blend_percent\":15,\"replay_corrections\":false,"
+      "\"model_blend_percent\":0,\"replay_corrections\":false,"
       "\"replay_book_enabled\":false,"
       "\"original_sha256\":\"" +
       std::string(papersoccer::Rank5DerivedBot::original_sha256()) + "\"}";
@@ -321,10 +320,43 @@ void rank5_derived_is_measured_with_fresh_root_diagnostics() {
                    "Rank5Derived summaries should retain all-edge timing");
 
   arena::PositionsConfig invalid = config;
-  invalid.candidate.rank5_derived_model_blend_percent = 101;
+  invalid.candidate.kind = papersoccer::BotKind::DeepTurnSearch;
+  invalid.candidate.complete_turn_max_nodes = 99'999;
   require_invalid_argument(
       [&] { (void)arena::run_positions_json(invalid); },
-      "programmatic arena use should reject an invalid Rank5 model blend");
+      "programmatic arena use should reject an unknown DeepTurnSearch profile");
+}
+
+void deep_turn_search_is_distinct_from_the_fixed_rank5_profile() {
+  arena::PositionsConfig config;
+  config.position_count = 1;
+  config.generation_plies = 0;
+  config.candidate.kind = papersoccer::BotKind::DeepTurnSearch;
+  config.candidate.complete_turn_max_nodes = 100'000;
+  config.reference.kind = papersoccer::BotKind::Random;
+
+  const std::string json = arena::run_positions_json(config);
+  require_contains(
+      json,
+      "\"candidate\":{\"kind\":\"deep-turn-search\","
+      "\"profile\":\"deep-100k\",\"max_turn_depth\":32,"
+      "\"max_nodes\":100000,\"transposition_table_entries\":65536,"
+      "\"evaluation_cache_entries\":32768,\"max_time_ms\":0,"
+      "\"model_blend_percent\":0,\"replay_corrections\":false,"
+      "\"ranked_source_sha256\":\"",
+      "DeepTurnSearch should have its own public arena profile identity");
+  require_contains(
+      json,
+      "\"rank5_derived\":null,\"deep_turn_search\":{"
+      "\"profile_node_budget\":100000,\"requested_nodes\":100000,"
+      "\"visited_nodes\":",
+      "DeepTurnSearch decisions must not report themselves as Rank5Derived");
+  require_contains(
+      json,
+      "\"deep_turn_search\":{\"decisions\":1,"
+      "\"fresh_root_searches\":1,\"cached_continuation_edges\":0,"
+      "\"requested_nodes_per_fresh_search\":100000,",
+      "DeepTurnSearch summaries should retain their selected work profile");
 }
 
 void truncations_are_invalid_not_draws_and_completed_pairs_remain_scored() {
@@ -534,6 +566,7 @@ int main() {
     alpha_beta_is_configured_measured_and_summarized();
     jacek_inspired_is_configured_measured_and_summarized();
     rank5_derived_is_measured_with_fresh_root_diagnostics();
+    deep_turn_search_is_distinct_from_the_fixed_rank5_profile();
     truncations_are_invalid_not_draws_and_completed_pairs_remain_scored();
     frozen_openings_are_replayed_and_validated_programmatically();
     invalid_tactical_limits_and_policy_are_rejected();

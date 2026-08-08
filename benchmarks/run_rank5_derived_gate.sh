@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="${RANK5_GATE_BUILD_DIR:-${repository_dir}/build}"
-executable="${build_dir}/papersoccer_rank5_derived_gate"
-
-if [[ ! -f "${build_dir}/CMakeCache.txt" ]]; then
-  cmake -S "${repository_dir}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release
-else
-  cmake -S "${repository_dir}" -B "${build_dir}"
-fi
-cmake --build "${build_dir}" --target papersoccer_rank5_derived_gate
-
-exec "${executable}" "$@"
+cat >&2 <<'EOF'
+The replay-blend Rank5Derived gate is an archived historical experiment.
+Rank5DerivedBot is now an immutable 50k, zero-blend profile, so this command
+cannot rerun a configurable blend under that identity. Use the source revision
+recorded with the archived artifact to reproduce it.
+EOF
+exit 2

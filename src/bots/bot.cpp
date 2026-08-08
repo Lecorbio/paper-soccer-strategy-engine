@@ -3,6 +3,8 @@
 #include <memory>
 #include <stdexcept>
 
+#include "papersoccer/game_review.hpp"
+
 namespace papersoccer {
 
 std::string_view bot_kind_name(BotKind kind) noexcept {
@@ -17,6 +19,8 @@ std::string_view bot_kind_name(BotKind kind) noexcept {
       return "JacekInspiredBot";
     case BotKind::Rank5Derived:
       return "Rank5DerivedBot";
+    case BotKind::DeepTurnSearch:
+      return "DeepTurnSearchBot";
   }
   return "UnknownBot";
 }
@@ -55,6 +59,9 @@ std::unique_ptr<Bot> make_bot(const BotConfig &config) {
     }
     case BotKind::Rank5Derived:
       return std::make_unique<Rank5DerivedBot>();
+    case BotKind::DeepTurnSearch:
+      return std::make_unique<DeepTurnSearchBot>(
+          GameReviewConfig::locked(ReviewMode::Deep).deep_profile);
   }
   throw std::invalid_argument("unknown bot kind");
 }

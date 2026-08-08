@@ -84,6 +84,8 @@ std::string_view kind_name(BotKind kind) noexcept {
       return "jacek-inspired";
     case BotKind::Rank5Derived:
       return "rank5-derived";
+    case BotKind::DeepTurnSearch:
+      return "deep-turn-search";
   }
   return "unknown";
 }
@@ -167,11 +169,10 @@ void validate_bot_config(const ArenaBotConfig &config) {
       }
       return;
     case BotKind::Rank5Derived:
-      if (config.rank5_derived_model_blend_percent < 0 ||
-          config.rank5_derived_model_blend_percent > 100) {
-        throw std::invalid_argument(
-            "arena Rank5Derived model blend must be between 0 and 100");
-      }
+      return;
+    case BotKind::DeepTurnSearch:
+      (void)CompleteTurnAnalysisConfig::deep(
+          config.complete_turn_max_nodes);
       return;
   }
   throw std::invalid_argument("arena bot kind is unknown");
@@ -215,12 +216,11 @@ std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
       }
       return std::make_unique<AlphaBetaBot>(alpha_beta);
     }
-    case BotKind::Rank5Derived: {
-      Rank5DerivedConfig rank5;
-      rank5.replay_value_blend_percent =
-          config.rank5_derived_model_blend_percent;
-      return std::make_unique<Rank5DerivedBot>(rank5);
-    }
+    case BotKind::Rank5Derived:
+      return std::make_unique<Rank5DerivedBot>();
+    case BotKind::DeepTurnSearch:
+      return std::make_unique<DeepTurnSearchBot>(
+          config.complete_turn_max_nodes);
   }
   throw std::invalid_argument("arena bot kind is unknown");
 }
@@ -246,6 +246,20 @@ std::optional<AlphaBetaSearchStats> alpha_beta_search_stats(Bot &bot) {
 std::optional<Rank5DerivedSearchStats> rank5_derived_search_stats(Bot &bot) {
   if (auto *rank5_derived = dynamic_cast<Rank5DerivedBot *>(&bot)) {
     return rank5_derived->last_search_stats();
+  }
+  return std::nullopt;
+}
+
+std::optional<CompleteTurnSearchStats> deep_turn_search_stats(Bot &bot) {
+  if (auto *deep = dynamic_cast<DeepTurnSearchBot *>(&bot)) {
+    return deep->last_search_stats();
+  }
+  return std::nullopt;
+}
+
+std::optional<std::uint64_t> deep_turn_search_profile_nodes(Bot &bot) {
+  if (auto *deep = dynamic_cast<DeepTurnSearchBot *>(&bot)) {
+    return deep->config().max_nodes;
   }
   return std::nullopt;
 }
@@ -281,7 +295,9 @@ DecisionReport choose_and_measure(Bot &bot, Entrant entrant, std::size_t ply,
                         elapsed_nanoseconds(start, end),
                         search_stats(bot),
                         alpha_beta_search_stats(bot),
-                        rank5_derived_search_stats(bot)};
+                        rank5_derived_search_stats(bot),
+                        deep_turn_search_stats(bot),
+                        deep_turn_search_profile_nodes(bot)};
 }
 
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
@@ -530,7 +546,9 @@ PositionEvaluation evaluate_position(const ArenaBotConfig &config, Entrant entra
                             decision.elapsed_ns,
                             decision.stats,
                             decision.alpha_beta_stats,
-                            decision.rank5_derived_stats};
+                            decision.rank5_derived_stats,
+                            decision.deep_turn_search_stats,
+                            decision.deep_turn_search_profile_nodes};
 }
 
 std::uint64_t median_unsigned(std::vector<std::uint64_t> values) {
@@ -608,6 +626,12 @@ TimingSummary summarize_timing(
                decision->elapsed_ns > 0) {
       node_throughput.push_back(
           static_cast<double>(decision->rank5_derived_stats->nodes) *
+          1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
+    } else if (decision->deep_turn_search_stats.has_value() &&
+               !decision->deep_turn_search_stats->cached_continuation &&
+               decision->elapsed_ns > 0) {
+      node_throughput.push_back(
+          static_cast<double>(decision->deep_turn_search_stats->nodes) *
           1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
     }
   }
@@ -687,18 +711,22 @@ AlphaBetaSummary summarize_alpha_beta(
   return summary;
 }
 
-Rank5DerivedSummary summarize_rank5_derived(
-    const std::vector<const DecisionReport *> &decisions) {
+Rank5DerivedSummary summarize_complete_turn_search(
+    const std::vector<const DecisionReport *> &decisions,
+    std::uint64_t requested_nodes,
+    std::optional<CompleteTurnSearchStats> DecisionReport::*stats_member,
+    std::string_view label) {
   Rank5DerivedSummary summary;
   std::vector<const DecisionReport *> all_edges;
   std::vector<const DecisionReport *> fresh_roots;
   all_edges.reserve(decisions.size());
   fresh_roots.reserve(decisions.size());
   for (const DecisionReport *decision : decisions) {
-    if (!decision->rank5_derived_stats.has_value()) {
+    const auto &maybe_stats = decision->*stats_member;
+    if (!maybe_stats.has_value()) {
       continue;
     }
-    const Rank5DerivedSearchStats &stats = *decision->rank5_derived_stats;
+    const CompleteTurnSearchStats &stats = *maybe_stats;
     ++summary.decisions;
     all_edges.push_back(decision);
     summary.maximum_current_edge_index =
@@ -708,7 +736,7 @@ Rank5DerivedSummary summarize_rank5_derived(
       continue;
     }
     ++summary.fresh_root_searches;
-    summary.requested_nodes_sum += Rank5DerivedConfig::profile_max_nodes;
+    summary.requested_nodes_sum += requested_nodes;
     summary.visited_nodes_sum += stats.nodes;
     summary.budget_exhausted_fresh_searches +=
         stats.budget_exhausted ? 1U : 0U;
@@ -755,9 +783,25 @@ Rank5DerivedSummary summarize_rank5_derived(
           summary.fresh_root_searches + summary.cached_continuation_edges ||
       summary.fresh_root_timing.decisions != summary.fresh_root_searches ||
       summary.all_edge_timing.decisions != summary.decisions) {
-    throw std::logic_error("inconsistent Rank5Derived arena summary");
+    throw std::logic_error("inconsistent " + std::string(label) +
+                           " arena summary");
   }
   return summary;
+}
+
+Rank5DerivedSummary summarize_rank5_derived(
+    const std::vector<const DecisionReport *> &decisions) {
+  return summarize_complete_turn_search(
+      decisions, Rank5DerivedConfig::profile_max_nodes,
+      &DecisionReport::rank5_derived_stats, "Rank5Derived");
+}
+
+Rank5DerivedSummary summarize_deep_turn_search(
+    const std::vector<const DecisionReport *> &decisions,
+    std::uint64_t requested_nodes) {
+  return summarize_complete_turn_search(
+      decisions, requested_nodes, &DecisionReport::deep_turn_search_stats,
+      "DeepTurnSearch");
 }
 
 Record record_for(const std::vector<GameReport> &games, Entrant entrant,
@@ -805,7 +849,8 @@ std::vector<const DecisionReport *> decisions_for(
     storage.push_back(DecisionReport{
         1, entrant, position.state.to_move, position.state.ball, evaluation.move,
         evaluation.elapsed_ns, evaluation.stats, evaluation.alpha_beta_stats,
-        evaluation.rank5_derived_stats});
+        evaluation.rank5_derived_stats, evaluation.deep_turn_search_stats,
+        evaluation.deep_turn_search_profile_nodes});
   }
   std::vector<const DecisionReport *> result;
   result.reserve(storage.size());

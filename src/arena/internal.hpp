@@ -68,6 +68,8 @@ struct DecisionReport {
   std::optional<SearchStats> stats{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
   std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
+  std::optional<CompleteTurnSearchStats> deep_turn_search_stats{};
+  std::optional<std::uint64_t> deep_turn_search_profile_nodes{};
 };
 
 struct GameReport {
@@ -102,6 +104,8 @@ struct PositionEvaluation {
   std::optional<SearchStats> stats{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
   std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
+  std::optional<CompleteTurnSearchStats> deep_turn_search_stats{};
+  std::optional<std::uint64_t> deep_turn_search_profile_nodes{};
 };
 
 struct PositionReport {
@@ -267,6 +271,9 @@ AlphaBetaSummary summarize_alpha_beta(
     const std::vector<const DecisionReport *> &decisions);
 Rank5DerivedSummary summarize_rank5_derived(
     const std::vector<const DecisionReport *> &decisions);
+Rank5DerivedSummary summarize_deep_turn_search(
+    const std::vector<const DecisionReport *> &decisions,
+    std::uint64_t requested_nodes);
 Record record_for(const std::vector<GameReport> &games, Entrant entrant,
                   std::optional<Player> color = std::nullopt);
 std::vector<const DecisionReport *> decisions_for(

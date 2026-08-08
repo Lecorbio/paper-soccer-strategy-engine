@@ -49,6 +49,7 @@ struct WebBotSearchDiagnostic {
   std::uint32_t requested_turn_depth{};
   std::optional<AlphaBetaSearchStats> alpha_beta_stats{};
   std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
+  std::optional<CompleteTurnSearchStats> deep_turn_search_stats{};
 };
 
 class WebGameSession {

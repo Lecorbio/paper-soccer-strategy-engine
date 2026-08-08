@@ -706,6 +706,52 @@ test("Rank5Derived summaries separate cached edges from fresh-root searches", ()
   assert.equal(summary.all_edge_timing.decisions, decisions.length);
 });
 
+test("DeepTurnSearch has a distinct fixed-profile identity and diagnostics", () => {
+  const report = runJson([
+    "positions",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "deep-turn-search",
+    "--candidate-complete-turn-max-nodes", "100000",
+    "--reference-kind", "random",
+  ]);
+
+  assert.deepEqual(report.configuration.candidate, {
+    kind: "deep-turn-search",
+    profile: "deep-100k",
+    max_turn_depth: 32,
+    max_nodes: 100000,
+    transposition_table_entries: 65536,
+    evaluation_cache_entries: 32768,
+    max_time_ms: 0,
+    model_blend_percent: 0,
+    replay_corrections: false,
+    ranked_source_sha256:
+      "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+  });
+  const candidate = report.positions[0].evaluations[0];
+  assert.equal(candidate.rank5_derived, null);
+  assert.equal(candidate.deep_turn_search.profile_node_budget, 100000);
+  assert.equal(candidate.deep_turn_search.requested_nodes, 100000);
+  assert.ok(candidate.deep_turn_search.visited_nodes > 0);
+  assert.ok(candidate.deep_turn_search.visited_nodes <= 100000);
+  assert.equal(candidate.deep_turn_search.cached_continuation, false);
+  assert.equal(report.summary.candidate.rank5_derived.decisions, 0);
+  assert.equal(report.summary.candidate.deep_turn_search.decisions, 1);
+  assert.equal(
+    report.summary.candidate.deep_turn_search.requested_nodes_per_fresh_search,
+    100000,
+  );
+
+  const invalid = spawnSync(arena, [
+    "positions",
+    "--candidate-kind", "deep-turn-search",
+    "--candidate-complete-turn-max-nodes", "50000",
+  ], { encoding: "utf8" });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /100k, 200k, or 400k node profile/u);
+});
+
 test("mode-specific options are rejected outside their mode", () => {
   const positions = spawnSync(arena, ["positions", "--pairs", "1"], {
     encoding: "utf8",
@@ -826,5 +872,5 @@ test("invalid alpha-beta arena settings are rejected", () => {
   ], { encoding: "utf8" });
   assert.notEqual(unknownKind.status, 0);
   assert.match(unknownKind.stderr,
-    /requires random, mcts, alpha-beta, jacek-inspired, or rank5-derived/);
+    /requires random, mcts, alpha-beta, jacek-inspired, rank5-derived, or deep-turn-search/);
 });

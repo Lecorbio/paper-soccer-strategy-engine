@@ -9,6 +9,7 @@
 
 #include <emscripten/emscripten.h>
 
+#include "papersoccer/game_review.hpp"
 #include "papersoccer/web_game.hpp"
 
 namespace ps = papersoccer;
@@ -69,6 +70,10 @@ bool parse_bot_kind(int input, ps::BotKind &kind) noexcept {
     kind = ps::BotKind::Rank5Derived;
     return true;
   }
+  if (input == 5) {
+    kind = ps::BotKind::DeepTurnSearch;
+    return true;
+  }
   return false;
 }
 
@@ -81,8 +86,23 @@ bool parse_bot_config(const char *seed_text, int kind_value,
   if (!parse_bot_kind(kind_value, config.kind)) {
     last_error =
         "the bot kind must be 0 (RandomBot), 1 (MctsBot), "
-        "2 (AlphaBetaBot), 3 (JacekInspiredBot), or 4 (Rank5DerivedBot)";
+        "2 (AlphaBetaBot), 3 (JacekInspiredBot), 4 (Rank5DerivedBot), "
+        "or 5 (DeepTurnSearchBot)";
     return false;
+  }
+  if (config.kind == ps::BotKind::DeepTurnSearch) {
+    if (!ps::GameReviewConfig::has_locked_profile()) {
+      last_error =
+          "DeepTurnSearchBot is unavailable without the frozen review lock";
+      return false;
+    }
+    if (search_setting != 0) {
+      last_error =
+          "DeepTurnSearchBot uses the validation-selected fixed profile";
+      return false;
+    }
+    config.seed = 0;
+    return true;
   }
   if (config.kind == ps::BotKind::Rank5Derived) {
     if (search_setting != kWebRank5DerivedMaxNodes) {

@@ -246,6 +246,93 @@ canonical in the [model record](../models/README.md).
 The bot's measurements do not reproduce Jacek's unpublished contest strength
 and do not improve or modify any CodinGame submission.
 
+## Complete-turn analysis and Game Review
+
+`CompleteTurnAnalyzer` exposes the immutable complete-turn search used by the
+Rank5Derived adapter without exposing the ranked implementation or allowing a
+custom search to claim the fixed Rank5Derived identity. It returns one complete
+action: consecutive same-player rebound edges through a handoff or terminal
+state. The authoritative rules engine validates every edge and rejects an
+empty, illegal, overlong, or rebound-incomplete action.
+
+The public fixed analysis profiles share depth 32, 65,536 transposition
+entries, 32,768 evaluation-cache entries, no wall-clock cutoff, no replay
+corrections, and a 0% learned-value blend:
+
+| Identity | Node budget | Purpose |
+| --- | ---: | --- |
+| `fast-50k` | 50,000 | Deterministic Fast review preview |
+| `deep-100k` | 100,000 | Frozen Deep candidate |
+| `deep-200k` | 200,000 | Frozen Deep candidate |
+| `deep-400k` | 400,000 | Frozen Deep candidate |
+
+Exactly one Deep candidate is selected on validation strength subject to its
+Wasm latency gate, then bound to a profile-specific validation calibration.
+The selected identity is locked before the held-out test. `DeepTurnSearchBot`
+is the corresponding playable-bot type, distinct from both the general
+`CompleteTurnAnalyzer` and the fixed `Rank5DerivedBot`. Like Rank5Derived, it
+returns one edge through `Bot::choose_move` and caches the rest of a rebound
+action only while the supplied state exactly matches its predicted state. An
+undo, unrelated move, or mismatch invalidates the cache.
+
+### Exact endgame oracle
+
+`ExactEndgameSolver` runs only at a possession boundary under the standard
+8x10 demo rules. It first counts unused edges reachable from the ball and
+declines the position if that count exceeds 18. Eligible positions use
+deterministic memoized minimax with alpha-beta pruning over a compact reversible
+position. The fixed node budget is 250,000 and there is no wall-clock limit.
+
+The objective is winner first, then deterministic distance: prefer a faster
+win and delay an unavoidable loss. A completed proof reports the proving
+complete action, winner, physical-edge distance to terminal, node and cache-hit
+counts, and reachable-edge count. Exhausting the node budget returns `Unknown`;
+an incomplete search is never labelled a proof. The normal demo contract has
+no draw, so a completed solve proves either `ProvenWin` or `ProvenLoss` relative
+to the player at the boundary. Review falls back to the profile's complete-turn
+heuristic search whenever the oracle declines or remains unresolved.
+
+### Possession grouping and grading
+
+`GameReviewSession` replays each imported edge through `Match`, including its
+declared player, start point, rebound flag, status, and final outcome. It then
+partitions consecutive edges by one player into possessions ending at handoff
+or terminal state. A truncated history that stops during a rebound remains
+visible but is `Unclear`. Grading one possession does not remove physical-edge
+navigation: every constituent edge retains its original replay ply.
+
+For each possession the analyzer evaluates the boundary before the played
+action and the boundary after it, always orienting scores and proofs to the
+player who made that possession. A profile-specific logistic mapping fitted on
+fresh validation decisions turns heuristic scores into estimated win chances.
+Coefficients are rejected if their profile identity differs; Fast calibration
+is never silently reused for Deep or vice versa. Estimated loss is the
+non-negative difference between those two estimates.
+
+Grades use these fixed bands:
+
+| Grade | Rule |
+| --- | --- |
+| `Forced` | Every decision within the possession had one legal edge |
+| `Best` | Recommended action matched, or estimated loss is below 2 percentage points |
+| `Good` | Estimated loss is 2–5 points |
+| `Inaccuracy` | Estimated loss is 5–10 points |
+| `Mistake` | Estimated loss is 10–20 points |
+| `Blunder` | Estimated loss is at least 20 points |
+| `Unclear` | Required search failed to complete a depth, or Fast and Deep differ by at least two grade bands |
+
+A winning terminal action is always `Best`. Surrendering a proven win, or
+newly allowing a proven loss, is always `Blunder`. An estimate within one
+percentage point of 2, 5, 10, or 20 is flagged `borderline`; that flag is not a
+confidence interval. Deep mode completes the entire Fast pass before refining
+possessions, preserving both grades for the disagreement check.
+
+The first differing edge between the played and recommended complete actions
+is the divergence marker. Except where the oracle supplies a proof, grades and
+estimated losses are deterministic engine estimates for a named search and
+calibration profile—not objective truth, per-edge scores, or per-move
+confidence intervals.
+
 ## Rank5DerivedBot
 
 `Rank5DerivedBot — 50k demo profile` adapts complete-turn search from the
@@ -258,16 +345,18 @@ ranked entrant.
 | Work limit | 650 ms first response, 130 ms later; 3M-node guard | 50,000 nodes; no wall-clock cutoff |
 | Turn depth | Up to 32 | Up to 32 |
 | Tables | 262,144 transposition / 131,072 evaluation | 65,536 / 32,768 |
-| Learned value | 15% replay-trained blend | 0% blend after the demo gate |
+| Learned value | 15% replay-trained blend | Fixed 0% blend |
 | Replay corrections | Exact full-history replay book enabled | Disabled |
 | Evidence | Historical CodinGame rank 5/206 | Demo-rule gates and Wasm timing only |
 
-The adapter includes
-[`bot.cpp`](../submissions/codingame/bots/rank_5/bot.cpp) with its main function
-disabled and constructs `CompleteTurnSearch` directly. It validates the returned
-complete possession. Because the public `Bot` API returns one edge, later
-rebound edges are cached and reused only if the next state is byte-for-byte
-equivalent in rules, ball, player, status, path, used edges, and visit counts.
+One private translation unit includes
+[`bot.cpp`](../submissions/codingame/bots/rank_5/bot.cpp) with only its protocol
+main disabled. An opaque internal adapter constructs the unmodified
+`CompleteTurnSearch`, validates the returned complete possession, and is reused
+by separately named analysis types. `Rank5DerivedBot` itself has no configurable
+constructor. Because the public `Bot` API returns one edge, later rebound edges
+are cached and reused only if the next state is byte-for-byte equivalent in
+rules, ball, player, status, path, used edges, and visit counts.
 
 Its diagnostics separate fresh searches from cached continuations and include
 requested/visited nodes, completed/attempted depth, root score, budget

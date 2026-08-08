@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.20)
 
 project(papersoccer LANGUAGES CXX)
 
+# CONFIGURE_DEPENDS notices the validation lock's absent-to-present transition.
+# That forces a reconfigure and changes a core compile definition, so an
+# incremental post-selection build cannot retain the pre-lock branch.
+file(GLOB PAPERSOCCER_GAME_REVIEW_LOCK_FILES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/game_review_gate/game_review_calibration_lock.hpp")
+if(PAPERSOCCER_GAME_REVIEW_LOCK_FILES)
+  set(PAPERSOCCER_GAME_REVIEW_LOCK_PRESENT 1)
+else()
+  set(PAPERSOCCER_GAME_REVIEW_LOCK_PRESENT 0)
+endif()
+
 execute_process(
   COMMAND git rev-parse HEAD
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -60,6 +71,9 @@ else()
 endif()
 
 add_library(papersoccer_core
+  src/analysis/complete_turn_analysis.cpp
+  src/analysis/exact_endgame_solver.cpp
+  src/analysis/game_review_session.cpp
   src/bots/alpha_beta/alpha_beta.cpp
   src/bots/bot.cpp
   src/bots/jacek_inspired/jacek_features.cpp
@@ -77,6 +91,8 @@ add_library(papersoccer_core
 )
 target_include_directories(papersoccer_core PUBLIC include)
 target_include_directories(papersoccer_core PRIVATE src/bots)
+target_compile_definitions(papersoccer_core PRIVATE
+  PAPERSOCCER_GAME_REVIEW_LOCK_PRESENT=${PAPERSOCCER_GAME_REVIEW_LOCK_PRESENT})
 if(EMSCRIPTEN)
   # Alpha-beta uses a private exception to unwind cleanly when its hard node
   # budget is reached. Every Wasm consumer must compile the core with catches
@@ -129,6 +145,7 @@ if(EMSCRIPTEN)
 endif()
 
 add_executable(papersoccer_tests
+  tests/analysis/game_review_test.cpp
   tests/bots/alpha_beta/alpha_beta_test.cpp
   tests/bots/jacek_inspired/jacek_inspired_test.cpp
   tests/bots/mcts/mcts_test.cpp
@@ -174,6 +191,16 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
             -p test_*.py
   )
   set_tests_properties(papersoccer_flagship_study_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(
+    NAME papersoccer_game_review_gate_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/game_review_gate
+            -p test_*.py
+  )
+  set_tests_properties(papersoccer_game_review_gate_unit_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
@@ -232,12 +259,12 @@ if(NOT EMSCRIPTEN)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
-  add_executable(papersoccer_rank5_derived_gate
+  add_executable(papersoccer_complete_turn_analysis_regression
     tools/rank5_derived_evaluator_gate.cpp)
-  target_link_libraries(papersoccer_rank5_derived_gate
+  target_link_libraries(papersoccer_complete_turn_analysis_regression
     PRIVATE papersoccer_core)
-  add_test(NAME papersoccer_rank5_derived_gate_smoke
-    COMMAND papersoccer_rank5_derived_gate
+  add_test(NAME papersoccer_complete_turn_analysis_regression_smoke
+    COMMAND papersoccer_complete_turn_analysis_regression
             --nodes 500
             --depth 2
             --pairs-per-stage 1
@@ -357,6 +384,29 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_replay_setup_test.mjs
     )
+    add_test(
+      NAME papersoccer_game_review_client_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/game_review_client_test.mjs
+    )
+    add_test(
+      NAME papersoccer_game_review_ui_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/game_review_ui_test.mjs
+    )
+    add_test(
+      NAME papersoccer_web_review_wasm_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_review_wasm_test.mjs
+    )
+    add_test(
+      NAME papersoccer_game_review_browser_smoke_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/game_review_browser_smoke_test.mjs
+    )
+    set_tests_properties(papersoccer_game_review_browser_smoke_tests PROPERTIES
+      TIMEOUT 330
+    )
     if(NOT EMSCRIPTEN)
       foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
         papersoccer_codingame_target_prefix(
@@ -404,7 +454,8 @@ if(EMSCRIPTEN)
   endif()
   add_executable(papersoccer_web_engine src/web/wasm_bridge.cpp)
   target_link_libraries(papersoccer_web_engine PRIVATE papersoccer_core)
-  target_compile_options(papersoccer_web_engine PRIVATE -O3 -flto)
+  target_compile_options(papersoccer_web_engine PRIVATE
+    -O3 -flto -sDISABLE_EXCEPTION_CATCHING=0)
   target_link_options(papersoccer_web_engine PRIVATE
     --no-entry
     -O3
@@ -445,5 +496,51 @@ if(EMSCRIPTEN)
     COMMAND ${CMAKE_COMMAND} -E compare_files
             $<TARGET_FILE:papersoccer_web_engine>
             ${CMAKE_CURRENT_SOURCE_DIR}/web/papersoccer-wasm.js
+  )
+
+  add_executable(papersoccer_analysis_wasm src/web/review_wasm_bridge.cpp)
+  target_link_libraries(papersoccer_analysis_wasm PRIVATE papersoccer_core)
+  target_compile_options(papersoccer_analysis_wasm PRIVATE
+    -O3 -flto -sDISABLE_EXCEPTION_CATCHING=0)
+  target_link_options(papersoccer_analysis_wasm PRIVATE
+    --no-entry
+    -O3
+    -flto
+    -sDISABLE_EXCEPTION_CATCHING=0
+    -sMODULARIZE=1
+    -sEXPORT_NAME=createPaperSoccerAnalysisModule
+    -sEXPORT_ES6=0
+    -sSINGLE_FILE=1
+    -sSINGLE_FILE_BINARY_ENCODE=0
+    -sENVIRONMENT=web,worker,node
+    -sFILESYSTEM=0
+    -sINITIAL_MEMORY=67108864
+    -sALLOW_MEMORY_GROWTH=0
+    "-sEXPORTED_RUNTIME_METHODS=['ccall']"
+  )
+  set_target_properties(papersoccer_analysis_wasm PROPERTIES
+    OUTPUT_NAME papersoccer-analysis-wasm
+    SUFFIX .js
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/web
+  )
+  add_custom_target(update_papersoccer_analysis_wasm
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:papersoccer_analysis_wasm>
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/papersoccer-analysis-wasm.js
+    DEPENDS papersoccer_analysis_wasm
+    COMMENT "Updating the checked-in Game Review WebAssembly module"
+  )
+  add_custom_target(check_papersoccer_analysis_wasm
+    COMMAND ${CMAKE_COMMAND} -E compare_files
+            $<TARGET_FILE:papersoccer_analysis_wasm>
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/papersoccer-analysis-wasm.js
+    DEPENDS papersoccer_analysis_wasm
+    COMMENT "Checking that the Game Review WebAssembly module is current"
+  )
+  add_test(
+    NAME papersoccer_analysis_wasm_artifact_current
+    COMMAND ${CMAKE_COMMAND} -E compare_files
+            $<TARGET_FILE:papersoccer_analysis_wasm>
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/papersoccer-analysis-wasm.js
   )
 endif()

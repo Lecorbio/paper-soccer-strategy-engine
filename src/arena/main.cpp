@@ -50,9 +50,9 @@ void print_usage(std::ostream &out) {
       "Common options:\n"
       "  --seed N                         Base seed (default: 828927513140)\n"
       "  --width N --height N             Board dimensions (default: 8x10)\n"
-      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived\n"
+      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search\n"
       "                                     Candidate bot (default: mcts)\n"
-      "  --reference-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived\n"
+      "  --reference-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search\n"
       "                                     Reference bot (default: mcts)\n"
       "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
@@ -83,7 +83,11 @@ void print_usage(std::ostream &out) {
       "  --candidate-alpha-beta-max-search-plies N\n"
       "                                     Candidate soft physical horizon\n"
       "  --reference-alpha-beta-max-search-plies N\n"
-      "                                     Reference soft physical horizon\n\n"
+      "                                     Reference soft physical horizon\n"
+      "  --candidate-complete-turn-max-nodes N\n"
+      "                                     DeepTurnSearch work: 100000, 200000, or 400000\n"
+      "  --reference-complete-turn-max-nodes N\n"
+      "                                     DeepTurnSearch work: 100000, 200000, or 400000\n\n"
       "Match options:\n"
       "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
       "  --opening-plies N                Shared random opening length (default: 0)\n"
@@ -166,9 +170,13 @@ ps::BotKind parse_kind(std::string_view value, std::string_view option) {
   if (value == "rank5-derived") {
     return ps::BotKind::Rank5Derived;
   }
+  if (value == "deep-turn-search") {
+    return ps::BotKind::DeepTurnSearch;
+  }
   throw std::invalid_argument(std::string(option) +
                               " requires random, mcts, alpha-beta, "
-                              "jacek-inspired, or rank5-derived");
+                              "jacek-inspired, rank5-derived, or "
+                              "deep-turn-search");
 }
 
 ps::MctsRolloutPolicy parse_policy(std::string_view value,
@@ -338,6 +346,12 @@ CliConfig parse_cli(int argc, char **argv) {
     } else if (option == "--reference-alpha-beta-max-search-plies") {
       config.reference.alpha_beta_max_search_plies =
           parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--candidate-complete-turn-max-nodes") {
+      config.candidate.complete_turn_max_nodes =
+          parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--reference-complete-turn-max-nodes") {
+      config.reference.complete_turn_max_nodes =
+          parse_unsigned<std::uint64_t>(value(), option);
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }

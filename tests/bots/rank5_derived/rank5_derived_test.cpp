@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "papersoccer/bot.hpp"
@@ -65,19 +66,10 @@ ps::GameState forced_two_edge_rebound() {
   return state;
 }
 
-ps::Rank5DerivedConfig small_config() {
-  ps::Rank5DerivedConfig config;
-  config.max_turn_depth = 2;
-  config.max_nodes = 5'000;
-  config.transposition_table_entries = 2'048;
-  config.evaluation_table_entries = 1'024;
-  return config;
-}
-
 void fixed_node_search_is_legal_and_deterministic() {
   const ps::GameState state = ps::make_initial_state();
-  ps::Rank5DerivedBot first(small_config());
-  ps::Rank5DerivedBot second(small_config());
+  ps::Rank5DerivedBot first;
+  ps::Rank5DerivedBot second;
   const ps::Move first_move = first.choose_move(state);
   const ps::Move second_move = second.choose_move(state);
   const auto &left = first.last_search_stats();
@@ -93,11 +85,8 @@ void fixed_node_search_is_legal_and_deterministic() {
 }
 
 void rebound_edges_are_cached_and_match_a_fresh_search() {
-  ps::Rank5DerivedConfig config = small_config();
-  config.max_turn_depth = 1;
-  config.max_nodes = 1;
   const ps::GameState root = forced_two_edge_rebound();
-  ps::Rank5DerivedBot cached(config);
+  ps::Rank5DerivedBot cached;
 
   const ps::Move first = cached.choose_move(root);
   require(first == ps::Move{ps::Point{4, 3}} &&
@@ -108,7 +97,7 @@ void rebound_edges_are_cached_and_match_a_fresh_search() {
           "The first edge should retain the mandatory rebound continuation.");
 
   const ps::GameState rebound = ps::apply_move(root, first);
-  ps::Rank5DerivedBot fresh(config);
+  ps::Rank5DerivedBot fresh;
   const ps::Move expected = fresh.choose_move(rebound);
   const ps::Move second = cached.choose_move(rebound);
   require(second == expected && second == ps::Move{ps::Point{4, 2}} &&
@@ -122,10 +111,7 @@ void rebound_edges_are_cached_and_match_a_fresh_search() {
 }
 
 void any_expected_state_difference_invalidates_the_cache() {
-  ps::Rank5DerivedConfig config = small_config();
-  config.max_turn_depth = 1;
-  config.max_nodes = 1;
-  ps::Rank5DerivedBot bot(config);
+  ps::Rank5DerivedBot bot;
   const ps::GameState root = forced_two_edge_rebound();
   const ps::Move first = bot.choose_move(root);
   ps::GameState different = ps::apply_move(root, first);
@@ -139,10 +125,7 @@ void any_expected_state_difference_invalidates_the_cache() {
 }
 
 void undo_to_the_original_root_invalidates_the_cache() {
-  ps::Rank5DerivedConfig config = small_config();
-  config.max_turn_depth = 1;
-  config.max_nodes = 1;
-  ps::Rank5DerivedBot bot(config);
+  ps::Rank5DerivedBot bot;
   const ps::GameState root = forced_two_edge_rebound();
   (void)bot.choose_move(root);
 
@@ -154,7 +137,7 @@ void undo_to_the_original_root_invalidates_the_cache() {
 }
 
 void incompatible_rules_are_rejected() {
-  ps::Rank5DerivedBot bot(small_config());
+  ps::Rank5DerivedBot bot;
 
   ps::RulesConfig wrong_width;
   wrong_width.width = 10;
@@ -182,13 +165,12 @@ void incompatible_rules_are_rejected() {
 }
 
 void public_metadata_has_frozen_defaults() {
-  const ps::Rank5DerivedConfig config;
   ps::Rank5DerivedBot bot;
+  const ps::CompleteTurnAnalysisConfig &config = bot.config();
   require(config.max_turn_depth == 32 && config.max_nodes == 50'000 &&
               config.transposition_table_entries == 65'536 &&
               config.evaluation_table_entries == 32'768 &&
-              config.max_time_ms == 0 && !config.replay_corrections &&
-              config.replay_value_blend_percent == 0 &&
+              config.is_fast_profile() && config.profile_name() == "fast-50k" &&
               ps::Rank5DerivedBot::profile_name() == "50k-demo" &&
               ps::Rank5DerivedBot::original_artifact_name() == "rank_5" &&
               ps::Rank5DerivedBot::original_submission_id() == "41015554" &&
@@ -199,6 +181,22 @@ void public_metadata_has_frozen_defaults() {
               ps::bot_kind_name(ps::BotKind::Rank5Derived) ==
                   "Rank5DerivedBot",
           "Rank-5-derived metadata should expose the fixed-node defaults.");
+}
+
+void fixed_profile_cannot_be_reconfigured() {
+  static_assert(std::is_default_constructible_v<ps::Rank5DerivedBot>);
+  static_assert(!std::is_constructible_v<ps::Rank5DerivedBot,
+                                         ps::CompleteTurnAnalysisConfig>);
+  static_assert(!std::is_constructible_v<ps::Rank5DerivedBot,
+                                         ps::Rank5DerivedConfig>);
+
+  ps::CompleteTurnAnalysisConfig custom =
+      ps::CompleteTurnAnalysisConfig::fast();
+  custom.max_nodes = 1;
+  require(custom.profile_name() == "custom-analysis" &&
+              !custom.is_fast_profile(),
+          "Configurable work must identify itself as custom analysis, not "
+          "the fixed Rank5Derived profile.");
 }
 
 void factory_ignores_seed_and_unknown_kinds_still_fail() {
@@ -248,6 +246,8 @@ int run_rank5_derived_tests() {
       {"incompatible_rules_are_rejected", incompatible_rules_are_rejected},
       {"public_metadata_has_frozen_defaults",
        public_metadata_has_frozen_defaults},
+      {"fixed_profile_cannot_be_reconfigured",
+       fixed_profile_cannot_be_reconfigured},
       {"factory_ignores_seed_and_unknown_kinds_still_fail",
        factory_ignores_seed_and_unknown_kinds_still_fail},
   };
@@ -269,3 +269,7 @@ int run_rank5_derived_tests() {
             << "/" << tests.size() << " rank-5-derived tests passed.\n";
   return failures == 0 ? 0 : 1;
 }
+
+#ifdef PAPERSOCCER_STANDALONE_RANK5_DERIVED_TEST
+int main() { return run_rank5_derived_tests(); }
+#endif

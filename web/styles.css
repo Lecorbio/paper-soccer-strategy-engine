@@ -614,6 +614,272 @@ button.board-target:hover,
   line-height: 1.45;
 }
 
+.review-entry-actions {
+  display: flex;
+  margin-top: 12px;
+}
+
+.review-entry-actions button {
+  width: 100%;
+}
+
+.game-review {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.game-review-heading,
+.possession-review-title-row,
+.review-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.game-review-heading h2 {
+  margin-top: 3px;
+  font-size: 1.08rem;
+}
+
+.game-review-heading button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 0.8rem;
+}
+
+.review-explanation,
+.review-transport,
+.try-line-status {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.review-mode-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.review-mode-actions button {
+  min-width: 0;
+  padding-inline: 7px;
+  font-size: 0.82rem;
+}
+
+.review-mode-actions #cancelReviewButton {
+  grid-column: 1 / -1;
+  border-color: #8b4a3b;
+  background: #f6ddd5;
+  color: #70291c;
+}
+
+.review-progress {
+  display: grid;
+  gap: 5px;
+  color: #414a52;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.review-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.review-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.review-summary > div {
+  min-width: 0;
+  border: 1px solid #cfc5af;
+  border-radius: 7px;
+  background: #ede7d6;
+  padding: 8px;
+}
+
+.review-summary > div:first-child {
+  grid-column: 1 / -1;
+}
+
+.review-summary span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.review-summary p {
+  margin-top: 3px;
+  font-size: 0.82rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.possession-timeline-section {
+  display: grid;
+  gap: 7px;
+}
+
+.review-subheading span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.possession-timeline {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+}
+
+.possession-badge {
+  min-width: 38px;
+  min-height: 32px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 0.75rem;
+  font-weight: 780;
+}
+
+.possession-badge.is-active {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.grade-forced,
+.grade-best {
+  border-color: #3e7442;
+  background: #d9eed6;
+  color: #245a2a;
+}
+
+.grade-good {
+  border-color: #5e7c58;
+  background: #e6efda;
+  color: #365a30;
+}
+
+.grade-inaccuracy {
+  border-color: #aa7b13;
+  background: #fff0b8;
+  color: #664600;
+}
+
+.grade-mistake {
+  border-color: #a95528;
+  background: #f9d9bd;
+  color: #713114;
+}
+
+.grade-blunder {
+  border-color: #9b3535;
+  background: #f4cccc;
+  color: #771f1f;
+}
+
+.grade-unclear {
+  border-color: #77716a;
+  background: #e5e1d9;
+  color: #4e4a45;
+}
+
+.possession-review-detail {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #b7ae98;
+  border-radius: 8px;
+  background: #ede7d6;
+  padding: 10px;
+}
+
+.possession-grade {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.possession-loss,
+.possession-proof,
+.possession-borderline,
+.possession-diagnostics {
+  color: #414a52;
+  font-size: 0.79rem;
+  line-height: 1.35;
+}
+
+.possession-borderline {
+  color: #7b4e00;
+  font-weight: 720;
+}
+
+.possession-borderline:empty,
+.try-line-status:empty,
+.review-transport:empty {
+  display: none;
+}
+
+.review-path-legend {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid #cfc5af;
+  padding-top: 8px;
+  color: #414a52;
+  font-size: 0.75rem;
+}
+
+.review-path-legend span::before {
+  display: inline-block;
+  width: 18px;
+  height: 4px;
+  margin-right: 7px;
+  border-radius: 99px;
+  vertical-align: middle;
+  content: "";
+}
+
+.played-path-key::before {
+  background: #ff8452;
+}
+
+.recommended-path-key::before {
+  border-top: 2px dashed #167c9b;
+  background: transparent;
+}
+
+.divergence-key::before {
+  height: 12px !important;
+  background:
+    linear-gradient(45deg, transparent 42%, #9b3500 43% 57%, transparent 58%),
+    linear-gradient(-45deg, transparent 42%, #9b3500 43% 57%, transparent 58%);
+}
+
+.try-line-actions,
+.review-export-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.try-line-actions button,
+.review-export-actions button {
+  flex: 1;
+}
+
+.review-export-actions {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
 .live-history-controls {
   display: flex;
   gap: 8px;

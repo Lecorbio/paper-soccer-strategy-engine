@@ -2,9 +2,9 @@
 
 The repository treats determinism, generated-artifact freshness, and evidence
 provenance as separate checks. The fast path builds and tests the maintained
-project. Additional commands verify the checked-in WebAssembly module, trained
-model header, and immutable CodinGame submission without rerunning long
-tournaments.
+project. Additional commands verify the checked-in gameplay and analysis
+WebAssembly modules, trained model header, and immutable CodinGame submission
+without rerunning long tournaments.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Training and research scripts additionally use Python 3.12–3.14 and the pinned
 package in `requirements-research.txt`. The C++ engine, CLI, checked-in models,
 and live browser game have no Python or NumPy runtime dependency.
 
-Emscripten is needed only to rebuild the checked-in browser module. Exact
+Emscripten is needed only to rebuild the checked-in browser modules. Exact
 artifact verification requires Emscripten 6.0.2.
 
 ## One-command native build and test
@@ -53,15 +53,22 @@ Run the core binary directly when isolating a C++ failure:
 
 When Node.js 18+ is available, CTest registers browser/Wasm, UI support, replay
 exporter, arena CLI, generated submission, and protocol tests. The checked-in
-Wasm boundary can also be exercised directly:
+Wasm and Game Review boundaries can also be exercised directly:
 
 ```bash
 node --test tests/web/web_wasm_test.mjs
+node --test tests/web/web_review_wasm_test.mjs
+node --test tests/web/game_review_client_test.mjs
+node --test tests/web/game_review_ui_test.mjs
 ```
 
 Full competitive tournaments are deliberately outside CTest. Tests use small,
 fixed budgets to validate legality, deterministic counters, report schemas,
 paired accounting, and command integration without depending on machine speed.
+The review registrations also cover native/Wasm transcript parity,
+long-trail fixed-heap stress, classic-worker and direct-file fallback
+protocols, cancellation and stale sessions, and authoritative try-line
+sandboxing.
 
 ## Research environment
 
@@ -116,32 +123,154 @@ protocol smokes, and invokes every generator in `--check` mode. Shared tooling
 and the directory contract are documented in the
 [CodinGame archive](../submissions/codingame/README.md).
 
-## WebAssembly artifact
+## WebAssembly artifacts
 
-`web/papersoccer-wasm.js` embeds the Wasm bytes, allowing direct-file use and
-static GitHub Pages deployment. The build pins Emscripten 6.0.2, uses a fixed
-32 MiB initial heap, disables memory growth, and emits a single file for browser
-and Node environments.
+`web/papersoccer-wasm.js` embeds the live-game Wasm bytes, allowing direct-file
+use and static GitHub Pages deployment. The build pins Emscripten 6.0.2, uses a
+fixed 32 MiB initial heap, disables memory growth, and emits a single file for
+browser and Node environments.
 
-After changing C++ rules, bots, or the browser-session boundary, regenerate it:
+`web/papersoccer-analysis-wasm.js` is a separate lazy-loaded single-file
+artifact for Game Review. It has its own fixed 64 MiB initial heap, disables
+memory growth, and supports browser, classic-worker, and Node environments. On
+hosted pages `web/game-review-worker.js` owns a separate instance. Under
+`file://`, failure to create or load that worker creates a second main-thread
+analysis instance and schedules one synchronous possession step per event-loop
+task. Neither path shares state with the 32 MiB live-game module.
+
+After changing C++ rules, bots, review code, or either browser boundary,
+regenerate both artifacts:
 
 ```bash
 emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
 cmake --build build/wasm --target update_papersoccer_web
+cmake --build build/wasm --target update_papersoccer_analysis_wasm
 ```
 
-To prove that the checked-in module matches current sources without updating
+To prove that the checked-in modules match current sources without updating
 the repository:
 
 ```bash
 emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
 cmake --build build/wasm --target check_papersoccer_web
+cmake --build build/wasm --target check_papersoccer_analysis_wasm
 ```
 
 CMake rejects another Emscripten version before producing an artifact. The
 generated JavaScript is expected to be marked as generated for repository
-language statistics; the C++ and hand-written JavaScript around it remain
-maintained source.
+language statistics; the C++, worker, and hand-written JavaScript clients
+around it remain maintained source. The analysis C ABI and deterministic export
+contract are documented in
+[Architecture](architecture.md#browser-and-analysis-boundaries).
+
+## Game Review gate
+
+The frozen Game Review gate uses fresh opening banks disjoint from every
+flagship bank. It evaluates 100k, 200k, and 400k DeepTurnSearch candidates
+against the fixed Rank5Derived 50k and selected JacekInspired 20k references at
+4, 8, 12, and 20 opening plies. Development contains 25 color-swapped pairs per
+cell, validation 50, and the one-shot selected-profile test 100. Calibration is
+fit on validation decisions only. The exact contract is
+`benchmarks/game_review_gate/manifest.json`.
+
+First build an optimized native arena and verify all frozen opening identities:
+
+```bash
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release
+
+python3 benchmarks/game_review_gate/run_gate.py validate \
+  --opening-tool build/release/papersoccer_opening_bank \
+  --verify-regeneration
+```
+
+Run and aggregate development and validation. The runner is resumable and
+stores raw reports below the manifest-bound `results/game_review_gate/` path:
+
+```bash
+python3 benchmarks/game_review_gate/run_gate.py run \
+  --phase development --arena build/release/papersoccer_arena
+python3 benchmarks/game_review_gate/run_gate.py aggregate --phase development
+
+python3 benchmarks/game_review_gate/run_gate.py run \
+  --phase validation --arena build/release/papersoccer_arena
+python3 benchmarks/game_review_gate/run_gate.py aggregate --phase validation
+```
+
+For parallel execution, invoke every distinct `--shard-index` from zero through
+`--shard-count - 1` with the same shard count, then aggregate once. A shard
+will reuse an already validated raw unit instead of overwriting it.
+
+The selected profile and calibration are linked into the analysis module, so
+stabilize that generated module before promoting its latency. First measure the
+pre-lock probe artifact and render a draft lock from that measurement:
+
+```bash
+emcmake cmake -S . -B build/wasm -DCMAKE_BUILD_TYPE=Release
+
+node benchmarks/game_review_gate/measure_wasm_latency.mjs \
+  --module web/papersoccer-analysis-wasm.js \
+  --output results/game_review_gate/wasm-latency-draft-1.json \
+  --emscripten-version 6.0.2
+
+python3 benchmarks/game_review_gate/run_gate.py render-lock \
+  --latency-input results/game_review_gate/wasm-latency-draft-1.json
+cmake --build build/wasm \
+  --target update_papersoccer_web update_papersoccer_analysis_wasm
+```
+
+Remeasure the linked artifact to a new draft, then check that the same lock is
+selected:
+
+```bash
+node benchmarks/game_review_gate/measure_wasm_latency.mjs \
+  --module web/papersoccer-analysis-wasm.js \
+  --output results/game_review_gate/wasm-latency-draft-2.json \
+  --emscripten-version 6.0.2
+
+python3 benchmarks/game_review_gate/run_gate.py check-lock \
+  --latency-input results/game_review_gate/wasm-latency-draft-2.json
+cmake --build build/wasm \
+  --target check_papersoccer_web check_papersoccer_analysis_wasm
+```
+
+If that check differs, render from draft 2, rebuild, and measure to a fresh
+draft path; repeat until `check-lock --latency-input` succeeds. Never overwrite
+or hand-edit a draft. Promote only the stable linked-module measurement, then
+create and verify the official selection lock. The example below assumes draft
+2 passed; substitute the last fresh draft after any additional iteration:
+
+```bash
+python3 benchmarks/game_review_gate/run_gate.py record-latency \
+  --input results/game_review_gate/wasm-latency-draft-2.json
+python3 benchmarks/game_review_gate/run_gate.py lock-selection
+python3 benchmarks/game_review_gate/run_gate.py check-lock
+```
+
+Review and commit the manifest, banks, development and validation summaries,
+latency measurement, final analysis module, selection/calibration lock, and
+generated C++ lock before test. The Release arena embeds its source commit, and
+the test runner refuses an arena from another or dirty source state. Rebuild
+the native Release arena from that exact clean commit, then run the test exactly
+once:
+
+```bash
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release --target papersoccer_arena
+
+python3 benchmarks/game_review_gate/run_gate.py run \
+  --phase test --arena build/release/papersoccer_arena
+python3 benchmarks/game_review_gate/run_gate.py aggregate --phase test
+python3 benchmarks/game_review_gate/run_gate.py report
+python3 benchmarks/game_review_gate/run_gate.py validate --require-complete
+```
+
+The test runner writes a manifest-, selection-, and arena-bound one-shot marker
+before starting and refuses a second completed evaluation. Do not delete or
+work around that marker. The final report records whether each paired 95% lower
+bound from 10,000 whole-pair bootstrap resamples clears 50%; only both positive
+results permit the **Expert — DeepTurnSearch** selector. Deep review itself does
+not depend on that strength claim.
 
 ## Benchmark website snapshot
 
@@ -240,6 +369,8 @@ match:
 - legal moves and game transitions;
 - fixed-seed RandomBot and MCTS random streams;
 - fixed-iteration or fixed-node search choices and deterministic counters;
+- possession partitioning, exact endgame proofs, Game Review grades, and
+  complete-action diagnostics for a locked profile and calibration;
 - paired opening banks and bootstrap resampling from recorded seeds;
 - generated submission/model headers; and
 - checked-in Wasm bytes when using the pinned toolchain.
@@ -257,7 +388,8 @@ Before publishing documentation or code that changes evidence paths:
 
 1. Run `./scripts/build-and-test.sh`.
 2. Run the rank-5 generator `--check` and verify the expected SHA-256.
-3. With Emscripten 6.0.2, run `check_papersoccer_web` if browser C++ changed.
+3. With Emscripten 6.0.2, run `check_papersoccer_web` and
+   `check_papersoccer_analysis_wasm` if shared or browser C++ changed.
 4. Run `web_summary.py --check` if benchmark inputs or presentation changed.
 5. Run the Python import validation and model generator check if research code
    or dependencies changed.
@@ -267,3 +399,5 @@ Before publishing documentation or code that changes evidence paths:
    require `../` to reach repository-root artifacts.
 8. Review claims against [Experiments](experiments.md) and the specialized
    source records, preserving limitations and bot provenance.
+9. Validate the Game Review manifest and lock; require the complete gate only
+   after its one-shot test has actually finished.

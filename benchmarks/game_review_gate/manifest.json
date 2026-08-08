@@ -1,0 +1,346 @@
+{
+  "schema_version": "papersoccer.game-review-gate-manifest.v1",
+  "study": {
+    "id": "deep-turn-search-game-review-gate-2026-v1",
+    "title": "DeepTurnSearch review-profile strength and calibration gate",
+    "frozen": true,
+    "status": "preregistered"
+  },
+  "rules": {
+    "width": 8,
+    "height": 10,
+    "goal_rule": "opponent_goal_only",
+    "blocked_rule": "player_to_move_loses",
+    "natural_draws": false,
+    "max_game_plies": 512,
+    "opening_ply_definition": "one physical legal edge including rebounds"
+  },
+  "profiles": {
+    "candidates": [
+      {
+        "id": "deep-turn-search-100k",
+        "kind": "deep-turn-search",
+        "public_label": "DeepTurnSearch — 100k analysis profile",
+        "max_turn_depth": 32,
+        "max_nodes": 100000,
+        "transposition_entries": 65536,
+        "evaluation_entries": 32768,
+        "wall_clock_limit_ms": 0,
+        "replay_corrections": false,
+        "learned_value_blend_percent": 0
+      },
+      {
+        "id": "deep-turn-search-200k",
+        "kind": "deep-turn-search",
+        "public_label": "DeepTurnSearch — 200k analysis profile",
+        "max_turn_depth": 32,
+        "max_nodes": 200000,
+        "transposition_entries": 65536,
+        "evaluation_entries": 32768,
+        "wall_clock_limit_ms": 0,
+        "replay_corrections": false,
+        "learned_value_blend_percent": 0
+      },
+      {
+        "id": "deep-turn-search-400k",
+        "kind": "deep-turn-search",
+        "public_label": "DeepTurnSearch — 400k analysis profile",
+        "max_turn_depth": 32,
+        "max_nodes": 400000,
+        "transposition_entries": 65536,
+        "evaluation_entries": 32768,
+        "wall_clock_limit_ms": 0,
+        "replay_corrections": false,
+        "learned_value_blend_percent": 0
+      }
+    ],
+    "references": [
+      {
+        "id": "rank5-derived-fixed-50k",
+        "kind": "rank5-derived",
+        "public_label": "Rank5DerivedBot — fixed 50k demo profile",
+        "settings": {
+          "max_turn_depth": 32,
+          "max_nodes": 50000,
+          "transposition_entries": 65536,
+          "evaluation_entries": 32768,
+          "wall_clock_limit_ms": 0,
+          "replay_corrections": false,
+          "learned_value_blend_percent": 0,
+          "ranked_source_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+        }
+      },
+      {
+        "id": "jacek-inspired-20k",
+        "kind": "jacek-inspired",
+        "public_label": "Selected JacekInspiredBot — 20k profile",
+        "settings": {
+          "max_turn_depth": 6,
+          "max_nodes": 20000,
+          "transposition_entries": 65536,
+          "max_search_plies": 12,
+          "wall_clock_limit_ms": 0,
+          "model_sha256": "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084"
+        }
+      }
+    ]
+  },
+  "samples": {
+    "development": {
+      "color_swapped_pairs_per_depth_matchup": 25,
+      "games_per_pair": 2
+    },
+    "validation": {
+      "color_swapped_pairs_per_depth_matchup": 50,
+      "games_per_pair": 2
+    },
+    "test": {
+      "color_swapped_pairs_per_depth_matchup": 100,
+      "games_per_pair": 2
+    }
+  },
+  "openings": {
+    "depths": [4, 8, 12, 20],
+    "generator": {
+      "id": "uniform-legal-move-generator/v1",
+      "selection": "splitmix64-unbiased-rejection-sampling/v1",
+      "canonical_equivalence": "horizontal reflection about x=width/2",
+      "duplicate_policy": "reject across gate and every flagship bank"
+    },
+    "banks": [
+      {
+        "id": "game-review-development-d04",
+        "phase": "development",
+        "depth": 4,
+        "pairs": 25,
+        "seed": "202608090401",
+        "path": "benchmarks/game_review_gate/openings/development_d04.tsv",
+        "sha256": "31a9884b541f530277b20283bf6ded751e8005535d5bf12d39bff2a6158fe74a"
+      },
+      {
+        "id": "game-review-development-d08",
+        "phase": "development",
+        "depth": 8,
+        "pairs": 25,
+        "seed": "202608090801",
+        "path": "benchmarks/game_review_gate/openings/development_d08.tsv",
+        "sha256": "3bf0ae35b7c170e8aa8d13743e35b7a1d1bb76786132535bec068b0caaa258b2"
+      },
+      {
+        "id": "game-review-development-d12",
+        "phase": "development",
+        "depth": 12,
+        "pairs": 25,
+        "seed": "202608091201",
+        "path": "benchmarks/game_review_gate/openings/development_d12.tsv",
+        "sha256": "f9f334acf64bae44f7541b89c472e55066776af7d7b8e1b2f4168a3637675cd6"
+      },
+      {
+        "id": "game-review-development-d20",
+        "phase": "development",
+        "depth": 20,
+        "pairs": 25,
+        "seed": "202608092001",
+        "path": "benchmarks/game_review_gate/openings/development_d20.tsv",
+        "sha256": "140e71ab0ec33c6aa979753599c98aab060148bd1a0d9baf5186189dd68583a4"
+      },
+      {
+        "id": "game-review-validation-d04",
+        "phase": "validation",
+        "depth": 4,
+        "pairs": 50,
+        "seed": "202608100401",
+        "path": "benchmarks/game_review_gate/openings/validation_d04.tsv",
+        "sha256": "d96db3a627cef90f365d2629b9610ccbdbc9e33df2dc3b8d8c1f77624357f130"
+      },
+      {
+        "id": "game-review-validation-d08",
+        "phase": "validation",
+        "depth": 8,
+        "pairs": 50,
+        "seed": "202608100801",
+        "path": "benchmarks/game_review_gate/openings/validation_d08.tsv",
+        "sha256": "e820f596f71255922db7f9896d382782a90b75ba44ba881be379eb04dfbc9852"
+      },
+      {
+        "id": "game-review-validation-d12",
+        "phase": "validation",
+        "depth": 12,
+        "pairs": 50,
+        "seed": "202608101201",
+        "path": "benchmarks/game_review_gate/openings/validation_d12.tsv",
+        "sha256": "38adf0e4d90e46a248a6219fdef2752775bc0dc5aaf6d1288363308e70b7ea3a"
+      },
+      {
+        "id": "game-review-validation-d20",
+        "phase": "validation",
+        "depth": 20,
+        "pairs": 50,
+        "seed": "202608102001",
+        "path": "benchmarks/game_review_gate/openings/validation_d20.tsv",
+        "sha256": "bc90c9fb1c195904311532cdaefe082747382c60a4745ebc823b00664c167ba1"
+      },
+      {
+        "id": "game-review-test-d04",
+        "phase": "test",
+        "depth": 4,
+        "pairs": 100,
+        "seed": "202608110401",
+        "path": "benchmarks/game_review_gate/openings/test_d04.tsv",
+        "sha256": "43b57547a35a88d1e4a76efbd20a6ba4d1bfb222b80c008a159a922aa6dcfd33"
+      },
+      {
+        "id": "game-review-test-d08",
+        "phase": "test",
+        "depth": 8,
+        "pairs": 100,
+        "seed": "202608110801",
+        "path": "benchmarks/game_review_gate/openings/test_d08.tsv",
+        "sha256": "ba255e8df2083a859fa490787afd8fe396c80c759a5938e0b77b239e74fb30fa"
+      },
+      {
+        "id": "game-review-test-d12",
+        "phase": "test",
+        "depth": 12,
+        "pairs": 100,
+        "seed": "202608111201",
+        "path": "benchmarks/game_review_gate/openings/test_d12.tsv",
+        "sha256": "e54db998b6941960baaab1165cdea8f53f343197b7bcdbe87de5393f5f5ff60f"
+      },
+      {
+        "id": "game-review-test-d20",
+        "phase": "test",
+        "depth": 20,
+        "pairs": 100,
+        "seed": "202608112001",
+        "path": "benchmarks/game_review_gate/openings/test_d20.tsv",
+        "sha256": "9e8bb74981e80c94c931e472c164caf24b85fca5d85d446ffa021d323d5a5c20"
+      }
+    ],
+    "excluded_flagship_banks": [
+      {"id":"flagship-exclusion-00","phase":"development","depth":4,"pairs":25,"seed":"1004101","path":"benchmarks/flagship_study/openings/development_d04.tsv","sha256":"99f5ffe035aed851c7b43b9f52a65c554418d4da52f1d8e3ab62476d5c206f19"},
+      {"id":"flagship-exclusion-01","phase":"development","depth":8,"pairs":25,"seed":"1008101","path":"benchmarks/flagship_study/openings/development_d08.tsv","sha256":"81031d20b3cb4ab87ab2c48550010b19c2ae9e4d2a1be39f75d4aaee9bff1bfb"},
+      {"id":"flagship-exclusion-02","phase":"development","depth":12,"pairs":25,"seed":"1012101","path":"benchmarks/flagship_study/openings/development_d12.tsv","sha256":"d14078679891e1cc5d96fb13cad008de2bd65e654ed97f2d138eb99715259d5f"},
+      {"id":"flagship-exclusion-03","phase":"development","depth":20,"pairs":25,"seed":"1020101","path":"benchmarks/flagship_study/openings/development_d20.tsv","sha256":"d1c05512c50f45819b6ffac72e8d2814a6b87839fd790a6944b4a2313556176d"},
+      {"id":"flagship-exclusion-04","phase":"test","depth":4,"pairs":100,"seed":"3004101","path":"benchmarks/flagship_study/openings/test_d04.tsv","sha256":"b9282d3f61a54638ec6b991a2944b6ad6f2c815188845a8e6e5863d3b6fcefe6"},
+      {"id":"flagship-exclusion-05","phase":"test","depth":8,"pairs":100,"seed":"3008101","path":"benchmarks/flagship_study/openings/test_d08.tsv","sha256":"70103a63fb15f30f57a140467a07af666b5f71928b8291deb5a1eb3c400549ad"},
+      {"id":"flagship-exclusion-06","phase":"test","depth":12,"pairs":100,"seed":"3012101","path":"benchmarks/flagship_study/openings/test_d12.tsv","sha256":"b3315e6aa8ec64b52ff14bfacfc3fa81d1d94de896bceb8ec5471cd6542ec0bf"},
+      {"id":"flagship-exclusion-07","phase":"test","depth":20,"pairs":100,"seed":"3020101","path":"benchmarks/flagship_study/openings/test_d20.tsv","sha256":"edb686a25491163cf7cd85325901a069877f36b9f4b4d03fdebd34ee9acf109c"},
+      {"id":"flagship-exclusion-08","phase":"validation","depth":4,"pairs":50,"seed":"2004101","path":"benchmarks/flagship_study/openings/validation_d04.tsv","sha256":"9ffa305b9c2b9aeb99233377df65ebd87aace7ce6991ba940a609fe46ddc8404"},
+      {"id":"flagship-exclusion-09","phase":"validation","depth":8,"pairs":50,"seed":"2008101","path":"benchmarks/flagship_study/openings/validation_d08.tsv","sha256":"2e10f14f6dec3f8dbf2cdbf0695e2cc759cb27ef6215580aee5e49cbb33f6ee2"},
+      {"id":"flagship-exclusion-10","phase":"validation","depth":12,"pairs":50,"seed":"2012101","path":"benchmarks/flagship_study/openings/validation_d12.tsv","sha256":"80f53894cf4b2cf13a199e402a005efc6eb765353171d12514819313974ab802"},
+      {"id":"flagship-exclusion-11","phase":"validation","depth":20,"pairs":50,"seed":"2020101","path":"benchmarks/flagship_study/openings/validation_d20.tsv","sha256":"4978afba0389bea5484c86e1f8f83b2bfc0709a331489c8c2d74ba94e5378ed0"},
+      {"id":"flagship-exclusion-12","phase":"validation","depth":4,"pairs":50,"seed":"8004101","path":"benchmarks/flagship_study/openings/validation_v4_d04.tsv","sha256":"9cb8786782fb0302b46b508bdb7532c0c9c09628dc1ca9aa99adf2665195614a"},
+      {"id":"flagship-exclusion-13","phase":"validation","depth":8,"pairs":50,"seed":"8008101","path":"benchmarks/flagship_study/openings/validation_v4_d08.tsv","sha256":"cf92970053478ab4156df4035dd94e40af90dbe1d7411bf529c9441c85a81249"},
+      {"id":"flagship-exclusion-14","phase":"validation","depth":12,"pairs":50,"seed":"8012101","path":"benchmarks/flagship_study/openings/validation_v4_d12.tsv","sha256":"d7307d9cf17af14e5619eba8a843cff101d928e6be83eec5c68ca49e8200b314"},
+      {"id":"flagship-exclusion-15","phase":"validation","depth":20,"pairs":50,"seed":"8020101","path":"benchmarks/flagship_study/openings/validation_v4_d20.tsv","sha256":"84ee7fdbc7c83b274623d293bc59e9135e457b9b2abd23cd8812753f3f90fc20"}
+    ],
+    "identities_path": "benchmarks/game_review_gate/opening_identities.json"
+  },
+  "seeds": {
+    "opening": {
+      "development": {"4":"202608090401","8":"202608090801","12":"202608091201","20":"202608092001"},
+      "validation": {"4":"202608100401","8":"202608100801","12":"202608101201","20":"202608102001"},
+      "test": {"4":"202608110401","8":"202608110801","12":"202608111201","20":"202608112001"}
+    },
+    "bot": {
+      "development": "2026080900001",
+      "validation": "2026080900002",
+      "test": "2026080900003"
+    },
+    "bootstrap": {
+      "development": "2026080910001",
+      "validation": "2026080910002",
+      "test": "2026080910003"
+    },
+    "calibration": {
+      "validation": "2026080920002"
+    }
+  },
+  "latency_protocol": {
+    "runtime": "wasm",
+    "phase": "validation",
+    "fresh_possession_boundaries_only": true,
+    "minimum_samples_per_candidate": 80,
+    "samples_per_opening_depth_per_candidate": 20,
+    "warmup_searches_per_candidate": 8,
+    "native_parity_reference": "rank5-derived-fixed-50k",
+    "quantiles": ["median", "p95", "maximum"],
+    "p95_limit_ms": 400,
+    "maximum_limit_ms": 750,
+    "initial_memory_bytes": 67108864,
+    "memory_growth": false,
+    "emscripten_version": "6.0.2"
+  },
+  "selection_rule": {
+    "phase": "validation",
+    "strength_metric": "mean whole-pair score across both references and all four opening depths",
+    "practical_tie_percentage_points": 1.0,
+    "tie_break_order": ["lower_wasm_p95", "lower_work", "stable_profile_id"],
+    "no_eligible_candidate_policy": "stop_before_test"
+  },
+  "statistics": {
+    "bootstrap": {
+      "resamples": 10000,
+      "confidence": 0.95,
+      "unit": "whole_color_swapped_pair",
+      "stratify_by": "opening_depth"
+    },
+    "calibration": {
+      "fit_phase": "validation",
+      "link": "profile_specific_standardized_logistic",
+      "score_perspective": "player_who_made_possession",
+      "outcome": "eventual_binary_win",
+      "mapping_profiles": {
+        "fast": {
+          "id": "complete-turn-analysis-fast-50k",
+          "kind": "complete-turn-analysis",
+          "review_mode": "Fast",
+          "max_turn_depth": 32,
+          "max_nodes": 50000,
+          "transposition_entries": 65536,
+          "evaluation_entries": 32768,
+          "wall_clock_limit_ms": 0,
+          "replay_corrections": false,
+          "learned_value_blend_percent": 0,
+          "ranked_evaluator_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+        },
+        "deep": "selected_validation_candidate"
+      },
+      "observation_sources": {
+        "fast": "fresh_fixed_rank5_reference_decisions",
+        "deep": "fresh_deep_turn_search_candidate_decisions"
+      }
+    },
+    "expert_gate": {
+      "test_pairs_per_depth_opponent": 100,
+      "bootstrap_resamples": 10000,
+      "claim_rule": "show Expert only when each reference matchup has zero operational failures and a paired 95% lower bound strictly above 0.50"
+    }
+  },
+  "source": {
+    "ranked_source": {
+      "path": "submissions/codingame/bots/rank_5/submission.cpp",
+      "sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+    },
+    "jacek_model": {
+      "path": "models/jacek_article_value_model.json",
+      "sha256": "57412763f650350a1036e438a7a18656c3da675a2f27c7308001acfb12407084"
+    }
+  },
+  "outputs": {
+    "raw_results_root": "results/game_review_gate",
+    "opening_identities": "benchmarks/game_review_gate/opening_identities.json",
+    "phase_results": {
+      "development": "benchmarks/game_review_gate/results/development.json",
+      "validation": "benchmarks/game_review_gate/results/validation.json",
+      "test": "benchmarks/game_review_gate/results/test.json"
+    },
+    "wasm_latency": "benchmarks/game_review_gate/wasm_latency.json",
+    "selection_lock": "benchmarks/game_review_gate/selection_calibration_lock.json",
+    "cpp_lock_header": "benchmarks/game_review_gate/game_review_calibration_lock.hpp",
+    "compact_results": "benchmarks/game_review_gate/compact_results.json",
+    "report": "benchmarks/game_review_gate/REPORT.md",
+    "web_gate_status": "web/game-review-gate.js"
+  }
+}

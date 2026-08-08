@@ -18,6 +18,7 @@
     AlphaBeta: "alphaBeta",
     JacekInspired: "jacekInspired",
     Rank5Derived: "rank5Derived",
+    DeepTurnSearch: "deepTurnSearch",
   });
 
   const DEFAULT_BOT_ITERATIONS = 2000;
@@ -46,11 +47,19 @@
     if (kind === BotKind.Rank5Derived) {
       return 4;
     }
+    if (kind === BotKind.DeepTurnSearch) {
+      return 5;
+    }
     throw new Error("Unsupported bot kind: " + String(kind));
   }
 
   function isDepthBot(kind) {
     return kind === BotKind.AlphaBeta || kind === BotKind.JacekInspired;
+  }
+
+  function isFixedBot(kind) {
+    return kind === BotKind.Rank5Derived ||
+      kind === BotKind.DeepTurnSearch;
   }
 
   function depthBotName(kind) {
@@ -76,8 +85,9 @@
     }
 
     const kindValue = botKindValue(config.kind);
-    const searchSetting = config.kind === BotKind.Rank5Derived
-      ? RANK5_DERIVED_MAX_NODES
+    const searchSetting = config.kind === BotKind.DeepTurnSearch
+      ? 0
+      : config.kind === BotKind.Rank5Derived ? RANK5_DERIVED_MAX_NODES
       : isDepthBot(config.kind)
       ? unsignedInteger(
         config.depth ?? DEFAULT_ALPHA_BETA_DEPTH,
@@ -91,7 +101,7 @@
         false,
       );
 
-    const seed = config.kind === BotKind.Rank5Derived ? "0" : String(config.seed);
+    const seed = isFixedBot(config.kind) ? "0" : String(config.seed);
     return [seed, kindValue, searchSetting];
   }
 
@@ -165,8 +175,9 @@
       ) {
         const humanValue = humanPlayer === Player.Two ? 2 : 1;
         const kindValue = botKindValue(botKind);
-        const settingValue = botKind === BotKind.Rank5Derived
-          ? RANK5_DERIVED_MAX_NODES
+        const settingValue = botKind === BotKind.DeepTurnSearch
+          ? 0
+          : botKind === BotKind.Rank5Derived ? RANK5_DERIVED_MAX_NODES
           : isDepthBot(botKind)
           ? unsignedInteger(
             searchSetting ?? DEFAULT_ALPHA_BETA_DEPTH,
@@ -182,7 +193,7 @@
         return runCommand(
           "ps_start_game",
           ["string", "number", "number", "number"],
-          [botKind === BotKind.Rank5Derived ? "0" : String(seed),
+          [isFixedBot(botKind) ? "0" : String(seed),
             humanValue, kindValue, settingValue],
           snapshot,
         );
