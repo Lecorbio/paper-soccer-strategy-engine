@@ -175,10 +175,40 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
   )
   set_tests_properties(papersoccer_flagship_study_unit_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame
+            -p test_*.py)
+  set_tests_properties(papersoccer_codingame_promotion_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_banks_current
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/promotion/build_goal_shell_banks.py
+            --check)
+  set_tests_properties(papersoccer_codingame_promotion_banks_current PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_manifest_valid
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/promotion_gate.py
+            validate)
+  set_tests_properties(papersoccer_codingame_promotion_manifest_valid PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn)
+  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn topology)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -278,8 +308,19 @@ if(NOT EMSCRIPTEN)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
       target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         PRIVATE papersoccer_core)
-      add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
-        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --bank
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/promotion/openings/initial.tsv
+            --stage smoke --node-budget 500 --max-turns 320
+            --shard-count 1 --shard-index 0
+            --output
+            ${CMAKE_CURRENT_BINARY_DIR}/topology-comparison-smoke.json)
+      else()
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
+      endif()
     endif()
   endforeach()
 

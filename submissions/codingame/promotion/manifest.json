@@ -1,0 +1,133 @@
+{
+  "banks": {
+    "openings/development.tsv": {
+      "records": 96,
+      "sha256": "3698d925c4d03fe960f398f3c2d0c2857af78be8e1c9d613327f8985b3f1081b"
+    },
+    "openings/initial.tsv": {
+      "records": 1,
+      "sha256": "317c7bb9f9fdef7f40c031bf852681c1286a374d92b82cd07a697b4313bdebf6"
+    },
+    "openings/test.tsv": {
+      "records": 68,
+      "sha256": "5363c74182980e0060083fd47b38bc73babe179609dfc8f4d3e6da3f38c15cd8"
+    },
+    "openings/validation.tsv": {
+      "records": 96,
+      "sha256": "a346171ef64d3b983a9134bf1422b2f2b205bfe2b2a8e3b710e238f599adb51b"
+    }
+  },
+  "candidate": "topology",
+  "hypothesis": "capped rebound-goal connectivity used only for move ordering",
+  "incumbent": {
+    "name": "rank_5",
+    "submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+  },
+  "rules": {
+    "blocked_rule": "mover_loses",
+    "goal_rule": "own_goals_allowed",
+    "height": 10,
+    "positions_are_complete_turn_boundaries": true,
+    "width": 8
+  },
+  "schema": "papersoccer.codingame-promotion-manifest.v1",
+  "selection": {
+    "cross_split_order": [
+      "development",
+      "validation",
+      "test"
+    ],
+    "development_agents": [
+      6567975,
+      6567983,
+      6567993,
+      6568126,
+      6568130
+    ],
+    "game_cap": "at most four states per game and two per goal-distance band",
+    "goal_shell": "winner to move at normalized y 9, 10, or 11",
+    "locked_after_game": 896637709,
+    "locked_test_agent": 6273433,
+    "normalization": "winner rotated to player zero; horizontal reflection dedup",
+    "validation_agents": [
+      6568141,
+      6568150,
+      6568158
+    ]
+  },
+  "source_limit": 100000,
+  "sources": {
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568126.json": "475e8e097f8d8eac1d8ab449fe72a3bcbea38753728c415722d9f5c858f08dcf",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568130.json": "5981c67047e2c801da3566375448b729dee168bce2704fef88e43fa4563a5da5",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568141.json": "24117a54fe0e18b4e9e750656b316cd3771d84a262f170e3190c75cc27595f08",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568150.json": "aaca35fc1d4763045ca450602163518721bcc1243fbce3434b8d0599085fc052",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568158.json": "33940006e2398fceb627049de6da12ad00720d990509f3d82df7604bdf7b9eb2",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567975.json": "81c087e12df3193b1a7b349d322f9ccb4547985fb1666e223db25d42eacf8d3d",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567983.json": "acd046018f8a190213f92aef95c47fc9b66b08d528f168552053a892dc66b297",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567993.json": "2d954eecd073d0e2c25bc08a8453087d24881b8204261086a5f13303b73f6d1d",
+    "submissions/codingame/bots/topology/comparison_gate.cpp": "abb8cfd462401d34b284a1bbff91e73eec3c11b8699886f843ae4733c08a6bf8",
+    "submissions/codingame/bots/topology/submission_test.cpp": "f295cff81454d3369860fab581108de986c159be11f2208f5d756297271e2b87",
+    "submissions/codingame/bots/topology/timing_probe.cpp": "b971c0f6f7ae37c93bf90efde2f757662b8c0a30a5b05c80134d537603254dd7",
+    "submissions/codingame/promotion/build_goal_shell_banks.py": "9e14ca8c3f08fe792188cf219f65398e0f0a44ce0be916993c495e176cc6fbe9",
+    "submissions/codingame/promotion/rank1_locked_games.json": "f92c6a6d34c65149cc4640e3f90ae76297305860f5b4614275eb34de18e5fb71",
+    "submissions/codingame/tools/promotion_gate.py": "ccf769b7e63a27e27cfa3ab9f897e1ab859f8f1ea6f8fbb17426d6e4d1f0e98b"
+  },
+  "stages": {
+    "development": {
+      "bank": "openings/development.tsv",
+      "maximum_turns": 320,
+      "minimum_mean": 0.52,
+      "minimum_throughput_ratio": 0.9,
+      "node_budget": 5000,
+      "require_more_wins_than_incumbent": true
+    },
+    "initial": {
+      "bank": "openings/initial.tsv",
+      "maximum_turns": 320,
+      "minimum_mean": 0.5,
+      "node_budget": 5000
+    },
+    "test": {
+      "bank": "openings/test.tsv",
+      "maximum_turns": 320,
+      "minimum_ci_lower": 0.45,
+      "minimum_color_score": 0.45,
+      "minimum_mean": 0.5,
+      "minimum_stratum_score": 0.45,
+      "minimum_throughput_ratio": 0.9,
+      "node_budgets": [
+        30000,
+        100000
+      ]
+    },
+    "validation": {
+      "bank": "openings/validation.tsv",
+      "maximum_turns": 320,
+      "minimum_ci_lower": 0.5,
+      "minimum_color_score": 0.48,
+      "minimum_mean": 0.53,
+      "minimum_stratum_score": 0.48,
+      "minimum_throughput_ratio": 0.9,
+      "node_budget": 5000
+    }
+  },
+  "statistics": {
+    "confidence": 0.95,
+    "method": "source_game_cluster_percentile_bootstrap",
+    "resamples": 10000,
+    "seed": 4774557432748095049,
+    "unit": "source_game_cluster_of_color_swapped_opening_pairs"
+  },
+  "timing": {
+    "first_max_ms": 1000.0,
+    "first_p95_ms": 950.0,
+    "fresh_process_samples": 20,
+    "later_max_ms": 200.0,
+    "later_p95_ms": 190.0,
+    "shell_cases": [
+      "elite-d2",
+      "rank1-d1",
+      "elite-d0-dense"
+    ]
+  }
+}
