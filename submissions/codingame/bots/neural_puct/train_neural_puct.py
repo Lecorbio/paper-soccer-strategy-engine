@@ -31,6 +31,7 @@ except ModuleNotFoundError:
 
 
 HERE = pathlib.Path(__file__).resolve().parent
+REPOSITORY = HERE.parents[3]
 PROMOTION = HERE.parents[1] / "promotion"
 DEFAULT_ELITE = (
     PROMOTION / "elite_final_holdout_v2.json",
@@ -64,8 +65,31 @@ INPUT_COUNT = EDGE_COUNT + VERTEX_COUNT * DISTANCE_BUCKETS + VERTEX_COUNT + GLOB
 HIDDEN_ONE = 32
 HIDDEN_TWO = 32
 POLICY_COUNT = 8
+ACTION_FEATURE_NAMES = (
+    "direction_x",
+    "direction_attack",
+    "rebound",
+    "handoff",
+    "immediate_win",
+    "immediate_loss",
+    "attack_goal_progress",
+    "own_goal_safety",
+    "remaining_degree",
+    "safe_frontiers",
+    "dead_frontiers",
+    "continuation_size",
+    "layer_fill_after",
+    "layer_closure",
+    "escape_routes",
+    "opponent_mobility",
+)
+ACTION_FEATURE_COUNT = len(ACTION_FEATURE_NAMES)
+ACTION_POLICY_HIDDEN = 8
 INT4_LIMIT = 7
 POLICY_TARGET_SCHEMA = "canonical-primitive-root-visits-v1"
+LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
+LIVE_REPLAY_SCHEMA = "papersoccer.codingame-live-replay.v1"
+LIVE_RELABEL_SCHEMA = "papersoccer.live-replay-relabel.v1"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,13 +110,21 @@ class Game:
     turns: tuple[tuple[int, str], ...]
     policy_start_turn: int = 0
     policy_targets: tuple[tuple[PolicyTarget, ...] | None, ...] | None = None
+    value_targets: tuple[tuple[float, ...] | None, ...] | None = None
+    priority_weights: tuple[tuple[float, ...] | None, ...] | None = None
     split_group: str | None = None
     duplicate_count: int = 1
+    split_scope: str = "agent"
+    source_group: str = "anchor"
+    policy_mass: float = 1.0
+    value_mass: float = 1.0
+    allow_policy_disagreement: bool = False
 
 
 @dataclasses.dataclass
 class Sample:
     features: np.ndarray
+    action_features: np.ndarray
     legal: np.ndarray
     policy: int
     policy_target: np.ndarray
@@ -102,6 +134,10 @@ class Sample:
     focus_agent_id: int
     source: str
     state_key: bytes
+    has_value: bool = True
+    source_group: str = "anchor"
+    policy_mass: float = 1.0
+    value_mass: float = 1.0
     value_weight: float = 0.0
     policy_weight: float = 0.0
 
@@ -209,6 +245,11 @@ def make_topology():
 
 
 POINTS, POINT_INDEX, EDGES, EDGE_INDEX, ADJACENCY, CUT_EDGES = make_topology()
+EDGE_CUT = {
+    edge: cut
+    for cut, edges in enumerate(CUT_EDGES)
+    for edge in edges
+}
 
 
 def rotate(point: tuple[int, int]) -> tuple[int, int]:
@@ -366,6 +407,107 @@ def legal_policy_mask(ball, used_segments, player: int, reflected: bool):
     if not np.any(mask):
         raise ValueError("non-terminal state has no legal action")
     return mask
+
+
+def action_feature_matrix(ball, used_segments, visited, player: int, reflected: bool):
+    """Encode each legal primitive consequence in the current mover's frame."""
+
+    ball, used_segments, visited = canonical_state(
+        ball, used_segments, visited, player, reflected
+    )
+    used_edges = {EDGE_INDEX[edge] for edge in used_segments}
+    base_distances = true_turn_distances(ball, used_edges, visited)
+    base_attack = min(
+        base_distances[POINT_INDEX[(x, GOAL_BOTTOM)]] for x in range(3, 6)
+    )
+    base_own = min(
+        base_distances[POINT_INDEX[(x, GOAL_TOP)]] for x in range(3, 6)
+    )
+    result = np.zeros((POLICY_COUNT, ACTION_FEATURE_COUNT), dtype=np.float32)
+
+    for direction, (dx, dy) in enumerate(DIRECTIONS):
+        destination = ball[0] + dx, ball[1] + dy
+        edge = segment(ball, destination)
+        edge_id = EDGE_INDEX.get(edge)
+        if edge_id is None or edge_id in used_edges:
+            continue
+
+        child_used = set(used_edges)
+        child_used.add(edge_id)
+        child_visited = set(visited)
+        was_rebound = destination in visited or is_boundary(destination)
+        child_visited.add(destination)
+        degrees = free_degrees(child_used)
+        remaining_degree = degrees[POINT_INDEX[destination]]
+        immediate_win = is_goal(destination) and destination[1] == GOAL_BOTTOM
+        immediate_loss = (
+            (is_goal(destination) and destination[1] == GOAL_TOP)
+            or (not is_goal(destination) and remaining_degree == 0)
+        )
+        terminal = immediate_win or immediate_loss
+        rebound = was_rebound and not terminal
+        handoff = not was_rebound and not terminal
+
+        child_distances = true_turn_distances(
+            destination, child_used, child_visited
+        )
+        child_attack = min(
+            child_distances[POINT_INDEX[(x, GOAL_BOTTOM)]] for x in range(3, 6)
+        )
+        child_own = min(
+            child_distances[POINT_INDEX[(x, GOAL_TOP)]] for x in range(3, 6)
+        )
+        component, safe, dead, _, _, _ = rebound_component(
+            destination, child_used, child_visited, degrees
+        )
+
+        cut = EDGE_CUT.get(edge_id)
+        layer_fill = 0.0
+        layer_closure = False
+        if cut is not None:
+            cut_edges = CUT_EDGES[cut]
+            used_in_cut = sum(value in child_used for value in cut_edges)
+            layer_fill = used_in_cut / len(cut_edges)
+            layer_closure = used_in_cut == len(cut_edges)
+
+        child_player = 0 if rebound else 1
+        escape_routes = 0
+        if not terminal:
+            for next_vertex, next_edge in ADJACENCY[POINT_INDEX[destination]]:
+                if next_edge in child_used:
+                    continue
+                next_point = POINTS[next_vertex]
+                if is_goal(next_point):
+                    attacking_y = GOAL_BOTTOM if child_player == 0 else GOAL_TOP
+                    escape_routes += next_point[1] == attacking_y
+                    continue
+                next_used = set(child_used)
+                next_used.add(next_edge)
+                if free_degrees(next_used)[next_vertex] > 0:
+                    escape_routes += 1
+
+        result[direction] = np.asarray(
+            [
+                float(dx),
+                float(-dy),
+                float(rebound),
+                float(handoff),
+                float(immediate_win),
+                float(immediate_loss),
+                (base_attack - child_attack) / 7.0,
+                (child_own - base_own) / 7.0,
+                remaining_degree / 8.0,
+                min(safe, 64) / 64.0,
+                min(dead, 64) / 64.0,
+                component / VERTEX_COUNT,
+                layer_fill,
+                float(layer_closure),
+                escape_routes / 8.0,
+                escape_routes / 8.0 if handoff else 0.0,
+            ],
+            dtype=np.float32,
+        )
+    return result
 
 
 def canonical_direction(direction: int, player: int, reflected: bool):
@@ -591,6 +733,299 @@ def load_selfplay(paths: Iterable[pathlib.Path]):
     return games, sorted(teachers), teacher_models, sorted(policy_target_schemas)
 
 
+def repository_path(relative: str, location: str):
+    if not isinstance(relative, str) or pathlib.PurePosixPath(relative).is_absolute():
+        raise ValueError(f"invalid repository-relative path at {location}")
+    path = (REPOSITORY / relative).resolve()
+    try:
+        path.relative_to(REPOSITORY.resolve())
+    except ValueError as error:
+        raise ValueError(f"path escapes the repository at {location}") from error
+    return path
+
+
+def verified_snapshot_file(relative: str, expected_sha256: str, location: str):
+    if not isinstance(expected_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_sha256
+    ):
+        raise ValueError(f"invalid SHA-256 at {location}")
+    path = repository_path(relative, location)
+    if not path.is_file() or sha256(path) != expected_sha256:
+        raise ValueError(f"snapshot-bound file hash mismatch at {location}")
+    return path
+
+
+def parse_live_policy_target(target: object, location: str):
+    if not isinstance(target, dict):
+        raise ValueError(f"invalid live policy target at {location}")
+    probabilities = target.get("probabilities")
+    if not isinstance(probabilities, list) or len(probabilities) != POLICY_COUNT:
+        raise ValueError(f"live policy probabilities have the wrong size at {location}")
+    probabilities = tuple(float(value) for value in probabilities)
+    if (
+        any(not math.isfinite(value) or value < 0.0 for value in probabilities)
+        or abs(sum(probabilities) - 1.0) > 1.0e-5
+    ):
+        raise ValueError(f"live policy probabilities are not normalized at {location}")
+    total_visits = target.get("total_visits")
+    fallback = target.get("fallback")
+    if (
+        isinstance(total_visits, bool)
+        or not isinstance(total_visits, int)
+        or total_visits < 0
+        or not isinstance(fallback, bool)
+        or fallback != (total_visits == 0)
+    ):
+        raise ValueError(f"live visit provenance is invalid at {location}")
+    return PolicyTarget(probabilities, total_visits, fallback)
+
+
+def load_live_replay(snapshot_path: pathlib.Path, relabel_path: pathlib.Path):
+    snapshot_path = snapshot_path.resolve()
+    relabel_path = relabel_path.resolve()
+    try:
+        snapshot_path.relative_to(REPOSITORY.resolve())
+        relabel_path.relative_to(REPOSITORY.resolve())
+    except ValueError as error:
+        raise ValueError("live replay inputs must remain inside the repository") from error
+    snapshot = json.loads(snapshot_path.read_text())
+    if snapshot.get("schema") != LIVE_SNAPSHOT_SCHEMA:
+        raise ValueError("unexpected live replay snapshot schema")
+    if snapshot_path.stem != sha256(snapshot_path):
+        raise ValueError("live replay snapshot is not content-addressed")
+    if int(snapshot.get("independent_games", -1)) < int(
+        snapshot.get("minimum_independent_games", 50)
+    ):
+        raise ValueError("live replay snapshot is below its frozen game floor")
+
+    exclusion_path = verified_snapshot_file(
+        snapshot["exclusion_registry_path"],
+        snapshot["exclusion_registry_sha256"],
+        "snapshot exclusion registry",
+    )
+    exclusions = json.loads(exclusion_path.read_text())
+    if exclusions.get("schema") != "papersoccer.live-replay-exclusions.v1":
+        raise ValueError("unexpected exclusion registry schema")
+    protected_ids = {
+        int(record["game_id"])
+        for record in exclusions["records"]
+        if any(
+            str(category).startswith("protected_")
+            for category in record.get("categories", [])
+        )
+    }
+    verified_snapshot_file(
+        snapshot["poll_path"], snapshot["poll_sha256"], "snapshot poll"
+    )
+    relabel_binding = snapshot.get("relabel_input")
+    if not isinstance(relabel_binding, dict):
+        raise ValueError("snapshot has no relabel input binding")
+    verified_snapshot_file(
+        relabel_binding["path"], relabel_binding["sha256"], "relabel input"
+    )
+    if relabel_path.name != f"{sha256(relabel_path)}.relabel.jsonl":
+        raise ValueError("live relabel output is not content-addressed")
+
+    games = []
+    snapshot_records = {}
+    direct_primitives = 0
+    for snapshot_record in snapshot.get("records", []):
+        game_id = int(snapshot_record["game_id"])
+        if game_id in snapshot_records:
+            raise ValueError(f"live snapshot repeats game {game_id}")
+        if game_id in protected_ids:
+            raise ValueError(f"live snapshot contains protected game {game_id}")
+        record_path = verified_snapshot_file(
+            snapshot_record["record_path"],
+            snapshot_record["record_sha256"],
+            f"live game {game_id}",
+        )
+        record = json.loads(record_path.read_text())
+        if record.get("schema") != LIVE_REPLAY_SCHEMA:
+            raise ValueError(f"unexpected replay schema for live game {game_id}")
+        replay = record.get("replay", {})
+        if int(replay.get("game_id", -1)) != game_id:
+            raise ValueError(f"live replay id mismatch for game {game_id}")
+        turns = tuple(
+            (int(turn["player_id"]), str(turn["action"]))
+            for turn in replay.get("turns", [])
+        )
+        winner = int(replay["winner_player_id"])
+        replay_agents = {int(agent["agent_id"]): agent for agent in replay["agents"]}
+        direct = snapshot_record.get("direct_experts", [])
+        if not direct:
+            raise ValueError(f"live game {game_id} has no frozen direct expert")
+        for expert in direct:
+            agent_id = int(expert["agent_id"])
+            player_id = int(expert["player_id"])
+            agent = replay_agents.get(agent_id)
+            tier = expert.get("strength_tier")
+            if (
+                agent is None
+                or agent.get("label_role") != "direct-public-expert"
+                or int(agent["player_id"]) != player_id
+                or agent.get("strength_tier") != tier
+            ):
+                raise ValueError(f"live expert binding mismatch in game {game_id}")
+            tier_name = str(tier.get("name"))
+            policy_mass = float(tier.get("policy_mass"))
+            if tier_name not in {"elite-1-5", "strong-6-10", "upper-11-20"} or policy_mass not in {
+                1.0,
+                0.75,
+                0.5,
+            }:
+                raise ValueError(f"invalid frozen strength tier in game {game_id}")
+            direct_primitives += sum(
+                len(action) for player, action in turns if player == player_id
+            )
+            games.append(
+                Game(
+                    key=f"codingame-live-direct:{game_id}:{agent_id}",
+                    game_id=game_id,
+                    source=f"codingame-live-expert:{tier_name}",
+                    focus_agent_id=agent_id,
+                    focus_player=player_id,
+                    winner=winner,
+                    turns=turns,
+                    split_group=f"codingame-live:{game_id}",
+                    split_scope="global",
+                    source_group="live",
+                    policy_mass=policy_mass,
+                    value_mass=0.0,
+                )
+            )
+        snapshot_records[game_id] = (snapshot_record, record, turns, winner)
+    if len(snapshot_records) != int(snapshot["independent_games"]):
+        raise ValueError("live snapshot record count mismatch")
+    if direct_primitives != int(snapshot["direct_expert_primitives"]):
+        raise ValueError("live direct primitive count mismatch")
+
+    relabelled = set()
+    relabel_searches = 0
+    teacher_models = set()
+    for line_number, line in enumerate(relabel_path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        location = f"{relabel_path}:{line_number}"
+        if record.get("schema") != LIVE_RELABEL_SCHEMA:
+            raise ValueError(f"unexpected live relabel schema at {location}")
+        if record.get("teacher") != "neural_puct" or int(
+            record.get("requested_simulations", 0)
+        ) <= 2_000:
+            raise ValueError(f"live relabel teacher is not deeper neural PUCT at {location}")
+        if int(record.get("max_nodes", 0)) > 100_000:
+            raise ValueError(f"live relabel exceeds the production node cap at {location}")
+        teacher_model = record.get("teacher_model_sha256")
+        if not isinstance(teacher_model, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", teacher_model
+        ):
+            raise ValueError(f"live relabel teacher hash is invalid at {location}")
+        teacher_models.add(teacher_model)
+        game_id = int(record["game_id"])
+        if game_id in relabelled or game_id not in snapshot_records:
+            raise ValueError(f"unexpected or duplicate relabel game {game_id}")
+        snapshot_record, _, expected_turns, expected_winner = snapshot_records[game_id]
+        if snapshot_record.get("own_agent_id") is None:
+            raise ValueError(f"game {game_id} has relabels but no owned agent")
+        own_agent = int(record["own_agent_id"])
+        own_player = int(record["own_player_id"])
+        turns = tuple(zip(
+            (int(value) for value in record["turn_players"]),
+            (str(value) for value in record["turns"]),
+        ))
+        if (
+            turns != expected_turns
+            or int(record["winner"]) != expected_winner
+            or own_agent != int(snapshot_record["own_agent_id"])
+            or own_player != int(snapshot_record["own_player_id"])
+            or record.get("source_record_sha256") != snapshot_record["record_sha256"]
+        ):
+            raise ValueError(f"live relabel binding mismatch for game {game_id}")
+        raw_policy = record.get("policy_targets")
+        raw_values = record.get("value_targets")
+        raw_priorities = record.get("priorities")
+        if not all(
+            isinstance(value, list) and len(value) == len(turns)
+            for value in (raw_policy, raw_values, raw_priorities)
+        ):
+            raise ValueError(f"live relabel turn alignment mismatch for game {game_id}")
+        policy_targets = []
+        value_targets = []
+        priority_weights = []
+        for turn_index, ((player, action), policy, values, priorities) in enumerate(
+            zip(turns, raw_policy, raw_values, raw_priorities)
+        ):
+            location = f"game {game_id}, turn {turn_index}"
+            if player != own_player:
+                if policy is not None or values is not None or priorities is not None:
+                    raise ValueError(f"opponent action copied into relabels at {location}")
+                policy_targets.append(None)
+                value_targets.append(None)
+                priority_weights.append(None)
+                continue
+            if not all(
+                isinstance(value, list) and len(value) == len(action)
+                for value in (policy, values, priorities)
+            ):
+                raise ValueError(f"owned primitive targets do not align at {location}")
+            parsed_policy = tuple(
+                parse_live_policy_target(target, f"{location}, primitive {index}")
+                for index, target in enumerate(policy)
+            )
+            parsed_values = tuple(float(value) for value in values)
+            parsed_priorities = tuple(float(value["weight"]) for value in priorities)
+            if any(
+                not math.isfinite(value) or value < -1.0 or value > 1.0
+                for value in parsed_values
+            ) or any(
+                not math.isfinite(value) or value <= 0.0
+                for value in parsed_priorities
+            ):
+                raise ValueError(f"invalid live value or priority target at {location}")
+            policy_targets.append(parsed_policy)
+            value_targets.append(parsed_values)
+            priority_weights.append(parsed_priorities)
+            relabel_searches += len(action)
+        games.append(
+            Game(
+                key=f"codingame-live-relabel:{game_id}:{own_agent}",
+                game_id=game_id,
+                source="codingame-live-neural-relabel",
+                focus_agent_id=own_agent,
+                focus_player=own_player,
+                winner=expected_winner,
+                turns=turns,
+                policy_targets=tuple(policy_targets),
+                value_targets=tuple(value_targets),
+                priority_weights=tuple(priority_weights),
+                split_group=f"codingame-live:{game_id}",
+                split_scope="global",
+                source_group="live",
+                allow_policy_disagreement=True,
+            )
+        )
+        relabelled.add(game_id)
+    expected_relabels = {
+        game_id
+        for game_id, (record, _, _, _) in snapshot_records.items()
+        if record.get("own_agent_id") is not None
+    }
+    if relabelled != expected_relabels or relabel_searches != int(
+        snapshot["self_primitives_for_relabel"]
+    ):
+        raise ValueError("live relabel coverage does not match the frozen snapshot")
+    return games, {
+        "snapshot_sha256": sha256(snapshot_path),
+        "relabel_sha256": sha256(relabel_path),
+        "independent_games": len(snapshot_records),
+        "direct_expert_primitives": direct_primitives,
+        "relabelled_primitives": relabel_searches,
+        "teacher_model_sha256": sorted(teacher_models),
+        "source_policy_mass": {"anchor": 0.75, "live": 0.25},
+    }
+
+
 def replay_game(game: Game):
     ball = (WIDTH // 2, HEIGHT // 2 + 1)
     used_segments = set()
@@ -629,21 +1064,40 @@ def replay_game(game: Game):
                     )
                 elif turn_targets is not None:
                     raise ValueError("unlabelled turn contains soft policy targets")
-            if include_sample:
+            value_target = 1.0 if game.winner == player else -1.0
+            has_value = include_sample and game.value_mass > 0.0
+            if game.value_targets is not None:
+                turn_values = game.value_targets[turn_index]
+                has_value = include_sample and turn_values is not None
+                if has_value:
+                    value_target = float(turn_values[edge_index])
+            priority = 1.0
+            if game.priority_weights is not None:
+                turn_priorities = game.priority_weights[turn_index]
+                if has_policy or has_value:
+                    if turn_priorities is None:
+                        raise ValueError("labelled turn omits its priority weights")
+                    priority = float(turn_priorities[edge_index])
+                elif turn_priorities is not None:
+                    raise ValueError("unlabelled turn contains priority weights")
+            if include_sample and (has_policy or has_value):
                 pair = []
                 for reflected in (False, True):
                     features = feature_vector(
                         ball, used_segments, visited, player, reflected
                     )
+                    action_features = action_feature_matrix(
+                        ball, used_segments, visited, player, reflected
+                    )
                     legal = legal_policy_mask(
                         ball, used_segments, player, reflected
                     )
-                    policy = canonical_direction(direction, player, reflected)
-                    if not legal[policy]:
+                    played_policy = canonical_direction(direction, player, reflected)
+                    if not legal[played_policy]:
                         raise ValueError("encoded expert action is not legal")
                     policy_target = np.zeros(POLICY_COUNT, dtype=np.float32)
                     if soft_target is None:
-                        policy_target[policy] = 1.0
+                        policy_target[played_policy] = 1.0
                     else:
                         policy_target = (
                             reflect_policy_target(soft_target)
@@ -654,25 +1108,37 @@ def replay_game(game: Game):
                             raise ValueError(
                                 "soft policy target assigns mass to an illegal edge"
                             )
-                        if policy_target[policy] + 1.0e-6 < np.max(policy_target):
+                        if (
+                            not game.allow_policy_disagreement
+                            and policy_target[played_policy] + 1.0e-6
+                            < np.max(policy_target)
+                        ):
                             raise ValueError(
                                 "played edge is not visit-max in soft policy target"
                             )
-                    pair.append((features, legal, policy, policy_target))
+                    policy = int(np.argmax(policy_target))
+                    pair.append(
+                        (features, action_features, legal, policy, policy_target)
+                    )
                 state_key = min(pair[0][0].tobytes(), pair[1][0].tobytes())
-                for features, legal, policy, policy_target in pair:
+                for features, action_features, legal, policy, policy_target in pair:
                     samples.append(
                         Sample(
                             features=features,
+                            action_features=action_features,
                             legal=legal,
                             policy=policy,
                             policy_target=policy_target,
-                            value=1.0 if game.winner == player else -1.0,
+                            value=value_target,
                             has_policy=has_policy,
                             game_key=game.key,
                             focus_agent_id=game.focus_agent_id,
                             source=game.source,
                             state_key=state_key,
+                            has_value=has_value,
+                            source_group=game.source_group,
+                            policy_mass=game.policy_mass * priority,
+                            value_mass=game.value_mass * priority,
                         )
                     )
             was_visited = destination in visited
@@ -709,11 +1175,19 @@ def split_name(game: Game):
 
 
 def stratified_splits(games: list[Game]):
+    result = {}
+    global_groups = collections.defaultdict(list)
     by_agent = collections.defaultdict(lambda: collections.defaultdict(list))
     for game in games:
-        by_agent[game.focus_agent_id][game.split_group or game.key].append(game)
-    result = {}
-    for groups in by_agent.values():
+        group = game.split_group or game.key
+        if game.split_scope == "global":
+            global_groups[group].append(game)
+        elif game.split_scope == "agent":
+            by_agent[game.focus_agent_id][group].append(game)
+        else:
+            raise ValueError(f"unsupported split scope {game.split_scope!r}")
+
+    def assign(groups):
         ordered = sorted(
             groups.items(),
             key=lambda item: (hashlib.sha256(item[0].encode()).digest(), item[0]),
@@ -724,7 +1198,7 @@ def stratified_splits(games: list[Game]):
                 split = split_name(members[0])
                 for game in members:
                     result[game.key] = split
-            continue
+            return
         validation_count = max(1, int(round(count * 0.1)))
         test_count = max(1, int(round(count * 0.1)))
         if validation_count + test_count >= count:
@@ -739,26 +1213,39 @@ def stratified_splits(games: list[Game]):
                 split = "test"
             for game in members:
                 result[game.key] = split
+
+    if global_groups:
+        assign(global_groups)
+    for groups in by_agent.values():
+        assign(groups)
     return result
 
 
-def assign_weights(samples: list[Sample], selfplay_multiplier: float):
-    by_game = collections.Counter(sample.game_key for sample in samples)
+def assign_weights(
+    samples: list[Sample], selfplay_multiplier: float, live_mass: float = 0.25
+):
+    if not 0.2 <= live_mass <= 0.3:
+        raise ValueError("live policy mass must remain between 0.2 and 0.3")
+    value_mass_by_game = collections.defaultdict(float)
     value_games_by_agent = collections.defaultdict(set)
     for sample in samples:
-        value_games_by_agent[sample.focus_agent_id].add(sample.game_key)
+        if sample.has_value:
+            value_mass_by_game[sample.game_key] += sample.value_mass
+            value_games_by_agent[sample.focus_agent_id].add(sample.game_key)
     for sample in samples:
+        if not sample.has_value:
+            sample.value_weight = 0.0
+            continue
         multiplier = selfplay_multiplier if sample.focus_agent_id == -1 else 1.0
-        sample.value_weight = multiplier / (
+        sample.value_weight = multiplier * sample.value_mass / (
             len(value_games_by_agent[sample.focus_agent_id])
-            * by_game[sample.game_key]
+            * value_mass_by_game[sample.game_key]
         )
-    policy_by_game = collections.Counter(
-        sample.game_key for sample in samples if sample.has_policy
-    )
+    policy_mass_by_game = collections.defaultdict(float)
     games_by_agent = collections.defaultdict(set)
     for sample in samples:
         if sample.has_policy:
+            policy_mass_by_game[sample.game_key] += sample.policy_mass
             games_by_agent[sample.focus_agent_id].add(sample.game_key)
     for sample in samples:
         if not sample.has_policy:
@@ -770,15 +1257,40 @@ def assign_weights(samples: list[Sample], selfplay_multiplier: float):
             if sample.focus_agent_id == -1
             else 1.0
         )
-        sample.policy_weight = multiplier / (
+        sample.policy_weight = multiplier * sample.policy_mass / (
             len(games_by_agent[sample.focus_agent_id])
-            * policy_by_game[sample.game_key]
+            * policy_mass_by_game[sample.game_key]
         )
-    value_mean = np.mean([sample.value_weight for sample in samples])
+
+    def rebalance(attribute: str):
+        totals = collections.Counter()
+        for sample in samples:
+            weight = getattr(sample, attribute)
+            if weight > 0.0:
+                totals[sample.source_group] += weight
+        if totals["anchor"] > 0.0 and totals["live"] > 0.0:
+            combined = totals["anchor"] + totals["live"]
+            scales = {
+                "anchor": combined * (1.0 - live_mass) / totals["anchor"],
+                "live": combined * live_mass / totals["live"],
+            }
+            for sample in samples:
+                if sample.source_group in scales:
+                    setattr(
+                        sample,
+                        attribute,
+                        getattr(sample, attribute) * scales[sample.source_group],
+                    )
+
+    rebalance("value_weight")
+    rebalance("policy_weight")
+    value_values = [sample.value_weight for sample in samples if sample.has_value]
     policy_values = [sample.policy_weight for sample in samples if sample.has_policy]
-    policy_mean = np.mean(policy_values)
+    value_mean = np.mean(value_values) if value_values else 1.0
+    policy_mean = np.mean(policy_values) if policy_values else 1.0
     for sample in samples:
-        sample.value_weight /= value_mean
+        if sample.has_value:
+            sample.value_weight /= value_mean
         if sample.has_policy:
             sample.policy_weight /= policy_mean
 
@@ -830,7 +1342,9 @@ def selfplay_preprocessing_report(games: list[Game]):
     }
 
 
-def dataset_from_games(games: list[Game], selfplay_multiplier: float = 1.0):
+def dataset_from_games(
+    games: list[Game], selfplay_multiplier: float = 1.0, live_mass: float = 0.25
+):
     buckets = {name: [] for name in ("train", "validation", "test")}
     rejected = []
     game_counts = collections.Counter()
@@ -877,7 +1391,24 @@ def dataset_from_games(games: list[Game], selfplay_multiplier: float = 1.0):
     if not buckets["validation"] or not buckets["test"]:
         raise RuntimeError("unseen held-out expert samples are empty")
     for split in buckets:
-        assign_weights(buckets[split], selfplay_multiplier)
+        assign_weights(buckets[split], selfplay_multiplier, live_mass)
+    source_mass = {}
+    for split, samples in buckets.items():
+        policy = collections.Counter()
+        value = collections.Counter()
+        for sample in samples:
+            policy[sample.source_group] += sample.policy_weight
+            value[sample.source_group] += sample.value_weight
+        policy_total = sum(policy.values()) or 1.0
+        value_total = sum(value.values()) or 1.0
+        source_mass[split] = {
+            "policy": {
+                key: amount / policy_total for key, amount in sorted(policy.items())
+            },
+            "value": {
+                key: amount / value_total for key, amount in sorted(value.items())
+            },
+        }
     return buckets, {
         "games": dict(game_counts),
         "agent_game_splits": {
@@ -891,6 +1422,7 @@ def dataset_from_games(games: list[Game], selfplay_multiplier: float = 1.0):
         },
         "rejected_games": rejected,
         "held_out_feature_overlaps_removed": removed,
+        "source_mass_after_weighting": source_mass,
         **preprocessing,
     }
 
@@ -898,12 +1430,13 @@ def dataset_from_games(games: list[Game], selfplay_multiplier: float = 1.0):
 def arrays(samples: list[Sample]):
     return {
         "x": np.stack([sample.features for sample in samples]),
+        "action_x": np.stack([sample.action_features for sample in samples]),
         "legal": np.stack([sample.legal for sample in samples]),
         "policy": np.asarray([sample.policy for sample in samples], dtype=np.int64),
         "policy_target": np.stack([sample.policy_target for sample in samples]),
         "value": np.asarray([sample.value for sample in samples], dtype=np.float32),
         "value_weight": np.asarray(
-            [sample.value_weight or 1.0 for sample in samples], dtype=np.float32
+            [sample.value_weight for sample in samples], dtype=np.float32
         ),
         "policy_weight": np.asarray(
             [sample.policy_weight for sample in samples], dtype=np.float32
@@ -912,27 +1445,79 @@ def arrays(samples: list[Sample]):
     }
 
 
-def initialize(seed: int):
+def initialize(seed: int, policy_head: str = "legacy-directional"):
     rng = np.random.default_rng(seed)
-    return rng, {
+    parameters = {
         "w1": rng.normal(0, math.sqrt(2 / INPUT_COUNT), (INPUT_COUNT, HIDDEN_ONE)).astype(np.float32),
         "b1": np.zeros(HIDDEN_ONE, dtype=np.float32),
         "w2": rng.normal(0, math.sqrt(2 / HIDDEN_ONE), (HIDDEN_ONE, HIDDEN_TWO)).astype(np.float32),
         "b2": np.zeros(HIDDEN_TWO, dtype=np.float32),
         "wv": rng.normal(0, math.sqrt(1 / HIDDEN_TWO), (HIDDEN_TWO, 1)).astype(np.float32),
         "bv": np.zeros(1, dtype=np.float32),
-        "wp": rng.normal(0, math.sqrt(1 / HIDDEN_TWO), (HIDDEN_TWO, POLICY_COUNT)).astype(np.float32),
-        "bp": np.zeros(POLICY_COUNT, dtype=np.float32),
     }
+    if policy_head == "legacy-directional":
+        parameters.update(
+            {
+                "wp": rng.normal(
+                    0,
+                    math.sqrt(1 / HIDDEN_TWO),
+                    (HIDDEN_TWO, POLICY_COUNT),
+                ).astype(np.float32),
+                "bp": np.zeros(POLICY_COUNT, dtype=np.float32),
+            }
+        )
+    elif policy_head == "shared-action-conditioned-v1":
+        parameters.update(
+            {
+                "wps": rng.normal(
+                    0,
+                    math.sqrt(1 / HIDDEN_TWO),
+                    (HIDDEN_TWO, ACTION_POLICY_HIDDEN),
+                ).astype(np.float32),
+                "wpa": rng.normal(
+                    0,
+                    math.sqrt(1 / ACTION_FEATURE_COUNT),
+                    (ACTION_FEATURE_COUNT, ACTION_POLICY_HIDDEN),
+                ).astype(np.float32),
+                "bpa": np.zeros(ACTION_POLICY_HIDDEN, dtype=np.float32),
+                "wpo": rng.normal(
+                    0,
+                    math.sqrt(1 / ACTION_POLICY_HIDDEN),
+                    (ACTION_POLICY_HIDDEN, 1),
+                ).astype(np.float32),
+            }
+        )
+    else:
+        raise ValueError(f"unsupported policy head: {policy_head}")
+    return rng, parameters
 
 
-def forward(parameters, x):
+def policy_forward(parameters, hidden_two, action_features):
+    if "wp" in parameters:
+        return hidden_two @ parameters["wp"] + parameters["bp"], None
+    if action_features is None:
+        raise ValueError("action-conditioned policy requires action features")
+    state_projection = hidden_two @ parameters["wps"]
+    action_projection = np.einsum(
+        "nda,ah->ndh", action_features, parameters["wpa"]
+    )
+    preactivation = (
+        state_projection[:, None, :] + action_projection + parameters["bpa"]
+    )
+    hidden = np.maximum(preactivation, 0)
+    logits = (hidden @ parameters["wpo"]).reshape(
+        len(hidden_two), POLICY_COUNT
+    )
+    return logits, (preactivation, hidden)
+
+
+def forward(parameters, x, action_features=None):
     z1 = x @ parameters["w1"] + parameters["b1"]
     h1 = np.maximum(z1, 0)
     z2 = h1 @ parameters["w2"] + parameters["b2"]
     h2 = np.maximum(z2, 0)
     value = (h2 @ parameters["wv"] + parameters["bv"]).reshape(-1)
-    policy = h2 @ parameters["wp"] + parameters["bp"]
+    policy, _ = policy_forward(parameters, h2, action_features)
     return z1, h1, z2, h2, value, policy
 
 
@@ -948,7 +1533,9 @@ def masked_softmax(logits, legal):
 
 
 def metrics(parameters, data):
-    _, _, _, _, value_logits, policy_logits = forward(parameters, data["x"])
+    _, _, _, _, value_logits, policy_logits = forward(
+        parameters, data["x"], data["action_x"]
+    )
     value_targets = (data["value"] + 1.0) * 0.5
     value_losses = (
         np.maximum(value_logits, 0)
@@ -1004,8 +1591,13 @@ def metrics_by_source(parameters, data):
     return result
 
 
-def train(dataset, seed: int, maximum_epochs: int):
-    rng, parameters = initialize(seed)
+def train(
+    dataset,
+    seed: int,
+    maximum_epochs: int,
+    policy_head: str = "legacy-directional",
+):
+    rng, parameters = initialize(seed, policy_head)
     first = {name: np.zeros_like(value) for name, value in parameters.items()}
     second = {name: np.zeros_like(value) for name, value in parameters.items()}
     train_data = dataset["train"]
@@ -1019,12 +1611,18 @@ def train(dataset, seed: int, maximum_epochs: int):
         for start in range(0, len(order), batch_size):
             indices = order[start : start + batch_size]
             x = train_data["x"][indices]
+            action_x = train_data["action_x"][indices]
             legal = train_data["legal"][indices]
             policy_target_probabilities = train_data["policy_target"][indices]
             value_target = (train_data["value"][indices] + 1.0) * 0.5
             value_weight = train_data["value_weight"][indices]
             policy_weight = train_data["policy_weight"][indices]
-            z1, h1, z2, h2, value_logits, policy_logits = forward(parameters, x)
+            z1, h1, z2, h2, value_logits, _ = forward(
+                parameters, x, action_x
+            )
+            policy_logits, policy_cache = policy_forward(
+                parameters, h2, action_x
+            )
             delta_value = (sigmoid(value_logits) - value_target) * value_weight
             delta_value /= max(float(np.sum(value_weight)), 1e-9)
             probabilities = masked_softmax(policy_logits, legal)
@@ -1034,12 +1632,33 @@ def train(dataset, seed: int, maximum_epochs: int):
             gradients = {
                 "wv": h2.T @ delta_value[:, None],
                 "bv": np.asarray([np.sum(delta_value)], dtype=np.float32),
-                "wp": h2.T @ delta_policy,
-                "bp": np.sum(delta_policy, axis=0),
             }
+            if "wp" in parameters:
+                gradients["wp"] = h2.T @ delta_policy
+                gradients["bp"] = np.sum(delta_policy, axis=0)
+                policy_delta2 = delta_policy @ parameters["wp"].T
+            else:
+                policy_preactivation, policy_hidden = policy_cache
+                gradients["wpo"] = np.einsum(
+                    "ndh,nd->h", policy_hidden, delta_policy
+                )[:, None]
+                delta_policy_hidden = (
+                    delta_policy[:, :, None] * parameters["wpo"].reshape(-1)
+                )
+                delta_policy_preactivation = delta_policy_hidden * (
+                    policy_preactivation > 0
+                )
+                shared_delta = np.sum(delta_policy_preactivation, axis=1)
+                gradients["wps"] = h2.T @ shared_delta
+                gradients["wpa"] = np.einsum(
+                    "nda,ndh->ah", action_x, delta_policy_preactivation
+                )
+                gradients["bpa"] = np.sum(
+                    delta_policy_preactivation, axis=(0, 1)
+                )
+                policy_delta2 = shared_delta @ parameters["wps"].T
             delta2 = (
-                delta_value[:, None] @ parameters["wv"].T
-                + delta_policy @ parameters["wp"].T
+                delta_value[:, None] @ parameters["wv"].T + policy_delta2
             ) * (z2 > 0)
             gradients["w2"] = h1.T @ delta2
             gradients["b2"] = np.sum(delta2, axis=0)
@@ -1094,9 +1713,15 @@ def quantize_matrix(matrix):
 def quantized_model(parameters):
     tensors = {}
     restored = {}
-    for name in ("w1", "w2", "wv", "wp"):
+    matrix_names = ["w1", "w2", "wv"]
+    matrix_names.extend(
+        ["wp"] if "wp" in parameters else ["wps", "wpa", "wpo"]
+    )
+    for name in matrix_names:
         tensors[name], restored[name] = quantize_matrix(parameters[name])
-    for name in ("b1", "b2", "bv", "bp"):
+    bias_names = ["b1", "b2", "bv"]
+    bias_names.extend(["bp"] if "bp" in parameters else ["bpa"])
+    for name in bias_names:
         restored[name] = parameters[name].copy()
     return tensors, restored
 
@@ -1152,23 +1777,78 @@ def quantized_golden(tensors, parameters):
     hidden_two = np.maximum(hidden_two, np.float32(0.0))
 
     value_logit = np.float32(parameters["bv"][0])
-    policy_logits = parameters["bp"].copy()
     for hidden in range(HIDDEN_TWO):
         value_contribution = np.float32(
             np.float32(hidden_two[hidden] * np.float32(weights["wv"][hidden, 0]))
             * scales["wv"][0]
         )
         value_logit = np.float32(value_logit + value_contribution)
-        for policy in range(POLICY_COUNT):
-            contribution = np.float32(
-                np.float32(
-                    hidden_two[hidden] * np.float32(weights["wp"][hidden, policy])
+    if "wp" in parameters:
+        policy_logits = parameters["bp"].copy()
+        for hidden in range(HIDDEN_TWO):
+            for policy in range(POLICY_COUNT):
+                contribution = np.float32(
+                    np.float32(
+                        hidden_two[hidden]
+                        * np.float32(weights["wp"][hidden, policy])
+                    )
+                    * scales["wp"][policy]
                 )
-                * scales["wp"][policy]
-            )
-            policy_logits[policy] = np.float32(policy_logits[policy] + contribution)
+                policy_logits[policy] = np.float32(
+                    policy_logits[policy] + contribution
+                )
+        golden_input = "stride17-mod11-v1"
+    else:
+        action_features = np.zeros(
+            (POLICY_COUNT, ACTION_FEATURE_COUNT), dtype=np.float32
+        )
+        for direction in range(POLICY_COUNT):
+            for feature in range(ACTION_FEATURE_COUNT):
+                action_features[direction, feature] = np.float32(
+                    ((direction * ACTION_FEATURE_COUNT + feature) % 13 + 1) / 13
+                )
+        policy_logits = np.zeros(POLICY_COUNT, dtype=np.float32)
+        for policy in range(POLICY_COUNT):
+            policy_hidden = parameters["bpa"].copy()
+            for hidden in range(HIDDEN_TWO):
+                for output in range(ACTION_POLICY_HIDDEN):
+                    contribution = np.float32(
+                        np.float32(
+                            hidden_two[hidden]
+                            * np.float32(weights["wps"][hidden, output])
+                        )
+                        * scales["wps"][output]
+                    )
+                    policy_hidden[output] = np.float32(
+                        policy_hidden[output] + contribution
+                    )
+            for feature in range(ACTION_FEATURE_COUNT):
+                for output in range(ACTION_POLICY_HIDDEN):
+                    contribution = np.float32(
+                        np.float32(
+                            action_features[policy, feature]
+                            * np.float32(weights["wpa"][feature, output])
+                        )
+                        * scales["wpa"][output]
+                    )
+                    policy_hidden[output] = np.float32(
+                        policy_hidden[output] + contribution
+                    )
+            policy_hidden = np.maximum(policy_hidden, np.float32(0.0))
+            for hidden in range(ACTION_POLICY_HIDDEN):
+                contribution = np.float32(
+                    np.float32(
+                        policy_hidden[hidden]
+                        * np.float32(weights["wpo"][hidden, 0])
+                    )
+                    * scales["wpo"][0]
+                )
+                policy_logits[policy] = np.float32(
+                    policy_logits[policy] + contribution
+                )
+        golden_input = "stride17-mod11-action-mod13-v1"
     return {
-        "input": "stride17-mod11-v1",
+        "input": golden_input,
         # BCE learns a win log-odds logit. Convert sigmoid(logit) back to the
         # mover-relative [-1, 1] expectation used by PUCT.
         "value": float(np.tanh(np.float32(0.5) * value_logit)),
@@ -1208,6 +1888,14 @@ def main():
     parser.add_argument("--elite-corpus", type=pathlib.Path, action="append")
     parser.add_argument("--jacek-corpus", type=pathlib.Path, default=DEFAULT_JACEK)
     parser.add_argument("--selfplay-corpus", type=pathlib.Path, action="append")
+    parser.add_argument("--live-replay-manifest", type=pathlib.Path)
+    parser.add_argument("--live-relabel-corpus", type=pathlib.Path)
+    parser.add_argument(
+        "--live-mass",
+        type=float,
+        default=0.25,
+        help="policy/value mass reserved for frozen live direct and relabelled data",
+    )
     parser.add_argument(
         "--selfplay-multiplier",
         type=float,
@@ -1217,6 +1905,11 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--seed", type=int, default=20260809)
     parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument(
+        "--policy-head",
+        choices=("legacy-directional", "shared-action-conditioned-v1"),
+        default="legacy-directional",
+    )
     arguments = parser.parse_args()
     if np is None:
         parser.error("NumPy is required; install requirements-research.txt")
@@ -1224,12 +1917,19 @@ def main():
         parser.error("--selfplay-multiplier must be finite and greater than zero")
     if arguments.selfplay_corpus is None and arguments.selfplay_multiplier != 1.0:
         parser.error("--selfplay-multiplier is only active with --selfplay-corpus")
+    if not 0.2 <= arguments.live_mass <= 0.3:
+        parser.error("--live-mass must remain between 0.2 and 0.3")
+    if (arguments.live_replay_manifest is None) != (
+        arguments.live_relabel_corpus is None
+    ):
+        parser.error("live replay manifest and relabel corpus must be supplied together")
     elite_paths = tuple(arguments.elite_corpus or DEFAULT_ELITE)
     public_paths = (*elite_paths, arguments.jacek_corpus)
     games, source_hashes = load_public_games(public_paths)
     selfplay_teachers = []
     selfplay_teacher_models = {}
     selfplay_policy_target_schemas = []
+    live_report = None
     if arguments.selfplay_corpus is not None:
         resolved_corpora = [path.resolve() for path in arguments.selfplay_corpus]
         if len(resolved_corpora) != len(set(resolved_corpora)):
@@ -1243,9 +1943,27 @@ def main():
         games.extend(selfplay_games)
         for path in arguments.selfplay_corpus:
             source_hashes[str(path)] = sha256(path)
-    buckets, dataset_report = dataset_from_games(games, arguments.selfplay_multiplier)
+    if arguments.live_replay_manifest is not None:
+        live_games, live_report = load_live_replay(
+            arguments.live_replay_manifest, arguments.live_relabel_corpus
+        )
+        games.extend(live_games)
+        source_hashes[str(arguments.live_replay_manifest)] = sha256(
+            arguments.live_replay_manifest
+        )
+        source_hashes[str(arguments.live_relabel_corpus)] = sha256(
+            arguments.live_relabel_corpus
+        )
+    buckets, dataset_report = dataset_from_games(
+        games, arguments.selfplay_multiplier, arguments.live_mass
+    )
     datasets = {name: arrays(samples) for name, samples in buckets.items()}
-    parameters, best_epoch = train(datasets, arguments.seed, arguments.epochs)
+    parameters, best_epoch = train(
+        datasets,
+        arguments.seed,
+        arguments.epochs,
+        arguments.policy_head,
+    )
     packed, restored = quantized_model(parameters)
     golden = quantized_golden(packed, parameters)
     float_metrics = {name: metrics(parameters, data) for name, data in datasets.items()}
@@ -1261,9 +1979,19 @@ def main():
         "schema": "papersoccer.neural-puct-model.v1",
         "feature_schema": "neural-puct-features-v1",
         "model_kind": (
-            "expert-dagger-policy-value-v1"
+            "shared-action-conditioned-policy-value-v1"
+            if arguments.policy_head == "shared-action-conditioned-v1"
+            else "expert-dagger-policy-value-v1"
             if arguments.selfplay_corpus is not None
             else "expert-imitation-policy-value-v1"
+        ),
+        "policy_head": arguments.policy_head,
+        "action_feature_count": ACTION_FEATURE_COUNT,
+        "action_feature_names": list(ACTION_FEATURE_NAMES),
+        "action_policy_hidden": (
+            ACTION_POLICY_HIDDEN
+            if arguments.policy_head == "shared-action-conditioned-v1"
+            else 0
         ),
         "input_count": INPUT_COUNT,
         "edge_count": EDGE_COUNT,
@@ -1282,10 +2010,15 @@ def main():
             "policy_count": POLICY_COUNT,
             "activation": "relu",
             "value": "mover-relative-logit",
-            "policy": "canonical-primitive-direction-logits",
+            "policy": (
+                "shared-action-conditioned-primitive-logits"
+                if arguments.policy_head == "shared-action-conditioned-v1"
+                else "canonical-primitive-direction-logits"
+            ),
         },
         "training": {
             "seed": arguments.seed,
+            "policy_head": arguments.policy_head,
             "best_epoch": best_epoch,
             "trainer_sha256": trainer_hash,
             "source_sha256": source_hashes,
@@ -1297,10 +2030,14 @@ def main():
             "selfplay_teacher_model_sha256": selfplay_teacher_models,
             "selfplay_policy_target_schemas": selfplay_policy_target_schemas,
             "selfplay_multiplier": arguments.selfplay_multiplier,
+            "live_replay_used": live_report is not None,
+            "live_replay": live_report,
+            "live_mass": arguments.live_mass,
             "rank5_selfplay_used": "rank_5" in selfplay_teachers,
             "policy_weighting": (
-                "equal mass per expert; Jacek mass multiplier 4; equal mass "
-                "per retained trajectory payload within expert"
+                "normalized per player and game; Jacek anchor multiplier 4; "
+                "frozen live strength tiers and relabel priorities applied; "
+                "anchor/live source mass fixed at 0.75/0.25 when both exist"
             ),
             "policy_target_training": (
                 "weighted cross entropy; public and legacy self-play actions are "
@@ -1308,9 +2045,9 @@ def main():
                 "normalized soft distribution"
             ),
             "value_weighting": (
-                "equal mass per focus expert; equal mass per retained trajectory "
-                "payload within expert; primitives before teacher_start_turn excluded; "
-                "no source multiplier"
+                "normalized per focus player and game; live direct final outcomes "
+                "have zero weight; live self positions use deeper neural PUCT root "
+                "values; anchor/live mass fixed at 0.75/0.25 when both exist"
             ),
             **dataset_report,
         },
@@ -1332,7 +2069,8 @@ def main():
             **packed,
             **{
                 name: [float(value) for value in parameters[name].reshape(-1)]
-                for name in ("b1", "b2", "bv", "bp")
+                for name in ("b1", "b2", "bv", "bp", "bpa")
+                if name in parameters
             },
         },
     }

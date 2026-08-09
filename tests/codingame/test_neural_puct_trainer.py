@@ -137,6 +137,9 @@ class NeuralPuctTrainerTest(unittest.TestCase):
         target[policy] = 1.0
         return self.trainer.Sample(
             features=np.zeros(1, dtype=np.float32),
+            action_features=np.zeros(
+                (8, self.trainer.ACTION_FEATURE_COUNT), dtype=np.float32
+            ),
             legal=np.ones(8, dtype=bool),
             policy=policy,
             policy_target=target,
@@ -193,6 +196,67 @@ class NeuralPuctTrainerTest(unittest.TestCase):
                 "train" if index < 16 else "validation" if index < 18 else "test"
             )
         self.assertEqual(self.trainer.stratified_splits(games), expected)
+
+    def test_live_whole_game_group_is_global_across_label_sources(self):
+        games = []
+        for index in range(10):
+            for suffix, agent in (("expert", 100 + index), ("relabel", 999)):
+                games.append(
+                    self.trainer.Game(
+                        key=f"live:{index}:{suffix}",
+                        game_id=index,
+                        source=suffix,
+                        focus_agent_id=agent,
+                        focus_player=0,
+                        winner=0,
+                        turns=((0, "0"),),
+                        split_group=f"codingame-live:{index}",
+                        split_scope="global",
+                    )
+                )
+        splits = self.trainer.stratified_splits(games)
+        for index in range(10):
+            self.assertEqual(
+                splits[f"live:{index}:expert"], splits[f"live:{index}:relabel"]
+            )
+        self.assertEqual(
+            {split: list(splits.values()).count(split) for split in set(splits.values())},
+            {"train": 16, "validation": 2, "test": 2},
+        )
+
+    def test_live_source_mass_is_frozen_and_unlabelled_values_stay_zero(self):
+        samples = [
+            self.sample(b"a", 0, 1.0),
+            self.sample(b"b", 1, -1.0),
+            self.sample(b"c", 2, 0.25),
+            self.sample(b"d", 3, -0.25),
+        ]
+        for sample in samples[:2]:
+            sample.source_group = "anchor"
+        for sample in samples[2:]:
+            sample.source_group = "live"
+        samples[-1].has_value = False
+        samples[-1].value_mass = 0.0
+        self.trainer.assign_weights(samples, 1.0, 0.25)
+        policy = {
+            group: sum(
+                sample.policy_weight
+                for sample in samples
+                if sample.source_group == group
+            )
+            for group in ("anchor", "live")
+        }
+        value = {
+            group: sum(
+                sample.value_weight
+                for sample in samples
+                if sample.source_group == group
+            )
+            for group in ("anchor", "live")
+        }
+        self.assertAlmostEqual(policy["live"] / sum(policy.values()), 0.25)
+        self.assertAlmostEqual(value["live"] / sum(value.values()), 0.25)
+        self.assertEqual(samples[-1].value_weight, 0.0)
 
 
 if __name__ == "__main__":

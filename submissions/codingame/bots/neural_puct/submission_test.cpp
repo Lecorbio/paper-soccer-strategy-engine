@@ -112,6 +112,13 @@ std::array<float, np::kFeatureCount> encode(const ps::GameState &state) {
   return encoder.encode(position);
 }
 
+np::ActionFeatureMatrix encode_actions(const ps::GameState &state) {
+  auto topology = std::make_shared<ps::detail::SearchTopology>(state.config);
+  ps::detail::SearchPosition position(topology, state);
+  np::FeatureEncoder encoder(topology);
+  return encoder.encode_actions(position);
+}
+
 void direction_and_canonical_rotation_are_exact() {
   const ps::Point center{4, 6};
   for (std::size_t direction = 0; direction < 8; ++direction) {
@@ -144,14 +151,35 @@ void packed_model_has_a_stable_golden_output() {
           "Generated model must identify its artifact kind.");
   require(np::model_data::kArtifactSha256.size() == 64,
           "Generated model header must retain an artifact hash.");
-  require(np::model_data::kGoldenInput == "stride17-mod11-v1",
+  require(np::model_data::kGoldenInput ==
+              (np::model_data::kActionConditionedPolicy
+                   ? "stride17-mod11-action-mod13-v1"
+                   : "stride17-mod11-v1"),
           "Model golden input formula must remain versioned.");
 
   std::array<float, np::model_data::kInputCount> features{};
   for (std::size_t index = 0; index < features.size(); index += 17) {
     features[index] = static_cast<float>((index % 11) + 1) / 11.0F;
   }
-  const np::ModelOutput output = np::QuantizedModel{}.evaluate(features);
+  np::ActionFeatureMatrix action_features{};
+  for (std::size_t direction = 0; direction < action_features.size();
+       ++direction) {
+    for (std::size_t feature = 0;
+         feature < action_features[direction].size(); ++feature) {
+      action_features[direction][feature] =
+          static_cast<float>((direction * np::kActionFeatureCount + feature) %
+                                 13U +
+                             1U) /
+          13.0F;
+    }
+  }
+  np::ModelOutput output;
+  if constexpr (np::model_data::kActionConditionedPolicy) {
+    output = np::QuantizedModel{}.evaluate(
+        features, nullptr, features.size(), &action_features);
+  } else {
+    output = np::QuantizedModel{}.evaluate(features);
+  }
   require_close(output.value, np::model_data::kGoldenValue,
                 "Quantized value must match the exported golden output.");
   for (std::size_t policy = 0; policy < output.policy_logits.size(); ++policy) {
@@ -164,6 +192,36 @@ void packed_model_has_a_stable_golden_output() {
   require(std::isfinite(output.value) && output.value >= -1.0F &&
               output.value <= 1.0F,
           "Quantized mover value must be finite and bounded.");
+}
+
+void action_features_obey_rotation_and_reflection() {
+  const ps::GameState state = asymmetric_position();
+  const auto normal = encode_actions(state);
+  const auto rotated = encode_actions(
+      transform_state(state, rotate_point, true));
+  for (std::size_t direction = 0; direction < normal.size(); ++direction) {
+    for (std::size_t feature = 0; feature < normal[direction].size();
+         ++feature) {
+      require_close(rotated[direction][feature], normal[direction][feature],
+                    "Action consequences must be mover-rotation invariant.");
+    }
+  }
+
+  constexpr std::array<std::size_t, 8> reflected_direction{{
+      0, 7, 6, 5, 4, 3, 2, 1,
+  }};
+  const auto reflected = encode_actions(
+      transform_state(state, reflect_point, false));
+  for (std::size_t direction = 0; direction < normal.size(); ++direction) {
+    const std::size_t mirrored = reflected_direction[direction];
+    require_close(reflected[mirrored][0], -normal[direction][0],
+                  "Reflected action x direction must change sign.");
+    for (std::size_t feature = 1; feature < normal[direction].size();
+         ++feature) {
+      require_close(reflected[mirrored][feature], normal[direction][feature],
+                    "Reflected action consequences must remap exactly.");
+    }
+  }
 }
 
 void initial_feature_vector_matches_the_frozen_schema() {
@@ -458,6 +516,8 @@ int main() {
        mover_rotation_preserves_every_feature},
       {"horizontal_reflection_permutes_spatial_features",
        horizontal_reflection_permutes_spatial_features},
+      {"action_features_obey_rotation_and_reflection",
+       action_features_obey_rotation_and_reflection},
       {"search_returns_complete_legal_rebound_actions",
        search_returns_complete_legal_rebound_actions},
       {"action_visit_targets_are_soft_legal_and_behavior_neutral",

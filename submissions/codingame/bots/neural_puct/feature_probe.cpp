@@ -49,11 +49,29 @@ std::array<float, np::kFeatureCount> encode(const ps::GameState &state) {
   return encoder.encode(position);
 }
 
+np::ActionFeatureMatrix encode_actions(const ps::GameState &state) {
+  auto topology = std::make_shared<ps::detail::SearchTopology>(state.config);
+  ps::detail::SearchPosition position(topology, state);
+  np::FeatureEncoder encoder(topology);
+  return encoder.encode_actions(position);
+}
+
 void print_fixture(std::string_view name, const ps::GameState &state) {
   const auto features = encode(state);
   std::cout << name;
   for (const float feature : features) {
     std::cout << ',' << std::hexfloat << feature;
+  }
+  std::cout << '\n';
+}
+
+void print_action_fixture(std::string_view name, const ps::GameState &state) {
+  const auto features = encode_actions(state);
+  std::cout << name << "_actions";
+  for (const auto &direction : features) {
+    for (const float feature : direction) {
+      std::cout << ',' << std::hexfloat << feature;
+    }
   }
   std::cout << '\n';
 }
@@ -73,8 +91,12 @@ int main() {
       transform_state(transcript, reflect, false);
 
   print_fixture("initial_player_one", initial);
+  print_action_fixture("initial_player_one", initial);
   print_fixture("initial_player_two_rotated", initial_rotated);
+  print_action_fixture("initial_player_two_rotated", initial_rotated);
   print_fixture("transcript_0_5_21", transcript);
+  print_action_fixture("transcript_0_5_21", transcript);
   print_fixture("transcript_0_3_67_reflected", transcript_reflected);
+  print_action_fixture("transcript_0_3_67_reflected", transcript_reflected);
   return 0;
 }

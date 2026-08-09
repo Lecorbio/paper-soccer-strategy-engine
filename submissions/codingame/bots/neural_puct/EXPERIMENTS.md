@@ -69,6 +69,34 @@ separately. The maintained value head already predicted its own held-out
 
 No gameplay gate was run for an ineligible search-value model.
 
+## First append-only live action head
+
+The first threshold-crossing live snapshot froze 68 strong-opponent games.
+Strong played edges supplied 5,482 direct policy primitives; the maintained
+bot's 4,204 positions were relabelled with neural-only PUCT at 10,000
+simulations rather than copied. Whole games and reflections shared one split,
+canonical held-out overlaps were purged, direct live outcomes had zero value
+weight, and each split used 75% anchored public-expert mass plus 25% live
+direct/relabelled mass.
+
+Seeds 20260810, 20260811, and 20260812 trained the compact shared
+action-conditioned head. Seed 20260811 minimized the predeclared int4
+validation value-plus-policy loss; test outcomes were not consulted. Its
+shared scorer used 16 edge-consequence features and generated a
+98,062-character submission.
+
+| Screen | Candidate | Rank 5 | Decision |
+|---|---:|---:|---|
+| Six paired defaults, 2,000 simulations vs 5,000 nodes | 7 | 5 | pass at floor |
+| Full exposed development, same fixed budgets | 51 | 45 | pass; colors 25/26 |
+| Full exposed development, equal 20 ms | 29 | 67 | reject |
+
+All operational checks were clean, so the failure is performance rather than
+legality or truncation. Fixed-work strength did not survive the action head's
+equal-clock cost. The seed-20260809 maintained model remains deployed, and no
+performance candidate was uploaded. Full hash-bound evidence is in
+[`live_replay/FIRST_ITERATION_REPORT.md`](live_replay/FIRST_ITERATION_REPORT.md).
+
 ## Rejected architecture and search families
 
 - Article-exact 1,156 inputs: 4-8 on defaults despite much faster inference.

@@ -1,0 +1,63 @@
+{
+  "schema": "papersoccer.live-replay-candidate-plan.v1",
+  "recorded_at_utc": "2026-08-09T20:18:56Z",
+  "recorded_before_training": true,
+  "base_commit": "0f8532a7083917b72f6a50ad8a6bc33e0a1482b0",
+  "corpus": {
+    "snapshot_sha256": "687468e84c475107eee840f4d731fbc51182e8cfc20d2bf2cd7039d344f48f97",
+    "relabel_sha256": "e406c9ad5d3796524e29ba2e052a84f778c43ab8f1eb7c5817f6ad1da6ff2e98",
+    "independent_games": 68,
+    "direct_expert_primitives": 5482,
+    "relabelled_primitives": 4204,
+    "relabel_simulations": 10000,
+    "relabel_teacher_model_sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2"
+  },
+  "training": {
+    "policy_head": "shared-action-conditioned-v1",
+    "seeds": [20260810, 20260811, 20260812],
+    "epochs": 40,
+    "anchor_policy_mass": 0.75,
+    "live_policy_mass": 0.25,
+    "selection_metric": "minimum int4 validation (value_loss + policy_loss), then seed",
+    "test_metrics_available_only_after_selection": true
+  },
+  "gates": {
+    "preflight": [
+      "full-release-build",
+      "address-and-undefined-sanitizers",
+      "generated-source-current",
+      "python-cpp-feature-parity",
+      "reflection-and-rotation",
+      "int4-golden",
+      "legality-and-protocol",
+      "construction-inclusive-timing",
+      "node-hard-cap",
+      "source-under-100000-characters"
+    ],
+    "paired_defaults": {
+      "openings": 6,
+      "both_colors": true,
+      "candidate_simulations": 2000,
+      "rank5_nodes": 5000,
+      "minimum_candidate_score": 7,
+      "total_games": 12
+    },
+    "fixed_work_development": {
+      "run_only_after_defaults_pass": true,
+      "openings": 48,
+      "both_colors": true,
+      "minimum_candidate_score": 48,
+      "total_games": 96,
+      "require_no_material_color_collapse": true
+    },
+    "equal_clock_development": {
+      "run_only_after_fixed_work_pass": true,
+      "baseline_candidate_score": 39,
+      "baseline_opponent_score": 57,
+      "require_clear_improvement": true,
+      "require_zero_operational_failures": true
+    },
+    "sealed_or_prospective_banks": "forbidden-for-exploratory-candidate"
+  },
+  "submission_policy": "at-most-one performance upload, only after every gate passes"
+}

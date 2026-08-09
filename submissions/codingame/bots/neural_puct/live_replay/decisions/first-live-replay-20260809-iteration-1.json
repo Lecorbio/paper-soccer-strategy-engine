@@ -1,0 +1,68 @@
+{
+  "schema": "papersoccer.live-replay-iteration-decision.v1",
+  "run_id": "first-live-replay-20260809",
+  "completed_at_utc": "2026-08-09T20:29:08Z",
+  "completion_path": "B",
+  "active_collection_build": {
+    "agent_id": 6604698,
+    "submission_id": 41114191,
+    "session_id": "77331573cfcf07bc257c0a715fe9675351097800",
+    "source_sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243",
+    "model_sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2",
+    "source_matches_maintained_collection_build": true,
+    "collection_submission_created": true,
+    "processing_percentage": 100,
+    "final_rank": 24,
+    "final_score": 35.13
+  },
+  "collection": {
+    "collector_sha256": "5c73139e9607ea97477aef212b6c015207cf66fb462fda8759003f98a4e897ef",
+    "snapshot_sha256": "687468e84c475107eee840f4d731fbc51182e8cfc20d2bf2cd7039d344f48f97",
+    "accepted_independent_games": 68,
+    "direct_expert_primitives": 5482,
+    "self_primitives_relabelled": 4204,
+    "request_failures": 0,
+    "payload_conflicts": 0
+  },
+  "threshold": {
+    "minimum_independent_new_games": 50,
+    "observed_independent_new_games": 68,
+    "passed": true
+  },
+  "training": {
+    "labels_constructed": true,
+    "action_conditioned_representation_tested": true,
+    "deterministic_seeds_trained": 3,
+    "selected_seed": 20260811,
+    "selected_model_sha256": "549e443d6aa37532f9569116b675e5c3cd6f484cdd38cb1e15ea60ee846f83f2",
+    "selection_used_test_metrics": false,
+    "anchor_mass": 0.75,
+    "live_mass": 0.25
+  },
+  "verification": {
+    "release_full_build": "passed",
+    "address_and_undefined_sanitizers": "passed",
+    "codingame_python_tests": "31-passed",
+    "store_check": {
+      "accepted_game_records": 68,
+      "discoveries": 68,
+      "raw_responses": 139,
+      "normalized_responses": 139,
+      "receipts": 520,
+      "conflicts": 0
+    },
+    "neural_cpp_tests": "passed",
+    "python_cpp_feature_parity": "5656-of-5656-exact",
+    "candidate_source_characters": 98062
+  },
+  "candidate_gates": {
+    "preflight": "passed",
+    "six_paired_defaults": "passed-7-5",
+    "fixed_work_development": "passed-51-45-colors-25-26",
+    "equal_clock_development": "failed-29-67-maintained-baseline-39-57",
+    "prospective_or_sealed": "not-inspected"
+  },
+  "maintained_model_sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2",
+  "performance_submission_created": false,
+  "decision": "reject-action-conditioned-candidate-and-retain-maintained-model"
+}

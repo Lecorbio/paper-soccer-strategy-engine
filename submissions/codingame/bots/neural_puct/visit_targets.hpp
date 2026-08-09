@@ -10,6 +10,35 @@ struct PrimitiveVisitTarget {
 
 class NeuralPuctTrainingAccess {
  public:
+  static PrimitiveVisitTarget root(const NeuralPuctSearch &search) {
+    const NeuralPuctSearch::Node &node = search.nodes_.front();
+    if (!node.expanded || node.edge_count == 0) {
+      throw std::logic_error("neural PUCT root was not expanded");
+    }
+    PrimitiveVisitTarget target;
+    if (node.exact_winning_child.has_value()) {
+      target.total_visits = 1;
+      target.probabilities[
+          node.edges[*node.exact_winning_child].canonical_direction] = 1.0F;
+      return target;
+    }
+    for (std::uint8_t index = 0; index < node.edge_count; ++index) {
+      target.total_visits += node.edges[index].visits;
+    }
+    if (target.total_visits != 0) {
+      for (std::uint8_t index = 0; index < node.edge_count; ++index) {
+        target.probabilities[node.edges[index].canonical_direction] =
+            static_cast<float>(node.edges[index].visits) /
+            static_cast<float>(target.total_visits);
+      }
+      return target;
+    }
+    const std::uint8_t selected = search.visit_max_edge(node);
+    target.probabilities[node.edges[selected].canonical_direction] = 1.0F;
+    target.fallback = true;
+    return target;
+  }
+
   static std::vector<PrimitiveVisitTarget> collect(
       NeuralPuctSearch &search, const std::vector<Move> &selected_action) {
     const std::size_t root_depth = search.position_.undo_depth();

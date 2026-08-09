@@ -3,6 +3,7 @@
   "sources": "sources.txt",
   "output": "submission.cpp",
   "source_limit": 100000,
+  "strip_leading_whitespace": true,
   "allowed_local_includes": [
     "mcts_internal.hpp",
     "neural_puct_model.hpp",

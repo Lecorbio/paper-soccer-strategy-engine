@@ -48,7 +48,7 @@ def state_after(actions: tuple[str, ...]):
 def python_fixtures():
     initial = (4, 6), set(), {(4, 6)}, 0
     transcript = state_after(("0", "5", "21"))
-    return {
+    fixtures = {
         "initial_player_one": trainer.feature_vector(
             *initial[:3], initial[3], False
         ),
@@ -66,6 +66,27 @@ def python_fixtures():
             *transcript[:3], transcript[3], True
         ),
     }
+    fixtures.update(
+        {
+            "initial_player_one_actions": trainer.action_feature_matrix(
+                *initial[:3], initial[3], False
+            ).reshape(-1),
+            "initial_player_two_rotated_actions": trainer.action_feature_matrix(
+                trainer.rotate(initial[0]),
+                set(),
+                {trainer.rotate(point) for point in initial[2]},
+                1,
+                False,
+            ).reshape(-1),
+            "transcript_0_5_21_actions": trainer.action_feature_matrix(
+                *transcript[:3], transcript[3], False
+            ).reshape(-1),
+            "transcript_0_3_67_reflected_actions": trainer.action_feature_matrix(
+                *transcript[:3], transcript[3], True
+            ).reshape(-1),
+        }
+    )
+    return fixtures
 
 
 def main() -> None:

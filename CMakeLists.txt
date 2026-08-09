@@ -399,6 +399,15 @@ if(NOT EMSCRIPTEN)
     papersoccer_codingame_neural_puct_selfplay_generator
     PRIVATE papersoccer_core)
 
+  add_executable(papersoccer_codingame_neural_puct_live_replay_relabeler
+    submissions/codingame/bots/neural_puct/live_replay_relabeler.cpp)
+  target_include_directories(
+    papersoccer_codingame_neural_puct_live_replay_relabeler
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_neural_puct_live_replay_relabeler
+    PRIVATE papersoccer_core)
+
   add_executable(papersoccer_codingame_selfplay_nn_selfplay_generator
     submissions/codingame/bots/selfplay_nn/selfplay_generator.cpp)
   target_include_directories(

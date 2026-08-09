@@ -1,0 +1,56 @@
+{
+  "schema": "papersoccer.codingame-active-submission.v1",
+  "inspected_at_utc": "2026-08-09T20:07:08Z",
+  "puzzle_public_id": "paper-soccer",
+  "account": {
+    "name": "Lecorbio",
+    "public_handle": "82d5312ae5c63e0977417d696eddbb397745125",
+    "user_id": 5215477
+  },
+  "authenticated_ui": {
+    "browser": "Chrome",
+    "history_version": 55,
+    "history_created_at_utc": "2026-08-09T19:49:45.157Z",
+    "language": "C++",
+    "editor_character_count": 99697,
+    "editor_source_sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243"
+  },
+  "public_identity": {
+    "agent_id": 6604698,
+    "submission_id": 41114191,
+    "session_id": "77331573cfcf07bc257c0a715fe9675351097800",
+    "rank": 24,
+    "score": 35.13,
+    "percentage": 100,
+    "in_progress": false,
+    "agent_created_at_utc": "2026-08-09T19:49:45.157Z",
+    "leaderboard_updated_at_utc": "2026-08-09T20:02:50.452Z",
+    "leaderboard_raw_sha256": "63bc804941507fd239021e7147dd7a9538cf00d5451b0bf98f30a257f50a4f39",
+    "leaderboard_normalized_sha256": "1018c91ac4385072501abe6df29bdc6c6c1c8f37eb2572275785ca24aea7e40a",
+    "completed_battle_window": {
+      "count": 90,
+      "minimum_game_id": 898436895,
+      "maximum_game_id": 898437924
+    }
+  },
+  "submitted_artifacts": {
+    "repository_commit": "0f8532a7083917b72f6a50ad8a6bc33e0a1482b0",
+    "source": {
+      "path": "submissions/codingame/bots/neural_puct/submission.cpp",
+      "character_count": 99697,
+      "sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243"
+    },
+    "model": {
+      "path": "submissions/codingame/bots/neural_puct/neural_puct_model.json",
+      "sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2"
+    },
+    "generated_model_header_sha256": "b79e8064ade10d2d75252c9811ab9b8f28b3223f720c91aadadeeb5ba1666849",
+    "maintained_bot_source_sha256": "9f79a1ac5f9734c11779782075a858ad194d5197e1ccf9b4c4ed99f654847e95"
+  },
+  "verification": {
+    "browser_source_matches_repository_commit": true,
+    "collection_action": "single-explicit-collection-upload",
+    "new_collection_submission_created": true,
+    "additional_collection_upload_allowed": false
+  }
+}

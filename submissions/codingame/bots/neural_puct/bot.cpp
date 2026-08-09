@@ -34,6 +34,9 @@ inline constexpr std::size_t kDistanceOffset = 316;
 inline constexpr std::size_t kDegreeOffset = 1156;
 inline constexpr std::size_t kGlobalOffset = 1261;
 inline constexpr std::size_t kFeatureCount = 1286;
+inline constexpr std::size_t kActionFeatureCount = 16;
+using ActionFeatureMatrix =
+    std::array<std::array<float, kActionFeatureCount>, 8>;
 
 static_assert(kDistanceOffset == model_data::kEdgeCount);
 static_assert(kDegreeOffset ==
@@ -42,6 +45,7 @@ static_assert(kDegreeOffset ==
 static_assert(kGlobalOffset == kDegreeOffset + model_data::kVertexCount);
 static_assert(kFeatureCount == kGlobalOffset + model_data::kGlobalCount);
 static_assert(kFeatureCount == model_data::kInputCount);
+static_assert(kActionFeatureCount == model_data::kActionFeatureCount);
 
 inline constexpr std::array<Point, 8> kDirectionDeltas{{
     {0, -1},
@@ -59,12 +63,15 @@ struct ModelOutput {
   std::array<float, model_data::kPolicyCount> policy_logits{};
 };
 
+std::size_t canonical_direction(Point from, Point to, Player mover);
+
 class QuantizedModel {
  public:
   ModelOutput evaluate(
       const std::array<float, model_data::kInputCount> &features,
       const std::uint16_t *active_inputs = nullptr,
-      std::size_t input_count = model_data::kInputCount) const {
+      std::size_t input_count = model_data::kInputCount,
+      const ActionFeatureMatrix *action_features = nullptr) const {
     const std::vector<std::int8_t> &weights = decoded_weights();
     std::array<float, model_data::kHiddenOne> hidden_one = model_data::kB1;
     for (std::size_t entry = 0; entry < input_count; ++entry) {
@@ -114,14 +121,67 @@ class QuantizedModel {
       value_logit += hidden_two[hidden] *
                      static_cast<float>(weights[kValueOffset + hidden]) *
                      model_data::kValueScales[0];
+      if constexpr (!model_data::kActionConditionedPolicy) {
+        for (std::size_t policy = 0; policy < model_data::kPolicyCount;
+             ++policy) {
+          policy_logits[policy] +=
+              hidden_two[hidden] *
+              static_cast<float>(
+                  weights[kPolicyOffset + hidden * model_data::kPolicyCount +
+                          policy]) *
+              model_data::kPolicyScales[policy];
+        }
+      }
+    }
+    if constexpr (model_data::kActionConditionedPolicy) {
+      if (action_features == nullptr) {
+        throw std::invalid_argument(
+            "action-conditioned policy requires action features");
+      }
+      constexpr std::size_t kActionOffset =
+          kPolicyOffset + model_data::kHiddenTwo *
+                              model_data::kActionPolicyHidden;
+      constexpr std::size_t kOutputOffset =
+          kActionOffset + model_data::kActionFeatureCount *
+                              model_data::kActionPolicyHidden;
       for (std::size_t policy = 0; policy < model_data::kPolicyCount;
            ++policy) {
-        policy_logits[policy] +=
-            hidden_two[hidden] *
-            static_cast<float>(
-                weights[kPolicyOffset + hidden * model_data::kPolicyCount +
-                        policy]) *
-            model_data::kPolicyScales[policy];
+        std::array<float, model_data::kActionPolicyHidden> policy_hidden =
+            model_data::kActionPolicyBias;
+        for (std::size_t hidden = 0; hidden < model_data::kHiddenTwo;
+             ++hidden) {
+          const std::size_t offset =
+              kPolicyOffset + hidden * model_data::kActionPolicyHidden;
+          for (std::size_t output = 0;
+               output < model_data::kActionPolicyHidden; ++output) {
+            policy_hidden[output] +=
+                hidden_two[hidden] *
+                static_cast<float>(weights[offset + output]) *
+                model_data::kPolicyStateScales[output];
+          }
+        }
+        for (std::size_t feature = 0;
+             feature < model_data::kActionFeatureCount; ++feature) {
+          const std::size_t offset =
+              kActionOffset + feature * model_data::kActionPolicyHidden;
+          for (std::size_t output = 0;
+               output < model_data::kActionPolicyHidden; ++output) {
+            policy_hidden[output] +=
+                (*action_features)[policy][feature] *
+                static_cast<float>(weights[offset + output]) *
+                model_data::kPolicyActionScales[output];
+          }
+        }
+        for (float &value : policy_hidden) {
+          value = std::max(value, 0.0F);
+        }
+        for (std::size_t hidden = 0;
+             hidden < model_data::kActionPolicyHidden; ++hidden) {
+          policy_logits[policy] +=
+              policy_hidden[hidden] *
+              static_cast<float>(weights[kOutputOffset + hidden]) *
+              model_data::kPolicyOutputScales[0];
+        }
       }
     }
     // Training uses binary cross entropy with target (value + 1) / 2.
@@ -270,7 +330,8 @@ class FeatureEncoder {
       }
     }
 
-    const ComponentFeatures component = component_features(position);
+    const ComponentFeatures component =
+        component_features(position, position.to_move());
     std::array<std::uint8_t, detail::kMaximumMoves> legal{};
     const std::uint8_t ball_degree = position.legal_slots(legal);
     const Point canonical_ball =
@@ -319,6 +380,81 @@ class FeatureEncoder {
 
   std::size_t active_count() const noexcept { return active_count_; }
 
+  ActionFeatureMatrix encode_actions(detail::SearchPosition &position) {
+    ActionFeatureMatrix result{};
+    const Player mover = position.to_move();
+    calculate_turn_distances(position);
+    const int base_attack = minimum_goal_distance(mover, true);
+    const int base_own = minimum_goal_distance(mover, false);
+    const Point ball = position.ball();
+    std::array<std::uint8_t, detail::kMaximumMoves> slots{};
+    const std::uint8_t count = position.legal_slots(slots);
+    for (std::uint8_t index = 0; index < count; ++index) {
+      const std::uint8_t slot = slots[index];
+      const Move move = position.move_for_slot(slot);
+      const std::size_t direction = canonical_direction(ball, move.to, mover);
+      const auto destination = topology_->find_vertex(move.to);
+      const auto physical_edge = topology_->find_edge(Segment{ball, move.to});
+      if (!destination.has_value() || !physical_edge.has_value()) {
+        throw std::logic_error("action feature move is absent from topology");
+      }
+      const std::size_t canonical_edge =
+          mover == Player::One ? *physical_edge
+                               : canonical_edges_for_player_two_[*physical_edge];
+
+      position.make_move(slot);
+      const std::optional<Player> winner = position.winner();
+      const bool terminal = winner.has_value();
+      const bool rebound = !terminal && position.to_move() == mover;
+      const bool handoff = !terminal && position.to_move() != mover;
+      const std::size_t remaining_degree = free_degree(position, *destination);
+      calculate_turn_distances(position);
+      const int child_attack = minimum_goal_distance(mover, true);
+      const int child_own = minimum_goal_distance(mover, false);
+      const ComponentFeatures component = component_features(position, mover);
+
+      float layer_fill = 0.0F;
+      bool layer_closure = false;
+      const std::int8_t cut = edge_cuts_[canonical_edge];
+      if (cut >= 0) {
+        std::size_t used = 0;
+        for (std::size_t edge = 0; edge < model_data::kEdgeCount; ++edge) {
+          if (edge_cuts_[edge] == cut &&
+              position.edge_used(physical_edge_for(edge, mover))) {
+            ++used;
+          }
+        }
+        const std::size_t total = cut_totals_[static_cast<std::size_t>(cut)];
+        layer_fill = static_cast<float>(used) / static_cast<float>(total);
+        layer_closure = used == total;
+      }
+      const std::size_t escapes = terminal ? 0U : safe_escape_routes(position);
+      const Point delta = kDirectionDeltas[direction];
+      result[direction] = {
+          static_cast<float>(delta.x),
+          static_cast<float>(-delta.y),
+          rebound ? 1.0F : 0.0F,
+          handoff ? 1.0F : 0.0F,
+          winner.has_value() && *winner == mover ? 1.0F : 0.0F,
+          winner.has_value() && *winner != mover ? 1.0F : 0.0F,
+          static_cast<float>(base_attack - child_attack) / 7.0F,
+          static_cast<float>(child_own - base_own) / 7.0F,
+          static_cast<float>(remaining_degree) / 8.0F,
+          static_cast<float>(std::min<std::size_t>(component.safe_frontiers, 64)) /
+              64.0F,
+          static_cast<float>(std::min<std::size_t>(component.dead_frontiers, 64)) /
+              64.0F,
+          static_cast<float>(component.vertices) / 105.0F,
+          layer_fill,
+          layer_closure ? 1.0F : 0.0F,
+          static_cast<float>(escapes) / 8.0F,
+          handoff ? static_cast<float>(escapes) / 8.0F : 0.0F,
+      };
+      position.unmake_move();
+    }
+    return result;
+  }
+
   const std::array<detail::SearchTopology::VertexIndex,
                    model_data::kVertexCount> &
   rotated_vertices() const noexcept {
@@ -347,6 +483,8 @@ class FeatureEncoder {
       rotated_vertices_{};
   std::array<detail::SearchTopology::EdgeIndex, model_data::kEdgeCount>
       rotated_edges_{};
+  std::array<detail::SearchTopology::EdgeIndex, model_data::kEdgeCount>
+      canonical_edges_for_player_two_{};
   std::array<Segment, model_data::kEdgeCount> edge_segments_{};
   std::array<std::int8_t, model_data::kEdgeCount> edge_cuts_{};
   std::array<std::array<detail::SearchTopology::VertexIndex, 3>, 2>
@@ -434,6 +572,8 @@ class FeatureEncoder {
         throw std::logic_error("neural edge map is not rotationally symmetric");
       }
       rotated_edges_[edge] = *rotated;
+      canonical_edges_for_player_two_[*rotated] =
+          static_cast<detail::SearchTopology::EdgeIndex>(edge);
       if (std::abs(segment.a.y - segment.b.y) == 1) {
         const int cut = std::min(segment.a.y, segment.b.y);
         if (cut >= 0 && cut < 12) {
@@ -456,6 +596,36 @@ class FeatureEncoder {
     return mover == Player::One
                ? static_cast<detail::SearchTopology::EdgeIndex>(canonical)
                : rotated_edges_[canonical];
+  }
+
+  detail::SearchTopology::EdgeIndex physical_edge_for(
+      std::size_t canonical, Player mover) const noexcept {
+    return physical_edge(canonical, mover);
+  }
+
+  std::size_t free_degree(
+      const detail::SearchPosition &position,
+      detail::SearchTopology::VertexIndex vertex) const {
+    std::size_t result = 0;
+    const auto &adjacency = cooperative_adjacency_[vertex];
+    for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+      result += position.edge_used(adjacency.arcs[index].edge) ? 0U : 1U;
+    }
+    return result;
+  }
+
+  std::size_t safe_escape_routes(detail::SearchPosition &position) const {
+    const Player mover = position.to_move();
+    std::array<std::uint8_t, detail::kMaximumMoves> slots{};
+    const std::uint8_t count = position.legal_slots(slots);
+    std::size_t result = 0;
+    for (std::uint8_t index = 0; index < count; ++index) {
+      position.make_move(slots[index]);
+      const std::optional<Player> winner = position.winner();
+      result += !winner.has_value() || *winner == mover ? 1U : 0U;
+      position.unmake_move();
+    }
+    return result;
   }
 
   void calculate_turn_distances(const detail::SearchPosition &position) {
@@ -505,7 +675,7 @@ class FeatureEncoder {
   }
 
   ComponentFeatures component_features(
-      const detail::SearchPosition &position) const {
+      const detail::SearchPosition &position, Player mover) const {
     using Vertex = detail::SearchTopology::VertexIndex;
     std::array<bool, model_data::kVertexCount> in_component{};
     std::array<bool, model_data::kVertexCount> frontier_seen{};
@@ -513,7 +683,6 @@ class FeatureEncoder {
     std::array<Vertex, model_data::kVertexCount> queue{};
     std::size_t head = 0;
     std::size_t tail = 0;
-    const Player mover = position.to_move();
     in_component[position.ball_vertex()] = true;
     queue[tail++] = position.ball_vertex();
     ComponentFeatures result;
@@ -671,6 +840,11 @@ class NeuralPuctSearch {
   ModelOutput inspect_model_output() {
     ++stats_.neural_evaluations;
     const auto &encoded = features_.encode(position_);
+    if constexpr (model_data::kActionConditionedPolicy) {
+      const ActionFeatureMatrix actions = features_.encode_actions(position_);
+      return model_.evaluate(encoded, features_.active_indices().data(),
+                             features_.active_count(), &actions);
+    }
     return model_.evaluate(encoded, features_.active_indices().data(),
                            features_.active_count());
   }
@@ -764,8 +938,14 @@ class NeuralPuctSearch {
     ++stats_.neural_evaluations;
     entry.key = key;
     const auto &encoded = features_.encode(position_);
-    entry.output = model_.evaluate(encoded, features_.active_indices().data(),
-                                   features_.active_count());
+    if constexpr (model_data::kActionConditionedPolicy) {
+      const ActionFeatureMatrix actions = features_.encode_actions(position_);
+      entry.output = model_.evaluate(encoded, features_.active_indices().data(),
+                                     features_.active_count(), &actions);
+    } else {
+      entry.output = model_.evaluate(encoded, features_.active_indices().data(),
+                                     features_.active_count());
+    }
     entry.occupied = true;
     return entry.output;
   }

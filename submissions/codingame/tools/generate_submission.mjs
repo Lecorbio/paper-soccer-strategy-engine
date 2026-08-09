@@ -66,6 +66,10 @@ const sourceLimit = config.source_limit ?? 100_000;
 if (!Number.isInteger(sourceLimit) || sourceLimit <= 0) {
   fail("source_limit must be a positive integer.");
 }
+const stripLeadingWhitespace = config.strip_leading_whitespace ?? false;
+if (typeof stripLeadingWhitespace !== "boolean") {
+  fail("strip_leading_whitespace must be a boolean.");
+}
 
 const generators = config.generators ?? [];
 if (!Array.isArray(generators) ||
@@ -156,15 +160,23 @@ const includes = [...systemIncludes]
   .map((header) => `#include <${header}>`)
   .join("\n");
 const readableOutput = `${banner}${includes}\n\n${bodies.join("\n\n")}\n`;
+if (stripLeadingWhitespace &&
+    (readableOutput.includes('R"') ||
+     readableOutput.split("\n").some((line) => line.endsWith("\\")))) {
+  fail(
+    "strip_leading_whitespace refuses raw strings and line continuations.",
+  );
+}
 const compactLines = [];
 for (const line of readableOutput.split("\n")) {
   if (line.trimStart().startsWith("//")) {
     continue;
   }
-  if (line.trim() === "" && compactLines.at(-1)?.trim() === "") {
+  const compactLine = stripLeadingWhitespace ? line.trimStart() : line;
+  if (compactLine.trim() === "" && compactLines.at(-1)?.trim() === "") {
     continue;
   }
-  compactLines.push(line);
+  compactLines.push(compactLine);
 }
 const output = compactLines.join("\n");
 

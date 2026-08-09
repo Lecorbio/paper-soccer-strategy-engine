@@ -25,6 +25,13 @@ for selection. Later self-play candidates remain experiments rather than
 silently replacing this reproducible baseline. See `EXPERIMENTS.md` for the
 match-backed promotion decisions.
 
+The implementation also supports the first experimental
+`shared-action-conditioned-v1` head. It projects the shared 32-value state and
+16 consequence features for each legal edge into one shared eight-unit scorer;
+direction count does not multiply the scorer parameters. The checked-in model
+remains the legacy maintained artifact because the first live candidate failed
+the equal-clock gate.
+
 Training is game-split and expert-first. It uses the exposed frozen elite
 corpora plus the public Jacek games in `public_jacek_unlocked_v1.json`. The
 Jacek fetcher filters every game id in `rank1_locked_games.json` before fetching
@@ -60,6 +67,15 @@ plus ten follow-up polls produced 34 valid independent games, below the frozen
 50-game training floor. No labels, model change, candidate match, or additional
 submission was made. The append-only collector can resume the same run when
 normal arena activity creates more strong-opponent games.
+
+The resumed round is archived in
+[`live_replay/FIRST_ITERATION_REPORT.md`](live_replay/FIRST_ITERATION_REPORT.md).
+A single identical collection upload became agent `6604698` and raised the
+frozen corpus to 68 games. Deeper 10,000-simulation neural-only relabeling and
+three deterministic action-head seeds produced a validation-selected
+candidate. It passed defaults 7-5 and fixed-work development 51-45, but lost
+equal-clock development 29-67 versus the maintained 39-57 baseline. The
+maintained model was restored and no performance upload was made.
 
 Build the neural-only self-play generator and create a deterministic shard with:
 

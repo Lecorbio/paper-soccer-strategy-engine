@@ -17,17 +17,27 @@ if (process.argv.length > 3 ||
 
 const source = fs.readFileSync(inputPath);
 const report = JSON.parse(source.toString("utf8"));
+const policyHead = report.policy_head ?? "legacy-directional";
+const actionConditioned = policyHead === "shared-action-conditioned-v1";
 if (report.schema !== "papersoccer.neural-puct-model.v1" ||
     report.feature_schema !== "neural-puct-features-v1" ||
     report.input_count !== 1286 || report.edge_count !== 316 ||
     report.vertex_count !== 105 || report.distance_buckets !== 8 ||
     report.global_count !== 25 || report.hidden_one !== 32 ||
     report.hidden_two !== 32 || report.policy_count !== 8 ||
+    !["legacy-directional", "shared-action-conditioned-v1"].includes(policyHead) ||
+    (actionConditioned &&
+      (report.action_feature_count !== 16 || report.action_policy_hidden !== 8 ||
+       !Array.isArray(report.action_feature_names) ||
+       report.action_feature_names.length !== 16)) ||
     report.quantization !==
       "signed-int4-symmetric-per-output-channel") {
   throw new Error("Invalid neural PUCT model schema or dimensions");
 }
-if (report.golden?.input !== "stride17-mod11-v1" ||
+const expectedGoldenInput = actionConditioned
+  ? "stride17-mod11-action-mod13-v1"
+  : "stride17-mod11-v1";
+if (report.golden?.input !== expectedGoldenInput ||
     typeof report.golden.value !== "number" ||
     !Number.isFinite(report.golden.value) ||
     !Array.isArray(report.golden.policy) ||
@@ -37,7 +47,14 @@ if (report.golden?.input !== "stride17-mod11-v1" ||
   throw new Error("Invalid neural PUCT quantized golden output");
 }
 
-const shapes = {
+const shapes = actionConditioned ? {
+  w1: [1286, 32],
+  w2: [32, 32],
+  wv: [32, 1],
+  wps: [32, 8],
+  wpa: [16, 8],
+  wpo: [8, 1],
+} : {
   w1: [1286, 32],
   w2: [32, 32],
   wv: [32, 1],
@@ -101,12 +118,18 @@ for (const [name, shape] of Object.entries(shapes)) {
   tensorScales[name] = tensor.scales;
 }
 
-for (const [name, length] of Object.entries({
+const biases = actionConditioned ? {
+  b1: 32,
+  b2: 32,
+  bv: 1,
+  bpa: 8,
+} : {
   b1: 32,
   b2: 32,
   bv: 1,
   bp: 8,
-})) {
+};
+for (const [name, length] of Object.entries(biases)) {
   const values = report.model?.[name];
   if (!Array.isArray(values) || values.length !== length ||
       values.some((value) => typeof value !== "number" ||
@@ -144,6 +167,9 @@ const lines = [
   `inline constexpr std::size_t kHiddenOne = ${report.hidden_one};`,
   `inline constexpr std::size_t kHiddenTwo = ${report.hidden_two};`,
   `inline constexpr std::size_t kPolicyCount = ${report.policy_count};`,
+  `inline constexpr bool kActionConditionedPolicy = ${actionConditioned};`,
+  "inline constexpr std::size_t kActionFeatureCount = 16;",
+  "inline constexpr std::size_t kActionPolicyHidden = 8;",
   `inline constexpr std::size_t kUnpackedWeightCount = ${unpackedWeightCount};`,
   `inline constexpr std::string_view kGoldenInput = "${report.golden.input}";`,
   `inline constexpr float kGoldenValue = ${floats([report.golden.value])};`,
@@ -151,11 +177,15 @@ const lines = [
   `inline constexpr std::array<float, 32> kW1Scales{{${floats(tensorScales.w1)}}};`,
   `inline constexpr std::array<float, 32> kW2Scales{{${floats(tensorScales.w2)}}};`,
   `inline constexpr std::array<float, 1> kValueScales{{${floats(tensorScales.wv)}}};`,
-  `inline constexpr std::array<float, 8> kPolicyScales{{${floats(tensorScales.wp)}}};`,
+  `inline constexpr std::array<float, 8> kPolicyScales{{${floats(actionConditioned ? Array(8).fill(1) : tensorScales.wp)}}};`,
+  `inline constexpr std::array<float, 8> kPolicyStateScales{{${floats(actionConditioned ? tensorScales.wps : Array(8).fill(1))}}};`,
+  `inline constexpr std::array<float, 8> kPolicyActionScales{{${floats(actionConditioned ? tensorScales.wpa : Array(8).fill(1))}}};`,
+  `inline constexpr std::array<float, 1> kPolicyOutputScales{{${floats(actionConditioned ? tensorScales.wpo : [1])}}};`,
   `inline constexpr std::array<float, 32> kB1{{${floats(report.model.b1)}}};`,
   `inline constexpr std::array<float, 32> kB2{{${floats(report.model.b2)}}};`,
   `inline constexpr float kValueBias = ${floats(report.model.bv)};`,
-  `inline constexpr std::array<float, 8> kPolicyBias{{${floats(report.model.bp)}}};`,
+  `inline constexpr std::array<float, 8> kPolicyBias{{${floats(actionConditioned ? Array(8).fill(0) : report.model.bp)}}};`,
+  `inline constexpr std::array<float, 8> kActionPolicyBias{{${floats(actionConditioned ? report.model.bpa : Array(8).fill(0))}}};`,
   `inline constexpr std::string_view kEncodedPackedWeights = "${encodedWeights}";`,
   "",
   "}  // namespace papersoccer::neural_puct::model_data",
