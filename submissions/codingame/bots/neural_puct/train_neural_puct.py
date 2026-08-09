@@ -21,7 +21,13 @@ import pathlib
 import re
 from typing import Iterable
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    # Replay-only validation deliberately remains available to the live
+    # collector in minimal Python environments.  Actual sample construction
+    # and training still require the pinned research dependencies.
+    np = None
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -605,6 +611,10 @@ def replay_game(game: Game):
             if edge not in EDGE_INDEX or edge in used_segments:
                 raise ValueError("game contains an illegal edge")
             include_sample = turn_index >= game.policy_start_turn
+            if include_sample and np is None:
+                raise RuntimeError(
+                    "NumPy is required to construct neural training samples"
+                )
             has_policy = include_sample and (
                 game.focus_player is None or player == game.focus_player
             )
@@ -1208,6 +1218,8 @@ def main():
     parser.add_argument("--seed", type=int, default=20260809)
     parser.add_argument("--epochs", type=int, default=40)
     arguments = parser.parse_args()
+    if np is None:
+        parser.error("NumPy is required; install requirements-research.txt")
     if not math.isfinite(arguments.selfplay_multiplier) or arguments.selfplay_multiplier <= 0:
         parser.error("--selfplay-multiplier must be finite and greater than zero")
     if arguments.selfplay_corpus is None and arguments.selfplay_multiplier != 1.0:

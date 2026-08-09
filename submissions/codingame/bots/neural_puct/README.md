@@ -53,6 +53,14 @@ protocol is documented in [LIVE_REPLAY_LOOP.md](LIVE_REPLAY_LOOP.md). It keeps
 locked and promotion evidence outside training, uses elite actions as direct
 labels, and relabels the neural bot's own positions with deeper neural search.
 
+The first live round is archived in
+[`live_replay/FIRST_ROUND_REPORT.md`](live_replay/FIRST_ROUND_REPORT.md). The
+already active maintained source was reused byte-for-byte, and a top-20 sweep
+plus ten follow-up polls produced 34 valid independent games, below the frozen
+50-game training floor. No labels, model change, candidate match, or additional
+submission was made. The append-only collector can resume the same run when
+normal arena activity creates more strong-opponent games.
+
 Build the neural-only self-play generator and create a deterministic shard with:
 
 ```sh

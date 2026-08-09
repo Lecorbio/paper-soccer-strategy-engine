@@ -306,6 +306,55 @@ def build_exclusion_registry(
             entry["categories"].add("live_replay_archive")
             entry["sources"].add(relative)
 
+    # Permanent structural rejections and payload conflicts are also known
+    # outcomes.  Bind only their audit hashes and reasons so later runs do not
+    # re-request or repeatedly revalidate the same unusable response.  Network
+    # failures remain retryable and therefore never enter this registry.
+    permanent_outcomes: dict[int, dict[str, Any]] = {}
+    for path in sorted((data_root / "events").glob("*/*/rejection/*.json")):
+        outcome = json.loads(path.read_text())
+        if outcome.get("status") != "structural-rejection":
+            continue
+        game_id = int(outcome["game_id"])
+        entry = permanent_outcomes.setdefault(
+            game_id,
+            {"category": "live_replay_structural_rejection", "files": []},
+        )
+        entry["files"].append({"path": path, "sha256": digest_file(path)})
+    for path in sorted((data_root / "conflicts").glob("*/*.json")):
+        outcome = json.loads(path.read_text())
+        game_id = int(outcome["game_id"])
+        entry = permanent_outcomes.setdefault(
+            game_id, {"category": "live_replay_conflict", "files": []}
+        )
+        entry["category"] = "live_replay_conflict"
+        entry["files"].append({"path": path, "sha256": digest_file(path)})
+    for game_id, outcome in sorted(permanent_outcomes.items()):
+        logical_path = f"{relative_to_repository(data_root, repository)}/outcomes/{game_id}"
+        sources.append(
+            {
+                "category": outcome["category"],
+                "game_id_count": 1,
+                "path": logical_path,
+                "sha256": digest_bytes(
+                    canonical_json_bytes(
+                        [
+                            {
+                                "path": relative_to_repository(item["path"], repository),
+                                "sha256": item["sha256"],
+                            }
+                            for item in outcome["files"]
+                        ]
+                    )
+                ),
+            }
+        )
+        entry = by_game.setdefault(
+            game_id, {"categories": set(), "sources": set()}
+        )
+        entry["categories"].add(outcome["category"])
+        entry["sources"].add(logical_path)
+
     payload = {
         "schema": EXCLUSION_SCHEMA,
         "selection": (
@@ -861,6 +910,7 @@ class LiveReplayCollector:
         poll_index: int,
         game_id: int,
         hashes: list[str],
+        network_requested: bool,
     ) -> dict[str, Any]:
         conflict = {
             "collector_sha256": self.collector_sha256,
@@ -878,6 +928,7 @@ class LiveReplayCollector:
         )
         return {
             "game_id": game_id,
+            "network_requested": network_requested,
             "normalized_payload_sha256": hashes,
             "reason": conflict["reason"],
             "status": "conflict",
@@ -909,6 +960,7 @@ class LiveReplayCollector:
                 rejection = {
                     "collector_sha256": self.collector_sha256,
                     "game_id": game_id,
+                    "network_requested": True,
                     "reason": f"detail request failed: {type(error).__name__}: {error}",
                     "rejected_at_utc": self.clock(),
                     "status": "request-error",
@@ -923,7 +975,11 @@ class LiveReplayCollector:
         hashes = sorted({version.normalized_sha256 for version in versions})
         if len(hashes) > 1:
             return self._record_conflict(
-                run_id, poll_index, game_id, hashes
+                run_id,
+                poll_index,
+                game_id,
+                hashes,
+                network_requested=fetched_new_response,
             )
         if response is None:
             response = versions[0]
@@ -937,8 +993,10 @@ class LiveReplayCollector:
             )
         except (KeyError, TypeError, ValueError) as error:
             rejection = {
+                "cached": response.cached,
                 "collector_sha256": self.collector_sha256,
                 "game_id": game_id,
+                "network_requested": fetched_new_response,
                 "normalized_payload_sha256": response.normalized_sha256,
                 "raw_sha256": response.raw_sha256,
                 "reason": str(error),
@@ -995,6 +1053,7 @@ class LiveReplayCollector:
         accepted = {
             "cached": response.cached,
             "game_id": game_id,
+            "network_requested": fetched_new_response,
             "normalized_payload_sha256": response.normalized_sha256,
             "raw_sha256": response.raw_sha256,
             "record_path": relative_to_repository(record_path, self.repository),
@@ -1255,10 +1314,9 @@ class LiveReplayCollector:
             "cursor_before": cursor_before,
             "decisions": decisions,
             "detail_request_count": sum(
-                item["status"] in {"accepted", "conflict", "request-error", "structural-rejection"}
-                and not item.get("cached", False)
-                for item in detail_results
+                item.get("network_requested", False) for item in detail_results
             ),
+            "detail_validation_count": len(detail_results),
             "expanded_to_top": expanded_top if expanded else initial_top,
             "exclusion_registry_path": relative_to_repository(
                 self.registry_path, self.repository
@@ -1383,12 +1441,22 @@ class LiveReplayCollector:
 
 def check_store(data_root: pathlib.Path) -> dict[str, int]:
     counts = {
+        "accepted_game_records": 0,
         "conflicts": 0,
         "discoveries": 0,
         "games": 0,
         "normalized_responses": 0,
         "raw_responses": 0,
+        "receipts": 0,
     }
+    for path in sorted((data_root / "exclusions").glob("*.json")):
+        payload = json.loads(path.read_text())
+        if (
+            payload.get("schema") != EXCLUSION_SCHEMA
+            or canonical_json_bytes(payload) != path.read_bytes()
+            or digest_file(path) != path.stem
+        ):
+            raise ValueError(f"exclusion registry is not canonical: {path}")
     for path in sorted((data_root / "raw").rglob("*.json")):
         if digest_file(path) != path.stem:
             raise ValueError(f"raw response hash mismatch: {path}")
@@ -1399,14 +1467,104 @@ def check_store(data_root: pathlib.Path) -> dict[str, int]:
         if canonical_json_bytes(payload) != path.read_bytes() or digest_file(path) != path.stem:
             raise ValueError(f"normalized response is not canonical: {path}")
         counts["normalized_responses"] += 1
+    for path in sorted((data_root / "receipts").glob("*/*/*.json")):
+        receipt = json.loads(path.read_text())
+        if canonical_json_bytes(receipt) != path.read_bytes() or digest_file(path) != path.stem:
+            raise ValueError(f"response receipt is not canonical: {path}")
+        request = receipt.get("request") or {}
+        schema = request.get("request_schema")
+        if schema not in REQUEST_SCHEMAS:
+            raise ValueError(f"response receipt has an unknown schema: {path}")
+        expected_key = request_key(schema, request.get("service"), request.get("body"))
+        if receipt.get("request_key") != expected_key or path.parent.name != expected_key:
+            raise ValueError(f"response receipt request key mismatch: {path}")
+        raw_path = (
+            data_root
+            / "raw"
+            / schema
+            / expected_key
+            / f"{receipt['raw_sha256']}.json"
+        )
+        normalized_path = (
+            data_root
+            / "normalized"
+            / schema
+            / expected_key
+            / f"{receipt['normalized_sha256']}.json"
+        )
+        if not raw_path.is_file() or digest_file(raw_path) != receipt["raw_sha256"]:
+            raise ValueError(f"response receipt raw payload is missing: {path}")
+        if (
+            not normalized_path.is_file()
+            or digest_file(normalized_path) != receipt["normalized_sha256"]
+        ):
+            raise ValueError(f"response receipt normalized payload is missing: {path}")
+        counts["receipts"] += 1
     for path in sorted((data_root / "replay_payloads").glob("*/*.json")):
         payload = json.loads(path.read_text())
         if canonical_json_bytes(payload) != path.read_bytes() or digest_file(path) != path.stem:
             raise ValueError(f"replay payload is not canonical: {path}")
+        if int(payload.get("gameId", -1)) != int(path.parent.name):
+            raise ValueError(f"replay payload game id disagrees with path: {path}")
         counts["games"] += 1
+    accepted_ids = set()
+    trainer = None
+    for path in sorted((data_root / "games").glob("*/*.json")):
+        record = json.loads(path.read_text())
+        if (
+            record.get("schema") != REPLAY_SCHEMA
+            or canonical_json_bytes(record) != path.read_bytes()
+            or digest_file(path) != path.stem
+        ):
+            raise ValueError(f"accepted game record is not canonical: {path}")
+        replay = record.get("replay") or {}
+        game_id = int(replay.get("game_id", -1))
+        if game_id != int(path.parent.name):
+            raise ValueError(f"accepted game record id disagrees with path: {path}")
+        payload_hash = record["acquisition"]["normalized_payload_sha256"]
+        payload_path = data_root / "replay_payloads" / str(game_id) / f"{payload_hash}.json"
+        if not payload_path.is_file():
+            raise ValueError(f"accepted game omits its replay payload: {path}")
+        roles = {agent.get("label_role") for agent in replay.get("agents", [])}
+        if "direct-public-expert" not in roles or not roles.issubset(
+            {"direct-public-expert", "self-relabel-only", "unlabelled-opponent"}
+        ):
+            raise ValueError(f"accepted game has invalid label roles: {path}")
+        if trainer is None:
+            trainer = trainer_module()
+        turns = tuple(
+            (int(turn["player_id"]), str(turn["action"]))
+            for turn in replay["turns"]
+        )
+        trainer.replay_game(
+            trainer.Game(
+                key=f"store-check:{game_id}",
+                game_id=game_id,
+                source="codingame-live",
+                focus_agent_id=-1,
+                focus_player=None,
+                winner=int(replay["winner_player_id"]),
+                turns=turns,
+                policy_start_turn=len(turns),
+            )
+        )
+        accepted_ids.add(game_id)
+        counts["accepted_game_records"] += 1
     for path in sorted((data_root / "discoveries").glob("*/*.json")):
         payload = json.loads(path.read_text())
-        if int(path.stem) != int(payload["game_id"]):
+        game_id = int(payload["game_id"])
+        replay_path = (
+            data_root
+            / "replay_payloads"
+            / str(game_id)
+            / f"{payload['normalized_payload_sha256']}.json"
+        )
+        if (
+            canonical_json_bytes(payload) != path.read_bytes()
+            or int(path.stem) != game_id
+            or game_id not in accepted_ids
+            or not replay_path.is_file()
+        ):
             raise ValueError(f"discovery filename disagrees with payload: {path}")
         counts["discoveries"] += 1
     for directory in sorted((data_root / "conflicts").glob("*")):

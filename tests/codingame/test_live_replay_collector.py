@@ -358,24 +358,52 @@ class LiveReplayCollectorTest(unittest.TestCase):
     def test_incomplete_replay_is_structurally_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             api = FakeApi()
-            self.add_leaderboard(api)
-            api.add("agent-battles-v1", [101, None], [battle(1001, 202, 101)])
+            self.add_leaderboard(api, repeats=2)
+            api.add(
+                "agent-battles-v1",
+                [101, None],
+                [battle(1001, 202, 101)],
+                [battle(1001, 202, 101)],
+            )
             incomplete = valid_game(1001, 202, 101)
             incomplete["frames"] = incomplete["frames"][:1]
             api.add("game-detail-v1", [1001, None], incomplete)
             collector = self.make_collector(temporary, api)
-            poll = collector.collect_poll(
+            first = collector.collect_poll(
                 run_id="incomplete",
                 poll_index=0,
                 minimum_new_games=1,
                 initial_top=1,
                 expanded_top=1,
             )
+            second = collector.collect_poll(
+                run_id="incomplete",
+                poll_index=1,
+                minimum_new_games=1,
+                initial_top=1,
+                expanded_top=1,
+            )
             rejected = [
-                item for item in poll["decisions"] if item["status"] == "structural-rejection"
+                item
+                for item in first["decisions"]
+                if item["status"] == "structural-rejection"
             ]
             self.assertEqual(len(rejected), 1)
             self.assertIn("incomplete", rejected[0]["reason"])
+            self.assertEqual(first["detail_request_count"], 1)
+            self.assertEqual(second["detail_request_count"], 0)
+            self.assertEqual(second["detail_validation_count"], 1)
+            self.assertEqual(api.count("game-detail-v1", [1001, None]), 1)
+            rebuilt = collector_module.build_exclusion_registry(
+                ROOT,
+                pathlib.Path(temporary) / "live",
+                evidence_paths=[],
+            )
+            self.assertEqual(rebuilt.known_ids, {1001})
+            self.assertEqual(
+                rebuilt.records[1001]["categories"],
+                ["live_replay_structural_rejection"],
+            )
 
 
 if __name__ == "__main__":

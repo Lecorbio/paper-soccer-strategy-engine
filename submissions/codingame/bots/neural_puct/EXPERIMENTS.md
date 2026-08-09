@@ -91,3 +91,25 @@ current rank-5 benchmark at equal time. Offline classification improvements
 are not accepted as strength evidence. The next iteration should add genuinely
 stronger value supervision or a representation that can exploit it, and must
 repeat the fixed-work and equal-clock gates before any CodinGame submission.
+
+## First append-only live replay round
+
+On 2026-08-09, authenticated inspection found the maintained neural source
+already active as agent `6604625`, submission `41113702`. Its 99,697-character
+source SHA-256 exactly matched the checked-in generated submission, so no
+collection upload was made.
+
+The exclusion-first collector reproduced the 208-game current top-five audit:
+all 208 IDs were already local. Expansion through the top 20 identified 40 new
+games against the active neural agent. Strict replay accepted 34 and rejected
+six incomplete games with an empty action frame. Ten bounded follow-up polls
+found no additional eligible games. There were no request failures or payload
+conflicts.
+
+Because 34 is below the predeclared 50-game independent-data floor, the round
+ended before label construction. The neural bot's own 2,079 played primitive
+actions were not copied as expert targets; the 2,659 available strong-opponent
+actions remain untrained. The action-conditioned head, three-seed training,
+candidate match gates, and performance upload were all skipped. See
+[`live_replay/FIRST_ROUND_REPORT.md`](live_replay/FIRST_ROUND_REPORT.md) for the
+hash-bound audit.

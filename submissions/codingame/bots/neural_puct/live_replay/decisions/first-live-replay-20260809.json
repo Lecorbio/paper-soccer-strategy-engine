@@ -1,0 +1,70 @@
+{
+  "schema": "papersoccer.live-replay-iteration-decision.v1",
+  "run_id": "first-live-replay-20260809",
+  "completed_at_utc": "2026-08-09T19:31:53Z",
+  "completion_path": "B",
+  "active_collection_build": {
+    "agent_id": 6604625,
+    "submission_id": 41113702,
+    "session_id": "77331573cfcf07bc257c0a715fe9675351097800",
+    "source_sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243",
+    "model_sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2",
+    "source_matches_maintained_local_build": true,
+    "collection_submission_created": false
+  },
+  "collection": {
+    "collector_sha256": "4272f3ba3ada8ce7b9377d4b3c0647633ea0af4b2a4d4be6d00d9d08ddf0176b",
+    "maintained_collector_sha256": "5c73139e9607ea97477aef212b6c015207cf66fb462fda8759003f98a4e897ef",
+    "initial_exclusion_registry_sha256": "531342acdafe02b5c21650ff4e82c4e48e2262dbdc6270c7cfce22aab208148d",
+    "final_exclusion_registry_sha256": "f20baf50fb4a0d3574027e3e8c2731542082149fe3c3dfec89b83734cf9f71d8",
+    "polls": 11,
+    "top_five_unique_games": 208,
+    "top_five_initially_known_games": 208,
+    "top_twenty_unique_games": 665,
+    "top_twenty_initially_known_games": 625,
+    "detail_requests": 40,
+    "accepted_independent_games": 34,
+    "structural_rejections": 6,
+    "request_failures": 0,
+    "payload_conflicts": 0
+  },
+  "threshold": {
+    "minimum_independent_new_games": 50,
+    "observed_independent_new_games": 34,
+    "passed": false
+  },
+  "available_untrained_mass": {
+    "whole_games": 34,
+    "public_expert_primitive_actions": 2659,
+    "neural_self_actions_reserved_for_offline_relabel": 2079
+  },
+  "training": {
+    "labels_constructed": false,
+    "action_conditioned_representation_tested": false,
+    "deterministic_seeds_trained": 0,
+    "reason": "independent live-game floor failed"
+  },
+  "verification": {
+    "release_full_build": "passed",
+    "codingame_python_tests_with_pinned_dependencies": "29-passed",
+    "store_check": {
+      "accepted_game_records": 34,
+      "discoveries": 34,
+      "raw_responses": 62,
+      "normalized_responses": 62,
+      "receipts": 282,
+      "conflicts": 0
+    },
+    "neural_cpp_tests": "passed",
+    "python_cpp_feature_parity": "5144-of-5144-exact"
+  },
+  "candidate_gates": {
+    "build_and_sanitizers": "not-run-no-candidate",
+    "six_paired_defaults": "not-run-no-candidate",
+    "fixed_work_development": "not-run-no-candidate",
+    "equal_clock_development": "not-run-no-candidate",
+    "prospective_or_sealed": "not-inspected"
+  },
+  "performance_submission_created": false,
+  "decision": "retain-maintained-model-and-wait-for-data"
+}
