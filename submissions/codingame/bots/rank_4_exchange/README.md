@@ -22,10 +22,11 @@ e72bb4bdc3377d0a4602fd807a31083683677c4516f318d75352b60d63355f20
 ```
 
 This source has not been submitted. It beat the live rank-4 source 58-48 in
-106 paired games at both 5,000 and 30,000 nodes, with balanced 29/29 candidate
-wins at 5,000 nodes and no unfinished games. The isolated equal-clock
-800/165 ms screen was 8-10, so it does not satisfy a performance-promotion
-gate. Rank 4 remains the maintained live bot.
+106 paired games at both 5,000 and 30,000 nodes, but lost 51-55 at the
+intermediate 10,000-node horizon. The 5,000-node result had balanced 29/29
+candidate wins and no screen had unfinished games. The isolated equal-clock
+800/165 ms screen was 8-10, so the horizon-sensitive experiment does not
+satisfy a performance-promotion gate. Rank 4 remains the maintained live bot.
 
 Generate and verify from the repository root:
 

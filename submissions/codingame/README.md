@@ -56,7 +56,8 @@ are in [tools/README.md](tools/README.md).
   the historical training and arena inputs stay at their original paths.
 - [`rank_4_exchange`](bots/rank_4_exchange/README.md) adds exact rebound
   win/loss proofs to rank 4. It beat rank 4 58-48 at both 5k and 30k nodes,
-  but its final equal-clock screen was 8-10, so it remains unsubmitted.
+  but lost 51-55 at 10k and 8-10 on the final equal-clock screen, so it
+  remains unsubmitted.
 - [`alpha_beta`](bots/alpha_beta/README.md) is the prior production baseline
   and retains its compact historical experiment evidence. Its paste-ready file
   is [`submission.cpp`](bots/alpha_beta/submission.cpp).

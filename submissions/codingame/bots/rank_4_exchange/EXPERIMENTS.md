@@ -37,6 +37,7 @@ Direct candidate-versus-rank-4 results:
 |---|---:|---:|---:|---:|
 | 5,000 nodes | 106 | 58-48 | 29 / 29 | 0 |
 | 5,000 nodes, widened | 306 | 158-148 | 85 / 73 | 0 |
+| 10,000 nodes | 106 | 51-55 | 26 / 25 | 0 |
 | 30,000 nodes | 106 | 58-48 | 32 / 26 | 0 |
 | Equal clock, 800/165 ms | 18 | 8-10 | 4 / 4 | 0 |
 
@@ -46,10 +47,11 @@ At 5,000 nodes the final behavior-neutral implementation reproduced the same
 rebound probes. The leaf-cache shortcut avoids repeat proof work without
 altering fixed-work decisions.
 
-The fixed-work gain is repeatable and useful progress, but the equal-clock
-result is not a promotion result. Timed screens varied from 9-9 in an earlier
-run to the final isolated 8-10; neither is a clear improvement. The candidate
-therefore remains an experiment and rank 4 remains live.
+The gains at the two declared work points are repeatable and useful progress,
+but the negative intermediate result exposes horizon sensitivity and the
+equal-clock result is not a promotion result. Timed screens varied from 9-9 in
+an earlier run to the final isolated 8-10; neither is a clear improvement. The
+candidate therefore remains an experiment and rank 4 remains live.
 
 ## Rejected ablations
 
