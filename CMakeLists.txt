@@ -235,7 +235,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  alpha_beta rank_5 rank_4 challenger selfplay_nn selfplay_nn_v2 jacek_nn
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)

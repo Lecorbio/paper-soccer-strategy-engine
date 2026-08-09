@@ -6,10 +6,11 @@ CodinGame support is split into reusable tooling and self-contained bots:
 submissions/codingame/
 ├── bots/                 maintained source, tests, data, and output per bot
 │   ├── alpha_beta/       production baseline and its experiment archive
-│   ├── rank_5/           immutable verified arena incumbent
+│   ├── rank_5/           immutable previous arena incumbent
+│   ├── rank_4/           current live teacher-residual production bot
 │   ├── challenger/       completed exact-topology challenger experiment
 │   ├── selfplay_nn/      learned value and self-play training experiment
-│   ├── selfplay_nn_v2/   rank-5-anchored teacher-residual challenger
+│   ├── selfplay_nn_v2/   historical rank-4 training and arena provenance
 │   ├── jacek_nn/         Jacek-input, rank-5-anchored residual experiment
 │   └── topology/         goal-connectivity ordering experiment
 ├── promotion/            frozen elite banks and promotion manifest
@@ -28,6 +29,7 @@ Generate or verify either submission from the repository root:
 node submissions/codingame/tools/generate_submission.mjs alpha_beta
 node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
+node submissions/codingame/tools/generate_submission.mjs rank_4 --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn_v2 --check
 node submissions/codingame/tools/generate_submission.mjs jacek_nn --check
@@ -45,10 +47,15 @@ are in [tools/README.md](tools/README.md).
 
 ## Current bots
 
+- [`rank_4`](bots/rank_4/README.md) is the current live production bot:
+  history version 56, agent `6604719`, submission `41114327`, rank 4 of 208
+  with score `44.29750553418035` and a 66-24 record. It is the canonical,
+  byte-identical local snapshot of the retained `selfplay_nn_v2` artifact;
+  the historical training and arena inputs stay at their original paths.
 - [`alpha_beta`](bots/alpha_beta/README.md) is the prior production baseline
   and retains its compact historical experiment evidence. Its paste-ready file
   is [`submission.cpp`](bots/alpha_beta/submission.cpp).
-- [`rank_5`](bots/rank_5/README.md) is the immutable verified incumbent:
+- [`rank_5`](bots/rank_5/README.md) is the immutable previous incumbent:
   version 26, agent `6561779`, rank 5 of 206 with score
   `42.42773147296124`. Its paste-ready file is
   [`submission.cpp`](bots/rank_5/submission.cpp).
@@ -62,14 +69,10 @@ are in [tools/README.md](tools/README.md).
   completed result is version 41 at rank 5 with score `41.77236003585933`,
   below the accepted `rank_5` bot; all three live batches are recorded in
   [`EXPERIMENTS.md`](bots/selfplay_nn/EXPERIMENTS.md).
-- [`selfplay_nn_v2`](bots/selfplay_nn_v2/README.md) is the separate
-  rank-5-anchored, value-only teacher-residual challenger. One completed batch
-  scored `42.82914600312645`, but an exact-source confirmation scored
-  `42.001868057527055`; the mean did not clear the incumbent, so v2 remains an
-  unpromoted experiment. It carries reproducible fixed-node, deadline,
-  symmetry, legality, and chronological arena-loss regression gates; full
-  live evidence is recorded in
-  [`EXPERIMENTS.md`](bots/selfplay_nn_v2/EXPERIMENTS.md).
+- [`selfplay_nn_v2`](bots/selfplay_nn_v2/README.md) preserves the original
+  training corpus, model provenance, and version 42-44 arena evidence behind
+  `rank_4`. Its paths remain unchanged because frozen promotion and leakage
+  registries bind those historical artifacts by path and hash.
 - [`jacek_nn`](bots/jacek_nn/README.md) is the separate Jacek-input
   challenger. It preserves rank_5's complete search, replay book, and compact
   `1156 -> 8 -> 8 -> 1` value anchor, then adds a bounded 24-feature residual
