@@ -685,7 +685,9 @@ def replay_game(game: Game):
                     raise ValueError("game contains an overlong rebound action")
             elif terminal_winner is None and to_move == player:
                 raise ValueError("game ends a turn before a mandatory rebound")
-    if terminal_winner is not None and terminal_winner != game.winner:
+    if terminal_winner is None:
+        raise ValueError("game is incomplete")
+    if terminal_winner != game.winner:
         raise ValueError("recorded winner disagrees with replayed rules")
     return samples
 

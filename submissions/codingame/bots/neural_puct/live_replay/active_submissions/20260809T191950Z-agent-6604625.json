@@ -1,0 +1,58 @@
+{
+  "schema": "papersoccer.codingame-active-submission.v1",
+  "inspected_at_utc": "2026-08-09T19:19:50Z",
+  "puzzle_public_id": "paper-soccer",
+  "account": {
+    "name": "Lecorbio",
+    "public_handle": "82d5312ae5c63e0977417d696eddbb397745125",
+    "user_id": 5215477
+  },
+  "authenticated_ui": {
+    "browser": "Chrome",
+    "history_version": 54,
+    "history_created_at_utc": "2026-08-09T17:22:49.209Z",
+    "language": "C++",
+    "rank": 23,
+    "rank_population": 208,
+    "editor_character_count": 99697,
+    "editor_source_sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243"
+  },
+  "public_identity": {
+    "agent_id": 6604625,
+    "submission_id": 41113702,
+    "session_id": "77331573cfcf07bc257c0a715fe9675351097800",
+    "rank": 23,
+    "score": 35.66,
+    "agent_created_at_utc": "2026-08-09T17:22:49.209Z",
+    "leaderboard_updated_at_utc": "2026-08-09T17:37:38.458Z",
+    "completed_battle_window": {
+      "count": 90,
+      "minimum_game_id": 898427755,
+      "maximum_game_id": 898428775
+    }
+  },
+  "local_artifacts": {
+    "source": {
+      "path": "submissions/codingame/bots/neural_puct/submission.cpp",
+      "character_count": 99697,
+      "sha256": "4d77f9e20e756b2e11b0f4dc04ff9ed2fed37e85158f358dda104d8281b5b243"
+    },
+    "model": {
+      "path": "submissions/codingame/bots/neural_puct/neural_puct_model.json",
+      "sha256": "d7e5255fd2c3f7a203796829c21c8a7580b384de13942e466f4069081e2126b2"
+    },
+    "generated_model_header": {
+      "path": "submissions/codingame/bots/neural_puct/neural_puct_model.hpp",
+      "sha256": "b79e8064ade10d2d75252c9811ab9b8f28b3223f720c91aadadeeb5ba1666849"
+    },
+    "maintained_bot_source": {
+      "path": "submissions/codingame/bots/neural_puct/bot.cpp",
+      "sha256": "9f79a1ac5f9734c11779782075a858ad194d5197e1ccf9b4c4ed99f654847e95"
+    }
+  },
+  "verification": {
+    "browser_source_matches_local_source": true,
+    "collection_action": "reuse-identical-active-maintained-neural-submission",
+    "new_collection_submission_created": false
+  }
+}

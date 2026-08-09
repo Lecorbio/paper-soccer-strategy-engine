@@ -1,0 +1,64 @@
+{
+  "users": [
+    {
+      "agentId": 101,
+      "codingamer": {"publicHandle": "alpha-handle", "pseudo": "Alpha", "userId": 1},
+      "inProgress": false,
+      "programmingLanguage": "C++",
+      "pseudo": "Alpha",
+      "rank": 1,
+      "score": 51.0,
+      "testSessionHandle": "alpha-session"
+    },
+    {
+      "agentId": 202,
+      "codingamer": {"publicHandle": "beta-handle", "pseudo": "Beta", "userId": 2},
+      "inProgress": false,
+      "programmingLanguage": "Rust",
+      "pseudo": "Beta",
+      "rank": 2,
+      "score": 48.0,
+      "testSessionHandle": "beta-session"
+    },
+    {
+      "agentId": 303,
+      "codingamer": {"publicHandle": "gamma-handle", "pseudo": "Gamma", "userId": 3},
+      "inProgress": false,
+      "programmingLanguage": "C",
+      "pseudo": "Gamma",
+      "rank": 3,
+      "score": 45.0,
+      "testSessionHandle": "gamma-session"
+    },
+    {
+      "agentId": 404,
+      "codingamer": {"publicHandle": "delta-handle", "pseudo": "Delta", "userId": 4},
+      "inProgress": false,
+      "programmingLanguage": "C++",
+      "pseudo": "Delta",
+      "rank": 4,
+      "score": 44.0,
+      "testSessionHandle": "delta-session"
+    },
+    {
+      "agentId": 505,
+      "codingamer": {"publicHandle": "epsilon-handle", "pseudo": "Epsilon", "userId": 5},
+      "inProgress": false,
+      "programmingLanguage": "C++",
+      "pseudo": "Epsilon",
+      "rank": 5,
+      "score": 42.0,
+      "testSessionHandle": "epsilon-session"
+    },
+    {
+      "agentId": 606,
+      "codingamer": {"publicHandle": "zeta-handle", "pseudo": "Zeta", "userId": 6},
+      "inProgress": false,
+      "programmingLanguage": "C++",
+      "pseudo": "Zeta",
+      "rank": 6,
+      "score": 41.0,
+      "testSessionHandle": "zeta-session"
+    }
+  ]
+}

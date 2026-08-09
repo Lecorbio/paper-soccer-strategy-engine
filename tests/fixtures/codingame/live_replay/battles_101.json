@@ -1,0 +1,50 @@
+[
+  {
+    "done": true,
+    "gameId": 1001,
+    "players": [
+      {
+        "nickname": "Alpha",
+        "playerAgentId": 101,
+        "position": 1,
+        "publicHandle": "alpha-handle",
+        "submissionId": 1101,
+        "testSessionHandle": "alpha-session",
+        "userId": 1
+      },
+      {
+        "nickname": "Beta",
+        "playerAgentId": 202,
+        "position": 0,
+        "publicHandle": "beta-handle",
+        "submissionId": 1202,
+        "testSessionHandle": "beta-session",
+        "userId": 2
+      }
+    ]
+  },
+  {
+    "done": true,
+    "gameId": 1002,
+    "players": [
+      {
+        "nickname": "Alpha",
+        "playerAgentId": 101,
+        "position": 1,
+        "publicHandle": "alpha-handle",
+        "submissionId": 1101,
+        "testSessionHandle": "alpha-session",
+        "userId": 1
+      },
+      {
+        "nickname": "Opponent",
+        "playerAgentId": 9002,
+        "position": 0,
+        "publicHandle": "opponent-handle",
+        "submissionId": 19002,
+        "testSessionHandle": "opponent-session",
+        "userId": 90
+      }
+    ]
+  }
+]

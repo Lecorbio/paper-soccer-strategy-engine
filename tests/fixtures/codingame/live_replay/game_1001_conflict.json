@@ -1,0 +1,32 @@
+{
+  "agents": [
+    {"agentId": 202, "codingamer": {"pseudo": "Beta"}, "index": 0},
+    {"agentId": 101, "codingamer": {"pseudo": "Alpha"}, "index": 1}
+  ],
+  "frames": [
+    {"agentId": 0, "stdout": "5"},
+    {"agentId": 1, "stdout": "2"},
+    {"agentId": 0, "stdout": "4"},
+    {"agentId": 1, "stdout": "70"},
+    {"agentId": 0, "stdout": "20"},
+    {"agentId": 1, "stdout": "0"},
+    {"agentId": 0, "stdout": "0"},
+    {"agentId": 1, "stdout": "2"},
+    {"agentId": 0, "stdout": "2"},
+    {"agentId": 1, "stdout": "1"},
+    {"agentId": 0, "stdout": "35"},
+    {"agentId": 1, "stdout": "5"},
+    {"agentId": 0, "stdout": "4"},
+    {"agentId": 1, "stdout": "3"},
+    {"agentId": 0, "stdout": "5"},
+    {"agentId": 1, "stdout": "5"},
+    {"agentId": 0, "stdout": "2"},
+    {"agentId": 1, "stdout": "2"},
+    {"agentId": 0, "stdout": "72"},
+    {"agentId": 1, "stdout": "36003653"},
+    {"agentId": 0, "stdout": "03647"},
+    {"agentId": 1, "stdout": "55"}
+  ],
+  "gameId": 1001,
+  "ranks": [1, 0]
+}

@@ -1,0 +1,17 @@
+{
+  "agents": [
+    {"agentId": 202, "codingamer": {"pseudo": "Beta"}, "index": 0},
+    {"agentId": 101, "codingamer": {"pseudo": "Alpha"}, "index": 1}
+  ],
+  "frames": [
+    {"agentId": 0, "stdout": "0"},
+    {"agentId": 1, "stdout": "0"},
+    {"agentId": 0, "stdout": "3"},
+    {"agentId": 1, "stdout": "0"},
+    {"agentId": 0, "stdout": "61"},
+    {"agentId": 1, "stdout": "0"},
+    {"agentId": 0, "stdout": "07"}
+  ],
+  "gameId": 1001,
+  "ranks": [0, 1]
+}
