@@ -1,0 +1,342 @@
+{
+  "banks": {
+    "reference/t10_prospective_validation.tsv": {
+      "carried_forward_from": {
+        "reference": "reference/t9_sealed_final.tsv",
+        "sha256": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204",
+        "transformation": "split column test to validation only"
+      },
+      "records": 72,
+      "role": "prospective_validation",
+      "sealed": false,
+      "sha256": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d"
+    },
+    "reference/t10_sealed_final.tsv": {
+      "distance": {
+        "d0": 4,
+        "d1": 35,
+        "d2": 30
+      },
+      "focus_agents": 21,
+      "focus_rows": [
+        {
+          "agent_id": 2588475,
+          "rows": 9
+        },
+        {
+          "agent_id": 2601934,
+          "rows": 7
+        },
+        {
+          "agent_id": 2654687,
+          "rows": 7
+        },
+        {
+          "agent_id": 3010718,
+          "rows": 4
+        },
+        {
+          "agent_id": 3013187,
+          "rows": 2
+        },
+        {
+          "agent_id": 3040371,
+          "rows": 1
+        },
+        {
+          "agent_id": 3104696,
+          "rows": 8
+        },
+        {
+          "agent_id": 3330460,
+          "rows": 2
+        },
+        {
+          "agent_id": 3706654,
+          "rows": 1
+        },
+        {
+          "agent_id": 4079549,
+          "rows": 6
+        },
+        {
+          "agent_id": 4271564,
+          "rows": 2
+        },
+        {
+          "agent_id": 4561288,
+          "rows": 2
+        },
+        {
+          "agent_id": 4801558,
+          "rows": 6
+        },
+        {
+          "agent_id": 4816063,
+          "rows": 2
+        },
+        {
+          "agent_id": 4984854,
+          "rows": 1
+        },
+        {
+          "agent_id": 5104750,
+          "rows": 1
+        },
+        {
+          "agent_id": 5115116,
+          "rows": 1
+        },
+        {
+          "agent_id": 5205967,
+          "rows": 1
+        },
+        {
+          "agent_id": 5430764,
+          "rows": 1
+        },
+        {
+          "agent_id": 5571097,
+          "rows": 4
+        },
+        {
+          "agent_id": 5820842,
+          "rows": 1
+        }
+      ],
+      "maximum_focus_rows": 9,
+      "records": 69,
+      "role": "sealed_final",
+      "sealed": true,
+      "sha256": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb",
+      "source_games": 44,
+      "winner_tiers": {
+        "elite": 25,
+        "field": 44
+      }
+    }
+  },
+  "candidate": null,
+  "candidate_submission_sha256": null,
+  "immutability": {
+    "after_candidate_binding": "this manifest and both T10 banks are immutable; a candidate change requires a new versioned ladder",
+    "at_candidate_binding": "the active manifest must pin this evidence manifest, inherited protocol, candidate submission, and all harness hashes"
+  },
+  "prospective_strength_protocol": {
+    "diagnostic_only": [
+      "historical-role absolute score and uplift partitions",
+      "time-profile candidate_to_incumbent_throughput"
+    ],
+    "execution_contract": {
+      "candidate_runner_binding": "the future active candidate manifest must hash-pin its comparison runner before either T8 stage runs",
+      "common_jobs": 4,
+      "common_shard_count": 4,
+      "incumbent_submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+      "reason_for_four_shards": "limits concurrent table initialization and scheduler/memory noise relative to the deployment timing profile",
+      "sharding": "every profile in validation and final uses exactly four raw-evidence shards and a four-worker pool",
+      "time_budget_clock": "steady-clock wall time",
+      "time_budget_scope": "construction-inclusive: candidate bot construction and search both consume the 130ms wall-clock allowance",
+      "time_profile_node_cap": 3000000,
+      "within_opening_order": "the two candidate-color games and same-opening control run sequentially in one comparison-runner process"
+    },
+    "game_format": {
+      "candidate_games": "candidate versus rank5 once as each physical player",
+      "control_game": "rank5 versus rank5 on the same opening and budget",
+      "games_per_opening": 3
+    },
+    "runner_projection": {
+      "nodes": {
+        "node_budget": "profile.value",
+        "time_budget_ms": 0
+      },
+      "time_ms": {
+        "node_budget": "profile.max_nodes",
+        "time_budget_ms": "profile.value"
+      }
+    },
+    "stage_bank_policy": "validation and final each use one common bank for every profile; the two banks are disjoint by source game and canonical state",
+    "stages": {
+      "development": {
+        "bank": "reference/t3_development.tsv",
+        "bank_policy": "reuse the exposed frozen T3 development bank at future candidate binding",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_mean": 0.52,
+          "minimum_throughput_ratio": 0.9,
+          "node_budget_overrides": {
+            "5000": {
+              "minimum_mean": 0.5,
+              "require_at_least_as_many_wins_as_incumbent": true,
+              "require_more_wins_than_incumbent": false
+            }
+          },
+          "node_budgets": [
+            5000,
+            30000
+          ],
+          "require_more_wins_than_incumbent": true
+        },
+        "evidence_status": "exposed_adaptive_not_prospective"
+      },
+      "initial": {
+        "bank_policy": "reuse the already exposed frozen initial bank at future candidate binding",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_mean": 0.5,
+          "node_budget": 5000
+        },
+        "evidence_status": "exposed_adaptive_not_prospective"
+      },
+      "test": {
+        "bank": "reference/t8_sealed_final.tsv",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_ci_lower": 0.45,
+          "minimum_control_winner_retention": 0.75,
+          "minimum_elite_tier_score": 0.45,
+          "minimum_mean": 0.5,
+          "minimum_physical_color_uplift": -0.05,
+          "minimum_stratum_score": 0.45,
+          "minimum_throughput_ratio": 0.9,
+          "minimum_winner_tier_score": 0.4,
+          "required_jobs": 4,
+          "strength_profiles": [
+            {
+              "id": "100k-nodes",
+              "mode": "nodes",
+              "value": 100000
+            },
+            {
+              "id": "130ms",
+              "max_nodes": 3000000,
+              "mode": "time_ms",
+              "thresholds": {
+                "minimum_throughput_ratio": null
+              },
+              "value": 130
+            }
+          ]
+        },
+        "jobs": 4,
+        "shard_count": 4
+      },
+      "validation": {
+        "bank": "reference/t8_prospective_validation.tsv",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_ci_lower": 0.47,
+          "minimum_control_winner_retention": 0.8,
+          "minimum_elite_tier_score": 0.48,
+          "minimum_mean": 0.51,
+          "minimum_physical_color_uplift": -0.05,
+          "minimum_stratum_score": 0.48,
+          "minimum_throughput_ratio": 0.9,
+          "minimum_winner_tier_score": 0.48,
+          "required_jobs": 4,
+          "strength_profiles": [
+            {
+              "id": "30k-nodes",
+              "mode": "nodes",
+              "value": 30000
+            },
+            {
+              "id": "130ms",
+              "max_nodes": 3000000,
+              "mode": "time_ms",
+              "thresholds": {
+                "minimum_throughput_ratio": null
+              },
+              "value": 130
+            }
+          ]
+        },
+        "jobs": 4,
+        "shard_count": 4
+      }
+    },
+    "statistics": {
+      "confidence": 0.95,
+      "method": "source_game_cluster_percentile_bootstrap",
+      "resamples": 10000,
+      "seed": 8028218941123341919,
+      "unit": "source_game_cluster_of_color_swapped_opening_pairs"
+    },
+    "status": "predeclared_before_candidate_binding_and_outcomes"
+  },
+  "prospective_strength_protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c",
+  "protocol_carry_forward": {
+    "semantic_changes": [],
+    "source_ladder": "T9",
+    "source_protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c",
+    "stage_bank_aliases": {
+      "test": "reference/t10_sealed_final.tsv",
+      "validation": "reference/t10_prospective_validation.tsv"
+    }
+  },
+  "schema": "papersoccer.candidate-independent-t10-evidence.v1",
+  "selection": {
+    "candidate_independent": true,
+    "caps": {
+      "rows_per_focus_agent": 18,
+      "rows_per_game": 2,
+      "rows_per_game_distance": 1
+    },
+    "final": "fresh T10 v2 public acquisition, excluding every prior source game and canonical state; deterministic balanced sample at the maximum capacity under the frozen game caps",
+    "floors": {
+      "distance_rows": {
+        "d0": 4,
+        "d1": 24,
+        "d2": 24
+      },
+      "distinct_focus_agents": 12,
+      "elite_rows": 12,
+      "field_rows": 40
+    },
+    "fresh_pool": {
+      "cap_two_capacity": 69,
+      "distance": {
+        "d0": 4,
+        "d1": 65,
+        "d2": 75
+      },
+      "focus_agents": 21,
+      "no_shell_games": 534,
+      "overlap_states": 126,
+      "parseable_games": 650,
+      "source_games": 44,
+      "unique_states": 144,
+      "winner_tiers": {
+        "elite": 64,
+        "field": 80
+      }
+    },
+    "normalization": "historical winner rotated to player zero; horizontal reflection dedup",
+    "validation": "the outcome-unseen T9 sealed final, deterministically relabeled from split=test to split=validation after T9 validation rejection",
+    "validation_source_sha256": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204"
+  },
+  "sources": {
+    "submissions/codingame/promotion/acquire_t10_evidence.py": "17e6278b5a848404d9f8b75fea694ca6355142aa9a96142f582dbdf451f18176",
+    "submissions/codingame/promotion/freeze_t10_banks.py": "bca87557e7a87e1c9ca2c7ee41343fa1a82a25274900f2d3dc8254c3e3ca23ff",
+    "submissions/codingame/promotion/reference/t9_evidence_manifest.json": "5c4465b6cabec90c8ec0f5bb9cc8b9af65182f03136681e932a08e01de365845",
+    "submissions/codingame/promotion/reference/t9_sealed_final.tsv": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204",
+    "submissions/codingame/promotion/t10_evidence_ladder_v1.json": "74b412255304ec9d3043b2f10c42c63791dfcaa3a1539d94da3a73bbb359a3de",
+    "submissions/codingame/promotion/t10_evidence_ladder_v2.json": "00b912e25122c9600e97ca878669d9bc6ecf5a7f1339a87606154a7b135032db"
+  },
+  "status": "frozen_before_candidate_binding",
+  "t9_decision_and_final_nonconsumption": {
+    "bound_manifest_sha256": "4004325c6c34300c2781fb3464c9421de86c77d4846f45552d79c0d82e26f249",
+    "candidate_submission_sha256": "b13e1418b4fdd6f719208bd5ab6dd84f67fa55a7cc66f1c988d2ab8dcc9f6c69",
+    "decision_sha256": "0aba21a0307fad198e7b3f081de739511e8c9b8a78bddd43c2853c64dd6f81ce",
+    "failed_stage": "validation",
+    "final_immutable_snapshot_exists": false,
+    "final_ledger_marker_exists": false,
+    "final_report_exists": false,
+    "final_shards_exist": false,
+    "stage_status": {
+      "development": "pass",
+      "initial": "pass",
+      "test": "not_run_due_to_rejection",
+      "validation": "reject"
+    }
+  }
+}

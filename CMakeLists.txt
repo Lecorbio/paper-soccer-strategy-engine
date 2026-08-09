@@ -208,7 +208,9 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn topology)
+  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn topology
+  safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
+  reply_proof exchange_proof frontier_proof conservative_frontier_proof)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -291,6 +293,16 @@ if(NOT EMSCRIPTEN)
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission.cpp")
     add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+    if(PAPERSOCCER_CODINGAME_BOT STREQUAL "all_depth_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "reply_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "exchange_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof")
+      target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+      target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+        PRIVATE papersoccer_core)
+    endif()
     add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
              COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test)
 
@@ -308,7 +320,16 @@ if(NOT EMSCRIPTEN)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
       target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         PRIVATE papersoccer_core)
-      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology")
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "defensive_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "shell_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "all_depth_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "reply_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "exchange_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
             --bank
@@ -316,7 +337,7 @@ if(NOT EMSCRIPTEN)
             --stage smoke --node-budget 500 --max-turns 320
             --shard-count 1 --shard-index 0
             --output
-            ${CMAKE_CURRENT_BINARY_DIR}/topology-comparison-smoke.json)
+            ${CMAKE_CURRENT_BINARY_DIR}/${PAPERSOCCER_CODINGAME_BOT}-comparison-smoke.json)
       else()
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)

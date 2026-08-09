@@ -39,11 +39,30 @@ OPERATIONAL_FIELDS = (
     "overlong_actions",
     "unfinished_games",
 )
+MAX_NODE_BUDGET = (1 << 64) - 1
+MAX_TIME_BUDGET_MS = (1 << 32) - 1
+PROFILE_BOOLEAN_THRESHOLDS = {
+    "require_more_wins_than_incumbent",
+    "require_at_least_as_many_wins_as_incumbent",
+}
+PROFILE_NUMERIC_THRESHOLDS = {
+    "minimum_mean",
+    "minimum_ci_lower",
+    "minimum_color_score",
+    "minimum_control_adjusted_uplift",
+    "minimum_physical_color_uplift",
+    "minimum_historical_role_score",
+    "minimum_control_winner_retention",
+    "minimum_stratum_score",
+    "minimum_winner_tier_score",
+    "minimum_elite_tier_score",
+    "minimum_throughput_ratio",
+}
 BANK_FIELDS = (
     "opening_id", "split", "stratum", "source_agent_id", "source_game_id",
     "opponent_agent_id", "winner_player_id", "turn_index", "physical_edges",
     "state_key", "canonical_key", "ball_x", "ball_y", "mover",
-    "goal_distance_band", "used_edge_band", "shell_edge_band",
+    "winner_tier", "goal_distance_band", "used_edge_band", "shell_edge_band",
     "opening_family", "observed_winner_action", "transcript",
 )
 DIRECTIONS = (
@@ -229,6 +248,46 @@ def atomic_json(path: pathlib.Path, value) -> None:
     os.replace(temporary, path)
 
 
+def atomic_json_create_exclusive(path: pathlib.Path, value) -> None:
+    """Publish complete JSON only if no process has already claimed the path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as output:
+        temporary = pathlib.Path(output.name)
+        output.write(stable_json(value))
+        output.flush()
+        os.fsync(output.fileno())
+    try:
+        os.link(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def snapshot_verified_bank(source: pathlib.Path, destination: pathlib.Path,
+                           expected_sha256: str) -> pathlib.Path:
+    """Freeze a validated bank before workers can observe later path changes."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if sha256(destination) != expected_sha256:
+            raise UsageError("existing bank snapshot has an unexpected hash")
+        return destination
+    with source.open("rb") as input_file, tempfile.NamedTemporaryFile(
+        mode="wb", dir=destination.parent, delete=False
+    ) as output_file:
+        temporary = pathlib.Path(output_file.name)
+        for block in iter(lambda: input_file.read(1024 * 1024), b""):
+            output_file.write(block)
+    try:
+        if sha256(temporary) != expected_sha256:
+            raise UsageError("bank changed while its snapshot was being created")
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return destination
+
+
 def load_manifest(path: pathlib.Path):
     try:
         manifest = json.loads(path.read_text())
@@ -369,6 +428,11 @@ def validate(manifest_path: pathlib.Path, bot: str | None = None):
         if config["bank"] in referenced_banks:
             problems.append(f"multiple stages reference bank {config['bank']}")
         referenced_banks.add(config["bank"])
+        try:
+            configured_strength_profiles(config)
+            configured_required_jobs(config)
+        except UsageError as error:
+            problems.append(f"stage {stage}: {error}")
         summary = bank_summaries.get(config["bank"])
         if summary is not None and summary["split"] != stage:
             problems.append(
@@ -453,8 +517,54 @@ def locked_test_consumption_path(bank_hash: str):
     return HOLDOUT_LEDGER / f"locked-test-consumption-{bank_hash[:16]}.json"
 
 
-def verify_locked_test_consumption(manifest: dict, manifest_hash: str,
-                                   candidate_hash: str):
+def locked_test_consumption_marker(manifest: dict, manifest_hash: str,
+                                   candidate_hash: str, shard_count: int):
+    config = manifest["stages"]["test"]
+    bank_hash = manifest["banks"][config["bank"]]["sha256"]
+    marker = {
+        "candidate_submission_sha256": candidate_hash,
+        "manifest_sha256": manifest_hash,
+        "bank_sha256": bank_hash,
+        "shard_count": shard_count,
+    }
+    profiles = configured_strength_profiles(config)
+    if uses_explicit_strength_profiles(config):
+        marker.update({
+            "schema": "papersoccer.codingame-locked-test-consumption.v2",
+            "strength_profiles": [
+                strength_profile_identity(profile) for profile in profiles
+            ],
+        })
+    else:
+        marker.update({
+            "schema": "papersoccer.codingame-locked-test-consumption.v1",
+            "node_budgets": [profile["value"] for profile in profiles],
+        })
+    return marker
+
+
+def stage_profile_shard_count(directory: pathlib.Path, manifest: dict,
+                              stage: str) -> int:
+    counts = []
+    for profile in configured_strength_profiles(manifest["stages"][stage]):
+        shard_directory = (
+            directory / "shards" / stage / profile["directory"]
+        )
+        count = len(list(shard_directory.glob("shard-*-of-*.json")))
+        if count <= 0:
+            raise IncompleteError(
+                f"stage {stage} has no {profile['id']} shards"
+            )
+        counts.append(count)
+    if len(set(counts)) != 1:
+        raise IncompleteError(
+            f"stage {stage} profiles use different shard counts"
+        )
+    return counts[0]
+
+
+def verify_locked_test_consumption(directory: pathlib.Path, manifest: dict,
+                                   manifest_hash: str, candidate_hash: str):
     config = manifest["stages"]["test"]
     bank_hash = manifest["banks"][config["bank"]]["sha256"]
     path = locked_test_consumption_path(bank_hash)
@@ -464,17 +574,16 @@ def verify_locked_test_consumption(manifest: dict, manifest_hash: str,
         marker = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise IncompleteError(f"invalid locked-test consumption record: {error}") from error
-    expected_budgets = configured_node_budgets(config)
-    if (
-        marker.get("schema") != "papersoccer.codingame-locked-test-consumption.v1"
-        or marker.get("candidate_submission_sha256") != candidate_hash
-        or marker.get("manifest_sha256") != manifest_hash
-        or marker.get("bank_sha256") != bank_hash
-        or marker.get("node_budgets") != expected_budgets
-        or not isinstance(marker.get("shard_count"), int)
-        or marker["shard_count"] <= 0
-    ):
+    shard_count = marker.get("shard_count")
+    if (isinstance(shard_count, bool) or not isinstance(shard_count, int) or
+            shard_count <= 0 or marker != locked_test_consumption_marker(
+                manifest, manifest_hash, candidate_hash, shard_count
+            )):
         raise IncompleteError("locked-test consumption identity mismatch")
+    if shard_count != stage_profile_shard_count(directory, manifest, "test"):
+        raise IncompleteError(
+            "locked-test consumption shard count does not match raw evidence"
+        )
     return path
 
 
@@ -525,6 +634,17 @@ def write_nonstage_rejection(directory: pathlib.Path, bot: str,
     return decision
 
 
+def candidate_hypothesis_requirement(manifest: dict, candidate_hash: str):
+    expected_hash = manifest.get("candidate_submission_sha256", candidate_hash)
+    return {
+        "id": "candidate_matches_frozen_hypothesis",
+        "passed": candidate_hash == expected_hash,
+        "observed": candidate_hash,
+        "operator": "==",
+        "threshold": expected_hash,
+    }
+
+
 def preflight(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
               results_root: pathlib.Path):
     validation = validate(manifest_path, bot)
@@ -554,6 +674,7 @@ def preflight(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
     requirements = [
         {"id": "generated_submission_exists", "passed": submission.exists()},
         {"id": "generated_submission_ascii", "passed": all(byte < 128 for byte in data)},
+        candidate_hypothesis_requirement(manifest, candidate_hash),
         {"id": "generated_submission_size", "passed": len(data) <= source_limit,
          "observed": len(data), "operator": "<=", "threshold": source_limit},
         {"id": "artifact_tests", "passed": artifact_test_error is None,
@@ -646,11 +767,15 @@ def requirement(identifier: str, observed, operator: str, threshold):
     }
 
 
-def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: dict):
+def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: dict,
+                    node_budget: int | None = None,
+                    strength_profile: dict | None = None):
+    if node_budget is not None and strength_profile is not None:
+        raise ValueError("stage aggregation received two profile selectors")
     pairs = []
     operational = {field: 0 for field in OPERATIONAL_FIELDS}
     for shard in shards:
-        if shard.get("schema") != "papersoccer.codingame-promotion-shard.v1":
+        if shard.get("schema") != "papersoccer.codingame-promotion-shard.v2":
             raise GateError("runner produced an unsupported shard")
         if shard["identity"] != identity:
             raise GateError("shard identity mismatch")
@@ -663,13 +788,16 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         raise GateError(f"stage {stage} is incomplete or contains duplicate pairs")
     pairs.sort(key=lambda pair: pair["opening_id"])
 
-    scores = [float(pair["candidate_pair_score"]) for pair in pairs
-              if pair["candidate_pair_score"] is not None]
-    mean = sum(scores) / len(scores) if scores else 0.0
+    scores = []
     candidate_wins = 0
     incumbent_wins = 0
     color_scores = {"candidate_player_0": [], "candidate_player_1": []}
+    control_role_scores = {"candidate_player_0": [], "candidate_player_1": []}
+    historical_candidate_scores = {"winner": [], "opponent": []}
+    historical_control_scores = {"winner": [], "opponent": []}
+    retained = converted = 0
     stratum_scores = {}
+    winner_tier_scores = {}
     won_2_0 = split_1_1 = lost_0_2 = 0
     diagnostics = {
         "candidate_nodes": 0,
@@ -680,34 +808,91 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         "incumbent_depth_sum": 0,
         "candidate_ms": 0.0,
         "incumbent_ms": 0.0,
-        "corridor_probes": 0,
-        "corridor_activations": 0,
-        "corridor_breakers": 0,
+        "rebound_goal_probes": 0,
+        "rebound_goal_hits": 0,
+        "rebound_loss_hits": 0,
+        "exchange_ply1_probes": 0,
+        "exchange_ply1_win_hits": 0,
+        "exchange_ply1_loss_hits": 0,
+        "exchange_ply1_cutoffs": 0,
+        "exchange_ply2_probes": 0,
+        "exchange_ply2_win_hits": 0,
+        "exchange_ply2_loss_hits": 0,
+        "exchange_ply2_cutoffs": 0,
     }
     for pair in pairs:
-        score = pair["candidate_pair_score"]
+        games = pair.get("games")
+        if not isinstance(games, list) or len(games) != 2:
+            raise GateError("runner pair does not contain exactly two candidate games")
+        games_by_role = {}
+        for game in games:
+            candidate_player = int(game.get("candidate_player", -1))
+            winner = game.get("winner")
+            if candidate_player not in (0, 1) or winner not in (0, 1):
+                raise GateError("runner candidate game has an invalid role or winner")
+            if candidate_player in games_by_role:
+                raise GateError("runner repeated a candidate role")
+            games_by_role[candidate_player] = game
+        if set(games_by_role) != {0, 1}:
+            raise GateError("runner candidate roles are incomplete")
+
+        control_winner = pair.get("incumbent_control", {}).get("winner")
+        if control_winner not in (0, 1):
+            raise GateError("runner did not finish the incumbent control game")
+        control_turns = pair.get("incumbent_control", {}).get("turns")
+        if not isinstance(control_turns, int) or control_turns <= 0:
+            raise GateError("runner control game has an invalid turn count")
+
+        candidate_outcomes = {
+            role: float(games_by_role[role]["winner"] == role)
+            for role in (0, 1)
+        }
+        recomputed_score = sum(candidate_outcomes.values()) / 2.0
+        raw_score = pair.get("candidate_pair_score")
+        if raw_score is None or not math.isclose(
+            float(raw_score), recomputed_score, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise GateError("runner candidate pair score is inconsistent")
+        score = recomputed_score
+        scores.append(score)
+
+        historical_winner = int(pair.get("historical_winner_player", -1))
+        if historical_winner not in (0, 1):
+            raise GateError("runner pair has an invalid historical winner")
+        for role in (0, 1):
+            control_role_scores[f"candidate_player_{role}"].append(
+                float(control_winner == role)
+            )
+        for label, role in (
+            ("winner", historical_winner),
+            ("opponent", 1 - historical_winner),
+        ):
+            historical_candidate_scores[label].append(candidate_outcomes[role])
+            historical_control_scores[label].append(float(control_winner == role))
+        retained += int(candidate_outcomes[control_winner])
+        converted += int(candidate_outcomes[1 - control_winner])
         if score == 1.0:
             won_2_0 += 1
         elif score == 0.5:
             split_1_1 += 1
         elif score == 0.0:
             lost_0_2 += 1
-        if score is not None:
-            stratum_scores.setdefault(pair["stratum"], []).append(float(score))
-        for game in pair["games"]:
+        stratum_scores.setdefault(pair["stratum"], []).append(score)
+        winner_tier_scores.setdefault(pair["winner_tier"], []).append(score)
+        for game in games:
             for key in diagnostics:
                 if key not in ("candidate_ms", "incumbent_ms"):
                     diagnostics[key] += int(game.get(key, 0))
             diagnostics["candidate_ms"] += float(game.get("candidate_ms", 0.0))
             diagnostics["incumbent_ms"] += float(game.get("incumbent_ms", 0.0))
-            winner = game["winner"]
+            winner = int(game["winner"])
             candidate_player = int(game["candidate_player"])
-            if winner is None:
-                continue
-            won = int(winner) == candidate_player
+            won = winner == candidate_player
             candidate_wins += int(won)
             incumbent_wins += int(not won)
             color_scores[f"candidate_player_{candidate_player}"].append(float(won))
+
+    mean = sum(scores) / len(scores) if scores else 0.0
 
     statistics = manifest["statistics"]
     confidence = None
@@ -723,9 +908,87 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         key: sum(values) / len(values) if values else 0.0
         for key, values in color_scores.items()
     }
+    control_role_means = {
+        key: sum(values) / len(values) if values else 0.0
+        for key, values in control_role_scores.items()
+    }
+    role_uplifts = {
+        key: color_means[key] - control_role_means[key]
+        for key in color_means
+    }
+    historical_candidate_means = {
+        key: sum(values) / len(values)
+        for key, values in historical_candidate_scores.items()
+    }
+    historical_control_means = {
+        key: sum(values) / len(values)
+        for key, values in historical_control_scores.items()
+    }
+    historical_uplifts = {
+        key: historical_candidate_means[key] - historical_control_means[key]
+        for key in historical_candidate_means
+    }
+    regressions = len(pairs) - retained
+    improvements = converted
+    retention_score = retained / len(pairs)
+    conversion_score = converted / len(pairs)
+    minimum_physical_color_uplift = min(role_uplifts.values())
+    minimum_historical_uplift = min(historical_uplifts.values())
+    minimum_historical_role_score = min(historical_candidate_means.values())
+    minimum_adjusted_uplift = min(
+        minimum_physical_color_uplift, minimum_historical_uplift
+    )
+    control_normalization = {
+        "method": (
+            "rank5_vs_rank5_per_opening_same_time_budget_with_node_cap"
+            if strength_profile is not None and
+            strength_profile["mode"] == "time_ms"
+            else "rank5_vs_rank5_per_opening_same_node_budget"
+        ),
+        "openings": len(pairs),
+        "winner_counts": {
+            "player_0": sum(control_role_scores["candidate_player_0"]),
+            "player_1": sum(control_role_scores["candidate_player_1"]),
+        },
+        "physical_baseline_scores": control_role_means,
+        "candidate_physical_scores": color_means,
+        "physical_uplifts": role_uplifts,
+        "minimum_physical_color_uplift": minimum_physical_color_uplift,
+        "historical_baseline_scores": historical_control_means,
+        "candidate_historical_scores": historical_candidate_means,
+        "historical_uplifts": historical_uplifts,
+        "minimum_historical_uplift": minimum_historical_uplift,
+        "minimum_historical_role_score": minimum_historical_role_score,
+        "winner_role": {
+            "retained": retained,
+            "regressed": regressions,
+            "score": retention_score,
+        },
+        "loser_role": {
+            "converted": converted,
+            "not_converted": len(pairs) - converted,
+            "score": conversion_score,
+        },
+        "improvements": improvements,
+        "regressions": regressions,
+        "net_uplift": (improvements - regressions) / (2.0 * len(pairs)),
+        "minimum_adjusted_uplift": minimum_adjusted_uplift,
+    }
     stratum_means = {
         key: sum(values) / len(values) for key, values in sorted(stratum_scores.items())
     }
+    winner_tier_means = {
+        key: sum(values) / len(values)
+        for key, values in sorted(winner_tier_scores.items())
+    }
+    elite_tier_values = [
+        value for key in ("rank1", "elite")
+        for value in winner_tier_scores.get(key, [])
+    ]
+    elite_tier_mean = (
+        sum(elite_tier_values) / len(elite_tier_values)
+        if elite_tier_values else 0.0
+    )
     diagnostics["candidate_mean_nodes"] = (
         diagnostics["candidate_nodes"] / diagnostics["candidate_searches"]
         if diagnostics["candidate_searches"] else 0.0
@@ -755,7 +1018,18 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         diagnostics["incumbent_nodes_per_ms"]
         if diagnostics["incumbent_nodes_per_ms"] else 0.0
     )
-    config = manifest["stages"][stage]
+    base_config = manifest["stages"][stage]
+    config = dict(base_config)
+    if node_budget is not None:
+        config.update(base_config.get("node_budget_overrides", {}).get(
+            str(node_budget), {}
+        ))
+    if strength_profile is not None:
+        if strength_profile["mode"] == "nodes":
+            config.update(base_config.get("node_budget_overrides", {}).get(
+                str(strength_profile["value"]), {}
+            ))
+        config.update(strength_profile.get("thresholds", {}))
     requirements = [
         requirement("operational_counts_zero", sum(operational.values()), "==", 0),
         requirement("cluster_mean_score", promotion_mean, ">=", config["minimum_mean"]),
@@ -764,7 +1038,11 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         requirements.append(
             requirement("candidate_game_wins", candidate_wins, ">", incumbent_wins)
         )
-    if "minimum_throughput_ratio" in config:
+    if config.get("require_at_least_as_many_wins_as_incumbent"):
+        requirements.append(requirement(
+            "candidate_game_wins_noninferior", candidate_wins, ">=", incumbent_wins
+        ))
+    if config.get("minimum_throughput_ratio") is not None:
         requirements.append(requirement(
             "candidate_to_incumbent_throughput",
             diagnostics["candidate_to_incumbent_throughput"], ">=",
@@ -780,14 +1058,44 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
             "minimum_color_score", min(color_means.values()), ">=",
             config["minimum_color_score"],
         ))
+    if "minimum_control_adjusted_uplift" in config:
+        requirements.append(requirement(
+            "minimum_control_adjusted_uplift", minimum_adjusted_uplift, ">=",
+            config["minimum_control_adjusted_uplift"],
+        ))
+    if "minimum_physical_color_uplift" in config:
+        requirements.append(requirement(
+            "minimum_physical_color_uplift", minimum_physical_color_uplift, ">=",
+            config["minimum_physical_color_uplift"],
+        ))
+    if "minimum_historical_role_score" in config:
+        requirements.append(requirement(
+            "minimum_historical_role_score", minimum_historical_role_score, ">=",
+            config["minimum_historical_role_score"],
+        ))
+    if "minimum_control_winner_retention" in config:
+        requirements.append(requirement(
+            "control_winner_retention", retention_score, ">=",
+            config["minimum_control_winner_retention"],
+        ))
     if "minimum_stratum_score" in config:
         requirements.append(requirement(
             "minimum_stratum_score", min(stratum_means.values()), ">=",
             config["minimum_stratum_score"],
         ))
+    if "minimum_winner_tier_score" in config:
+        requirements.append(requirement(
+            "minimum_winner_tier_score", min(winner_tier_means.values()), ">=",
+            config["minimum_winner_tier_score"],
+        ))
+    if "minimum_elite_tier_score" in config:
+        requirements.append(requirement(
+            "elite_winner_tier_score", elite_tier_mean, ">=",
+            config["minimum_elite_tier_score"],
+        ))
     passed = all(item["passed"] for item in requirements)
     return {
-        "schema": "papersoccer.codingame-promotion-stage.v1",
+        "schema": "papersoccer.codingame-promotion-stage.v2",
         "stage": stage,
         "identity": identity,
         "verdict": "pass" if passed else "reject",
@@ -802,7 +1110,10 @@ def aggregate_stage(manifest: dict, stage: str, shards: list[dict], identity: di
         },
         "confidence_interval": confidence,
         "color_scores": color_means,
+        "control_normalization": control_normalization,
         "stratum_scores": stratum_means,
+        "winner_tier_scores": winner_tier_means,
+        "elite_winner_tier_score": elite_tier_mean,
         "diagnostics": diagnostics,
         "operational": operational,
         "requirements": requirements,
@@ -823,6 +1134,139 @@ def configured_node_budgets(config: dict):
     return budgets
 
 
+def uses_explicit_strength_profiles(config: dict) -> bool:
+    return "strength_profiles" in config
+
+
+def configured_required_jobs(config: dict) -> int | None:
+    value = config.get("required_jobs")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise UsageError("stage required_jobs must be a positive integer")
+    return value
+
+
+def configured_strength_profiles(config: dict):
+    if not uses_explicit_strength_profiles(config):
+        return [
+            {
+                "id": f"{budget}-nodes",
+                "mode": "nodes",
+                "value": budget,
+                "max_nodes": budget,
+                "node_budget": budget,
+                "time_budget_ms": 0,
+                "directory": f"{budget}-nodes",
+                "thresholds": {},
+                "legacy": True,
+            }
+            for budget in configured_node_budgets(config)
+        ]
+    if "node_budget" in config or "node_budgets" in config:
+        raise UsageError(
+            "stage cannot mix strength_profiles with legacy node budgets"
+        )
+    raw_profiles = config.get("strength_profiles")
+    if not isinstance(raw_profiles, list) or not raw_profiles:
+        raise UsageError("stage strength_profiles must be a non-empty list")
+    profiles = []
+    ids = set()
+    executions = set()
+    allowed = {"id", "mode", "value", "max_nodes", "thresholds"}
+    for raw in raw_profiles:
+        if not isinstance(raw, dict) or set(raw) - allowed:
+            raise UsageError("stage has an invalid strength profile object")
+        profile_id = raw.get("id")
+        mode = raw.get("mode")
+        value = raw.get("value")
+        if (not isinstance(profile_id, str) or
+                re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile_id) is None):
+            raise UsageError("strength profile id must be a filesystem-safe slug")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise UsageError("strength profile value must be a positive integer")
+        thresholds = raw.get("thresholds", {})
+        if not isinstance(thresholds, dict) or any(
+            not isinstance(key, str) for key in thresholds
+        ):
+            raise UsageError("strength profile thresholds must be an object")
+        unknown_thresholds = set(thresholds) - (
+            PROFILE_BOOLEAN_THRESHOLDS | PROFILE_NUMERIC_THRESHOLDS
+        )
+        if unknown_thresholds:
+            raise UsageError(
+                "strength profile has unknown threshold keys: " +
+                ", ".join(sorted(unknown_thresholds))
+            )
+        for key, threshold in thresholds.items():
+            if key in PROFILE_BOOLEAN_THRESHOLDS:
+                if not isinstance(threshold, bool):
+                    raise UsageError(
+                        f"strength profile threshold {key} must be boolean"
+                    )
+            elif key == "minimum_throughput_ratio" and threshold is None:
+                pass
+            elif (isinstance(threshold, bool) or
+                  not isinstance(threshold, (int, float)) or
+                  not math.isfinite(float(threshold))):
+                raise UsageError(
+                    f"strength profile threshold {key} must be finite numeric"
+                )
+        if mode == "nodes":
+            if value > MAX_NODE_BUDGET:
+                raise UsageError("node profile value exceeds uint64")
+            max_nodes = raw.get("max_nodes", value)
+            if (isinstance(max_nodes, bool) or
+                    not isinstance(max_nodes, int) or max_nodes <= 0 or
+                    max_nodes != value):
+                raise UsageError(
+                    "node profile max_nodes must equal its profile value"
+                )
+            node_budget = value
+            time_budget_ms = 0
+        elif mode == "time_ms":
+            if value > MAX_TIME_BUDGET_MS:
+                raise UsageError("time profile value exceeds uint32")
+            max_nodes = raw.get("max_nodes")
+            if (isinstance(max_nodes, bool) or not isinstance(max_nodes, int) or
+                    max_nodes <= 0 or max_nodes > MAX_NODE_BUDGET):
+                raise UsageError(
+                    "time profile requires a uint64 max_nodes safety cap"
+                )
+            node_budget = max_nodes
+            time_budget_ms = value
+        else:
+            raise UsageError("strength profile mode must be nodes or time_ms")
+        execution = (node_budget, time_budget_ms)
+        if profile_id in ids:
+            raise UsageError(f"duplicate strength profile id {profile_id}")
+        if execution in executions:
+            raise UsageError("strength profiles repeat an execution budget")
+        ids.add(profile_id)
+        executions.add(execution)
+        profiles.append({
+            "id": profile_id,
+            "mode": mode,
+            "value": value,
+            "max_nodes": max_nodes,
+            "node_budget": node_budget,
+            "time_budget_ms": time_budget_ms,
+            "directory": profile_id,
+            "thresholds": dict(thresholds),
+            "legacy": False,
+        })
+    return profiles
+
+
+def strength_profile_identity(profile: dict):
+    return {
+        "id": profile["id"],
+        "mode": profile["mode"],
+        "value": profile["value"],
+        "max_nodes": profile["max_nodes"],
+    }
+
+
 def combine_budget_profiles(stage: str, identity: dict, profiles: list[dict]):
     if len(profiles) == 1:
         return profiles[0]
@@ -834,7 +1278,7 @@ def combine_budget_profiles(stage: str, identity: dict, profiles: list[dict]):
             combined_requirements.append(combined)
     passed = all(profile["passed"] for profile in profiles)
     return {
-        "schema": "papersoccer.codingame-promotion-stage.v1",
+        "schema": "papersoccer.codingame-promotion-stage.v2",
         "stage": stage,
         "identity": identity,
         "verdict": "pass" if passed else "reject",
@@ -847,34 +1291,127 @@ def combine_budget_profiles(stage: str, identity: dict, profiles: list[dict]):
     }
 
 
+def combine_strength_profiles(stage: str, identity: dict,
+                              profiles: list[dict]):
+    combined_requirements = []
+    for profile in profiles:
+        profile_id = profile["strength_profile"]["id"]
+        for item in profile["requirements"]:
+            combined = dict(item)
+            combined["id"] = f"{profile_id}:{item['id']}"
+            combined_requirements.append(combined)
+    passed = all(profile["passed"] for profile in profiles)
+    return {
+        "schema": "papersoccer.codingame-promotion-stage.v2",
+        "stage": stage,
+        "identity": identity,
+        "verdict": "pass" if passed else "reject",
+        "passed": passed,
+        "reason_codes": [
+            item["id"] for item in combined_requirements if not item["passed"]
+        ],
+        "strength_profiles": profiles,
+        "requirements": combined_requirements,
+    }
+
+
+def shard_configuration_matches_profile(configuration: dict, stage: str,
+                                        profile: dict, maximum_turns: int,
+                                        shard_count: int,
+                                        shard_index: int | None = None):
+    if not isinstance(configuration, dict):
+        return False
+    try:
+        matches = (
+            configuration.get("stage") == stage
+            and int(configuration.get("node_budget", -1)) ==
+                profile["node_budget"]
+            and int(configuration.get("maximum_turns", -1)) == maximum_turns
+            and int(configuration.get("shard_count", -1)) == shard_count
+        )
+        if profile["legacy"]:
+            matches = matches and int(
+                configuration.get("time_budget_ms", 0)
+            ) == 0
+        else:
+            matches = matches and int(
+                configuration.get("time_budget_ms", -1)
+            ) == profile["time_budget_ms"]
+        if shard_index is not None:
+            matches = matches and int(
+                configuration.get("shard_index", -1)
+            ) == shard_index
+        return matches
+    except (TypeError, ValueError):
+        return False
+
+
+def aggregate_strength_profile(manifest: dict, stage: str, shards: list[dict],
+                               identity: dict, profile: dict):
+    if profile["legacy"]:
+        report = aggregate_stage(
+            manifest, stage, shards, identity, node_budget=profile["value"]
+        )
+        report["node_budget"] = profile["value"]
+        return report
+    report = aggregate_stage(
+        manifest, stage, shards, identity, strength_profile=profile
+    )
+    report["strength_profile"] = strength_profile_identity(profile)
+    return report
+
+
+def combine_configured_profiles(stage: str, identity: dict, profiles: list[dict],
+                                reports: list[dict]):
+    if any(profile["legacy"] for profile in profiles):
+        if not all(profile["legacy"] for profile in profiles):
+            raise ValueError("internal mixed legacy/explicit profile list")
+        return combine_budget_profiles(stage, identity, reports)
+    return combine_strength_profiles(stage, identity, reports)
+
+
 def reaggregate_stage_from_shards(directory: pathlib.Path, manifest: dict,
                                   stage: str, identity: dict):
     config = manifest["stages"][stage]
-    profiles = []
-    for node_budget in configured_node_budgets(config):
-        shard_directory = directory / "shards" / stage / f"{node_budget}-nodes"
+    profiles = configured_strength_profiles(config)
+    reports = []
+    expected_shard_count = None
+    for profile in profiles:
+        shard_directory = (
+            directory / "shards" / stage / profile["directory"]
+        )
         paths = sorted(shard_directory.glob("shard-*-of-*.json"))
         if not paths:
-            raise IncompleteError(f"stage {stage} has no {node_budget}-node shards")
+            raise IncompleteError(
+                f"stage {stage} has no {profile['id']} shards"
+            )
         shards = [json.loads(path.read_text()) for path in paths]
         shard_count = len(shards)
+        if expected_shard_count is None:
+            expected_shard_count = shard_count
+        elif shard_count != expected_shard_count:
+            raise IncompleteError(
+                f"stage {stage} profiles use different shard counts"
+            )
         indices = set()
         for shard in shards:
+            if not isinstance(shard, dict):
+                raise IncompleteError(
+                    f"stage {stage} contains a malformed shard"
+                )
             configuration = shard.get("configuration", {})
-            if (
-                configuration.get("stage") != stage
-                or int(configuration.get("node_budget", -1)) != node_budget
-                or int(configuration.get("maximum_turns", -1)) != config["maximum_turns"]
-                or int(configuration.get("shard_count", -1)) != shard_count
+            if not shard_configuration_matches_profile(
+                configuration, stage, profile, config["maximum_turns"],
+                shard_count,
             ):
                 raise IncompleteError(f"stage {stage} shard configuration mismatch")
             indices.add(int(configuration.get("shard_index", -1)))
         if indices != set(range(shard_count)):
             raise IncompleteError(f"stage {stage} shard indices are incomplete")
-        profile = aggregate_stage(manifest, stage, shards, identity)
-        profile["node_budget"] = node_budget
-        profiles.append(profile)
-    return combine_budget_profiles(stage, identity, profiles)
+        reports.append(
+            aggregate_strength_profile(manifest, stage, shards, identity, profile)
+        )
+    return combine_configured_profiles(stage, identity, profiles, reports)
 
 
 def require_stage_prerequisites(directory: pathlib.Path, stage: str, bot: str,
@@ -906,13 +1443,27 @@ def require_stage_prerequisites(directory: pathlib.Path, stage: str, bot: str,
             sha256(paths["runner"])
         )
         if (
-            report.get("schema") != "papersoccer.codingame-promotion-stage.v1"
+            report.get("schema") != "papersoccer.codingame-promotion-stage.v2"
             or report.get("stage") != predecessor
             or report.get("passed") is not True
             or report.get("identity") != expected_identity
         ):
             raise IncompleteError(
                 f"stage {stage} requires a passing current {predecessor} report"
+            )
+        try:
+            recomputed = reaggregate_stage_from_shards(
+                directory, manifest, predecessor, expected_identity
+            )
+        except (GateError, KeyError, TypeError, ValueError,
+                json.JSONDecodeError) as error:
+            raise IncompleteError(
+                f"stage {stage} requires complete raw {predecessor} evidence"
+            ) from error
+        if report != recomputed:
+            raise IncompleteError(
+                f"stage {stage} predecessor {predecessor} report does not "
+                "match its raw evidence"
             )
 
 
@@ -974,36 +1525,48 @@ def run_stage(bot: str, stage: str, jobs: int, manifest_path: pathlib.Path,
     )
     if identity["bank_sha256"] != bank_hash:
         raise UsageError("current bank does not match the validated manifest")
+    config = manifest["stages"][stage]
+    required_jobs = configured_required_jobs(config)
+    if required_jobs is not None and jobs != required_jobs:
+        raise UsageError(
+            f"stage {stage} requires exactly {required_jobs} jobs"
+        )
     record_count = manifest["banks"][bank_relative]["records"]
     jobs = max(1, min(jobs, record_count))
     destination = result_directory(
         bot, candidate_hash, validation["manifest_sha256"], results_root
     )
+    bank = snapshot_verified_bank(
+        bank,
+        destination / "banks" / f"{stage}-{bank_hash}.tsv",
+        bank_hash,
+    )
     require_stage_prerequisites(
         destination, stage, bot, manifest, candidate_hash,
         validation["manifest_sha256"], paths
     )
-    config = manifest["stages"][stage]
-    node_budgets = configured_node_budgets(config)
+    strength_profiles = configured_strength_profiles(config)
     if stage == "test":
         if not (ROOT / ".git").is_dir():
             raise UsageError("locked-test consumption requires the repository Git directory")
         consumption = locked_test_consumption_path(bank_hash)
-        marker = {
-            "schema": "papersoccer.codingame-locked-test-consumption.v1",
-            "candidate_submission_sha256": candidate_hash,
-            "manifest_sha256": validation["manifest_sha256"],
-            "bank_sha256": bank_hash,
-            "node_budgets": node_budgets,
-            "shard_count": jobs,
-        }
-        if consumption.exists() and json.loads(consumption.read_text()) != marker:
-            raise UsageError(
-                "locked test bank was already exposed to another run identity; "
-                "freeze a new game-disjoint test bank"
-            )
-        if not consumption.exists():
-            atomic_json(consumption, marker)
+        marker = locked_test_consumption_marker(
+            manifest, validation["manifest_sha256"], candidate_hash, jobs
+        )
+        try:
+            atomic_json_create_exclusive(consumption, marker)
+        except FileExistsError:
+            try:
+                existing_marker = json.loads(consumption.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                raise UsageError(
+                    f"locked test bank has an invalid consumption marker: {error}"
+                ) from error
+            if existing_marker != marker:
+                raise UsageError(
+                    "locked test bank was already exposed to another run identity; "
+                    "freeze a new game-disjoint test bank"
+                )
 
     write_incomplete_decision(
         destination, bot, candidate_hash, validation["manifest_sha256"],
@@ -1011,9 +1574,9 @@ def run_stage(bot: str, stage: str, jobs: int, manifest_path: pathlib.Path,
     )
 
     def run_one(specification):
-        node_budget, index = specification
+        profile, index = specification
         shard_directory = (
-            destination / "shards" / stage / f"{node_budget}-nodes"
+            destination / "shards" / stage / profile["directory"]
         )
         shard_directory.mkdir(parents=True, exist_ok=True)
         final_path = shard_directory / f"shard-{index:03d}-of-{jobs:03d}.json"
@@ -1023,22 +1586,21 @@ def run_stage(bot: str, stage: str, jobs: int, manifest_path: pathlib.Path,
                 cached = json.loads(final_path.read_text())
                 cached_config = cached["configuration"]
                 if (
-                    cached.get("schema") == "papersoccer.codingame-promotion-shard.v1"
+                    cached.get("schema") == "papersoccer.codingame-promotion-shard.v2"
                     and cached.get("identity") == identity
-                    and cached_config.get("stage") == stage
-                    and int(cached_config.get("node_budget", -1)) == node_budget
-                    and int(cached_config.get("maximum_turns", -1)) == config["maximum_turns"]
-                    and int(cached_config.get("shard_count", -1)) == jobs
-                    and int(cached_config.get("shard_index", -1)) == index
+                    and shard_configuration_matches_profile(
+                        cached_config, stage, profile, config["maximum_turns"],
+                        jobs, index,
+                    )
                     and not any(int(cached["operational"].get(field, 0))
                                 for field in OPERATIONAL_FIELDS)
                 ):
-                    return node_budget, cached
+                    return profile["id"], cached
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
         command = [
             paths["runner"], "--bank", bank, "--stage", stage,
-            "--node-budget", node_budget,
+            "--node-budget", profile["node_budget"],
             "--max-turns", config["maximum_turns"],
             "--shard-count", jobs, "--shard-index", index,
             "--output", temporary,
@@ -1048,28 +1610,50 @@ def run_stage(bot: str, stage: str, jobs: int, manifest_path: pathlib.Path,
             "--incumbent-sha256", identity["incumbent_submission_sha256"],
             "--runner-sha256", identity["runner_sha256"],
         ]
+        if profile["time_budget_ms"]:
+            command.extend(["--time-budget-ms", profile["time_budget_ms"]])
         run_checked(command)
+        try:
+            produced = json.loads(temporary.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise GateError("runner produced an unreadable shard") from error
+        produced_config = (
+            produced.get("configuration", {})
+            if isinstance(produced, dict) else {}
+        )
+        if (
+            not isinstance(produced, dict)
+            or produced.get("schema") !=
+                "papersoccer.codingame-promotion-shard.v2"
+            or produced.get("identity") != identity
+            or not shard_configuration_matches_profile(
+                produced_config, stage, profile, config["maximum_turns"],
+                jobs, index,
+            )
+        ):
+            raise GateError("runner produced a mismatched shard identity")
         os.replace(temporary, final_path)
-        return node_budget, json.loads(final_path.read_text())
+        return profile["id"], produced
 
     specifications = [
-        (node_budget, index)
-        for node_budget in node_budgets
+        (profile, index)
+        for profile in strength_profiles
         for index in range(jobs)
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
         completed = list(executor.map(run_one, specifications))
-    shards_by_budget = {node_budget: [] for node_budget in node_budgets}
-    for node_budget, shard in completed:
-        shards_by_budget[node_budget].append(shard)
-    profiles = []
-    for node_budget in node_budgets:
-        profile = aggregate_stage(
-            manifest, stage, shards_by_budget[node_budget], identity
-        )
-        profile["node_budget"] = node_budget
-        profiles.append(profile)
-    report = combine_budget_profiles(stage, identity, profiles)
+    shards_by_profile = {profile["id"]: [] for profile in strength_profiles}
+    for profile_id, shard in completed:
+        shards_by_profile[profile_id].append(shard)
+    profile_reports = []
+    for profile in strength_profiles:
+        profile_reports.append(aggregate_strength_profile(
+            manifest, stage, shards_by_profile[profile["id"]], identity,
+            profile,
+        ))
+    report = combine_configured_profiles(
+        stage, identity, strength_profiles, profile_reports
+    )
     atomic_json(destination / f"{stage}.json", report)
     if not report["passed"]:
         write_stage_rejection(destination, bot, stage, report, manifest)
@@ -1078,6 +1662,11 @@ def run_stage(bot: str, stage: str, jobs: int, manifest_path: pathlib.Path,
         printable["node_budget_profiles"] = [
             {key: value for key, value in profile.items() if key != "records"}
             for profile in printable["node_budget_profiles"]
+        ]
+    if "strength_profiles" in printable:
+        printable["strength_profiles"] = [
+            {key: value for key, value in profile.items() if key != "records"}
+            for profile in printable["strength_profiles"]
         ]
     print(stable_json(printable), end="")
     return report
@@ -1188,14 +1777,27 @@ def timing(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
         sha256(paths["runner"])
     )
     if (
-        test_report.get("schema") != "papersoccer.codingame-promotion-stage.v1"
+        test_report.get("schema") != "papersoccer.codingame-promotion-stage.v2"
         or test_report.get("stage") != "test"
         or test_report.get("identity") != expected_test_identity
         or test_report.get("passed") is not True
     ):
         raise IncompleteError("timing requires a passing locked test")
+    try:
+        recomputed_test_report = reaggregate_stage_from_shards(
+            destination, manifest, "test", expected_test_identity
+        )
+    except (GateError, KeyError, TypeError, ValueError,
+            json.JSONDecodeError) as error:
+        raise IncompleteError(
+            "timing requires complete raw locked-test evidence"
+        ) from error
+    if test_report != recomputed_test_report:
+        raise IncompleteError(
+            "timing locked-test report does not match its raw evidence"
+        )
     verify_locked_test_consumption(
-        manifest, validation["manifest_sha256"], candidate_hash
+        destination, manifest, validation["manifest_sha256"], candidate_hash
     )
     write_incomplete_decision(
         destination, bot, candidate_hash, validation["manifest_sha256"],
@@ -1294,6 +1896,7 @@ def evaluate(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
         {"id": "generated_submission_exists", "passed": True},
         {"id": "generated_submission_ascii",
          "passed": all(byte < 128 for byte in submission_data)},
+        candidate_hypothesis_requirement(manifest, candidate_hash),
         {"id": "generated_submission_size",
          "passed": len(submission_data) <= manifest["source_limit"],
          "observed": len(submission_data), "operator": "<=",
@@ -1341,7 +1944,7 @@ def evaluate(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
             and preflight_matches
             and failed_report is not None
             and failed_report.get("schema") ==
-                "papersoccer.codingame-promotion-stage.v1"
+                "papersoccer.codingame-promotion-stage.v2"
             and failed_report.get("stage") == failed_stage
             and failed_report.get("identity") == failed_identity
             and failed_report.get("passed") is False
@@ -1419,7 +2022,7 @@ def evaluate(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
             manifest, manifest_hash, stage, candidate_hash, runner_hash
         )
         if (
-            report.get("schema") != "papersoccer.codingame-promotion-stage.v1"
+            report.get("schema") != "papersoccer.codingame-promotion-stage.v2"
             or report.get("stage") != stage
             or report.get("identity") != expected_identity
         ):
@@ -1435,7 +2038,9 @@ def evaluate(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
         if report != recomputed:
             problems.append(f"{stage}_evidence")
     try:
-        verify_locked_test_consumption(manifest, manifest_hash, candidate_hash)
+        verify_locked_test_consumption(
+            directory, manifest, manifest_hash, candidate_hash
+        )
     except IncompleteError:
         problems.append("locked_test_consumption_identity")
     if problems:
@@ -1466,7 +2071,7 @@ def evaluate(bot: str, manifest_path: pathlib.Path, build: pathlib.Path,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("validate", "preflight", "run", "timing", "evaluate", "all"))
-    parser.add_argument("--bot", default="topology")
+    parser.add_argument("--bot", default="conservative_frontier_proof")
     parser.add_argument("--stage", choices=REQUIRED_STAGES)
     parser.add_argument("--jobs", type=int, default=max(1, min(8, os.cpu_count() or 1)))
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)

@@ -1,0 +1,455 @@
+{
+  "banks": {
+    "reference/t7_prospective_validation.tsv": {
+      "distance": {
+        "d0": 8,
+        "d1": 36,
+        "d2": 28
+      },
+      "focus_agents": 14,
+      "focus_rows": [
+        {
+          "agent_id": 2588583,
+          "rows": 3
+        },
+        {
+          "agent_id": 2597500,
+          "rows": 5
+        },
+        {
+          "agent_id": 2767844,
+          "rows": 7
+        },
+        {
+          "agent_id": 3047622,
+          "rows": 7
+        },
+        {
+          "agent_id": 4070038,
+          "rows": 6
+        },
+        {
+          "agent_id": 4413390,
+          "rows": 7
+        },
+        {
+          "agent_id": 4792144,
+          "rows": 2
+        },
+        {
+          "agent_id": 5056277,
+          "rows": 2
+        },
+        {
+          "agent_id": 5067018,
+          "rows": 2
+        },
+        {
+          "agent_id": 5141540,
+          "rows": 2
+        },
+        {
+          "agent_id": 5476643,
+          "rows": 3
+        },
+        {
+          "agent_id": 6249875,
+          "rows": 8
+        },
+        {
+          "agent_id": 6429945,
+          "rows": 13
+        },
+        {
+          "agent_id": 6589744,
+          "rows": 5
+        }
+      ],
+      "maximum_focus_rows": 13,
+      "records": 72,
+      "role": "prospective_validation",
+      "sealed": false,
+      "sha256": "878ca510b63e50339eaeccc57b50445c6b5915b568ccb26a588b386341c5b002",
+      "source_games": 48,
+      "winner_tiers": {
+        "elite": 14,
+        "field": 58
+      }
+    },
+    "reference/t7_sealed_final.tsv": {
+      "distance": {
+        "d0": 9,
+        "d1": 37,
+        "d2": 26
+      },
+      "focus_agents": 14,
+      "focus_rows": [
+        {
+          "agent_id": 2588583,
+          "rows": 4
+        },
+        {
+          "agent_id": 2597500,
+          "rows": 8
+        },
+        {
+          "agent_id": 2767844,
+          "rows": 6
+        },
+        {
+          "agent_id": 3047622,
+          "rows": 7
+        },
+        {
+          "agent_id": 4070038,
+          "rows": 2
+        },
+        {
+          "agent_id": 4413390,
+          "rows": 4
+        },
+        {
+          "agent_id": 5056277,
+          "rows": 2
+        },
+        {
+          "agent_id": 5067018,
+          "rows": 1
+        },
+        {
+          "agent_id": 5141540,
+          "rows": 1
+        },
+        {
+          "agent_id": 5476643,
+          "rows": 4
+        },
+        {
+          "agent_id": 5524151,
+          "rows": 2
+        },
+        {
+          "agent_id": 6249875,
+          "rows": 7
+        },
+        {
+          "agent_id": 6429945,
+          "rows": 13
+        },
+        {
+          "agent_id": 6589744,
+          "rows": 11
+        }
+      ],
+      "maximum_focus_rows": 13,
+      "records": 72,
+      "role": "sealed_final",
+      "sealed": true,
+      "sha256": "de7e592610c2ab2842874b5b647fca951cf7d51373b4c0c49d8b255b9543ed59",
+      "source_games": 47,
+      "winner_tiers": {
+        "elite": 19,
+        "field": 53
+      }
+    }
+  },
+  "candidate": null,
+  "candidate_submission_sha256": null,
+  "immutability": {
+    "after_candidate_binding": "this evidence manifest and both banks are immutable; any protocol change requires a new versioned evidence ladder",
+    "at_candidate_binding": "the active T7 manifest must pin this evidence-manifest hash, the protocol hash, candidate submission, and runner hashes",
+    "before_candidate_binding": "an explicit --update-manifest transition is required to replace this candidate-independent manifest"
+  },
+  "prior_decisions": {
+    "t6_final": {
+      "sha256": "ef48f9e190aa14cf4b791641ca73276f0794179b3a2f1c3fa26eda32d465cdd4",
+      "status": "exposed"
+    },
+    "t6_validation": {
+      "sha256": "69c0f3e78c878ed6e51e599f7207d445dbeb8a8564fecac63ff4105953bf600d",
+      "status": "exposed_rejected"
+    }
+  },
+  "prospective_strength_protocol": {
+    "diagnostic_only": [
+      "control_normalization.candidate_historical_scores",
+      "control_normalization.historical_baseline_scores",
+      "control_normalization.historical_uplifts",
+      "control_normalization.minimum_historical_uplift",
+      "control_normalization.minimum_historical_role_score",
+      "time-profile candidate_to_incumbent_throughput"
+    ],
+    "execution_contract": {
+      "candidate_runner_binding": "the active candidate manifest must hash-pin the candidate-specific comparison runner before any T7 stage runs",
+      "incumbent_submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+      "locked_final_identity": "the v2 consumption marker binds ordered profile identities and the common raw-evidence shard count",
+      "profile_sharding": "all profiles in one stage use the same positive shard count; one worker pool has max_workers equal to that count",
+      "time_budget_clock": "steady-clock wall time",
+      "time_profile_node_cap": 3000000,
+      "within_opening_order": "the two candidate-color games and rank5-vs-rank5 control are run sequentially by the same runner process"
+    },
+    "game_format": {
+      "candidate_games": "candidate versus rank5 once as each physical player",
+      "control_game": "rank5 versus rank5 on the same opening and execution budget",
+      "games_per_opening": 3
+    },
+    "runner_projection": {
+      "nodes": {
+        "node_budget": "profile.value",
+        "time_budget_ms": 0
+      },
+      "time_ms": {
+        "node_budget": "profile.max_nodes",
+        "time_budget_ms": "profile.value"
+      }
+    },
+    "stage_bank_policy": "each stage uses one bank for every strength profile; validation uses the prospective T7 validation bank and test uses the disjoint sealed T7 final bank",
+    "stages": {
+      "development": {
+        "bank_policy": "reuse the frozen development bank at candidate binding",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_mean": 0.52,
+          "minimum_throughput_ratio": 0.9,
+          "node_budget_overrides": {
+            "5000": {
+              "minimum_mean": 0.5,
+              "require_at_least_as_many_wins_as_incumbent": true,
+              "require_more_wins_than_incumbent": false
+            }
+          },
+          "node_budgets": [
+            5000,
+            30000
+          ],
+          "require_more_wins_than_incumbent": true
+        }
+      },
+      "initial": {
+        "bank_policy": "reuse the frozen initial bank at candidate binding",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_mean": 0.5,
+          "node_budget": 5000
+        }
+      },
+      "test": {
+        "bank": "reference/t7_sealed_final.tsv",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_ci_lower": 0.45,
+          "minimum_control_winner_retention": 0.75,
+          "minimum_elite_tier_score": 0.45,
+          "minimum_mean": 0.5,
+          "minimum_physical_color_uplift": -0.05,
+          "minimum_stratum_score": 0.45,
+          "minimum_throughput_ratio": 0.9,
+          "minimum_winner_tier_score": 0.4,
+          "strength_profiles": [
+            {
+              "id": "100k-nodes",
+              "mode": "nodes",
+              "value": 100000
+            },
+            {
+              "id": "130ms",
+              "max_nodes": 3000000,
+              "mode": "time_ms",
+              "thresholds": {
+                "minimum_throughput_ratio": null
+              },
+              "value": 130
+            }
+          ]
+        }
+      },
+      "validation": {
+        "bank": "reference/t7_prospective_validation.tsv",
+        "configuration": {
+          "maximum_turns": 320,
+          "minimum_ci_lower": 0.47,
+          "minimum_control_winner_retention": 0.8,
+          "minimum_elite_tier_score": 0.48,
+          "minimum_mean": 0.51,
+          "minimum_physical_color_uplift": -0.05,
+          "minimum_stratum_score": 0.48,
+          "minimum_throughput_ratio": 0.9,
+          "minimum_winner_tier_score": 0.48,
+          "strength_profiles": [
+            {
+              "id": "30k-nodes",
+              "mode": "nodes",
+              "value": 30000
+            },
+            {
+              "id": "130ms",
+              "max_nodes": 3000000,
+              "mode": "time_ms",
+              "thresholds": {
+                "minimum_throughput_ratio": null
+              },
+              "value": 130
+            }
+          ]
+        }
+      }
+    },
+    "statistics": {
+      "confidence": 0.95,
+      "method": "source_game_cluster_percentile_bootstrap",
+      "resamples": 10000,
+      "seed": 4774557432748095049,
+      "unit": "source_game_cluster_of_color_swapped_opening_pairs"
+    },
+    "status": "predeclared_before_candidate_binding_and_outcomes"
+  },
+  "prospective_strength_protocol_sha256": "83433c7b74ceb38a166d3a52324d7c137fe8db04038c48edc57d839effe82dba",
+  "schema": "papersoccer.candidate-independent-t7-evidence.v1",
+  "selection": {
+    "candidate_independent": true,
+    "caps": {
+      "rows_per_focus_agent": 16,
+      "rows_per_game": 2,
+      "rows_per_game_distance": 1
+    },
+    "floors": {
+      "distance_rows": {
+        "d0": 8,
+        "d1": 24,
+        "d2": 24
+      },
+      "distinct_focus_agents": 12,
+      "elite_rows": 12,
+      "field_rows": 40
+    },
+    "input": "only the append-only T7 v2 public-game snapshot",
+    "normalization": "historical winner rotated to player zero; horizontal reflection dedup",
+    "partition": "within each frozen (focus_agent_id, winner_tier) group, source games are ordered by sha256('t7-partition|' + game_id); alternating assignment starts at the low bit of sha256('t7-group|' + Python tuple representation); side 0 is validation and side 1 is final",
+    "prior_exclusion": {
+      "canonical_keys": 3195,
+      "canonical_overlap_games": 28,
+      "no_shell_games": 192,
+      "source_games": 853
+    },
+    "tier_taxonomy": {
+      "frozen_focus_scores": [
+        {
+          "agent_id": 2588583,
+          "score": 31.280748969768588
+        },
+        {
+          "agent_id": 2597500,
+          "score": 37.573719919417854
+        },
+        {
+          "agent_id": 2767844,
+          "score": 33.903472179071485
+        },
+        {
+          "agent_id": 2848831,
+          "score": 13.490127268040307
+        },
+        {
+          "agent_id": 3047622,
+          "score": 31.568029138199922
+        },
+        {
+          "agent_id": 4070038,
+          "score": 33.375046375807656
+        },
+        {
+          "agent_id": 4413390,
+          "score": 36.05429402404214
+        },
+        {
+          "agent_id": 4792144,
+          "score": 36.40614209402524
+        },
+        {
+          "agent_id": 4997814,
+          "score": 10.809652876433065
+        },
+        {
+          "agent_id": 5056277,
+          "score": 31.28443548553036
+        },
+        {
+          "agent_id": 5067018,
+          "score": 29.050396386083907
+        },
+        {
+          "agent_id": 5141540,
+          "score": 32.717760544955446
+        },
+        {
+          "agent_id": 5355234,
+          "score": 11.569703013688866
+        },
+        {
+          "agent_id": 5476643,
+          "score": 35.77698921648319
+        },
+        {
+          "agent_id": 5524151,
+          "score": 29.602617387502747
+        },
+        {
+          "agent_id": 6249875,
+          "score": 30.892297554166273
+        },
+        {
+          "agent_id": 6429945,
+          "score": 31.910153166000203
+        },
+        {
+          "agent_id": 6589744,
+          "score": 36.10438353027469
+        }
+      ],
+      "known_names": "existing rank1/elite name membership",
+      "public_elite_agent_ids": [
+        2597500,
+        4413390,
+        4792144,
+        5476643,
+        6589744
+      ],
+      "public_elite_score_cutoff": 35.0
+    }
+  },
+  "sources": {
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568126.json": "475e8e097f8d8eac1d8ab449fe72a3bcbea38753728c415722d9f5c858f08dcf",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568130.json": "5981c67047e2c801da3566375448b729dee168bce2704fef88e43fa4563a5da5",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568141.json": "24117a54fe0e18b4e9e750656b316cd3771d84a262f170e3190c75cc27595f08",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568150.json": "aaca35fc1d4763045ca450602163518721bcc1243fbce3434b8d0599085fc052",
+    "submissions/codingame/bots/jacek_nn/arena_batch_6568158.json": "33940006e2398fceb627049de6da12ad00720d990509f3d82df7604bdf7b9eb2",
+    "submissions/codingame/bots/rank_5/submission.cpp": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567975.json": "81c087e12df3193b1a7b349d322f9ccb4547985fb1666e223db25d42eacf8d3d",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567983.json": "acd046018f8a190213f92aef95c47fc9b66b08d528f168552053a892dc66b297",
+    "submissions/codingame/bots/selfplay_nn_v2/arena_batch_6567993.json": "2d954eecd073d0e2c25bc08a8453087d24881b8204261086a5f13303b73f6d1d",
+    "submissions/codingame/promotion/acquire_t7_evidence.py": "a59e73d6d3843f15bb0edb83e491b9372c1830c4640ca8468fd0914c9c4670e6",
+    "submissions/codingame/promotion/build_goal_shell_banks.py": "22c638df7f3d4bcac76733edb4ff81deb9fcd590b5cf0927c9c5068a7085058a",
+    "submissions/codingame/promotion/elite_final_holdout_v1.json": "576acf8d5627430392f2357c3af91dd35d23198cd0835c77b4bbb1f4296e894e",
+    "submissions/codingame/promotion/elite_final_holdout_v2.json": "ebe3e24fd88eb8bcba1acf7bce7d89d2c53e934a204c833709b4a93d567d1a3f",
+    "submissions/codingame/promotion/freeze_t7_banks.py": "32976fbaa461dfdf65b6d13321fb1a2d045b1344e80e0dbf40b3afe8871cbd57",
+    "submissions/codingame/promotion/prospective_validation_extension_v1.json": "ba3926e72cc09bfaf526819b5d94ad88fb34299b19256d33aea356f4372b3b33",
+    "submissions/codingame/promotion/prospective_validation_extension_v2.json": "d0be20f224350fec8b5e0c147b0d38e1e8f5c0464971268ba417e809c7ac3bb0",
+    "submissions/codingame/promotion/rank1_locked_games.json": "f92c6a6d34c65149cc4640e3f90ae76297305860f5b4614275eb34de18e5fb71",
+    "submissions/codingame/promotion/reference/rank1_validation.tsv": "5363c74182980e0060083fd47b38bc73babe179609dfc8f4d3e6da3f38c15cd8",
+    "submissions/codingame/promotion/reference/t3_development.tsv": "048b86ab0ba781a7cb1289b1ff4712070af6e384f91fd157895ac9e92772f319",
+    "submissions/codingame/promotion/reference/t3_validation_source.tsv": "e078ee0b9b40672c846a7226f6a22c652e3da996b701de76cded445b146d5719",
+    "submissions/codingame/promotion/reference/t4_final_test.tsv": "ef48f9e190aa14cf4b791641ca73276f0794179b3a2f1c3fa26eda32d465cdd4",
+    "submissions/codingame/promotion/reference/t4_validation.tsv": "9ab3d1f63d94e84efa37507b934e2d266aa6c7d91dc69e50ec1b29d88c0a4efb",
+    "submissions/codingame/promotion/reference/t5_exposed_validation.tsv": "91aee496bae9646ba6f1257490e01ea3657657948897617285cf90bfccf266e2",
+    "submissions/codingame/promotion/reference/t5_replacement_exposed_validation.tsv": "ae5c3e1998c85a87e1545bd6b74874cd1dd8802e427190b2e398660d745abc92",
+    "submissions/codingame/promotion/reference/t6_exposed_final.tsv": "ef48f9e190aa14cf4b791641ca73276f0794179b3a2f1c3fa26eda32d465cdd4",
+    "submissions/codingame/promotion/reference/t6_exposed_validation.tsv": "69c0f3e78c878ed6e51e599f7207d445dbeb8a8564fecac63ff4105953bf600d",
+    "submissions/codingame/promotion/safe_inward_fresh_games.json": "e530d132f7f41acb9cc922b6b8aa354198d0fe1b679885281f493a8eecea7291",
+    "submissions/codingame/promotion/t6_validation_extension_v1.json": "bcb2b43203e905c4dcf8e0d5f14de85b3c42bc25620ce56a120bc9aee93f5a92",
+    "submissions/codingame/promotion/t6_validation_extension_v2.json": "3bfe3fe18c01ec8be2c3be7a01a90ed69953923e50cea0aa31c9f891063c2b8d",
+    "submissions/codingame/promotion/t7_evidence_ladder_v1.json": "fc409257a9e19cb8664385e9cdf32f07ae4ce196a6a619d67d17acf27fdf230e",
+    "submissions/codingame/promotion/t7_evidence_ladder_v2.json": "207384779c5bccd5bddec97eb6fbc40bf7132698310381d5c840d9e5e74755fc",
+    "submissions/codingame/tools/promotion_gate.py": "70f010daa684c020641f5761010fd4fc699c52b0fcbb0d4c78dd9576ef852e24"
+  },
+  "status": "frozen_before_candidate_binding"
+}

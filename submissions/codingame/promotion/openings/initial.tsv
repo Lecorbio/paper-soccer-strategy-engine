@@ -1,2 +1,2 @@
-opening_id	split	stratum	source_agent_id	source_game_id	opponent_agent_id	winner_player_id	turn_index	physical_edges	state_key	canonical_key	ball_x	ball_y	mover	goal_distance_band	used_edge_band	shell_edge_band	opening_family	observed_winner_action	transcript
-initial	initial	initial	0	0	0	0	0	0	858408463f447fde1db7fcd19016f2ebd16e1433d534de61219dda9927aa1983	858408463f447fde1db7fcd19016f2ebd16e1433d534de61219dda9927aa1983	4	6	0	-1	empty	empty	initial	-	-
+opening_id	split	stratum	source_agent_id	source_game_id	opponent_agent_id	winner_player_id	turn_index	physical_edges	state_key	canonical_key	ball_x	ball_y	mover	winner_tier	goal_distance_band	used_edge_band	shell_edge_band	opening_family	observed_winner_action	transcript
+initial	initial	initial	0	0	0	0	0	0	858408463f447fde1db7fcd19016f2ebd16e1433d534de61219dda9927aa1983	858408463f447fde1db7fcd19016f2ebd16e1433d534de61219dda9927aa1983	4	6	0	initial	-1	empty	empty	initial	-	-
