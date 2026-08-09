@@ -208,7 +208,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn topology
+  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
 
@@ -320,7 +321,14 @@ if(NOT EMSCRIPTEN)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
       target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         PRIVATE papersoccer_core)
-      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --candidate-simulations 32 --candidate-nodes 2048
+            --incumbent-nodes 200 --opening-limit 1 --max-turns 320
+            --output
+            ${CMAKE_CURRENT_BINARY_DIR}/neural-puct-comparison-smoke.json)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "defensive_proof" OR
@@ -344,6 +352,18 @@ if(NOT EMSCRIPTEN)
       endif()
     endif()
   endforeach()
+
+  add_executable(papersoccer_codingame_neural_puct_feature_probe
+    submissions/codingame/bots/neural_puct/feature_probe.cpp)
+
+  add_executable(papersoccer_codingame_neural_puct_selfplay_generator
+    submissions/codingame/bots/neural_puct/selfplay_generator.cpp)
+  target_include_directories(
+    papersoccer_codingame_neural_puct_selfplay_generator
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_neural_puct_selfplay_generator
+    PRIVATE papersoccer_core)
 
   add_executable(papersoccer_codingame_selfplay_nn_selfplay_generator
     submissions/codingame/bots/selfplay_nn/selfplay_generator.cpp)
