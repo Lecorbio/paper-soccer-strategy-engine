@@ -202,10 +202,43 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
   )
   set_tests_properties(papersoccer_game_review_gate_unit_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame
+            -p test_*.py)
+  set_tests_properties(papersoccer_codingame_promotion_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_banks_current
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/promotion/build_goal_shell_banks.py
+            --check)
+  set_tests_properties(papersoccer_codingame_promotion_banks_current PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
+    NAME papersoccer_codingame_promotion_manifest_valid
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/promotion_gate.py
+            validate --bot all_depth_proof)
+  set_tests_properties(papersoccer_codingame_promotion_manifest_valid PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn)
+  alpha_beta rank_5 challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  neural_puct topology
+  safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
+  reply_proof exchange_proof frontier_proof conservative_frontier_proof)
 
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
@@ -288,6 +321,16 @@ if(NOT EMSCRIPTEN)
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission.cpp")
     add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+    if(PAPERSOCCER_CODINGAME_BOT STREQUAL "all_depth_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "reply_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "exchange_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof")
+      target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+      target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
+        PRIVATE papersoccer_core)
+    endif()
     add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
              COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test)
 
@@ -305,10 +348,56 @@ if(NOT EMSCRIPTEN)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
       target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         PRIVATE papersoccer_core)
-      add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
-        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --candidate-simulations 32 --candidate-nodes 2048
+            --incumbent-nodes 200 --opening-limit 1 --max-turns 320
+            --output
+            ${CMAKE_CURRENT_BINARY_DIR}/neural-puct-comparison-smoke.json)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "defensive_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "shell_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "all_depth_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "reply_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "exchange_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof")
+        if(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology")
+          set(PAPERSOCCER_CODINGAME_SMOKE_BANK
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/promotion/reference/rank1_validation.tsv)
+        else()
+          set(PAPERSOCCER_CODINGAME_SMOKE_BANK
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/promotion/openings/initial.tsv)
+        endif()
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --bank
+            ${PAPERSOCCER_CODINGAME_SMOKE_BANK}
+            --stage smoke --node-budget 500 --max-turns 320
+            --shard-count 1 --shard-index 0
+            --output
+            ${CMAKE_CURRENT_BINARY_DIR}/${PAPERSOCCER_CODINGAME_BOT}-comparison-smoke.json)
+      else()
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate 1 2000 200)
+      endif()
     endif()
   endforeach()
+
+  add_executable(papersoccer_codingame_neural_puct_feature_probe
+    submissions/codingame/bots/neural_puct/feature_probe.cpp)
+
+  add_executable(papersoccer_codingame_neural_puct_selfplay_generator
+    submissions/codingame/bots/neural_puct/selfplay_generator.cpp)
+  target_include_directories(
+    papersoccer_codingame_neural_puct_selfplay_generator
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_neural_puct_selfplay_generator
+    PRIVATE papersoccer_core)
 
   add_executable(papersoccer_codingame_selfplay_nn_selfplay_generator
     submissions/codingame/bots/selfplay_nn/selfplay_generator.cpp)

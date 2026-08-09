@@ -1,0 +1,362 @@
+{
+  "banks": {
+    "openings/development.tsv": {
+      "records": 48,
+      "sha256": "048b86ab0ba781a7cb1289b1ff4712070af6e384f91fd157895ac9e92772f319"
+    },
+    "openings/initial.tsv": {
+      "records": 1,
+      "sha256": "4661c38f195f718d1fac83dc43f3683f5a101dd7b6858eaff2f529cb82b49a01"
+    },
+    "openings/test.tsv": {
+      "records": 69,
+      "sha256": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb"
+    },
+    "openings/validation.tsv": {
+      "records": 72,
+      "sha256": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d"
+    }
+  },
+  "candidate": "all_depth_proof",
+  "candidate_submission_sha256": "c9895b18b3117c5a93909da28aaff11977afaf76c584ce310c7f153694fd6376",
+  "evidence": {
+    "acquisition": {
+      "controller": {
+        "path": "submissions/codingame/promotion/acquire_t10_evidence.py",
+        "sha256": "17e6278b5a848404d9f8b75fea694ca6355142aa9a96142f582dbdf451f18176"
+      },
+      "freezer": {
+        "path": "submissions/codingame/promotion/freeze_t10_banks.py",
+        "sha256": "bca87557e7a87e1c9ca2c7ee41343fa1a82a25274900f2d3dc8254c3e3ca23ff"
+      },
+      "parseable_snapshot": {
+        "path": "submissions/codingame/promotion/t10_evidence_ladder_v2.json",
+        "sha256": "00b912e25122c9600e97ca878669d9bc6ecf5a7f1339a87606154a7b135032db"
+      },
+      "raw_snapshot": {
+        "path": "submissions/codingame/promotion/t10_evidence_ladder_v1.json",
+        "sha256": "74b412255304ec9d3043b2f10c42c63791dfcaa3a1539d94da3a73bbb359a3de"
+      }
+    },
+    "banks": {
+      "test": {
+        "active": "openings/test.tsv",
+        "reference": "reference/t10_sealed_final.tsv",
+        "role": "sealed_final",
+        "sealed": true,
+        "sha256": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb"
+      },
+      "validation": {
+        "active": "openings/validation.tsv",
+        "carried_forward_from": "reference/t9_sealed_final.tsv",
+        "reference": "reference/t10_prospective_validation.tsv",
+        "role": "prospective_validation",
+        "sealed": false,
+        "sha256": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d"
+      }
+    },
+    "candidate_independent_selection": true,
+    "immutability": {
+      "t10": "this manifest and both T10 banks are immutable; a candidate change requires a new versioned ladder",
+      "t9": "validation is exposed and rejected; its final was never consumed and is now the T10 prospective validation bank"
+    },
+    "manifest": {
+      "path": "submissions/codingame/promotion/reference/t10_evidence_manifest.json",
+      "schema": "papersoccer.candidate-independent-t10-evidence.v1",
+      "sha256": "c1ac7e83f01b7685eea906c2006b35485a352c71db75d31ce594567a8b96a14d"
+    },
+    "prior_decisions": {
+      "t9": {
+        "bound_manifest_sha256": "4004325c6c34300c2781fb3464c9421de86c77d4846f45552d79c0d82e26f249",
+        "candidate_submission_sha256": "b13e1418b4fdd6f719208bd5ab6dd84f67fa55a7cc66f1c988d2ab8dcc9f6c69",
+        "decision_sha256": "0aba21a0307fad198e7b3f081de739511e8c9b8a78bddd43c2853c64dd6f81ce",
+        "failed_stage": "validation",
+        "final_immutable_snapshot_exists": false,
+        "final_ledger_marker_exists": false,
+        "final_report_exists": false,
+        "final_shards_exist": false,
+        "stage_status": {
+          "development": "pass",
+          "initial": "pass",
+          "test": "not_run_due_to_rejection",
+          "validation": "reject"
+        }
+      }
+    },
+    "prospective_strength_protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c",
+    "protocol_carry_forward": {
+      "semantic_changes": [],
+      "source_ladder": "T9",
+      "source_protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c",
+      "stage_bank_aliases": {
+        "test": "reference/t10_sealed_final.tsv",
+        "validation": "reference/t10_prospective_validation.tsv"
+      }
+    },
+    "provenance": {
+      "post_binding": {
+        "builder": {
+          "path": "submissions/codingame/promotion/build_goal_shell_banks.py",
+          "sha256": "dfb30bd009ce0310f1545cd0512dfcbc217be700498332732b37eb663cd4bfa9"
+        },
+        "candidate": {
+          "comparison_gate.cpp": {
+            "path": "submissions/codingame/bots/all_depth_proof/comparison_gate.cpp",
+            "sha256": "66c0f6338f6df4d58ff4cc613cd2ddc8a2a2a2336c0f6b443d15a61d55eeac22"
+          },
+          "submission.cpp": {
+            "path": "submissions/codingame/bots/all_depth_proof/submission.cpp",
+            "sha256": "c9895b18b3117c5a93909da28aaff11977afaf76c584ce310c7f153694fd6376"
+          },
+          "submission_test.cpp": {
+            "path": "submissions/codingame/bots/all_depth_proof/submission_test.cpp",
+            "sha256": "2ff3067dffd2d87a84c984b402ae4c1dc32c0a1288cabde86e7ed2261c45d0da"
+          },
+          "timing_probe.cpp": {
+            "path": "submissions/codingame/bots/all_depth_proof/timing_probe.cpp",
+            "sha256": "b971c0f6f7ae37c93bf90efde2f757662b8c0a30a5b05c80134d537603254dd7"
+          }
+        },
+        "promotion_controller": {
+          "path": "submissions/codingame/tools/promotion_gate.py",
+          "sha256": "9f88a3ec8d181f622f1f634a1fde5cf476ad8a494b3fbf603f968b522d80ad2b"
+        }
+      },
+      "pre_binding": {
+        "acquisition": {
+          "path": "submissions/codingame/promotion/acquire_t10_evidence.py",
+          "sha256": "17e6278b5a848404d9f8b75fea694ca6355142aa9a96142f582dbdf451f18176"
+        },
+        "evidence_manifest": {
+          "path": "submissions/codingame/promotion/reference/t10_evidence_manifest.json",
+          "sha256": "c1ac7e83f01b7685eea906c2006b35485a352c71db75d31ce594567a8b96a14d"
+        },
+        "freezer": {
+          "path": "submissions/codingame/promotion/freeze_t10_banks.py",
+          "sha256": "bca87557e7a87e1c9ca2c7ee41343fa1a82a25274900f2d3dc8254c3e3ca23ff"
+        },
+        "protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c"
+      }
+    },
+    "provenance_split": "the immutable T10 manifest pins the rejected T9 validation, unconsumed-final rollover, fresh acquisition, banks, and inherited protocol; this active manifest separately pins the builder, controller, candidate submission, and three harness identities",
+    "status": "candidate_bound_before_t10_outcomes",
+    "t9_decision_and_final_nonconsumption": {
+      "bound_manifest_sha256": "4004325c6c34300c2781fb3464c9421de86c77d4846f45552d79c0d82e26f249",
+      "candidate_submission_sha256": "b13e1418b4fdd6f719208bd5ab6dd84f67fa55a7cc66f1c988d2ab8dcc9f6c69",
+      "decision_sha256": "0aba21a0307fad198e7b3f081de739511e8c9b8a78bddd43c2853c64dd6f81ce",
+      "failed_stage": "validation",
+      "final_immutable_snapshot_exists": false,
+      "final_ledger_marker_exists": false,
+      "final_report_exists": false,
+      "final_shards_exist": false,
+      "stage_status": {
+        "development": "pass",
+        "initial": "pass",
+        "test": "not_run_due_to_rejection",
+        "validation": "reject"
+      }
+    }
+  },
+  "evidence_manifest": "submissions/codingame/promotion/reference/t10_evidence_manifest.json",
+  "evidence_manifest_sha256": "c1ac7e83f01b7685eea906c2006b35485a352c71db75d31ce594567a8b96a14d",
+  "hypothesis": "retain the exact rebound-component Win/Loss proof at the current-turn root and depth-zero leaves, then apply the same proof at every positive-depth complete-turn node after the transposition-table probe; Unknown positions continue through unchanged evaluation and search",
+  "incumbent": {
+    "name": "rank_5",
+    "submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29"
+  },
+  "prospective_strength_protocol_sha256": "8d73a1c92d43d73a8ebe48a63084f5f5c578ead9516058920c0700165ec3851c",
+  "rules": {
+    "blocked_rule": "mover_loses",
+    "goal_rule": "own_goals_allowed",
+    "height": 10,
+    "positions_are_complete_turn_boundaries": true,
+    "width": 8
+  },
+  "schema": "papersoccer.codingame-promotion-manifest.v1",
+  "selection": {
+    "bank_copy": "the builder verifies each frozen reference hash, record count, header, and split, then copies its bytes directly to the active path",
+    "bank_snapshot": "the controller verifies each active bank hash, snapshots verified bytes into the immutable result identity, and never reopens a mutable bank path in an in-flight shard",
+    "control_normalization": "one rank_5-vs-rank_5 control uses the same opening and profile; physical-color uplift remains a hard gate, historical roles are diagnostic, and time-profile throughput is diagnostic",
+    "development": "byte-identical exposed adaptive T3 development bank retained",
+    "goal_shell": "historical winner to move at normalized y 9, 10, or 11",
+    "initial": "byte-identical exposed adaptive initial bank retained",
+    "normalization": "historical winner rotated to player zero; horizontal reflection dedup",
+    "protocol": {
+      "diagnostic_only": [
+        "historical-role absolute score and uplift partitions",
+        "time-profile candidate_to_incumbent_throughput"
+      ],
+      "execution_contract": {
+        "candidate_runner_binding": "the future active candidate manifest must hash-pin its comparison runner before either T8 stage runs",
+        "common_jobs": 4,
+        "common_shard_count": 4,
+        "incumbent_submission_sha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+        "reason_for_four_shards": "limits concurrent table initialization and scheduler/memory noise relative to the deployment timing profile",
+        "sharding": "every profile in validation and final uses exactly four raw-evidence shards and a four-worker pool",
+        "time_budget_clock": "steady-clock wall time",
+        "time_budget_scope": "construction-inclusive: candidate bot construction and search both consume the 130ms wall-clock allowance",
+        "time_profile_node_cap": 3000000,
+        "within_opening_order": "the two candidate-color games and same-opening control run sequentially in one comparison-runner process"
+      },
+      "game_format": {
+        "candidate_games": "candidate versus rank5 once as each physical player",
+        "control_game": "rank5 versus rank5 on the same opening and budget",
+        "games_per_opening": 3
+      },
+      "stage_bank_policy": "validation and final each use one common bank for every profile; the two banks are disjoint by source game and canonical state",
+      "status": "predeclared_before_candidate_binding_and_outcomes"
+    },
+    "t9_provenance": {
+      "bound_manifest_sha256": "4004325c6c34300c2781fb3464c9421de86c77d4846f45552d79c0d82e26f249",
+      "candidate_submission_sha256": "b13e1418b4fdd6f719208bd5ab6dd84f67fa55a7cc66f1c988d2ab8dcc9f6c69",
+      "decision_sha256": "0aba21a0307fad198e7b3f081de739511e8c9b8a78bddd43c2853c64dd6f81ce",
+      "failed_stage": "validation",
+      "final_immutable_snapshot_exists": false,
+      "final_ledger_marker_exists": false,
+      "final_report_exists": false,
+      "final_shards_exist": false,
+      "stage_status": {
+        "development": "pass",
+        "initial": "pass",
+        "test": "not_run_due_to_rejection",
+        "validation": "reject"
+      }
+    },
+    "test": "fresh T10 v2 public acquisition, excluding every prior source game and canonical state; deterministic balanced sample at the maximum capacity under the frozen game caps",
+    "validation": "the outcome-unseen T9 sealed final, deterministically relabeled from split=test to split=validation after T9 validation rejection"
+  },
+  "source_limit": 100000,
+  "sources": {
+    "submissions/codingame/bots/all_depth_proof/comparison_gate.cpp": "66c0f6338f6df4d58ff4cc613cd2ddc8a2a2a2336c0f6b443d15a61d55eeac22",
+    "submissions/codingame/bots/all_depth_proof/submission.cpp": "c9895b18b3117c5a93909da28aaff11977afaf76c584ce310c7f153694fd6376",
+    "submissions/codingame/bots/all_depth_proof/submission_test.cpp": "2ff3067dffd2d87a84c984b402ae4c1dc32c0a1288cabde86e7ed2261c45d0da",
+    "submissions/codingame/bots/all_depth_proof/timing_probe.cpp": "b971c0f6f7ae37c93bf90efde2f757662b8c0a30a5b05c80134d537603254dd7",
+    "submissions/codingame/bots/rank_5/submission.cpp": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+    "submissions/codingame/promotion/acquire_t10_evidence.py": "17e6278b5a848404d9f8b75fea694ca6355142aa9a96142f582dbdf451f18176",
+    "submissions/codingame/promotion/acquire_t8_evidence.py": "4524c2390818e4cd9eb8e2a81b1b8f21157c52679d4118a330bd8f6aab674f3f",
+    "submissions/codingame/promotion/build_goal_shell_banks.py": "dfb30bd009ce0310f1545cd0512dfcbc217be700498332732b37eb663cd4bfa9",
+    "submissions/codingame/promotion/freeze_t10_banks.py": "bca87557e7a87e1c9ca2c7ee41343fa1a82a25274900f2d3dc8254c3e3ca23ff",
+    "submissions/codingame/promotion/freeze_t8_banks.py": "7f94e896bf86ee9caa4c701bf04a23346cbfbd2cdabbdfdfb636a2333a7bbf50",
+    "submissions/codingame/promotion/freeze_t9_banks.py": "b822400d3e55571f7ff24ee4c87d79e3e5aa7ae7abf948c8f07bacf54c791b4f",
+    "submissions/codingame/promotion/reference/t10_evidence_manifest.json": "c1ac7e83f01b7685eea906c2006b35485a352c71db75d31ce594567a8b96a14d",
+    "submissions/codingame/promotion/reference/t10_prospective_validation.tsv": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d",
+    "submissions/codingame/promotion/reference/t10_sealed_final.tsv": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb",
+    "submissions/codingame/promotion/reference/t3_development.tsv": "048b86ab0ba781a7cb1289b1ff4712070af6e384f91fd157895ac9e92772f319",
+    "submissions/codingame/promotion/reference/t7_prospective_validation.tsv": "878ca510b63e50339eaeccc57b50445c6b5915b568ccb26a588b386341c5b002",
+    "submissions/codingame/promotion/reference/t7_sealed_final.tsv": "de7e592610c2ab2842874b5b647fca951cf7d51373b4c0c49d8b255b9543ed59",
+    "submissions/codingame/promotion/reference/t8_evidence_manifest.json": "0723c580f0e4f01f433bfae83aa71a1ede83c9e7e04cce969dd1818019121c08",
+    "submissions/codingame/promotion/reference/t8_prospective_validation.tsv": "e670fc39902308b66debd8deb3dc82fb9e0ce0f61562b3078328e99350c54f3b",
+    "submissions/codingame/promotion/reference/t8_sealed_final.tsv": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204",
+    "submissions/codingame/promotion/reference/t9_evidence_manifest.json": "5c4465b6cabec90c8ec0f5bb9cc8b9af65182f03136681e932a08e01de365845",
+    "submissions/codingame/promotion/reference/t9_prospective_validation.tsv": "e670fc39902308b66debd8deb3dc82fb9e0ce0f61562b3078328e99350c54f3b",
+    "submissions/codingame/promotion/reference/t9_sealed_final.tsv": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204",
+    "submissions/codingame/promotion/t10_evidence_ladder_v1.json": "74b412255304ec9d3043b2f10c42c63791dfcaa3a1539d94da3a73bbb359a3de",
+    "submissions/codingame/promotion/t10_evidence_ladder_v2.json": "00b912e25122c9600e97ca878669d9bc6ecf5a7f1339a87606154a7b135032db",
+    "submissions/codingame/promotion/t8_evidence_ladder_v1.json": "c2ee19e042dad13bb67aa1a47c4c768fa8233ad8d762d17783405938b0a824c5",
+    "submissions/codingame/promotion/t8_evidence_ladder_v2.json": "780ddfc963fff710cacbbe0083f6ed87cd1f58888a9e85cdfe691645872e1f50",
+    "submissions/codingame/tools/promotion_gate.py": "9f88a3ec8d181f622f1f634a1fde5cf476ad8a494b3fbf603f968b522d80ad2b"
+  },
+  "stages": {
+    "development": {
+      "bank": "openings/development.tsv",
+      "maximum_turns": 320,
+      "minimum_mean": 0.52,
+      "minimum_throughput_ratio": 0.9,
+      "node_budget_overrides": {
+        "5000": {
+          "minimum_mean": 0.5,
+          "require_at_least_as_many_wins_as_incumbent": true,
+          "require_more_wins_than_incumbent": false
+        }
+      },
+      "node_budgets": [
+        5000,
+        30000
+      ],
+      "require_more_wins_than_incumbent": true
+    },
+    "initial": {
+      "bank": "openings/initial.tsv",
+      "maximum_turns": 320,
+      "minimum_mean": 0.5,
+      "node_budget": 5000
+    },
+    "test": {
+      "bank": "openings/test.tsv",
+      "maximum_turns": 320,
+      "minimum_ci_lower": 0.45,
+      "minimum_control_winner_retention": 0.75,
+      "minimum_elite_tier_score": 0.45,
+      "minimum_mean": 0.5,
+      "minimum_physical_color_uplift": -0.05,
+      "minimum_stratum_score": 0.45,
+      "minimum_throughput_ratio": 0.9,
+      "minimum_winner_tier_score": 0.4,
+      "required_jobs": 4,
+      "strength_profiles": [
+        {
+          "id": "100k-nodes",
+          "mode": "nodes",
+          "value": 100000
+        },
+        {
+          "id": "130ms",
+          "max_nodes": 3000000,
+          "mode": "time_ms",
+          "thresholds": {
+            "minimum_throughput_ratio": null
+          },
+          "value": 130
+        }
+      ]
+    },
+    "validation": {
+      "bank": "openings/validation.tsv",
+      "maximum_turns": 320,
+      "minimum_ci_lower": 0.47,
+      "minimum_control_winner_retention": 0.8,
+      "minimum_elite_tier_score": 0.48,
+      "minimum_mean": 0.51,
+      "minimum_physical_color_uplift": -0.05,
+      "minimum_stratum_score": 0.48,
+      "minimum_throughput_ratio": 0.9,
+      "minimum_winner_tier_score": 0.48,
+      "required_jobs": 4,
+      "strength_profiles": [
+        {
+          "id": "30k-nodes",
+          "mode": "nodes",
+          "value": 30000
+        },
+        {
+          "id": "130ms",
+          "max_nodes": 3000000,
+          "mode": "time_ms",
+          "thresholds": {
+            "minimum_throughput_ratio": null
+          },
+          "value": 130
+        }
+      ]
+    }
+  },
+  "statistics": {
+    "confidence": 0.95,
+    "method": "source_game_cluster_percentile_bootstrap",
+    "resamples": 10000,
+    "seed": 8028218941123341919,
+    "unit": "source_game_cluster_of_color_swapped_opening_pairs"
+  },
+  "timing": {
+    "first_max_ms": 1000.0,
+    "first_p95_ms": 950.0,
+    "fresh_process_samples": 20,
+    "later_max_ms": 200.0,
+    "later_p95_ms": 190.0,
+    "shell_cases": [
+      "elite-d2",
+      "rank1-d1",
+      "elite-d0-dense"
+    ]
+  }
+}

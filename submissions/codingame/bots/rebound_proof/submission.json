@@ -1,0 +1,14 @@
+{
+  "schema": "papersoccer.codingame-submission.v1",
+  "sources": "sources.txt",
+  "output": "submission.cpp",
+  "source_limit": 100000,
+  "allowed_local_includes": [
+    "mcts_internal.hpp",
+    "papersoccer/geometry.hpp",
+    "papersoccer/rules.hpp",
+    "papersoccer/types.hpp",
+    "replay_book.hpp",
+    "replay_value_model.hpp"
+  ]
+}

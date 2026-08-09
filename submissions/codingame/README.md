@@ -10,7 +10,9 @@ submissions/codingame/
 │   ├── challenger/       completed exact-topology challenger experiment
 │   ├── selfplay_nn/      learned value and self-play training experiment
 │   ├── selfplay_nn_v2/   rank-5-anchored teacher-residual challenger
-│   └── jacek_nn/         Jacek-input, rank-5-anchored residual experiment
+│   ├── jacek_nn/         Jacek-input, rank-5-anchored residual experiment
+│   └── topology/         goal-connectivity ordering experiment
+├── promotion/            frozen elite banks and promotion manifest
 └── tools/                shared generation, protocol, and replay utilities
 ```
 
@@ -29,6 +31,8 @@ node submissions/codingame/tools/generate_submission.mjs rank_5 --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn_v2 --check
 node submissions/codingame/tools/generate_submission.mjs jacek_nn --check
+node submissions/codingame/tools/generate_submission.mjs topology --check
+python3 submissions/codingame/tools/promotion_gate.py validate
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -81,3 +85,7 @@ are in [tools/README.md](tools/README.md).
   `fb570f7d60157ad1681569011b4249a5db415c1aeca6f665936b26ba5cc52102`;
   complete evidence is in
   [`EXPERIMENTS.md`](bots/jacek_nn/EXPERIMENTS.md).
+- [`topology`](bots/topology/README.md) is the capped rebound-goal connectivity
+  ordering experiment. It was rejected on the frozen 96-pair development bank
+  at 94-98 before validation or live submission. Its experiment ledger and the
+  reusable disjoint-bank promotion harness preserve the result.

@@ -1,0 +1,9 @@
+include/papersoccer/types.hpp
+include/papersoccer/geometry.hpp
+include/papersoccer/rules.hpp
+src/bots/mcts_internal.hpp
+src/core/geometry.cpp
+src/core/rules.cpp
+submissions/codingame/bots/topology/replay_book.hpp
+submissions/codingame/bots/topology/replay_value_model.hpp
+submissions/codingame/bots/topology/bot.cpp
