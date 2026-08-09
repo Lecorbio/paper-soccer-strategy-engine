@@ -681,7 +681,12 @@ test("Game Review works in hosted Worker and direct-file fallback browsers", {
       }
     }
     try {
-      await rm(temporary, { recursive: true, force: true });
+      await rm(temporary, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
     } catch (error) {
       cleanupFailure ??= error;
     }
