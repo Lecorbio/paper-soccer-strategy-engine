@@ -40,3 +40,20 @@ development and prospective-validation gates at both configured node budgets,
 including control-relative role, stratum, throughput, and timing checks. The
 30,000-node regression versus T3 must be treated as evidence, not hidden by the
 strong 5,000-node result.
+
+## T10 prospective result
+
+The candidate passed the exposed development gate at both budgets (54-42 at
+5,000 nodes and 53-43 at 30,000 nodes), but failed prospective T10 validation.
+The fixed 30,000-node profile was directionally strong at 79-65, cluster mean
+0.561 and lower bound 0.480; it missed retention (0.750 versus 0.800) and the
+smallest stratum (0.429 versus 0.480). The construction-inclusive 130 ms profile
+tied 72-72 and failed cluster mean/lower bound, physical-color uplift,
+retention, and elite transfer. The sealed T10 final remained unopened.
+
+This isolates the next problem: exact component proofs improve fixed-budget
+search but perturb iterative-deepening trajectories under the deployment clock.
+The next experiment should target root-action stability across completed depths
+or allocate proof work selectively from a completed-iteration uncertainty
+signal; it should not add another coordinate-specific heuristic or tune away a
+failed cohort after the fact.

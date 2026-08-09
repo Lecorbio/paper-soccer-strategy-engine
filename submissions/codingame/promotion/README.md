@@ -5,28 +5,28 @@ replace `rank_5`. It uses the authentic CodinGame rules (`OwnGoalsAllowed`,
 `MoverLoses`) and complete-turn transcripts. The flagship demo benchmark uses
 different rules and is not valid for this decision.
 
-## Frozen T9 carry-forward evidence
+## Current T10 evidence
 
-T9 is frozen but not candidate-bound. Its validation and sealed-final references
-are byte-identical aliases of the T8 banks, and it inherits the exact T8 strength
-protocol with no semantic or threshold changes. The T9 evidence manifest keeps
-both candidate fields null.
+T10 binds `all_depth_proof` to candidate-independent evidence. Its 72-opening
+validation bank is a split-only relabel of the T9 sealed bank, which was carried
+forward only after the freezer proved that T9 never opened or snapshotted it.
+The 69-opening T10 final is a fresh, disjoint maximum-cap sample from a new
+acquisition. Both stages retain the predeclared four-worker, fixed-node plus
+construction-inclusive 130 ms protocol.
 
-The only T8-bound candidate, `frontier_proof`, was rejected by the exposed T3
-development prerequisite. Its deterministic decision marks validation and test
-as not run. The T9 freezer also verifies that the T8 result identity contains no
-validation or test report, shard directory, immutable bank snapshot, or final
-ledger marker. Consequently neither prospective bank was consumed, so the
-versioned T9 ladder carries their bytes forward without inspecting outcomes.
+`all_depth_proof` passed preflight, initial, and exposed development. Prospective
+validation rejected it. At 30,000 nodes it won 79-65 with cluster mean 0.561 and
+lower bound 0.480, but retention was 0.750 and the smallest stratum scored
+0.429. At 130 ms it tied 72-72, with cluster lower bound 0.413, minimum physical
+uplift -0.125, retention 0.694, and elite score 0.447. The T10 sealed final was
+therefore not consumed and the bot must not be submitted.
 
-Verify the unbound freeze with:
+Verify the frozen T10 artifacts with:
 
 ```sh
-python3 submissions/codingame/promotion/freeze_t9_banks.py --check
+python3 submissions/codingame/promotion/freeze_t10_banks.py --check
+python3 submissions/codingame/promotion/build_goal_shell_banks.py --check
 ```
-
-No promotion command should run until a future active manifest binds exactly
-one candidate and its harness identities to the T9 evidence-manifest hash.
 
 ## Historical T7 evidence
 
