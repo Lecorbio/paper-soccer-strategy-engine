@@ -277,7 +277,11 @@ reference separately. Failure against either reference is an honest negative
 result: Deep Game Review still ships, but the opponent selector and Expert
 strength claim do not.
 
-**Expert selector status (frozen-test result): Pending final gate result.**
+**Expert selector status (frozen-test result): Enabled.** The locked 400k
+profile scored 67.25% against fixed Rank5Derived (paired 95% interval
+64.12%–70.25%) and 61.38% against JacekInspired-20k (58.25%–64.38%) across
+the exactly-once 1,600-game test, with zero operational failures. See the
+[generated gate report](../benchmarks/game_review_gate/REPORT.md).
 This single sentence is the release-status field; replace it from the frozen
 test report without changing the method above.
 

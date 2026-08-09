@@ -31,6 +31,47 @@ function terminalReplay() {
   return generated.replay;
 }
 
+function terminalReboundReplay() {
+  const endpoints = [
+    [4, 5], [4, 4], [4, 3], [4, 2], [4, 1], [3, 2],
+    [2, 3], [3, 3], [4, 2], [3, 1], [4, 0],
+  ];
+  const extraTurns = [
+    false, false, false, false, false, false,
+    false, false, true, true, false,
+  ];
+  let from = { x: 4, y: 6 };
+  let player = "one";
+  const moves = endpoints.map(([x, y], index) => {
+    const extraTurn = extraTurns[index];
+    const move = {
+      ply: index + 1,
+      player,
+      from,
+      to: { x, y },
+      extraTurn,
+      statusAfter: index === endpoints.length - 1
+        ? "wonByOne"
+        : "inProgress",
+    };
+    from = move.to;
+    if (!extraTurn) {
+      player = player === "one" ? "two" : "one";
+    }
+    return move;
+  });
+  return {
+    schema: "papersoccer.replay.v2",
+    rules: { width: 8, height: 10 },
+    players: { one: "Rebound fixture", two: "Rebound fixture" },
+    start: { x: 4, y: 6 },
+    status: "wonByOne",
+    winner: "one",
+    truncated: false,
+    moves,
+  };
+}
+
 function finish(prepared, mode) {
   let snapshot = review.populateSession(analysis, prepared, mode);
   let steps = 0;
@@ -82,7 +123,7 @@ test("the pre-lock candidate probe performs exactly one fresh complete-turn sear
 });
 
 test("Fast review validates and grades complete possessions deterministically", () => {
-  const prepared = review.prepareReplay(terminalReplay());
+  const prepared = review.prepareReplay(terminalReboundReplay());
   const first = finish(prepared, review.ReviewMode.Fast);
   const second = finish(prepared, review.ReviewMode.Fast);
 
