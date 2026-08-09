@@ -57,3 +57,14 @@ The next experiment should target root-action stability across completed depths
 or allocate proof work selectively from a completed-iteration uncertainty
 signal; it should not add another coordinate-specific heuristic or tune away a
 failed cohort after the fact.
+
+### Rejected action-consensus follow-up
+
+A time-mode-only prototype required a changed root action to win at two
+consecutive completed depths before replacing the last committed action; exact
+mate results still committed immediately and fixed-node behavior was unchanged.
+On the exposed T10 validation bank at 130 ms it collapsed to 48-96 (cluster
+mean 0.327, retention 0.375) versus the 72-72 baseline. Simple action consensus
+therefore overweights shallow iterations and must not be promoted. Any future
+stability rule needs root score margin or multi-PV uncertainty evidence rather
+than action repetition alone.
