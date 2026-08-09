@@ -1,0 +1,21 @@
+{
+  "schema": "papersoccer.codingame-submission.v1",
+  "sources": "sources.txt",
+  "output": "submission.cpp",
+  "source_limit": 100000,
+  "strip_leading_whitespace": true,
+  "allowed_local_includes": [
+    "mcts_internal.hpp",
+    "papersoccer/geometry.hpp",
+    "papersoccer/rules.hpp",
+    "papersoccer/types.hpp",
+    "replay_book.hpp",
+    "replay_value_model.hpp",
+    "teacher_residual_model.hpp"
+  ],
+  "generators": [
+    "generate_replay_book.mjs",
+    "generate_replay_value_header.mjs",
+    "generate_teacher_residual_header.mjs"
+  ]
+}

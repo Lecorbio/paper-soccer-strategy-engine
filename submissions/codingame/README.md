@@ -8,6 +8,7 @@ submissions/codingame/
 │   ├── alpha_beta/       production baseline and its experiment archive
 │   ├── rank_5/           immutable previous arena incumbent
 │   ├── rank_4/           current live teacher-residual production bot
+│   ├── rank_4_exchange/  unpromoted exact-exchange proof experiment
 │   ├── challenger/       completed exact-topology challenger experiment
 │   ├── selfplay_nn/      learned value and self-play training experiment
 │   ├── selfplay_nn_v2/   historical rank-4 training and arena provenance
@@ -30,6 +31,7 @@ node submissions/codingame/tools/generate_submission.mjs alpha_beta
 node submissions/codingame/tools/generate_submission.mjs alpha_beta --check
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
 node submissions/codingame/tools/generate_submission.mjs rank_4 --check
+node submissions/codingame/tools/generate_submission.mjs rank_4_exchange --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn --check
 node submissions/codingame/tools/generate_submission.mjs selfplay_nn_v2 --check
 node submissions/codingame/tools/generate_submission.mjs jacek_nn --check
@@ -52,6 +54,9 @@ are in [tools/README.md](tools/README.md).
   with score `44.29750553418035` and a 66-24 record. It is the canonical,
   byte-identical local snapshot of the retained `selfplay_nn_v2` artifact;
   the historical training and arena inputs stay at their original paths.
+- [`rank_4_exchange`](bots/rank_4_exchange/README.md) adds exact rebound
+  win/loss proofs to rank 4. It beat rank 4 58-48 at both 5k and 30k nodes,
+  but its final equal-clock screen was 8-10, so it remains unsubmitted.
 - [`alpha_beta`](bots/alpha_beta/README.md) is the prior production baseline
   and retains its compact historical experiment evidence. Its paste-ready file
   is [`submission.cpp`](bots/alpha_beta/submission.cpp).
