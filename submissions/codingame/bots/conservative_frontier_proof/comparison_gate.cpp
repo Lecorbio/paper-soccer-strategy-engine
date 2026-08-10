@@ -3,14 +3,6 @@
 #include "../rank_5/bot.cpp"
 #undef turn_action_v2
 
-#if defined(__GNUC__) && !defined(__clang__)
-namespace papersoccer::conservative_frontier_proof_engine {
-namespace replay_book = ::papersoccer::rank5_engine::replay_book;
-namespace replay_value_model =
-    ::papersoccer::rank5_engine::replay_value_model;
-}
-#endif
-
 #define turn_action_v2 conservative_frontier_proof_engine
 #include "bot.cpp"
 #undef turn_action_v2

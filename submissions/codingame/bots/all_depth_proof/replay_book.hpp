@@ -1,4 +1,5 @@
 #pragma once
+// GCC multi-engine identity marker: all_depth_proof.
 
 #include <array>
 #include <cstdint>

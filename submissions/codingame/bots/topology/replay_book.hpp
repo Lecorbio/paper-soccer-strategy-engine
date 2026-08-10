@@ -1,4 +1,5 @@
 #pragma once
+// GCC multi-engine identity marker: topology.
 
 #include <array>
 #include <cstdint>

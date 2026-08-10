@@ -1,4 +1,5 @@
 #pragma once
+// GCC multi-engine identity marker: exchange_proof.
 
 #include <array>
 #include <cstdint>

@@ -1,4 +1,5 @@
 #pragma once
+// GCC multi-engine identity marker: safe_inward.
 
 #include <array>
 #include <cstdint>

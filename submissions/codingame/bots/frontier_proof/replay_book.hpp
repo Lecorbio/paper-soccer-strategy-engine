@@ -1,4 +1,5 @@
 #pragma once
+// GCC multi-engine identity marker: frontier_proof.
 
 #include <array>
 #include <cstdint>
