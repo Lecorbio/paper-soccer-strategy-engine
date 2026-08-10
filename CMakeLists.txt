@@ -235,7 +235,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 rank_4 rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  alpha_beta rank_5 rank_4 rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
@@ -326,6 +326,7 @@ if(NOT EMSCRIPTEN)
        PAPERSOCCER_CODINGAME_BOT STREQUAL "exchange_proof" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_fullturn_bfm" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_exchange")
       target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
