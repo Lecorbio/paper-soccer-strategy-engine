@@ -188,6 +188,11 @@ do not read `matches.json`, replay banks, chronological loss suites, or any
 other protected data. Once a live batch influences development it is
 development evidence and cannot serve as a later promotion holdout.
 
+Round-two seed promotion uses the separate immutable
+[actual-clock selection contract](ROUND2_SELECTION.md). The training JSON
+keeps `chosen_seed: null`; complete content-addressed gate evidence selects an
+exact runtime without rewriting the model.
+
 Source-bound public live games can be diagnosed with the separate, read-only
 [replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
 evidence only and never enters the candidate model or promotion holdout.

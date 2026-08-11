@@ -519,6 +519,7 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         model = self.trainer.build_report(
             candidates, reports, {"corpus_sha256": "a" * 64}, arguments
         )
+        self.assertIsNone(model["training"]["chosen_seed"])
         self.assertEqual(model["training"]["provisional_seed"], 1)
         self.assertEqual(
             model["training"]["external_actual_clock_selection"]["status"],
@@ -625,6 +626,11 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             ).hexdigest(),
             runtime.splitlines()[4],
         )
+
+    def test_round2_exporter_rejects_implicit_provisional_seed(self):
+        model = self.exportable_model()
+        with self.assertRaisesRegex(ValueError, "explicit seed"):
+            self.exporter.render_runtime(model, "e" * 64)
 
     def test_round2_exporter_rejects_stale_semantic_provenance(self):
         model = self.exportable_model()

@@ -207,14 +207,16 @@ def _validate_retained_checkpoints(model: Mapping[str, object]) -> None:
         raise ValueError("round-two checkpoint order does not match training seeds")
     chosen = training.get("chosen_seed")
     provisional = training.get("provisional_seed")
-    if chosen not in observed or provisional not in observed:
-        raise ValueError("round-two selected checkpoint seed is unavailable")
+    if chosen is not None or provisional not in observed:
+        raise ValueError(
+            "round-two training artifact must remain pending and unselected"
+        )
     external = training.get("external_actual_clock_selection")
     if (
         not isinstance(external, dict)
         or external.get("required") is not True
         or external.get("criterion") != "native-actual-clock-match-strength"
-        or external.get("status") not in {"pending", "complete"}
+        or external.get("status") != "pending"
         or sorted(external.get("eligible_seed_order", ())) != sorted(observed)
     ):
         raise ValueError("round-two actual-clock selection contract is invalid")
@@ -267,6 +269,11 @@ def validate_model(model: Mapping[str, object]) -> tuple[list[int], dict[str, fl
 def render(
     model: Mapping[str, object], model_sha256: str, seed: int | None = None
 ) -> tuple[str, dict]:
+    if seed is None:
+        raise ValueError(
+            "round-two export requires an explicit seed or a verified "
+            "selection sidecar"
+        )
     selected, selected_seed = round1_exporter.select_checkpoint(model, seed)
     weights, scales = validate_model(selected)
     payload = round1_exporter.pack_signed_three_bit(weights)
@@ -326,6 +333,11 @@ inline constexpr std::string_view kPackedWeights =
 def render_runtime(
     model: Mapping[str, object], model_sha256: str, seed: int | None = None
 ) -> str:
+    if seed is None:
+        raise ValueError(
+            "round-two runtime export requires an explicit seed or a "
+            "verified selection sidecar"
+        )
     selected, _ = round1_exporter.select_checkpoint(model, seed)
     weights, scales = validate_model(selected)
     payload = round1_exporter.pack_signed_three_bit(weights)

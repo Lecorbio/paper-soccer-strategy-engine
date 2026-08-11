@@ -257,6 +257,15 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     set_tests_properties(
       papersoccer_codingame_jacek_native_round2_training_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME papersoccer_codingame_jacek_native_round2_selection_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_native_round2_selection)
+    set_tests_properties(
+      papersoccer_codingame_jacek_native_round2_selection_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
   add_test(

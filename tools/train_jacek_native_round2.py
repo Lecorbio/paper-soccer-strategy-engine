@@ -504,7 +504,11 @@ def build_report(
             "weight_decay": arguments.weight_decay,
             "qat_epochs": arguments.qat_epochs,
             "seeds": [report["seed"] for report in seed_reports],
-            "chosen_seed": provisional_report["seed"],
+            # The training artifact is immutable evidence, not a promotion
+            # pointer.  Actual-clock selection is recorded in a separate,
+            # content-addressed sidecar after every retained seed has passed
+            # through the frozen screen and decisive gates.
+            "chosen_seed": None,
             "provisional_seed": provisional_report["seed"],
             "selection": (
                 "provisional-minimum-quantized-validation-outcome-mse-then-seed;"
