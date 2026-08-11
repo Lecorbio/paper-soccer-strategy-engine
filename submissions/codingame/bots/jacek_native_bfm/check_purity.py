@@ -18,7 +18,7 @@ import sys
 BOT_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = BOT_DIRECTORY.parents[3]
 EXPECTED_SOURCE_LIMIT = 94_999
-EXPECTED_PURITY_DEPENDENCIES = (
+ROUND1_PURITY_DEPENDENCIES = (
     "models/jacek_native_bootstrap_model.json",
     "models/jacek_native_untrained_seed.json",
     "models/jacek_native_untrained_seed.runtime",
@@ -28,12 +28,42 @@ EXPECTED_PURITY_DEPENDENCIES = (
     "tools/jacek_native_selfplay.cpp",
     "tools/jacek_native_workflow.py",
 )
-EXPECTED_SEMANTIC_DEPENDENCIES = ("tools/jacek_native_corpus.py",)
+ROUND1_SEMANTIC_DEPENDENCIES = ("tools/jacek_native_corpus.py",)
+ROUND2_PURITY_DEPENDENCIES = (
+    "models/jacek_native_bootstrap_model.json",
+    "models/jacek_native_untrained_seed.json",
+    "models/jacek_native_untrained_seed.runtime",
+    "submissions/codingame/tools/generate_jacek_native_model_round2.py",
+    "submissions/codingame/tools/generate_jacek_native_model.py",
+    "tools/generate_jacek_native_seed.py",
+    "tools/train_jacek_native_round2.py",
+    "tools/train_jacek_native.py",
+    "tools/jacek_native_selfplay_round2.cpp",
+    "tools/jacek_native_restart_round2.cpp",
+    "tools/jacek_native_selfplay.cpp",
+    "tools/jacek_native_workflow_round2.py",
+    "tools/jacek_native_restart_round2.py",
+    "tools/jacek_native_workflow.py",
+)
+ROUND2_SEMANTIC_DEPENDENCIES = (
+    "tools/jacek_native_corpus_round2.py",
+    "tools/jacek_native_restart_corpus_round2.py",
+    "tools/jacek_native_corpus.py",
+)
+# Backward-compatible names are the exact frozen round-one contract.
+EXPECTED_PURITY_DEPENDENCIES = ROUND1_PURITY_DEPENDENCIES
+EXPECTED_SEMANTIC_DEPENDENCIES = ROUND1_SEMANTIC_DEPENDENCIES
 RUNTIME_SCHEMA = "papersoccer.jacek-native-runtime-model/v1"
 MODEL_SCHEMA = "jacek_native_model/v1"
 FEATURE_SCHEMA = "canonical-edges316-onehot-true-turn-distance105x8-v1"
 MODEL_SHAPES = {"w1": (1156, 32), "w2": (32, 32), "w3": (32,)}
 BUILD_PROVENANCE_SCHEMA = "papersoccer.jacek-native-build-provenance/v1"
+ROUND2_BUILD_PROVENANCE_SCHEMA = (
+    "papersoccer.jacek-native-build-provenance/v2"
+)
+RESTART_BUILD_PROVENANCE_SCHEMA = (
+    "papersoccer.jacek-native-restart-build-provenance/v1"
+)
 BUILD_SOURCE_PATHS = (
     "tools/jacek_native_selfplay.cpp",
     "submissions/codingame/bots/jacek_native_bfm/bot.cpp",
@@ -61,6 +91,36 @@ CANONICAL_BUILD_ARGV = (
     "-o",
     "$OUTPUT",
 )
+ROUND2_BUILD_SOURCE_PATHS = (
+    "tools/jacek_native_selfplay_round2.cpp",
+    *BUILD_SOURCE_PATHS,
+)
+ROUND2_CANONICAL_BUILD_ARGV = (
+    "$CXX",
+    "-std=c++20",
+    "-O3",
+    "-DNDEBUG",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Iinclude",
+    "-Isrc/bots",
+    "tools/jacek_native_selfplay_round2.cpp",
+    "src/core/rules.cpp",
+    "src/core/geometry.cpp",
+    "-o",
+    "$OUTPUT",
+)
+RESTART_BUILD_SOURCE_PATHS = (
+    "tools/jacek_native_restart_round2.cpp",
+    *ROUND2_BUILD_SOURCE_PATHS,
+)
+RESTART_CANONICAL_BUILD_ARGV = (
+    "$CXX", "-std=c++20", "-O3", "-DNDEBUG", "-Wall", "-Wextra",
+    "-Wpedantic", "-Iinclude", "-Isrc/bots",
+    "tools/jacek_native_restart_round2.cpp", "src/core/rules.cpp",
+    "src/core/geometry.cpp", "-o", "$OUTPUT",
+)
 
 BANNED_PATTERNS = (
     (re.compile(r"rank[_-]?4", re.IGNORECASE), "rank-4 dependency"),
@@ -76,6 +136,15 @@ BANNED_PATTERNS = (
     (re.compile(r"alpha[_-]?beta", re.IGNORECASE), "alpha-beta dependency"),
     (re.compile(r"\bteacher\b", re.IGNORECASE), "teacher-label dependency"),
 )
+ROUND2_BANNED_PATTERNS = tuple(
+    entry for entry in BANNED_PATTERNS
+    if entry[1] != "teacher-label dependency"
+) + ((
+    re.compile(
+        r"teacher[_-]?(?:move|action|policy|label)", re.IGNORECASE
+    ),
+    "teacher action-label dependency",
+),)
 
 
 def _contained(root: pathlib.Path, relative: str, label: str) -> pathlib.Path:
@@ -95,6 +164,24 @@ def _manifest_sources(path: pathlib.Path) -> list[str]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
+
+
+def _purity_track(config: dict) -> str:
+    dependencies = config.get("purity_dependencies")
+    semantic = config.get("purity_semantic_dependencies")
+    if (
+        dependencies == list(ROUND1_PURITY_DEPENDENCIES)
+        and semantic == list(ROUND1_SEMANTIC_DEPENDENCIES)
+    ):
+        return "round1"
+    if (
+        dependencies == list(ROUND2_PURITY_DEPENDENCIES)
+        and semantic == list(ROUND2_SEMANTIC_DEPENDENCIES)
+    ):
+        return "round2"
+    raise ValueError(
+        "purity dependencies do not match a frozen native round contract"
+    )
 
 
 def production_files(
@@ -130,14 +217,9 @@ def production_files(
         _contained(bot_directory, relative, "generator")
         for relative in config.get("generators", [])
     )
-    dependencies = config.get("purity_dependencies")
-    if dependencies != list(EXPECTED_PURITY_DEPENDENCIES):
-        raise ValueError("purity_dependencies do not match the native contract")
-    semantic_dependencies = config.get("purity_semantic_dependencies")
-    if semantic_dependencies != list(EXPECTED_SEMANTIC_DEPENDENCIES):
-        raise ValueError(
-            "purity_semantic_dependencies do not match the native contract"
-        )
+    _purity_track(config)
+    dependencies = config["purity_dependencies"]
+    semantic_dependencies = config["purity_semantic_dependencies"]
     files.extend(
         _contained(repository_root, relative, "purity dependency")
         for relative in dependencies
@@ -159,7 +241,7 @@ def production_files(
             repository_root, entry["runtime"], "native checkpoint runtime"
         )
         if model_path == (
-            repository_root / EXPECTED_PURITY_DEPENDENCIES[0]
+            repository_root / dependencies[0]
         ).resolve():
             raise ValueError(
                 "native checkpoint provenance must not self-reference the "
@@ -195,7 +277,9 @@ def _valid_sha256(value: object) -> bool:
     )
 
 
-def _validate_build_provenance(model: dict, label: str) -> None:
+def _validate_build_provenance(
+    model: dict, label: str, track: str = "round1"
+) -> None:
     generation = model.get("provenance", {}).get("generation")
     if not isinstance(generation, dict):
         raise ValueError(f"{label} generation provenance is missing")
@@ -238,15 +322,30 @@ def _validate_build_provenance(model: dict, label: str) -> None:
             "build_argv",
             "producer_sha256",
             "sources",
-        } or contract.get("schema") != BUILD_PROVENANCE_SCHEMA:
+        }:
             raise ValueError(f"{label} build contract schema is not frozen")
-        if contract.get("build_argv") != list(CANONICAL_BUILD_ARGV):
+        schema = contract.get("schema")
+        if schema == BUILD_PROVENANCE_SCHEMA:
+            expected_argv = CANONICAL_BUILD_ARGV
+            expected_sources = BUILD_SOURCE_PATHS
+            expected_binary = "selfplay-binary"
+        elif track == "round2" and schema == ROUND2_BUILD_PROVENANCE_SCHEMA:
+            expected_argv = ROUND2_CANONICAL_BUILD_ARGV
+            expected_sources = ROUND2_BUILD_SOURCE_PATHS
+            expected_binary = "selfplay-round2-binary"
+        elif track == "round2" and schema == RESTART_BUILD_PROVENANCE_SCHEMA:
+            expected_argv = RESTART_CANONICAL_BUILD_ARGV
+            expected_sources = RESTART_BUILD_SOURCE_PATHS
+            expected_binary = "selfplay-restart-round2-binary"
+        else:
+            raise ValueError(f"{label} build contract schema is not frozen")
+        if contract.get("build_argv") != list(expected_argv):
             raise ValueError(f"{label} build argv is not frozen")
         binary = contract.get("binary")
         if (
             not isinstance(binary, dict)
             or set(binary) != {"path", "sha256"}
-            or binary.get("path") != "selfplay-binary"
+            or binary.get("path") != expected_binary
             or not _valid_sha256(binary.get("sha256"))
         ):
             raise ValueError(f"{label} build binary identity is invalid")
@@ -269,11 +368,11 @@ def _validate_build_provenance(model: dict, label: str) -> None:
             raise ValueError(f"{label} build compiler identity is invalid")
         sources = contract.get("sources")
         if not isinstance(sources, list) or len(sources) != len(
-            BUILD_SOURCE_PATHS
+            expected_sources
         ):
             raise ValueError(f"{label} build source list is incomplete")
         source_pairs: list[list[str]] = []
-        for expected_path, source in zip(BUILD_SOURCE_PATHS, sources):
+        for expected_path, source in zip(expected_sources, sources):
             if (
                 not isinstance(source, dict)
                 or set(source) != {"path", "sha256"}
@@ -299,6 +398,7 @@ def _validate_native_model_provenance(
     model_path: pathlib.Path,
     trainer_path: pathlib.Path,
     corpus_path: pathlib.Path,
+    track: str = "round1",
 ) -> dict:
     model = json.loads(model_path.read_text(encoding="utf-8"))
     if model.get("schema") != MODEL_SCHEMA or model.get(
@@ -334,15 +434,174 @@ def _validate_native_model_provenance(
         or not all(_valid_sha256(value) for value in sources.values())
     ):
         raise ValueError("native corpus source hashes are incomplete")
-    _validate_build_provenance(model, "native model")
+    _validate_build_provenance(model, "native model", track)
+    if track == "round2":
+        _validate_round2_model_metadata(model, corpus_path.parents[1])
     return model
 
 
-def _validate_model_provenance(repository_root: pathlib.Path) -> dict:
+def _validate_round2_model_metadata(
+    model: dict, repository_root: pathlib.Path
+) -> None:
+    provenance = model["provenance"]
+    generation = provenance["generation"]
+    restart_corpus = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[1]
+    if provenance.get("restart_corpus_validator_sha256") != hashlib.sha256(
+            restart_corpus.read_bytes()).hexdigest():
+        raise ValueError("round-two restart corpus-validator SHA-256 is stale")
+    sources = provenance["source_sha256"]
+    if not all(key == f"sha256:{value}" for key, value in sources.items()):
+        raise ValueError("round-two corpus source identities are not content-addressed")
+    expected_corpus = hashlib.sha256(json.dumps(
+        sorted(sources.items()), separators=(",", ":")
+    ).encode()).hexdigest()
+    if provenance.get("corpus_sha256") != expected_corpus:
+        raise ValueError("round-two cumulative corpus SHA-256 is stale")
+    lineage = provenance.get("lineage")
+    if not isinstance(lineage, dict) or set(lineage) != {
+        "strict_current", "archived_round1", "live_restart_round2"
+    } or not isinstance(lineage["strict_current"], list) or not lineage[
+            "strict_current"]:
+        raise ValueError("round-two cumulative corpus lineage is incomplete")
+    for category in ("strict_current", "archived_round1"):
+        entries = lineage[category]
+        if not isinstance(entries, list):
+            raise ValueError("round-two corpus lineage category is invalid")
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {
+                "manifest_sha256", "build_provenance_sha256",
+                "binary_sha256", "shard_sha256", "games", "seed",
+            }:
+                raise ValueError("round-two corpus lineage entry is not frozen")
+            if not all(_valid_sha256(entry.get(field)) for field in (
+                "manifest_sha256", "build_provenance_sha256", "binary_sha256"
+            )):
+                raise ValueError("round-two corpus lineage identity is invalid")
+            shards = entry.get("shard_sha256")
+            games = entry.get("games")
+            seed = entry.get("seed")
+            if (
+                not isinstance(shards, list) or not shards
+                or shards != sorted(shards)
+                or not all(_valid_sha256(value) for value in shards)
+                or isinstance(games, bool) or not isinstance(games, int)
+                or games <= 0 or isinstance(seed, bool)
+                or not isinstance(seed, int) or not 0 <= seed < 1 << 64
+            ):
+                raise ValueError("round-two corpus lineage values are invalid")
+    restarts = lineage["live_restart_round2"]
+    if not isinstance(restarts, list):
+        raise ValueError("round-two restart lineage is invalid")
+    for entry in restarts:
+        if not isinstance(entry, dict) or set(entry) != {
+            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+            "collector_tsv_sha256", "arena_manifest_sha256",
+            "asserted_source_sha256", "exclusion_registry_sha256",
+            "source_binding_status", "games", "selected_prefixes",
+        }:
+            raise ValueError("round-two restart lineage entry is not frozen")
+        if not all(_valid_sha256(entry.get(field)) for field in (
+            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+            "collector_tsv_sha256", "arena_manifest_sha256",
+            "asserted_source_sha256", "exclusion_registry_sha256",
+        )) or entry.get("source_binding_status") not in {
+            "asserted-not-api-verified", "api-verified"
+        } or any(
+            isinstance(entry.get(field), bool)
+            or not isinstance(entry.get(field), int)
+            or entry[field] <= 0
+            for field in ("games", "selected_prefixes")
+        ):
+            raise ValueError("round-two restart lineage values are invalid")
+    lineage_entries = [
+        entry for category in (
+            "strict_current", "archived_round1", "live_restart_round2"
+        ) for entry in lineage[category]
+    ]
+    declared_builds = generation.get("build_provenance_sha256")
+    lineage_builds = sorted({
+        entry["build_provenance_sha256"] for entry in lineage_entries
+    })
+    if declared_builds != lineage_builds:
+        raise ValueError("round-two lineage/build provenance disagrees")
+    binary_by_build = {
+        item["sha256"]: item["contract"]["binary"]["sha256"]
+        for item in generation["build_contracts"]
+    }
+    if any(binary_by_build.get(entry["build_provenance_sha256"]) != entry[
+            "binary_sha256"] for entry in lineage_entries):
+        raise ValueError("round-two lineage/build binary identity disagrees")
+    training = model.get("training")
+    checkpoints = model.get("checkpoints")
+    if not isinstance(training, dict) or not isinstance(checkpoints, list) or (
+            not checkpoints):
+        raise ValueError("round-two retained checkpoints are missing")
+    seeds = training.get("seeds")
+    if (
+        not isinstance(seeds, list) or not seeds
+        or any(isinstance(seed, bool) or not isinstance(seed, int)
+               or not 0 <= seed < 1 << 64 for seed in seeds)
+        or len(set(seeds)) != len(seeds)
+    ):
+        raise ValueError("round-two training seed set is invalid")
+    observed = []
+    for checkpoint in checkpoints:
+        if not isinstance(checkpoint, dict) or set(checkpoint) != {
+            "seed", "model", "quantization", "checkpoint_sha256"
+        }:
+            raise ValueError("round-two checkpoint fields are not frozen")
+        payload = {
+            "seed": checkpoint["seed"],
+            "model": checkpoint["model"],
+            "quantization": checkpoint["quantization"],
+        }
+        canonical = json.dumps(
+            payload, allow_nan=False, sort_keys=True, separators=(",", ":")
+        )
+        canonical = (canonical + "\n").encode()
+        if hashlib.sha256(canonical).hexdigest() != checkpoint.get(
+                "checkpoint_sha256"):
+            raise ValueError("round-two checkpoint SHA-256 is stale")
+        # This also freezes seed, architecture, target, quantization shapes,
+        # integer ranges, and positive finite scales.
+        _checkpoint_runtime_bytes(
+            model, "0" * 64, checkpoint
+        )
+        observed.append(checkpoint["seed"])
+    if observed != seeds:
+        raise ValueError("round-two checkpoint order disagrees with training seeds")
+    external = training.get("external_actual_clock_selection")
+    if (
+        training.get("chosen_seed") not in observed
+        or training.get("provisional_seed") not in observed
+        or not isinstance(external, dict)
+        or external.get("required") is not True
+        or external.get("criterion") != "native-actual-clock-match-strength"
+        or external.get("status") != "complete"
+        or not isinstance(external.get("eligible_seed_order"), list)
+        or sorted(external["eligible_seed_order"]) != sorted(observed)
+    ):
+        raise ValueError("round-two actual-clock selection contract is invalid")
+
+
+def _validate_model_provenance(
+    repository_root: pathlib.Path, track: str = "round1"
+) -> dict:
+    if track == "round1":
+        dependencies = ROUND1_PURITY_DEPENDENCIES
+        trainer = "tools/train_jacek_native.py"
+        corpus = ROUND1_SEMANTIC_DEPENDENCIES[0]
+    elif track == "round2":
+        dependencies = ROUND2_PURITY_DEPENDENCIES
+        trainer = "tools/train_jacek_native_round2.py"
+        corpus = ROUND2_SEMANTIC_DEPENDENCIES[0]
+    else:
+        raise ValueError("unknown native purity track")
     return _validate_native_model_provenance(
-        repository_root / EXPECTED_PURITY_DEPENDENCIES[0],
-        repository_root / "tools/train_jacek_native.py",
-        repository_root / EXPECTED_SEMANTIC_DEPENDENCIES[0],
+        repository_root / dependencies[0],
+        repository_root / trainer,
+        repository_root / corpus,
+        track,
     )
 
 
@@ -485,10 +744,25 @@ def _validate_native_checkpoint_files(
         runtime_path = _contained(
             repository_root, entry["runtime"], f"native checkpoint {index} runtime"
         )
+        raw_candidate = json.loads(model_path.read_text(encoding="utf-8"))
+        trainer_sha = raw_candidate.get("provenance", {}).get("trainer_sha256")
+        round1_trainer = repository_root / "tools/train_jacek_native.py"
+        round2_trainer = repository_root / "tools/train_jacek_native_round2.py"
+        if trainer_sha == hashlib.sha256(round1_trainer.read_bytes()).hexdigest():
+            model_track = "round1"
+            trainer_path = round1_trainer
+            corpus_path = repository_root / ROUND1_SEMANTIC_DEPENDENCIES[0]
+        elif (
+            round2_trainer.is_file()
+            and trainer_sha == hashlib.sha256(round2_trainer.read_bytes()).hexdigest()
+        ):
+            model_track = "round2"
+            trainer_path = round2_trainer
+            corpus_path = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0]
+        else:
+            raise ValueError("native checkpoint trainer lineage is unrecognized")
         model = _validate_native_model_provenance(
-            model_path,
-            repository_root / "tools/train_jacek_native.py",
-            repository_root / EXPECTED_SEMANTIC_DEPENDENCIES[0],
+            model_path, trainer_path, corpus_path, model_track
         )
         raw_model = model_path.read_bytes()
         model_sha256 = hashlib.sha256(raw_model).hexdigest()
@@ -639,6 +913,7 @@ def _validate_checkpoint_provenance(
     config: dict,
     model: dict,
     seed_identity: dict[str, str],
+    track: str = "round1",
 ) -> None:
     mode, normalized = _checkpoint_provenance(model, "native model")
 
@@ -653,11 +928,19 @@ def _validate_checkpoint_provenance(
                 "bootstrap purity must not declare later native checkpoints"
             )
         return
-    if mode != "native-runtime-models/v1":
+    cumulative = mode == "cumulative-native-runtime-models/v2"
+    if cumulative and track != "round2":
+        raise ValueError("cumulative native checkpoint mode requires round two")
+    if mode != "native-runtime-models/v1" and not cumulative:
         raise ValueError("unsupported native checkpoint provenance mode")
-    if seed_identity in normalized:
+    if seed_identity in normalized and not cumulative:
         raise ValueError(
             "native checkpoint mode may not mix the untrained seed runtime"
+        )
+    if cumulative and (seed_identity not in normalized or len(normalized) < 2):
+        raise ValueError(
+            "cumulative native checkpoint mode requires its seed root and a "
+            "native checkpoint"
         )
     declarations = _validate_native_checkpoint_files(repository_root, config)
     reachable: set[str] = set()
@@ -689,13 +972,24 @@ def _validate_checkpoint_provenance(
                     "native checkpoint bootstrap ancestry is not bound to the "
                     "exact untrained seed runtime"
                 )
-        elif parent_mode == "native-runtime-models/v1":
-            if seed_identity in parents:
+        elif parent_mode in {
+            "native-runtime-models/v1", "cumulative-native-runtime-models/v2"
+        }:
+            parent_cumulative = (
+                parent_mode == "cumulative-native-runtime-models/v2"
+            )
+            if seed_identity in parents and not parent_cumulative:
                 raise ValueError(
                     "native checkpoint ancestry may not mix the untrained seed "
                     "runtime"
                 )
+            if parent_cumulative and seed_identity not in parents:
+                raise ValueError(
+                    "cumulative native checkpoint ancestry is missing its seed root"
+                )
             for parent in parents:
+                if parent == seed_identity:
+                    continue
                 validate_lineage(parent)
         else:
             raise ValueError("unsupported native checkpoint ancestry mode")
@@ -703,6 +997,8 @@ def _validate_checkpoint_provenance(
         reachable.add(artifact_sha256)
 
     for identity in normalized:
+        if identity == seed_identity:
+            continue
         validate_lineage(identity)
     if reachable != set(declarations):
         raise ValueError(
@@ -763,24 +1059,96 @@ def _validate_corpus_semantics(repository_root: pathlib.Path) -> None:
         raise ValueError("native corpus action-label guard is incomplete")
 
 
+def _validate_round2_corpus_semantics(repository_root: pathlib.Path) -> None:
+    # Round two deliberately layers stricter lineage/reanalysis checks over the
+    # frozen round-one replay and action-label guard.
+    _validate_corpus_semantics(repository_root)
+    path = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0]
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports_round1 = any(
+        isinstance(node, ast.Import)
+        and any(alias.name == "jacek_native_corpus" and alias.asname == "round1"
+                for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    validate_record = next((
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "validate_record"
+    ), None)
+    calls = set()
+    if validate_record is not None:
+        for node in ast.walk(validate_record):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "round1"
+            ):
+                calls.add(node.func.attr)
+    if not imports_round1 or not {"_check_purity", "validate_record"}.issubset(calls):
+        raise ValueError(
+            "round-two corpus does not inherit the frozen purity/replay guards"
+        )
+    restart_path = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[1]
+    restart_tree = ast.parse(
+        restart_path.read_text(encoding="utf-8"), filename=str(restart_path)
+    )
+    restart_validate = next((
+        node for node in ast.walk(restart_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "validate_record"
+    ), None)
+    restart_calls: set[tuple[str, str]] = set()
+    if restart_validate is not None:
+        for node in ast.walk(restart_validate):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+            ):
+                restart_calls.add((node.func.value.id, node.func.attr))
+    observed_usage = any(
+        isinstance(node, (ast.Assign, ast.AnnAssign))
+        and any(isinstance(target, ast.Name) and target.id == "OBSERVED_USAGE"
+                for target in (node.targets if isinstance(node, ast.Assign)
+                               else [node.target]))
+        and isinstance(node.value, ast.Constant)
+        and node.value.value == "state-construction-only"
+        for node in ast.walk(restart_tree)
+    )
+    if (
+        ("round1", "_check_purity") not in restart_calls
+        or ("round2", "validate_record") not in restart_calls
+        or not observed_usage
+    ):
+        raise ValueError(
+            "round-two live-restart corpus does not preserve no-label guards"
+        )
+
+
 def purity_violations(
     bot_directory: pathlib.Path = BOT_DIRECTORY,
     repository_root: pathlib.Path = REPOSITORY_ROOT,
 ) -> list[str]:
     repository_root = repository_root.resolve()
     config, files = production_files(bot_directory.resolve(), repository_root)
-    model = _validate_model_provenance(repository_root)
+    track = _purity_track(config)
+    model = _validate_model_provenance(repository_root, track)
     seed_identity = _validate_seed_provenance(repository_root)
     _validate_checkpoint_provenance(
-        repository_root, config, model, seed_identity
+        repository_root, config, model, seed_identity, track
     )
-    _validate_corpus_semantics(repository_root)
+    if track == "round1":
+        _validate_corpus_semantics(repository_root)
+        banned_patterns = BANNED_PATTERNS
+    else:
+        _validate_round2_corpus_semantics(repository_root)
+        banned_patterns = ROUND2_BANNED_PATTERNS
     violations: list[str] = []
     for path in files:
         relative = path.resolve().relative_to(repository_root.resolve())
         path_text = relative.as_posix()
         contents = path.read_text(encoding="utf-8")
-        for pattern, label in BANNED_PATTERNS:
+        for pattern, label in banned_patterns:
             if pattern.search(path_text) or pattern.search(contents):
                 violations.append(f"{relative}: {label}")
     return sorted(set(violations))

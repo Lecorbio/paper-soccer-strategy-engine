@@ -351,10 +351,177 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
         active_path.write_text(json.dumps(active), encoding="utf-8")
         return model_path, runtime_path, identity
 
+    def round2_fixture(self, temporary):
+        root, bot = self.fixture(temporary)
+        config_path = bot / "submission.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["purity_dependencies"] = list(purity.ROUND2_PURITY_DEPENDENCIES)
+        config["purity_semantic_dependencies"] = list(
+            purity.ROUND2_SEMANTIC_DEPENDENCIES
+        )
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+        for relative in purity.ROUND2_PURITY_DEPENDENCIES[1:]:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text("# native round-two dependency\n", encoding="utf-8")
+        round2_corpus = root / purity.ROUND2_SEMANTIC_DEPENDENCIES[0]
+        round2_corpus.write_text(
+            "import jacek_native_corpus as round1\n"
+            "def validate_record(record, line_number=1):\n"
+            "    round1._check_purity(record, line_number)\n"
+            "    return round1.validate_record(record, line_number)\n",
+            encoding="utf-8",
+        )
+        restart_corpus = root / purity.ROUND2_SEMANTIC_DEPENDENCIES[1]
+        restart_corpus.write_text(
+            "import jacek_native_corpus as round1\n"
+            "import jacek_native_corpus_round2 as round2\n"
+            "OBSERVED_USAGE = 'state-construction-only'\n"
+            "def validate_record(record, manifest, collector, selected, "
+            "line_number=1):\n"
+            "    round1._check_purity(record, line_number)\n"
+            "    return round2.validate_record(record, line_number)\n",
+            encoding="utf-8",
+        )
+        trainer = root / "tools/train_jacek_native_round2.py"
+        trainer.write_text("def train_round_two():\n    return None\n", encoding="utf-8")
+        model_path = root / purity.ROUND2_PURITY_DEPENDENCIES[0]
+        model = json.loads(model_path.read_text(encoding="utf-8"))
+        seed_runtime = root / "models/jacek_native_untrained_seed.runtime"
+        seed_lines = seed_runtime.read_text(encoding="utf-8").splitlines()
+        seed_identity = {
+            "artifact_sha256": hashlib.sha256(seed_runtime.read_bytes()).hexdigest(),
+            "model_sha256": seed_lines[3],
+            "packed_sha256": seed_lines[4],
+        }
+        shapes = purity.MODEL_SHAPES
+        quantization = {
+            "bits": 3,
+            "minimum": -3,
+            "maximum": 3,
+            "scheme": "symmetric-per-layer-round-to-nearest",
+            "packing": "w1-w2-w3-row-major-signed-3bit-lsb-first",
+            "scales": {"w1": 1.0, "w2": 1.0, "w3": 1.0},
+            "weights": {
+                name: {
+                    "shape": list(shape),
+                    "values": [0] * (
+                        shape[0] * shape[1] if len(shape) == 2 else shape[0]
+                    ),
+                }
+                for name, shape in shapes.items()
+            },
+        }
+        checkpoint_payload = {"seed": 31, "model": {}, "quantization": quantization}
+        checkpoint = {
+            **checkpoint_payload,
+            "checkpoint_sha256": hashlib.sha256(json.dumps(
+                checkpoint_payload, sort_keys=True, separators=(",", ":")
+            ).encode() + b"\n").hexdigest(),
+        }
+        source_digest = hashlib.sha256(b"round two shard").hexdigest()
+        generation = model["provenance"]["generation"]
+        build_sha = generation["build_provenance_sha256"][0]
+        build_binary_sha = generation["build_contracts"][0]["contract"][
+            "binary"
+        ]["sha256"]
+        model.update({
+            "architecture": {
+                "inputs": 1156, "hidden_one": 32, "hidden_two": 32,
+                "outputs": 1, "biases": False,
+                "hidden_one_activation":
+                    "square-nonnegative-leaky-0.01-negative",
+                "hidden_two_activation": "leaky-relu-0.01",
+                "output_activation": "tanh",
+            },
+            "rules": {
+                "width": 8, "height": 10,
+                "goal_rule": "own-goals-allowed",
+                "blocked_rule": "mover-loses",
+            },
+            "target": {
+                "primary": "mover-relative-final-outcome",
+                "auxiliary": "stable-native-bfm-reanalysis",
+                "auxiliary_weight": 0.25,
+                "policy_target": None,
+            },
+            "checkpoints": [checkpoint],
+            "training": {
+                "seeds": [31], "chosen_seed": 31, "provisional_seed": 31,
+                "external_actual_clock_selection": {
+                    "required": True, "status": "complete",
+                    "criterion": "native-actual-clock-match-strength",
+                    "eligible_seed_order": [31],
+                },
+            },
+        })
+        model["provenance"].update({
+            "trainer_sha256": hashlib.sha256(trainer.read_bytes()).hexdigest(),
+            "corpus_validator_sha256": hashlib.sha256(
+                round2_corpus.read_bytes()).hexdigest(),
+            "restart_corpus_validator_sha256": hashlib.sha256(
+                restart_corpus.read_bytes()).hexdigest(),
+            "source_sha256": {f"sha256:{source_digest}": source_digest},
+            "corpus_sha256": hashlib.sha256(json.dumps(
+                [[f"sha256:{source_digest}", source_digest]],
+                separators=(",", ":"),
+            ).encode()).hexdigest(),
+            "lineage": {
+                "strict_current": [{
+                    "manifest_sha256": "1" * 64,
+                    "build_provenance_sha256": build_sha,
+                    "binary_sha256": build_binary_sha,
+                    "shard_sha256": [source_digest],
+                    "games": 8,
+                    "seed": 17,
+                }],
+                "archived_round1": [],
+                "live_restart_round2": [],
+            },
+        })
+        generation.update({
+            "model_artifact_sha256": [seed_identity["artifact_sha256"]],
+            "checkpoint_provenance": {
+                "mode": "untrained-seed-bootstrap/v1",
+                "artifacts": [seed_identity],
+            },
+        })
+        model_path.write_text(json.dumps(model), encoding="utf-8")
+        return root, bot, model_path
+
     def test_clean_native_source_is_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, bot = self.fixture(temporary)
             self.assertEqual(purity.purity_violations(bot, root), [])
+
+    def test_round2_purity_branch_accepts_native_reanalysis_teacher_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, bot, _ = self.round2_fixture(temporary)
+            (root / "tools/jacek_native_workflow_round2.py").write_text(
+                "teacher = 'native reanalysis checkpoint'\n", encoding="utf-8"
+            )
+            self.assertEqual(purity.purity_violations(bot, root), [])
+
+    def test_round2_purity_requires_completed_clock_selection_and_restart_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, bot, model_path = self.round2_fixture(temporary)
+            model = json.loads(model_path.read_text(encoding="utf-8"))
+            model["training"]["external_actual_clock_selection"]["status"] = (
+                "pending"
+            )
+            model_path.write_text(json.dumps(model), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "actual-clock selection"):
+                purity.purity_violations(bot, root)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, bot, model_path = self.round2_fixture(temporary)
+            model = json.loads(model_path.read_text(encoding="utf-8"))
+            model["provenance"]["restart_corpus_validator_sha256"] = "0" * 64
+            model_path.write_text(json.dumps(model), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "restart corpus-validator"):
+                purity.purity_violations(bot, root)
 
     def test_incumbent_and_label_dependencies_are_rejected(self):
         forbidden = {

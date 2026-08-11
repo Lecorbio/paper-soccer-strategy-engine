@@ -164,9 +164,9 @@ td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 .gate-card p { color: var(--muted); line-height: 1.45; }
 .gate-card .gate-result { color: var(--ink); font-weight: 700; }
 .live-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 24px;
   border-radius: 12px;
   background: #2f5f36;
@@ -174,6 +174,16 @@ td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
   padding: clamp(22px, 4vw, 36px);
 }
 .live-panel p:last-child { margin-top: 8px; color: rgba(255, 250, 240, 0.8); }
+.live-details {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.live-details > div { border: 1px solid rgba(255, 250, 240, 0.24); border-radius: 8px; padding: 12px 13px; }
+.live-details dt { color: rgba(255, 250, 240, 0.7); font-size: 0.75rem; font-weight: 700; }
+.live-details dd { margin-top: 5px; font-weight: 700; line-height: 1.4; }
+.live-note { grid-column: 1 / -1; line-height: 1.5; }
 .documentation { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .documentation > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
 footer { display: flex; justify-content: space-between; gap: 18px; border-top: 1px solid var(--line); color: var(--muted); padding-block: 22px 32px; padding-inline: max(18px, calc((100vw - 1080px) / 2 + 18px)); font-size: 0.84rem; }
@@ -181,7 +191,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; border-top: 1
 @media (max-width: 760px) {
   .hero, .section-heading, .documentation { align-items: flex-start; flex-direction: column; }
   .hero-status { justify-items: start; }
-  .summary-grid, .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-grid, .detail-grid, .live-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two-column, .gate-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
@@ -190,7 +200,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; border-top: 1
   .status-topbar nav { width: 100%; }
   .status-topbar nav a { flex: 1; justify-content: center; }
   .status-shell { padding: 12px; }
-  .summary-grid, .detail-grid { grid-template-columns: 1fr; }
+  .summary-grid, .detail-grid, .live-details { grid-template-columns: 1fr; }
   .status-list li, .live-panel { align-items: flex-start; flex-direction: column; }
   footer { flex-direction: column; padding-inline: 12px; }
 }

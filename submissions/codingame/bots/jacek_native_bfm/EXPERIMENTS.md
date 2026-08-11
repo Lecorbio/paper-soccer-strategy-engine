@@ -204,7 +204,7 @@ to this bootstrap corpus.
    construction-inclusive wall time. Node counts are diagnostics, not the pass
    criterion.
 7. **External comparison:** procedural in-memory openings, both colors, fixed
-   work for CI reproducibility, then equal-clock 800/165 against canonical
+   work for CI reproducibility, then equal-clock 800/155 against canonical
    `rank_4` for the deployment decision.
 8. **Live experiment:** upload the exact generated source even if preliminary
    local strength is imperfect, wait for a complete arena batch, archive the
@@ -241,6 +241,11 @@ The earlier 800/165 ms batches remain historical evidence: the decisive
 bootstrap gate reached 179.918 ms, only 0.082 ms below the ceiling, and the old
 external Rank 4 source reached 180.513 ms and recorded one headroom failure.
 
+The post-upload seed-fidelity check used the same 24-game actual-clock setup
+twice. The deployed constant shuffle seed scored 4-20; explicitly varying the
+candidate shuffle seed scored 5-19. This one-game difference does not support
+seed mismatch as the main cause of the live and local strength gap.
+
 ## Frozen checkpoint-to-checkpoint gates
 
 Native model iterations must first beat the prior runtime checkpoint with the
@@ -248,7 +253,7 @@ same engine and production search limits. The runtime loader validates and
 prints the complete-file, model-artifact, and packed-weight SHA-256 values.
 
 1. Fast screen: 500 paired openings (1,000 games), 50/10 ms, at least 530 wins.
-2. Decisive screen: 106 paired openings (212 games), 800/165 ms, at least 112
+2. Decisive screen: 106 paired openings (212 games), 800/155 ms, at least 112
    wins overall and at least 50 wins in each color.
 3. Both screens require zero illegal/empty actions, unfinished games,
    operational timeouts, and 900/180 ms headroom failures.
@@ -285,7 +290,8 @@ stronger sibling at the fast clock.
 ## Frozen external Rank 4 gates
 
 External comparisons use canonical `rank_4` solely as the opponent and keep
-both engines at 800/165 ms. The terms are intentionally explicit:
+both engines at the current 800/155 ms deployment profile. The terms are
+intentionally explicit:
 
 1. Development screen: 53 paired openings = 106 games, at least 58 candidate
    wins. Repeat it under a second deterministic opening seed before treating
@@ -328,15 +334,64 @@ no 424-game parity gate, and no CodinGame upload of that historical source.
 The user authorized a new exploratory CodinGame diagnostic even though local
 strength is not established. The only production change from the historical
 artifact is the later search budget reduction from 165 ms to 155 ms. The
-current generated source is 94,528 characters with SHA-256
+uploaded generated source is 94,528 characters with SHA-256
 `3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20`;
 the model, packed weights, and generated header identities are unchanged.
 
 The exact source passes generated-source compilation, protocol and native
 tests, ASan+UBSan, the fresh-process timing probe above, and the 24-game
-operational safety screen. Upload has not yet completed, and submission and
-agent IDs are still pending. No live result, promotion, parity, or strength
-claim is recorded at this stage.
+operational safety screen. It was uploaded from Git commit
+`8cf6005aace930016b86ac05de2ac8743447612c` as agent `6609056`, submission
+`41123817`, history version `61`. The editor contents were copied back and
+matched the generated-source hash, but no API source verification was
+performed in this flow. The source binding is therefore
+`asserted-not-api-verified`, not stronger.
+
+The complete 90-game batch scored 52-38 raw, with colors 29-15 and 23-23,
+rank 9, and score 39.54. The candidate had zero operational failures. Eleven
+wins were opponent forfeits, comprising seven illegal-action failures and four
+timeouts. Removing them left 79 clean games at 41-38, with colors 21-15 and
+20-23. Clean frozen-cohort results were 4-25 against the top 5, 6-32 against
+the top 10, and 22-37 against the top 20.
+
+The provenance identities are:
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6609056/41123817/3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20/0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf.json` | `0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-41123817-20260811/clean-auditor.tsv` | `d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b` |
+| Frozen 30k-work decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-41123817-20260811/native-decisions-fixed30k.jsonl` | `7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee` |
+| Canonical audit summary | `results/codingame_arena_diagnostics/runs/jacek-native-41123817-20260811/native-decisions-fixed30k-summary.json` | `4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b` |
+
+The fixed-30k audit covers 1,918 decisions in all 79 clean games: 1,070
+`bfm-override`, 702 `match`, 136 `initial-evaluator-ordering`, six
+`generator-omission`, and four `operational-failure`. The labels describe a
+comparison with a deterministic fixed-work search; they are not labels of the
+correct move and do not show that an alternative would have won. Generator
+omissions are rare in this sample. The next native iteration therefore focuses
+on evaluator signal, reanalysis, and BFM allocation rather than treating action
+coverage as the primary weakness.
+
+This entire live batch is development-contaminated as soon as it informs that
+choice. It is excluded from promotion evidence and training-policy labels. No
+promotion, parity, or superiority claim follows from the raw rank or clean
+score.
+
+The behavior-preserving diagnostic successor to the uploaded source is 94,771
+characters with SHA-256
+`ac63ab602e6b837032fd2e88e2d8ca07e56ebabde956587e005270f45fcaad93`.
+It short-circuits duplicate-boundary tactical classification and adds
+root/non-root truncation, depth, leader-change, entropy, margin, and cap
+telemetry. It is local research code, not a second live submission.
+
+The corrected round-two pipeline pilot validated 32 paired-schedule games and
+1,430 augmented samples. Of 122 reanalysed boundaries, 21 passed the frozen
+30k-to-100k stability contract, including 17 non-exact auxiliary labels; zero
+had a deadline interruption. A deterministic two-epoch train/export smoke also
+produced byte-identical repeated JSON artifacts and a loadable 14,268-byte
+runtime. These are pipeline checks, not strength results. The full league,
+restart corpus, three-seed training round, and actual-clock selection remain
+pending.
 
 ## Results ledger
 
@@ -347,11 +402,15 @@ claim is recorded at this stage.
 | Bootstrap decisive vs untrained | 144 | 68 | 76 / 68 | 0 / 0 / 0 | 800/165 ms |
 | External Rank 4 development | 35 | 71 | 16 / 19 | 0 / 1 / 0 | equal 800/165 ms |
 | Exploratory operational screen vs Rank 4 | 8 | 16 | 5 / 3 | 0 / 0 / 0 | candidate 800/155 ms |
+| Constant-seed fidelity diagnostic | 4 | 20 | not a gate | 0 / 0 / 0 | candidate 800/155 ms |
+| Varied-seed fidelity diagnostic | 5 | 19 | not a gate | 0 / 0 / 0 | candidate 800/155 ms |
 | External final parity | not run | not run | not run | stopped | 424-game design |
-| Exact-source live batch | pending | field | pending | no source IDs yet | upload authorized |
+| Exact-source live batch, raw | 52 | 38 | 29 / 23 | our operational 0 | CodinGame 90 games |
+| Exact-source live batch, clean | 41 | 38 | 21 / 20 | 11 opponent forfeits removed | CodinGame 79 games |
 
 The bootstrap passed both comparisons with its untrained ancestor, but its
 historical 800/165 ms source lost decisively to the external Rank 4 reference
 and breached local timing headroom once. The current 800/155 ms source has
 better measured timing margin and is an auditable exploratory baseline, not a
-promotion, parity, or superiority result. The live batch remains pending.
+promotion, parity, or superiority result. The completed live batch is now
+diagnostic development evidence and cannot serve as an independent holdout.

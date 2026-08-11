@@ -9,12 +9,15 @@ used only as an external opponent in `comparison_gate.cpp`.
 The public-safe checkpoint, training, clock, verification, and live-gate ledger
 is published on the [native bot research status
 page](https://lecorbio.github.io/paper-soccer-strategy-engine/jacek-native/).
-The retained source is a reproducible research checkpoint. Its earlier
+The uploaded baseline is a reproducible research checkpoint. Its earlier
 800/165 ms artifact lost the external Rank 4 screen 35-71 and exceeded the
-180 ms local later-response ceiling once. The current artifact reduces the
+180 ms local later-response ceiling once. The uploaded artifact reduces the
 later search budget to 155 ms, passes the local operational checks below, and
-is authorized for an exploratory CodinGame diagnostic. Upload and source IDs
-are still pending; this is not a strength, promotion, or parity claim.
+completed an exploratory 90-game CodinGame diagnostic. The raw result was
+52-38 and the forfeit-clean result was 41-38. This batch is already
+development-contaminated and is not a strength, promotion, or parity claim.
+The later local research HEAD adds behavior-preserving duplicate-boundary
+short-circuiting and search diagnostics; it has not been uploaded.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -160,9 +163,12 @@ outcomes only. Its frozen identity is:
 | Packed weights | 14,268 bytes; SHA-256 `7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218` |
 | Generated header | 21,736 characters; SHA-256 `b9e6e5765bfc6f69e18a968c06e2f92825f91dfd3732176d94f7cd43608af43f` |
 | Schema | SHA-256 `dd36c1b2800620fab1d5dc88afe95fcbb13864d581a18f01d26b3e1c3a4a6dfd` |
-| Generated submission | 94,528 characters; SHA-256 `3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20` |
+| Uploaded live submission | 94,528 characters; SHA-256 `3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20` |
 
-The project cap leaves 471 characters of explicit source headroom. The
+That uploaded source leaves 471 characters of explicit project-cap headroom.
+The instrumentation-only local successor is 94,771 characters, SHA-256
+`ac63ab602e6b837032fd2e88e2d8ca07e56ebabde956587e005270f45fcaad93`,
+and leaves 228 characters; it is not live evidence. The
 independent initial-state golden value is `-0.000181343639`; C++ inference must
 match it within `2e-6`. The integration test also freezes rotational and
 partial/full evaluation parity and rejects a one-byte packed-payload mutation.
@@ -171,7 +177,7 @@ partial/full evaluation parity and rejects a one-byte packed-payload mutation.
 
 Local fixed-work matches are diagnostic: they make regressions reproducible
 but do not establish CodinGame strength. The historical checkpoint and
-external promotion gates below used equal-clock 800/165 ms games. The current
+external promotion gates below used equal-clock 800/165 ms games. The uploaded
 exploratory source instead uses 800/155 ms for additional operational margin,
 both colors, complete batches, and exact-source binding. Early unoptimized
 submissions are legitimate experiments when their source hash and
@@ -185,13 +191,16 @@ development evidence and cannot serve as a later promotion holdout.
 Source-bound public live games can be diagnosed with the separate, read-only
 [replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
 evidence only and never enters the candidate model or promotion holdout.
+The completed live batch has already influenced diagnosis, so neither its
+games nor any derived fixed-work counterfactual may be reused as independent
+promotion evidence.
 
 The timing probe measures model construction, search construction, action
 selection, and application together. It must remain below 900 ms for a first
 response and 180 ms later, leaving margin before CodinGame's 1,000/200 ms
 operational limits. Player 0 and Player 1 are measured by separate fresh
 process invocations so one color cannot inherit a warmed model or allocator
-from the other. For the current 800/155 ms artifact, the fresh-process Release
+from the other. For the uploaded 800/155 ms artifact, the fresh-process Release
 measurements were P0 425.910/157.571 ms with 81,461,248-byte peak RSS and a
 76,497,304-byte peak footprint, and P1 397.385/157.921 ms with 91,504,640-byte
 peak RSS and a 78,791,088-byte peak footprint. Both pass 900/180; node and
@@ -204,6 +213,12 @@ response was 166.726 ms. The score is not strength evidence. It only supports
 using this exact source as a live diagnostic. For historical context, the
 earlier 800/165 ms decisive bootstrap reached 179.918 ms later, and the old
 external Rank 4 source reached 180.513 ms, producing one headroom failure.
+
+A subsequent seed-fidelity diagnostic ran the same 24-game actual-clock setup
+with the deployed constant shuffle seed and with per-game varied shuffle
+seeds. The candidate scored 4-20 and 5-19 respectively. Both variants remained
+weak, so a deployment-versus-harness seed mismatch is not the main explanation
+for the strength gap.
 
 ## Build and verification
 
@@ -263,7 +278,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 \
 `papersoccer_jacek_native_model_gate` loads two such files, validates their
 model and packed hashes, and prints the SHA-256 of each complete runtime file.
 It plays every procedural opening in both colors with the exact production
-250/4,000/512/80,000 search profile. Checkpoint promotion is frozen as:
+250/4,000/512/80,000 search profile and the deployed constant shuffle seed.
+`--vary-shuffle-seed` is diagnostic only. Checkpoint promotion is frozen as:
 
 ```sh
 # Fast screen: 1,000 games.
@@ -277,7 +293,7 @@ build/papersoccer_jacek_native_model_gate \
 build/papersoccer_jacek_native_model_gate \
   --candidate-checkpoint build/candidate.runtime \
   --baseline-checkpoint build/baseline.runtime \
-  --pairs 106 --first-ms 800 --later-ms 165 \
+  --pairs 106 --first-ms 800 --later-ms 155 \
   --opening-turns 0,4,8,12 --minimum-candidate-wins 112 \
   --minimum-wins-per-color 50
 ```
@@ -353,3 +369,46 @@ There were no unfinished games or operational timeouts, but one candidate
 later response reached 180.513 ms and failed the pre-upload ceiling. The
 58-win development threshold failed, so the second-seed repeat, 424-game
 parity gate, and CodinGame upload were not run.
+
+## Completed CodinGame diagnostic
+
+The 800/155 ms source was uploaded from Git commit
+`8cf6005aace930016b86ac05de2ac8743447612c`. The editor contents were copied
+back and matched the 94,528-character generated source SHA-256
+`3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20`.
+No API source verification was performed in this flow, so the binding is
+recorded precisely as **asserted, not API-verified**. The live identity is
+agent `6609056`, submission `41123817`, history version `61`,
+model SHA-256
+`19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc`,
+and packed-weight SHA-256
+`7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218`.
+
+All 90 arena games completed. The raw score was 52-38, with colors 29-15 and
+23-23, rank 9, and score 39.54. Eleven wins were opponent forfeits: seven
+illegal actions and four timeouts. After removing those forfeits before
+analysis, 79 clean games remained at 41-38, split 21-15 and 20-23 by color.
+The candidate recorded zero operational failures. Against the frozen cohorts,
+the clean results were 4-25 versus the top 5, 6-32 versus the top 10, and
+22-37 versus the top 20. This is a completed exploratory batch, not evidence
+of parity or a checkpoint promotion.
+
+The provenance-safe archive is bound by manifest SHA-256
+`0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf`
+and clean auditor TSV SHA-256
+`d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b`.
+The frozen 30,000-work replay audit input has SHA-256
+`7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee`;
+its canonical summary has SHA-256
+`4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b`.
+Across 1,918 decisions in the 79 clean games, the audit classified 1,070 as
+BFM override, 702 as match, 136 as initial-evaluator ordering, six as generator
+omission, and four as operational failure. These labels compare the deployed
+choice with a fixed-work counterfactual; they do not establish that the
+counterfactual would have won. The very small omission count directs the next
+iteration toward evaluator/reanalysis and BFM allocation rather than broader
+action generation.
+
+Round-two native league, reanalysis, calibration, and training infrastructure
+is being exercised in a pilot. No round-two checkpoint or result has yet met
+the actual-clock promotion gates, so none is retained or reported here.

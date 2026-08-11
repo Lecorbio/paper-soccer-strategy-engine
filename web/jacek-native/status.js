@@ -33,6 +33,10 @@
         ledger.training.provenance.length === 0) {
       throw new Error("Native training provenance is incomplete.");
     }
+    if (typeof ledger.training.nextRound !== "string" ||
+        ledger.training.nextRound.length === 0) {
+      throw new Error("Native next-round status is incomplete.");
+    }
     for (const [key, value] of Object.entries(ledger.provenance)) {
       if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
         throw new Error(`Native provenance identity ${key} is incomplete.`);
@@ -50,6 +54,27 @@
           throw new Error(`Native diagnostic identity ${key} is incomplete.`);
         }
       }
+    }
+    for (const key of ["raw", "clean", "opponentForfeits", "cleanCohorts",
+      "evidence", "audit"]) {
+      if (!ledger.live[key] || typeof ledger.live[key] !== "object") {
+        throw new Error(`Native live ledger is missing ${key}.`);
+      }
+    }
+    for (const [key, value] of Object.entries(ledger.live.evidence)) {
+      if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+        throw new Error(`Native live evidence identity ${key} is incomplete.`);
+      }
+    }
+    for (const key of ["sourceSha256", "modelSha256", "packedSha256"]) {
+      if (typeof ledger.live[key] !== "string" ||
+          !/^[0-9a-f]{64}$/.test(ledger.live[key])) {
+        throw new Error(`Native live identity ${key} is incomplete.`);
+      }
+    }
+    if (typeof ledger.live.sourceCommit !== "string" ||
+        !/^[0-9a-f]{40}$/.test(ledger.live.sourceCommit)) {
+      throw new Error("Native live source commit is incomplete.");
     }
     return ledger;
   }
@@ -151,6 +176,7 @@
         definition(doc, "Quantized validation", `MSE ${ledger.training.validationMse.toFixed(4)} · ${(ledger.training.validationSignAccuracy * 100).toFixed(1)}% sign`),
         definition(doc, "Quantized test", `MSE ${ledger.training.testMse.toFixed(4)} · ${(ledger.training.testSignAccuracy * 100).toFixed(1)}% sign`),
         definition(doc, "Training resources", `${ledger.training.trainingSeconds.toFixed(2)} s · ${formatInteger(ledger.training.peakRssBytes)} bytes peak RSS`),
+        definition(doc, "Next round", ledger.training.nextRound),
       );
     }
     const warning = doc.getElementById("trainingWarning");
@@ -159,6 +185,7 @@
     const clock = doc.getElementById("clockDetails");
     if (clock) {
       const probe = ledger.clock.timingProbe;
+      const seed = ledger.clock.shuffleSeedDiagnostic;
       clock.replaceChildren(
         definition(doc, "Search budgets", `${ledger.clock.search.firstMs} / ${ledger.clock.search.laterMs} ms`),
         definition(doc, "Pre-upload ceilings", `${ledger.clock.headroom.firstMs} / ${ledger.clock.headroom.laterMs} ms`),
@@ -168,6 +195,7 @@
         definition(doc, "P1 memory", `${formatInteger(probe.playerOne.maxRssBytes)} bytes RSS · ${formatInteger(probe.playerOne.peakFootprintBytes)} footprint`),
         definition(doc, "Decisive bootstrap max", `${ledger.clock.decisiveBootstrap.candidateFirstMaxMs.toFixed(3)} / ${ledger.clock.decisiveBootstrap.candidateLaterMaxMs.toFixed(3)} ms · ${ledger.clock.decisiveBootstrap.headroomFailures} failures`),
         definition(doc, "External gate max", `${ledger.clock.externalDevelopment.candidateFirstMaxMs.toFixed(3)} / ${ledger.clock.externalDevelopment.candidateLaterMaxMs.toFixed(3)} ms · ${ledger.clock.externalDevelopment.headroomFailures} failure`),
+        definition(doc, "Shuffle-seed check", `constant ${seed.constantSeed.candidateWins}–${seed.constantSeed.referenceWins} · varied ${seed.variedSeed.candidateWins}–${seed.variedSeed.referenceWins} / ${seed.gamesPerVariant} games each`),
       );
     }
 
@@ -203,6 +231,25 @@
     if (liveStatus) {
       liveStatus.className = `status-pill ${statusClass(ledger.live.status)}`;
       liveStatus.textContent = statusLabel(ledger.live.status);
+    }
+    const liveDetails = doc.getElementById("liveDetails");
+    if (liveDetails) {
+      const raw = ledger.live.raw;
+      const clean = ledger.live.clean;
+      const forfeits = ledger.live.opponentForfeits;
+      const cohorts = ledger.live.cleanCohorts;
+      const classes = ledger.live.audit.classifications;
+      liveDetails.replaceChildren(
+        definition(doc, "Arena identity", `agent ${ledger.live.agentId} · submission ${ledger.live.submissionId} · history ${ledger.live.historyVersion}`),
+        definition(doc, "Placement", `rank ${ledger.live.rank} · score ${ledger.live.score.toFixed(2)}`),
+        definition(doc, "Raw result", `${raw.wins}–${raw.losses} / ${raw.games} · colors ${raw.colors.playerZero.wins}–${raw.colors.playerZero.losses} and ${raw.colors.playerOne.wins}–${raw.colors.playerOne.losses}`),
+        definition(doc, "Clean result", `${clean.wins}–${clean.losses} / ${clean.games} · colors ${clean.colors.playerZero.wins}–${clean.colors.playerZero.losses} and ${clean.colors.playerOne.wins}–${clean.colors.playerOne.losses}`),
+        definition(doc, "Opponent forfeits", `${forfeits.total} · ${forfeits.illegalAction} illegal action · ${forfeits.timeout} timeout`),
+        definition(doc, "Candidate operations", `${ledger.live.candidateOperationalFailures} failures`),
+        definition(doc, "Clean cohorts", `top 5 ${cohorts.top5.wins}–${cohorts.top5.losses} · top 10 ${cohorts.top10.wins}–${cohorts.top10.losses} · top 20 ${cohorts.top20.wins}–${cohorts.top20.losses}`),
+        definition(doc, "Source binding", ledger.live.sourceBinding),
+        definition(doc, "Fixed-30k audit", `${ledger.live.audit.decisions.toLocaleString("en-US")} decisions · BFM override ${classes.bfmOverride.toLocaleString("en-US")} · match ${classes.match} · evaluator ${classes.initialEvaluatorOrdering} · omission ${classes.generatorOmission} · operational ${classes.operationalFailure}`),
+      );
     }
     const readme = doc.getElementById("readmeLink");
     const experiments = doc.getElementById("experimentsLink");

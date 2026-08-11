@@ -131,6 +131,33 @@ forfeits, timeouts, invalid output, and runtime errors remain the collector's
 game-level operational classifications and are deliberately absent from its
 clean auditor export.
 
+## Offline aggregation and comparison
+
+`analyze_decision_audit.py` strictly validates JSONL schema, provenance, native
+configuration, decision identities, retention evidence, counters, and
+classification consistency before reporting anything. It aggregates the seven
+classifications overall and by result, player, and first-versus-later own
+decision; it also reports observed-boundary retention and initial ranks,
+deadline/cap/truncation rates, and each game's first non-equivalent decision.
+
+```sh
+python3 submissions/codingame/bots/jacek_native_bfm/analyze_decision_audit.py \
+  --input native-decisions.fixed.jsonl --label baseline --format json
+```
+
+An optional `--arena-manifest MANIFEST.json` joins only that explicitly named
+file. The join requires a fully accounted, self-contained collector manifest,
+exact source/submission/agent/provenance bindings, and complete clean-game and
+decision coverage. Its top-5/10/20 and named-opponent W/L summaries count each
+game once, never once per decision. Embedded content-addressed records are
+validated without opening their referenced paths.
+
+Use `--compare hypothesis.jsonl --compare-label hypothesis` to align two audits
+by game and state. Replay context and provenance must match exactly, while
+model/search configuration may differ and is recorded with classification,
+retention, rank, and pressure changes. The analyzer never scans result folders,
+opens match banks, or makes network requests.
+
 ## Build and focused verification
 
 ```sh

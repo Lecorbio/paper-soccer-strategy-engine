@@ -43,6 +43,7 @@ struct Arguments {
   std::size_t minimum_candidate_wins{};
   std::size_t minimum_wins_per_color{};
   bool verify_only{};
+  bool vary_shuffle_seed{};
 };
 
 struct LoadedModel {
@@ -296,10 +297,12 @@ int play(const Opening &opening, int candidate_player,
     const LoadedModel &selected = candidate_turn ? candidate : baseline;
     SearchTotals &totals =
         candidate_turn ? summary.candidate : summary.baseline;
-    const std::uint64_t shuffle_seed =
-        arguments.seed ^ opening.seed ^
-        (static_cast<std::uint64_t>(turn + 1) * 0x9e3779b97f4a7c15ULL) ^
-        (static_cast<std::uint64_t>(mover) * 0xd1b54a32d192ed03ULL);
+    const std::uint64_t shuffle_seed = arguments.vary_shuffle_seed
+        ? arguments.seed ^ opening.seed ^
+              (static_cast<std::uint64_t>(turn + 1) *
+               0x9e3779b97f4a7c15ULL) ^
+              (static_cast<std::uint64_t>(mover) * 0xd1b54a32d192ed03ULL)
+        : native::SearchConfig{}.shuffle_seed;
     (void)choose_turn(state, *selected.model, arguments,
                       player_turns[static_cast<std::size_t>(mover)],
                       shuffle_seed, totals);
@@ -355,6 +358,7 @@ void print_help() {
       << "  --seed N                      deterministic opening seed\n"
       << "  --minimum-candidate-wins N    total promotion threshold\n"
       << "  --minimum-wins-per-color N    threshold in each candidate color\n"
+      << "  --vary-shuffle-seed           diagnostic per-turn shuffle seeds\n"
       << "  --verify-only                 validate and identify both files\n";
 }
 
@@ -368,6 +372,10 @@ Arguments parse_arguments(int argc, char **argv) {
     }
     if (option == "--verify-only") {
       result.verify_only = true;
+      continue;
+    }
+    if (option == "--vary-shuffle-seed") {
+      result.vary_shuffle_seed = true;
       continue;
     }
     if (index + 1 >= argc) {
@@ -518,6 +526,8 @@ int main(int argc, char **argv) {
         << " baseline_operational_timeouts="
         << summary.baseline.operational_timeouts
         << " profile=" << arguments.first_ms << '/' << arguments.later_ms
+        << " shuffle_seed_policy="
+        << (arguments.vary_shuffle_seed ? "varied" : "deployment-constant")
         << " required_total=" << arguments.minimum_candidate_wins
         << " required_per_color=" << arguments.minimum_wins_per_color
         << " passed=" << (passed ? "true" : "false") << '\n';

@@ -223,6 +223,16 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     papersoccer_codingame_jacek_native_bfm_purity PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+  add_test(
+    NAME papersoccer_codingame_jacek_native_restart_round2_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest
+            tests.codingame.test_jacek_native_restart_round2)
+  set_tests_properties(
+    papersoccer_codingame_jacek_native_restart_round2_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   execute_process(
     COMMAND ${Python3_EXECUTABLE} -c "import numpy"
     RESULT_VARIABLE PAPERSOCCER_JACEK_NATIVE_NUMPY_STATUS
@@ -237,6 +247,15 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_native_training)
     set_tests_properties(
       papersoccer_codingame_jacek_native_training_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME papersoccer_codingame_jacek_native_round2_training_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_native_round2_training)
+    set_tests_properties(
+      papersoccer_codingame_jacek_native_round2_training_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
@@ -565,6 +584,38 @@ if(NOT EMSCRIPTEN)
   set_tests_properties(papersoccer_jacek_native_selfplay_smoke
     PROPERTIES FIXTURES_REQUIRED papersoccer_jacek_native_selfplay_output)
 
+  add_executable(papersoccer_jacek_native_selfplay_round2_test
+    tests/codingame/jacek_native_selfplay_round2_test.cpp)
+  target_include_directories(papersoccer_jacek_native_selfplay_round2_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_selfplay_round2_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_selfplay_round2_test
+    COMMAND papersoccer_jacek_native_selfplay_round2_test)
+
+  add_executable(papersoccer_jacek_native_selfplay_round2
+    tools/jacek_native_selfplay_round2.cpp)
+  target_include_directories(papersoccer_jacek_native_selfplay_round2
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_selfplay_round2
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_restart_round2
+    tools/jacek_native_restart_round2.cpp)
+  target_include_directories(papersoccer_jacek_native_restart_round2
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_restart_round2
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_restart_round2_test
+    tests/codingame/jacek_native_restart_round2_test.cpp)
+  target_include_directories(papersoccer_jacek_native_restart_round2_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_restart_round2_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_restart_round2_test
+    COMMAND papersoccer_jacek_native_restart_round2_test)
+
   add_executable(papersoccer_jacek_native_replay_decision_auditor
     submissions/codingame/bots/jacek_native_bfm/replay_decision_auditor.cpp)
   target_include_directories(
@@ -657,6 +708,18 @@ if(NOT EMSCRIPTEN)
           --baseline-checkpoint ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
           --pairs 1 --first-ms 50 --later-ms 10 --opening-turns 0
           --seed 6510615555426900575)
+      set_tests_properties(papersoccer_jacek_native_model_gate_match_smoke
+        PROPERTIES PASS_REGULAR_EXPRESSION
+          "shuffle_seed_policy=deployment-constant")
+      add_test(NAME papersoccer_jacek_native_model_gate_varied_shuffle_smoke
+        COMMAND papersoccer_jacek_native_model_gate
+          --candidate-checkpoint ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+          --baseline-checkpoint ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
+          --pairs 1 --first-ms 50 --later-ms 10 --opening-turns 0
+          --seed 6510615555426900575 --vary-shuffle-seed)
+      set_tests_properties(
+        papersoccer_jacek_native_model_gate_varied_shuffle_smoke
+        PROPERTIES PASS_REGULAR_EXPRESSION "shuffle_seed_policy=varied")
     endif()
   endif()
 endif()

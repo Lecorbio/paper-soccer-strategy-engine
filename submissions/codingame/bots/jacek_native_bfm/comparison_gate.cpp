@@ -43,6 +43,7 @@ struct HarnessConfig {
   int maximum_turns{200};
   std::vector<int> opening_turns{0, 2, 6, 12};
   std::uint64_t seed{0x64c28ebd2f17a953ULL};
+  bool vary_candidate_shuffle_seed{};
   std::uint32_t candidate_first_ms{};
   std::uint32_t candidate_later_ms{};
   std::uint32_t reference_first_ms{};
@@ -73,8 +74,20 @@ struct Decision {
   std::uint64_t tactical_classes_found{};
   std::uint64_t tactical_proof_truncations{};
   std::uint64_t truncations{};
+  std::uint64_t root_truncations{};
+  std::uint64_t nonroot_truncations{};
+  std::uint64_t tree_cap_decisions{};
+  std::uint64_t expansion_cap_decisions{};
+  std::uint64_t deadline_decisions{};
+  std::uint64_t search_decisions{};
+  std::uint64_t root_leader_changes{};
+  std::uint64_t initial_leader_rank_sum{};
+  std::uint16_t maximum_initial_leader_rank{};
   std::uint32_t completed_depth{};
+  std::uint32_t maximum_complete_turn_depth{};
   std::size_t tree_nodes{};
+  double root_visit_entropy{};
+  double final_action_margin{};
   double milliseconds{};
   double maximum_first_milliseconds{};
   double maximum_later_milliseconds{};
@@ -267,6 +280,15 @@ Decision choose_candidate(ps::GameState &state,
   decision.tactical_proof_truncations =
       result.stats.proof_truncations;
   decision.truncations = result.stats.generator_truncations;
+  decision.root_truncations = result.stats.root_generator_truncations;
+  decision.nonroot_truncations = result.stats.nonroot_generator_truncations;
+  decision.tree_cap_decisions = result.stats.tree_cap_reached ? 1U : 0U;
+  decision.expansion_cap_decisions =
+      result.stats.expansion_cap_reached ? 1U : 0U;
+  decision.deadline_decisions = result.stats.deadline_reached ? 1U : 0U;
+  decision.search_decisions = 1;
+  decision.maximum_complete_turn_depth =
+      result.stats.max_complete_turn_depth;
   decision.tree_nodes = result.stats.tree_nodes;
   decision.deadline_reached = result.stats.deadline_reached;
   decision.milliseconds =
@@ -282,6 +304,49 @@ Decision choose_candidate(ps::GameState &state,
   decision.operational_timeouts =
       is_operational_timeout(decision.milliseconds, prior_turns, time_ms) ? 1U
                                                                           : 0U;
+  const auto initial_order = [](const candidate::RootActionStat &left,
+                                const candidate::RootActionStat &right) {
+    return left.initial_value > right.initial_value ||
+           (left.initial_value == right.initial_value &&
+            left.encoded < right.encoded);
+  };
+  const auto final_score = [](const candidate::RootActionStat &action) {
+    return candidate::final_action_score(action.value, action.visits);
+  };
+  const auto final_order = [&](const candidate::RootActionStat &left,
+                               const candidate::RootActionStat &right) {
+    const double left_score = final_score(left);
+    const double right_score = final_score(right);
+    return left_score > right_score ||
+           (left_score == right_score && left.encoded < right.encoded);
+  };
+  const auto initial = std::min_element(result.root_actions.begin(),
+                                        result.root_actions.end(),
+                                        [&](const auto &left, const auto &right) {
+                                          return initial_order(left, right);
+                                        });
+  const auto final = std::min_element(result.root_actions.begin(),
+                                      result.root_actions.end(),
+                                      [&](const auto &left, const auto &right) {
+                                        return final_order(left, right);
+                                      });
+  std::uint16_t rank = 1;
+  std::uint64_t visits = 0;
+  for (const auto &action : result.root_actions) visits += action.visits;
+  double second_score = -std::numeric_limits<double>::infinity();
+  for (const auto &action : result.root_actions) {
+    if (&action != &*initial && final_order(action, *initial)) ++rank;
+    const double probability = static_cast<double>(action.visits) / visits;
+    decision.root_visit_entropy -= probability * std::log(probability);
+    if (&action != &*final) {
+      second_score = std::max(second_score, final_score(action));
+    }
+  }
+  decision.root_leader_changes = initial != final ? 1U : 0U;
+  decision.initial_leader_rank_sum = rank;
+  decision.maximum_initial_leader_rank = rank;
+  decision.final_action_margin =
+      std::isfinite(second_score) ? final_score(*final) - second_score : 0.0;
   return decision;
 }
 
@@ -356,8 +421,24 @@ void add_decision(Decision &total, const Decision &decision) {
   total.tactical_classes_found += decision.tactical_classes_found;
   total.tactical_proof_truncations += decision.tactical_proof_truncations;
   total.truncations += decision.truncations;
+  total.root_truncations += decision.root_truncations;
+  total.nonroot_truncations += decision.nonroot_truncations;
+  total.tree_cap_decisions += decision.tree_cap_decisions;
+  total.expansion_cap_decisions += decision.expansion_cap_decisions;
+  total.deadline_decisions += decision.deadline_decisions;
+  total.search_decisions += decision.search_decisions;
+  total.root_leader_changes += decision.root_leader_changes;
+  total.initial_leader_rank_sum += decision.initial_leader_rank_sum;
+  total.maximum_initial_leader_rank = std::max(
+      total.maximum_initial_leader_rank,
+      decision.maximum_initial_leader_rank);
   total.completed_depth += decision.completed_depth;
+  total.maximum_complete_turn_depth = std::max(
+      total.maximum_complete_turn_depth,
+      decision.maximum_complete_turn_depth);
   total.tree_nodes = std::max(total.tree_nodes, decision.tree_nodes);
+  total.root_visit_entropy += decision.root_visit_entropy;
+  total.final_action_margin += decision.final_action_margin;
   total.milliseconds += decision.milliseconds;
   total.maximum_first_milliseconds = std::max(
       total.maximum_first_milliseconds, decision.maximum_first_milliseconds);
@@ -379,10 +460,13 @@ GameResult play(const Opening &opening, int candidate_player,
     const int mover = player_id(state.to_move);
     Decision decision;
     if (mover == candidate_player) {
-      const std::uint64_t decision_seed =
-          config.seed ^ opening.seed ^
-          (static_cast<std::uint64_t>(result.turns + 1) *
-           0x9e3779b97f4a7c15ULL);
+      std::uint64_t decision_seed = candidate::SearchConfig{}.shuffle_seed;
+      if (config.vary_candidate_shuffle_seed) {
+        decision_seed =
+            config.seed ^ opening.seed ^
+            (static_cast<std::uint64_t>(result.turns + 1) *
+             0x9e3779b97f4a7c15ULL);
+      }
       decision = choose_candidate(
           state, config, player_turns[static_cast<std::size_t>(mover)],
           decision_seed);
@@ -492,6 +576,8 @@ void print_help() {
       << "  --maximum-turns N            decisions after each opening\n"
       << "  --opening-turns A,B,...      procedural opening depths\n"
       << "  --seed N                     deterministic batch seed\n"
+      << "  --vary-candidate-shuffle-seed diagnostic per-decision shuffle\n"
+      << "                               (default uses deployed constant seed)\n"
       << "  --equal-clock                both bots at 800/155 ms\n"
       << "  --candidate-first-ms N --candidate-later-ms N\n"
       << "  --reference-first-ms N --reference-later-ms N\n"
@@ -518,6 +604,10 @@ HarnessConfig parse_arguments(int argc, char **argv) {
       config.candidate_partial_paths = candidate::kProductionPartialPaths;
       config.candidate_tree_nodes = candidate::kProductionTreeNodes;
       config.reference_nodes = reference::kMaximumNodes;
+      continue;
+    }
+    if (argument == "--vary-candidate-shuffle-seed") {
+      config.vary_candidate_shuffle_seed = true;
       continue;
     }
     if (index + 1 >= argc) {
@@ -680,6 +770,30 @@ int main(int argc, char **argv) {
               << summary.candidate_totals.tactical_proof_truncations
               << " candidate_truncations="
               << summary.candidate_totals.truncations
+              << " candidate_root_truncations="
+              << summary.candidate_totals.root_truncations
+              << " candidate_nonroot_truncations="
+              << summary.candidate_totals.nonroot_truncations
+              << " candidate_tree_cap_decisions="
+              << summary.candidate_totals.tree_cap_decisions
+              << " candidate_expansion_cap_decisions="
+              << summary.candidate_totals.expansion_cap_decisions
+              << " candidate_deadline_decisions="
+              << summary.candidate_totals.deadline_decisions
+              << " candidate_max_complete_turn_depth="
+              << summary.candidate_totals.maximum_complete_turn_depth
+              << " candidate_root_leader_changes="
+              << summary.candidate_totals.root_leader_changes
+              << " candidate_initial_leader_rank_sum="
+              << summary.candidate_totals.initial_leader_rank_sum
+              << " candidate_max_initial_leader_rank="
+              << summary.candidate_totals.maximum_initial_leader_rank
+              << " candidate_root_visit_entropy_sum="
+              << summary.candidate_totals.root_visit_entropy
+              << " candidate_final_action_margin_sum="
+              << summary.candidate_totals.final_action_margin
+              << " candidate_search_decisions="
+              << summary.candidate_totals.search_decisions
               << " candidate_max_tree="
               << summary.candidate_totals.tree_nodes
               << " candidate_ms=" << summary.candidate_totals.milliseconds
@@ -711,6 +825,9 @@ int main(int argc, char **argv) {
               << config.candidate_tree_nodes
               << " candidate_profile=" << config.candidate_first_ms << '/'
               << config.candidate_later_ms
+              << " candidate_shuffle_seed_mode="
+              << (config.vary_candidate_shuffle_seed ? "varying"
+                                                     : "deployment")
               << " reference_profile=" << config.reference_first_ms << '/'
               << config.reference_later_ms << '\n';
     return summary.unfinished == 0 && summary.headroom_failure_games == 0 &&

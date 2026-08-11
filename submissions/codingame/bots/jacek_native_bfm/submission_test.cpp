@@ -180,6 +180,8 @@ void constants_freeze_the_direct_contract() {
   static_assert(candidate::kEdgeFeatureInputs == 316);
   static_assert(candidate::kFeatureVertices == 105);
   static_assert(candidate::kDistanceBuckets == 8);
+  static_assert(candidate::SearchConfig{}.shuffle_seed ==
+                0x6a09e667f3bcc909ULL);
   require(candidate::kExplorationConstant == 0.95,
           "The deployed UCT constant must remain explicit.");
   require(candidate::kFirstPlayUrgency == 0.5,
@@ -720,8 +722,8 @@ void search_uses_fpu_uct_visits_and_lexical_ties() {
   require(std::all_of(
               tied.root_actions.begin(), tied.root_actions.end(),
               [](const candidate::RootActionStat &action) {
-                return action.value == 0.0F && action.visits == 1 &&
-                       action.selection_visits == 0;
+                return action.value == 0.0F && action.initial_value == 0.0F &&
+                       action.visits == 1 && action.selection_visits == 0;
               }),
           "The tie fixture must start every root action with one final visit.");
 
@@ -755,6 +757,35 @@ void fixed_work_search_is_deterministic_legal_and_capped() {
       candidate::choose_complete_turn(state, config);
   require(!first.encoded.empty() && first.encoded == second.encoded,
           "Fixed-work search must choose deterministically.");
+  require(first.encoded == "3" && first.stats.expansions == 8 &&
+              first.stats.generated_children == 57 &&
+              first.stats.child_evaluations == 57 &&
+              first.stats.completed_actions == 65 &&
+              first.stats.duplicate_boundaries == 8 &&
+              first.stats.tactical_actions == 0 &&
+              first.stats.generator_partial_paths == 8 &&
+              first.stats.tree_nodes == 58,
+          "Duplicate filtering must preserve the frozen fixed-work action and "
+          "all pre-optimization work counters.");
+  require(first.stats.root_generator_truncations == 0 &&
+              first.stats.nonroot_generator_truncations == 0 &&
+              first.stats.generator_truncations == 0 &&
+              first.stats.max_complete_turn_depth == 5 &&
+              !first.stats.tree_cap_reached &&
+              first.stats.expansion_cap_reached,
+          "Fixed-work telemetry must distinguish depth and cap causes.");
+  require(first.root_actions.size() == second.root_actions.size(),
+          "Repeated fixed-work searches must retain the same root actions.");
+  for (std::size_t index = 0; index < first.root_actions.size(); ++index) {
+    const auto &left = first.root_actions[index];
+    const auto &right = second.root_actions[index];
+    require(left.encoded == right.encoded && left.value == right.value &&
+                left.initial_value == right.initial_value &&
+                left.visits == right.visits &&
+                left.selection_visits == right.selection_visits &&
+                left.tactical == right.tactical,
+            "Repeated fixed-work root telemetry must be bit-exact.");
+  }
   require(first.root_actions.size() <= config.max_actions &&
               !first.root_actions.empty(),
           "Root generation must obey the configured action cap.");
@@ -778,6 +809,20 @@ void fixed_work_search_is_deterministic_legal_and_capped() {
       candidate::choose_complete_turn(forced_two_move_rebound(), forced_config);
   require(forced.encoded == "00",
           "Search must preserve an exact forced two-edge rebound.");
+
+  candidate::SearchConfig truncated_config = config;
+  truncated_config.max_actions = 8;
+  truncated_config.max_partial_paths = 1;
+  truncated_config.max_tree_nodes = 64;
+  truncated_config.max_expansions = 2;
+  const candidate::SearchResult truncated = candidate::choose_complete_turn(
+      dense_rebound_state(), truncated_config);
+  require(truncated.stats.root_generator_truncations == 1 &&
+              truncated.stats.nonroot_generator_truncations == 1 &&
+              truncated.stats.generator_truncations == 2 &&
+              truncated.stats.max_complete_turn_depth == 2,
+          "Search telemetry must separate root and non-root generator "
+          "truncations while retaining their aggregate.");
 }
 
 void timed_search_returns_a_complete_replayable_action() {

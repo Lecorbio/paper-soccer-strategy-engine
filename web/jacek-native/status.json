@@ -3,10 +3,10 @@
   "updatedAt": "2026-08-11",
   "candidate": {
     "name": "jacek_native_bfm",
-    "stage": "live-diagnostic-ready",
-    "stageLabel": "Exploratory diagnostic ready",
+    "stage": "live-diagnostic-analyzed",
+    "stageLabel": "Live diagnostic analyzed",
     "status": "in-progress",
-    "claim": "Historical 800/165 source lost 35–71; the user-authorized 800/155 exact-source diagnostic is safety-checked and pending upload/source IDs"
+    "claim": "The exact-source 800/155 CodinGame diagnostic completed 52–38 raw and 41–38 clean at rank 9; it is development evidence, not a promotion or parity claim"
   },
   "architecture": {
     "searchAction": "One complete legal turn",
@@ -136,11 +136,43 @@
     },
     {
       "id": "submission",
-      "label": "Generated CodinGame source",
-      "path": "submissions/codingame/bots/jacek_native_bfm/submission.cpp",
+      "label": "Live diagnostic source",
+      "path": null,
       "sha256": "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
       "size": 94528,
       "sizeUnit": "characters"
+    },
+    {
+      "id": "live-manifest",
+      "label": "Complete live-batch manifest",
+      "path": null,
+      "sha256": "0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf",
+      "size": 90,
+      "sizeUnit": "games"
+    },
+    {
+      "id": "clean-auditor-input",
+      "label": "Forfeit-clean replay index",
+      "path": null,
+      "sha256": "d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b",
+      "size": 79,
+      "sizeUnit": "games"
+    },
+    {
+      "id": "fixed30k-audit",
+      "label": "Frozen fixed-30k decision audit",
+      "path": null,
+      "sha256": "7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee",
+      "size": 1918,
+      "sizeUnit": "decisions"
+    },
+    {
+      "id": "fixed30k-summary",
+      "label": "Canonical decision-audit summary",
+      "path": null,
+      "sha256": "4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b",
+      "size": 1918,
+      "sizeUnit": "decisions"
     }
   ],
   "training": {
@@ -172,7 +204,8 @@
     "trainingExamplesPerSecond": 28380.18,
     "peakRssBytes": 7829962752,
     "peakFootprintBytes": 8256755952,
-    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but the historical 800/165 source lost the external Rank 4 screen 35–71. The current 800/155 source is an exploratory diagnostic, not a strength claim."
+    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but the historical 800/165 source lost the external Rank 4 screen 35–71. The completed 800/155 live batch is an exploratory diagnostic, not a strength claim.",
+    "nextRound": "Round-two native league, reanalysis, calibration, and training infrastructure is in pilot execution; no checkpoint or result is retained yet"
   },
   "clock": {
     "search": { "firstMs": 800, "laterMs": 155 },
@@ -194,6 +227,12 @@
       "headroomFailures": 0,
       "operationalFailures": 0,
       "candidateLaterMaxMs": 166.726
+    },
+    "shuffleSeedDiagnostic": {
+      "gamesPerVariant": 24,
+      "constantSeed": { "candidateWins": 4, "referenceWins": 20 },
+      "variedSeed": { "candidateWins": 5, "referenceWins": 19 },
+      "conclusion": "The one-game change does not support shuffle-seed mismatch as the main strength bottleneck"
     }
   },
   "verification": {
@@ -252,13 +291,66 @@
     }
   ],
   "live": {
-    "status": "pending",
-    "label": "User-authorized exploratory baseline pending upload and source IDs",
-    "submissionId": null,
-    "agentId": null,
-    "rank": null,
-    "score": null,
-    "sourceBound": false
+    "status": "passed",
+    "batchStatus": "complete",
+    "label": "90-game diagnostic archived · 52–38 raw · 41–38 clean · no promotion claim",
+    "submissionId": 41123817,
+    "agentId": 6609056,
+    "historyVersion": 61,
+    "rank": 9,
+    "score": 39.54,
+    "percentage": 100,
+    "sourceBound": false,
+    "sourceBinding": "asserted-not-api-verified",
+    "sourceCommit": "8cf6005aace930016b86ac05de2ac8743447612c",
+    "sourceSha256": "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
+    "modelSha256": "19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc",
+    "packedSha256": "7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218",
+    "developmentContaminated": true,
+    "candidateOperationalFailures": 0,
+    "raw": {
+      "games": 90,
+      "wins": 52,
+      "losses": 38,
+      "colors": {
+        "playerZero": { "wins": 29, "losses": 15 },
+        "playerOne": { "wins": 23, "losses": 23 }
+      }
+    },
+    "clean": {
+      "games": 79,
+      "wins": 41,
+      "losses": 38,
+      "colors": {
+        "playerZero": { "wins": 21, "losses": 15 },
+        "playerOne": { "wins": 20, "losses": 23 }
+      }
+    },
+    "opponentForfeits": { "total": 11, "illegalAction": 7, "timeout": 4 },
+    "cleanCohorts": {
+      "top5": { "wins": 4, "losses": 25 },
+      "top10": { "wins": 6, "losses": 32 },
+      "top20": { "wins": 22, "losses": 37 }
+    },
+    "evidence": {
+      "manifestSha256": "0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf",
+      "cleanTsvSha256": "d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b",
+      "fixed30kAuditSha256": "7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee",
+      "fixed30kSummarySha256": "4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b"
+    },
+    "audit": {
+      "games": 79,
+      "decisions": 1918,
+      "workPerDecision": 30000,
+      "classifications": {
+        "bfmOverride": 1070,
+        "match": 702,
+        "initialEvaluatorOrdering": 136,
+        "generatorOmission": 6,
+        "operationalFailure": 4
+      },
+      "interpretation": "Fixed-work counterfactual classifications are diagnostic, not correct-move or promotion labels; the small omission count prioritizes evaluator, reanalysis, and BFM allocation work"
+    }
   },
   "links": {
     "readme": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/README.md",

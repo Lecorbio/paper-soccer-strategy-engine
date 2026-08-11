@@ -28,6 +28,14 @@ using SearchTopology = detail::SearchTopology;
 using SearchPosition = detail::SearchPosition;
 using PositionKey = detail::PositionKey;
 
+[[noreturn]] void invalid(const char *message) {
+  throw std::invalid_argument(message);
+}
+
+[[noreturn]] void impossible(const char *message) {
+  throw std::logic_error(message);
+}
+
 inline constexpr std::uint32_t kFirstSearchTimeMs = 800;
 inline constexpr std::uint32_t kLaterSearchTimeMs = 155;
 inline constexpr std::size_t kMaximumActions = 250;
@@ -83,12 +91,12 @@ bool is_production_rules(const RulesConfig &rules) noexcept {
 Player player_for_id(int player_id) {
   if (player_id == 0) return Player::One;
   if (player_id == 1) return Player::Two;
-  throw std::invalid_argument("player id");
+  invalid("player id");
 }
 
 Move decode_direction(Point from, char direction) {
   if (direction < '0' || direction > '7') {
-    throw std::invalid_argument("invalid direction");
+    invalid("invalid direction");
   }
   const Point delta =
       kDirectionDeltas[static_cast<std::size_t>(direction - '0')];
@@ -102,7 +110,7 @@ char encode_direction(Point from, Point to) {
       return static_cast<char>('0' + index);
     }
   }
-  throw std::invalid_argument("direction move");
+  invalid("direction move");
 }
 
 class SplitMix64 {
@@ -165,7 +173,7 @@ double uct_action_score(float action_value, std::uint32_t parent_visits,
                         double first_play_urgency = kFirstPlayUrgency) {
   if (!std::isfinite(action_value) || !std::isfinite(exploration) ||
       exploration < 0.0 || !std::isfinite(first_play_urgency)) {
-    throw std::invalid_argument("invalid UCT argument");
+    invalid("invalid UCT argument");
   }
   if (child_visits == 0) {
     return static_cast<double>(action_value) + first_play_urgency;
@@ -179,7 +187,7 @@ double uct_action_score(float action_value, std::uint32_t parent_visits,
 
 double final_action_score(float action_value, std::uint32_t visits) {
   if (visits == 0 || !std::isfinite(action_value)) {
-    throw std::invalid_argument("unvisited final");
+    invalid("unvisited final");
   }
   return static_cast<double>(action_value) +
          std::log(static_cast<double>(visits));
@@ -311,17 +319,17 @@ class QuantizedModel {
         !std::isfinite(scale_one_) || !std::isfinite(scale_two_) ||
         !std::isfinite(scale_three_) || scale_one_ <= 0.0F ||
         scale_two_ <= 0.0F || scale_three_ <= 0.0F) {
-      throw std::invalid_argument("model metadata");
+      invalid("model metadata");
     }
     if (packed_weights.empty()) {
       if (!allow_empty_bootstrap) {
-        throw std::invalid_argument("empty payload");
+        invalid("empty payload");
       }
       weights_.assign(jacek_native_model::kWeightCount, 0);
       packed_sha_ = sha256_hex({});
       if (!expected_packed_sha.empty() &&
           packed_sha_ != expected_packed_sha) {
-        throw std::invalid_argument("seed hash");
+        invalid("seed hash");
       }
       return;
     }
@@ -330,12 +338,12 @@ class QuantizedModel {
     if ((!expected_packed_sha.empty() &&
          (!valid_sha256(expected_packed_sha) ||
           packed_sha_ != expected_packed_sha))) {
-      throw std::invalid_argument("weight hash");
+      invalid("weight hash");
     }
     const std::size_t expected_bytes =
         (jacek_native_model::kWeightCount * 3U + 7U) / 8U;
     if (bytes.size() != expected_bytes) {
-      throw std::invalid_argument("weight count");
+      invalid("weight count");
     }
     weights_.resize(jacek_native_model::kWeightCount);
     for (std::size_t weight = 0; weight < weights_.size(); ++weight) {
@@ -350,7 +358,7 @@ class QuantizedModel {
       }
       const int signed_value = (code & 4U) != 0U ? code - 8 : code;
       if (signed_value < -3 || signed_value > 3) {
-        throw std::invalid_argument("weight range");
+        invalid("weight range");
       }
       weights_[weight] = static_cast<std::int8_t>(signed_value);
     }
@@ -425,7 +433,7 @@ class QuantizedModel {
 
   static std::vector<std::uint8_t> decode_base64(std::string_view encoded) {
     if (encoded.size() % 4U != 0U) {
-      throw std::invalid_argument("base64");
+      invalid("base64");
     }
     std::vector<std::uint8_t> result;
     result.reserve(encoded.size() / 4U * 3U);
@@ -437,9 +445,9 @@ class QuantizedModel {
         padding = true;
         continue;
       }
-      if (padding) throw std::invalid_argument("invalid base64 padding");
+      if (padding) invalid("invalid base64 padding");
       const int value = base64_value(character);
-      if (value < 0) throw std::invalid_argument("base64");
+      if (value < 0) invalid("base64");
       buffer = (buffer << 6U) | static_cast<std::uint32_t>(value);
       bits += 6;
       if (bits >= 8) {
@@ -473,7 +481,7 @@ float evaluate_float_model(const DenseFeatures &features,
   if (model.first.size() != kFeatureCount * kHiddenOne ||
       model.second.size() != kHiddenOne * kHiddenTwo ||
       model.output.size() != kHiddenTwo) {
-    throw std::invalid_argument("float dimensions");
+    invalid("float dimensions");
   }
   FirstLayer first{};
   for (std::size_t input = 0; input < features.size(); ++input) {
@@ -510,7 +518,7 @@ class FeatureEncoder {
     if (topology_->config().width != 8 || topology_->config().height != 10 ||
         topology_->edge_count() != kEdgeInputs ||
         topology_->vertex_count() != kVertices) {
-      throw std::invalid_argument("8x10 required");
+      invalid("8x10 required");
     }
     initialize_maps();
   }
@@ -587,7 +595,7 @@ class FeatureEncoder {
           const auto &arc = source.arcs[index];
           if (!contains(cooperative, arc)) {
             if (cooperative.count >= cooperative.arcs.size()) {
-              throw std::logic_error("too many arcs");
+              impossible("too many arcs");
             }
             cooperative.arcs[cooperative.count++] = arc;
           }
@@ -601,16 +609,16 @@ class FeatureEncoder {
     for (SearchTopology::VertexIndex vertex = 0;
          vertex < topology_->vertex_count(); ++vertex) {
       const auto rotated = topology_->find_vertex(rotate(topology_->point(vertex)));
-      if (!rotated.has_value()) throw std::logic_error("vertex rotation");
+      if (!rotated.has_value()) impossible("vertex rotation");
       rotated_vertices_[vertex] = *rotated;
     }
     for (SearchTopology::EdgeIndex edge = 0; edge < topology_->edge_count();
          ++edge) {
-      if (!segments[edge].has_value()) throw std::logic_error("missing edge");
+      if (!segments[edge].has_value()) impossible("missing edge");
       const Segment segment = *segments[edge];
       const auto rotated =
           topology_->find_edge(Segment{rotate(segment.a), rotate(segment.b)});
-      if (!rotated.has_value()) throw std::logic_error("edge rotation");
+      if (!rotated.has_value()) impossible("edge rotation");
       rotated_edges_[edge] = *rotated;
     }
   }
@@ -677,7 +685,7 @@ class NeuralEvaluator {
   float evaluate_child(const PreparedEvaluation &base,
                        const SearchPosition &child) {
     if (child.to_move() != base.perspective) {
-      throw std::invalid_argument("evaluation perspective");
+      invalid("evaluation perspective");
     }
     const FeatureFrame next = encoder_.frame(child, base.perspective);
     FirstLayer first = base.first;
@@ -860,13 +868,13 @@ class CompleteTurnGenerator {
     if (config_.max_actions == 0 || config_.max_actions > kMaximumActions ||
         config_.max_partial_paths == 0 ||
         config_.max_partial_paths > kMaximumPartialPaths) {
-      throw std::invalid_argument("generator limits");
+      invalid("generator limits");
     }
   }
 
   GenerationResult run() {
     if (root_.is_terminal()) {
-      throw std::invalid_argument("terminal generation");
+      invalid("terminal generation");
     }
     GenerationResult output;
     output.actions.reserve(config_.max_actions);
@@ -928,7 +936,7 @@ class CompleteTurnGenerator {
       for (const Move move : fallback.moves) {
         std::uint8_t slot = 0;
         if (!fallback.position.slot_for_move(move, slot)) {
-          throw std::logic_error("illegal fallback");
+          impossible("illegal fallback");
         }
         fallback.position.make_move(slot);
       }
@@ -990,7 +998,7 @@ class CompleteTurnGenerator {
       result.push_back(encode_direction(position.ball(), move.to));
       std::uint8_t slot = 0;
       if (!position.slot_for_move(move, slot)) {
-        throw std::logic_error("illegal action");
+        impossible("illegal action");
       }
       position.make_move(slot);
     }
@@ -1011,6 +1019,24 @@ class CompleteTurnGenerator {
   void retain(GenerationResult &output, Partial partial) {
     ++output.stats.completed_actions;
     const PositionKey key = partial.position.position_key();
+    for (std::size_t index = 0; index < retained_.size(); ++index) {
+      if (retained_[index] != key ||
+          !output.actions[index].result.same_compact_state(partial.position)) {
+        continue;
+      }
+      ++output.stats.duplicate_boundaries;
+      const TacticalClass tactical = output.actions[index].tactical;
+      if (tactical != TacticalClass::SafeHandoff) {
+        ++output.stats.tactical_actions;
+      }
+      std::string encoded = encode(partial.moves);
+      if (encoded < output.actions[index].encoded) {
+        output.actions[index] = CompleteTurnAction{
+            std::move(partial.moves), std::move(partial.position), tactical,
+            std::move(encoded)};
+      }
+      return;
+    }
     const TacticalClass tactical = classify(partial.position);
     if (tactical != TacticalClass::SafeHandoff) {
       ++output.stats.tactical_actions;
@@ -1018,16 +1044,6 @@ class CompleteTurnGenerator {
     CompleteTurnAction candidate{
         std::move(partial.moves), std::move(partial.position), tactical, {}};
     candidate.encoded = encode(candidate.moves);
-    for (std::size_t index = 0; index < retained_.size(); ++index) {
-      if (retained_[index] == key &&
-          output.actions[index].result.same_compact_state(candidate.result)) {
-        ++output.stats.duplicate_boundaries;
-        if (candidate.encoded < output.actions[index].encoded) {
-          output.actions[index] = std::move(candidate);
-        }
-        return;
-      }
-    }
     if (output.actions.size() < config_.max_actions) {
       retained_.push_back(key);
       output.actions.push_back(std::move(candidate));
@@ -1060,7 +1076,7 @@ class CompleteTurnGenerator {
     for (const Move move : partial.moves) {
       std::uint8_t slot = 0;
       if (!partial.position.slot_for_move(move, slot)) {
-        throw std::logic_error("illegal goal path");
+        impossible("illegal goal path");
       }
       partial.position.make_move(slot);
     }
@@ -1123,7 +1139,7 @@ class CompleteTurnGenerator {
     while (!position.is_terminal() && position.to_move() == mover) {
       std::array<std::uint8_t, detail::kMaximumMoves> slots{};
       const std::uint8_t count = position.legal_slots(slots);
-      if (count == 0) throw std::logic_error("missing move");
+      if (count == 0) impossible("missing move");
       shuffle(slots, count, position);
       result.push_back(position.move_for_slot(slots[0]));
       position.make_move(slots[0]);
@@ -1159,7 +1175,10 @@ struct SearchStats {
   std::uint64_t proof_classes{};
   std::uint64_t proof_truncations{};
   std::uint64_t generator_truncations{};
+  std::uint64_t root_generator_truncations{};
+  std::uint64_t nonroot_generator_truncations{};
   std::size_t tree_nodes{};
+  std::uint32_t max_complete_turn_depth{};
   bool deadline_reached{};
   bool tree_cap_reached{};
   bool expansion_cap_reached{};
@@ -1168,6 +1187,7 @@ struct SearchStats {
 struct RootActionStat {
   std::string encoded;
   float value{};
+  float initial_value{};
   std::uint32_t visits{};
   std::uint32_t selection_visits{};
   TacticalClass tactical{TacticalClass::SafeHandoff};
@@ -1200,17 +1220,17 @@ class BestFirstMinimaxSearch {
         !std::isfinite(config_.exploration_constant) ||
         config_.exploration_constant < 0.0 ||
         !std::isfinite(config_.first_play_urgency)) {
-      throw std::invalid_argument("search config");
+      invalid("search config");
     }
     nodes_.reserve(config_.max_tree_nodes);
   }
 
   SearchResult run() {
-    if (root_.is_terminal()) throw std::invalid_argument("terminal search root");
+    if (root_.is_terminal()) invalid("terminal search root");
     nodes_.emplace_back(root_, no_parent(), std::vector<Move>{},
                         TacticalClass::SafeHandoff, root_.to_move(), 0.0F, 0,
                         false, false, false);
-    if (!expand(0)) throw std::logic_error("root expansion");
+    if (!expand(0)) impossible("root expansion");
     refresh(0);
     while (!nodes_[0].closed && budget_available()) {
       const auto path = select_path();
@@ -1296,7 +1316,7 @@ class BestFirstMinimaxSearch {
     return !deadline_expired();
   }
 
-  void merge_generator_stats(const GeneratorStats &source) {
+  void merge_generator_stats(const GeneratorStats &source, bool root) {
     stats_.completed_actions += source.completed_actions;
     stats_.duplicate_boundaries += source.duplicate_boundaries;
     stats_.generator_partial_paths += source.explored_partial_paths;
@@ -1307,6 +1327,8 @@ class BestFirstMinimaxSearch {
     stats_.proof_classes += source.proof_classes;
     stats_.proof_truncations += source.proof_truncated ? 1U : 0U;
     stats_.generator_truncations += source.truncations;
+    (root ? stats_.root_generator_truncations
+          : stats_.nonroot_generator_truncations) += source.truncations;
     stats_.deadline_reached = stats_.deadline_reached || source.deadline_reached;
   }
 
@@ -1327,7 +1349,7 @@ class BestFirstMinimaxSearch {
     CompleteTurnGenerator generator(topology_, nodes_[index].position,
                                     generator_config);
     GenerationResult generated = generator.run();
-    merge_generator_stats(generated.stats);
+    merge_generator_stats(generated.stats, index == 0);
     if (generated.actions.empty()) return false;
     if (generated.actions.size() > config_.max_tree_nodes - nodes_.size()) {
       stats_.tree_cap_reached = true;
@@ -1340,6 +1362,8 @@ class BestFirstMinimaxSearch {
       prepared = evaluator_.prepare(nodes_[index].position, child_perspective);
     }
     const std::uint32_t child_depth = nodes_[index].depth + 1U;
+    stats_.max_complete_turn_depth =
+        std::max(stats_.max_complete_turn_depth, child_depth);
     const std::size_t first_child = nodes_.size();
     for (CompleteTurnAction &action : generated.actions) {
       float value = 0.0F;
@@ -1439,7 +1463,7 @@ class BestFirstMinimaxSearch {
 
   SearchResult make_result() const {
     if (nodes_.empty() || nodes_[0].children.empty()) {
-      throw std::logic_error("root action");
+      impossible("root action");
     }
     const Node &root = nodes_[0];
     std::size_t best = root.children.front();
@@ -1456,7 +1480,7 @@ class BestFirstMinimaxSearch {
         best_score = score;
       }
       result.root_actions.push_back(RootActionStat{
-          child.action_key, action_value, child.visits,
+          child.action_key, action_value, -child.prior_value, child.visits,
           child.selection_visits, child.tactical});
     }
     const Node &chosen = nodes_[best];
@@ -1479,17 +1503,17 @@ SearchResult choose_complete_turn(const GameState &state, SearchConfig config) {
 }
 
 void apply_encoded_turn(GameState &state, std::string_view encoded) {
-  if (encoded.empty()) throw std::invalid_argument("empty complete turn");
+  if (encoded.empty()) invalid("empty complete turn");
   GameState next = state;
   const Player mover = next.to_move;
   for (const char direction : encoded) {
     if (is_terminal(next) || next.to_move != mover) {
-      throw std::invalid_argument("action overrun");
+      invalid("action overrun");
     }
     next = apply_move(next, decode_direction(next.ball, direction));
   }
   if (!is_terminal(next) && next.to_move == mover) {
-    throw std::invalid_argument("incomplete action");
+    invalid("incomplete action");
   }
   state = std::move(next);
 }
