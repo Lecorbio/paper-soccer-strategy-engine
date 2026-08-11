@@ -485,10 +485,90 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
              in self.trainer.TURN_BINS],
             [1, 1, 1, 1],
         )
+        for value in calibration.values():
+            self.assertIsNotNone(value["prediction_std"])
+            self.assertIsNotNone(value["prediction_min"])
+            self.assertIsNotNone(value["prediction_max"])
+            self.assertEqual(
+                set(value["prediction_quantiles"]),
+                {"p05", "p25", "p50", "p75", "p95"},
+            )
         coverage = self.trainer.quantized_w1_coverage(parameters)
         self.assertEqual(coverage["all"]["rows"], corpus.INPUT_COUNT)
         self.assertEqual(sum(coverage["levels"].values()),
                          corpus.INPUT_COUNT * self.trainer.HIDDEN_ONE)
+
+    def test_robust_fixed_scale_rejects_a_single_max_outlier_and_roundtrips(self):
+        parameters = self.trainer.initialize(19)
+        pattern = np.where(
+            np.arange(parameters["w1"].size).reshape(parameters["w1"].shape)
+            % 2,
+            np.float32(-0.02),
+            np.float32(0.02),
+        )
+        parameters["w1"] = pattern.astype(np.float32)
+        parameters["w1"][0, 0] = np.float32(100.0)
+        dynamic_scale = self.trainer.quantize(parameters)[1]["w1"]
+        candidates = self.trainer._robust_scale_candidates(parameters["w1"])
+        self.assertLess(candidates[-1], dynamic_scale / 1_000.0)
+
+        first_scales, first, first_report = self.trainer.select_fixed_scales(
+            parameters, self.dataset()
+        )
+        second_scales, second, second_report = self.trainer.select_fixed_scales(
+            parameters, self.dataset()
+        )
+        self.assertEqual(first_report, second_report)
+        self.assertEqual(
+            self.trainer._scale_payload(first_scales),
+            self.trainer._scale_payload(second_scales),
+        )
+        for name in ("w1", "w2", "w3"):
+            np.testing.assert_array_equal(first[name], second[name])
+        self.assertTrue(first_report["max_abs_is_not_a_scale_candidate"])
+        self.assertEqual(
+            self.trainer.quantized_w1_coverage(first)["all"]["coverage"],
+            1.0,
+        )
+        _, _, exported = self.trainer.quantize(first)
+        for name in ("w1", "w2", "w3"):
+            np.testing.assert_array_equal(first[name], exported[name])
+
+    def test_provisional_order_honors_exact_override_combined_target(self):
+        candidates = [self.trainer.initialize(1), self.trainer.initialize(2)]
+        reports = [{
+            "seed": 1,
+            "quantized_metrics": {"validation": {
+                "outcome_mse": 0.1,
+                "combined_target_mse": 0.4,
+            }},
+        }, {
+            "seed": 2,
+            "quantized_metrics": {"validation": {
+                "outcome_mse": 0.2,
+                "combined_target_mse": 0.3,
+            }},
+        }]
+        arguments = argparse.Namespace(
+            auxiliary_weight=0.25, batch_size=256, epochs=50,
+            patience=8, learning_rate=0.001, weight_decay=1e-5,
+            qat_epochs=4,
+        )
+        model = self.trainer.build_report(
+            candidates, reports, {"corpus_sha256": "a" * 64}, arguments
+        )
+        self.assertEqual(model["training"]["provisional_seed"], 2)
+        self.assertIn("combined-target", model["training"]["selection"])
+
+    def test_dataset_release_uses_uint16_sparse_indices(self):
+        samples = [corpus.NativeSample(
+            game_key="memory", split_group="memory", turn=0, player=0,
+            active=(0, 315, 1155), outcome=1.0,
+            auxiliary_value=None, exact=False, symmetry="identity",
+        )]
+        dataset = self.trainer.dataset_from_samples(samples, release=True)
+        self.assertEqual(dataset.active[0].dtype, np.uint16)
+        self.assertIsNone(samples[0])
 
     def test_qat_tie_retains_pre_qat_best(self):
         datasets = {name: self.dataset()
@@ -499,6 +579,13 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             )
         self.assertTrue(report["qat_selection"]["pre_qat_retained"])
         self.assertEqual(report["qat_selection"]["selected_qat_epoch"], 0)
+        self.assertTrue(report["qat_selection"]["fixed_scale_qat"])
+        qat_history = [item for item in report["history"] if "qat_epoch" in item]
+        self.assertEqual(len(qat_history), 2)
+        self.assertTrue(all(
+            item["fixed_scales"] == report["qat_selection"]["fixed_scales"]
+            for item in qat_history
+        ))
         self.assertIn(
             "turn_calibration", report["quantized_metrics"]["validation"]
         )
@@ -508,7 +595,10 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         reports = [{
             "seed": seed,
             "quantized_metrics": {
-                "validation": {"outcome_mse": loss}
+                "validation": {
+                    "outcome_mse": loss,
+                    "combined_target_mse": loss,
+                }
             },
         } for seed, loss in ((1, 0.2), (2, 0.3))]
         arguments = argparse.Namespace(
@@ -556,7 +646,10 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         reports = [{
             "seed": seed,
             "quantized_metrics": {
-                "validation": {"outcome_mse": loss}
+                "validation": {
+                    "outcome_mse": loss,
+                    "combined_target_mse": loss,
+                }
             },
         } for seed, loss in ((1, 0.2), (2, 0.3))]
         source_digest = "a" * 64

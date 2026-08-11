@@ -2,8 +2,10 @@
 """Train cumulative Jacek-native round-two value checkpoints.
 
 The trainer emits every deterministic seed as an identified checkpoint.  Its
-held-out outcome MSE choice is explicitly provisional; final seed selection is
-performed by the native actual-clock match gate outside this trainer.
+held-out combined-target MSE choice is explicitly provisional; final seed
+selection is performed by the native actual-clock match gate outside this
+trainer. Robust validation-selected layer scales stay fixed through QAT;
+emitted tensors are the exact exporter-idempotent dequantized 3-bit values.
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ initialize = round1_trainer.initialize
 quantize = round1_trainer.quantize
 forward = round1_trainer.forward
 AdamW = round1_trainer.AdamW
-train_batch = round1_trainer.train_batch
+round1_train_batch = round1_trainer.train_batch
 parse_seeds = round1_trainer.parse_seeds
 tensor = round1_trainer.tensor
 integer_tensor = round1_trainer.integer_tensor
@@ -63,21 +65,47 @@ class Dataset:
         return len(self.active)
 
 
-def dataset_from_samples(samples: Sequence[corpus_contract.NativeSample]) -> Dataset:
+def dataset_from_samples(
+    samples: Sequence[corpus_contract.NativeSample], *, release: bool = False
+) -> Dataset:
+    """Materialize sparse samples without retaining two full representations.
+
+    Feature indices fit in uint16.  During a real corpus load ``samples`` is a
+    private list and ``release`` drops each Python-heavy NativeSample as soon
+    as its packed NumPy representation exists.  Tests and other callers keep
+    the non-mutating default.
+    """
+    if INPUT_COUNT > np.iinfo(np.uint16).max:
+        raise RuntimeError("native feature indices no longer fit uint16")
+    active: list[np.ndarray] = []
+    outcome: list[float] = []
+    auxiliary: list[float] = []
+    auxiliary_mask: list[bool] = []
+    exact_mask: list[bool] = []
+    game_keys: list[str] = []
+    turn: list[int] = []
+    mutable = samples if release and isinstance(samples, list) else None
+    for index, sample in enumerate(samples):
+        active.append(np.asarray(sample.active, dtype=np.uint16))
+        outcome.append(sample.outcome)
+        auxiliary.append(
+            sample.auxiliary_value
+            if sample.auxiliary_value is not None else 0.0
+        )
+        auxiliary_mask.append(sample.auxiliary_value is not None)
+        exact_mask.append(sample.exact)
+        game_keys.append(sample.game_key)
+        turn.append(sample.turn)
+        if mutable is not None:
+            mutable[index] = None
     return Dataset(
-        active=tuple(np.asarray(sample.active, dtype=np.int32)
-                     for sample in samples),
-        outcome=np.asarray([sample.outcome for sample in samples], dtype=np.float32),
-        auxiliary=np.asarray([
-            sample.auxiliary_value if sample.auxiliary_value is not None else 0.0
-            for sample in samples
-        ], dtype=np.float32),
-        auxiliary_mask=np.asarray([
-            sample.auxiliary_value is not None for sample in samples
-        ], dtype=bool),
-        exact_mask=np.asarray([sample.exact for sample in samples], dtype=bool),
-        game_keys=tuple(sample.game_key for sample in samples),
-        turn=np.asarray([sample.turn for sample in samples], dtype=np.int32),
+        active=tuple(active),
+        outcome=np.asarray(outcome, dtype=np.float32),
+        auxiliary=np.asarray(auxiliary, dtype=np.float32),
+        auxiliary_mask=np.asarray(auxiliary_mask, dtype=bool),
+        exact_mask=np.asarray(exact_mask, dtype=bool),
+        game_keys=tuple(game_keys),
+        turn=np.asarray(turn, dtype=np.int32),
     )
 
 
@@ -143,11 +171,10 @@ def load_datasets(
         games.sort(key=corpus_contract.game_sort_key)
         source_hashes = dict(sorted(source_hashes.items()))
     split_samples, overlaps_removed, assignments = corpus_contract.prepare_splits(games)
-    datasets = {
-        split: dataset_from_samples(samples)
-        for split, samples in split_samples.items()
+    split_sample_counts = {
+        split: len(samples) for split, samples in split_samples.items()
     }
-    empty = [split for split, dataset in datasets.items() if not dataset]
+    empty = [split for split, count in split_sample_counts.items() if count == 0]
     if empty:
         raise ValueError(
             "whole-game split has no retained samples: " + ", ".join(empty)
@@ -174,7 +201,8 @@ def load_datasets(
             for split in ("train", "validation", "test")
         },
         "split_samples": {
-            split: len(dataset) for split, dataset in datasets.items()
+            split: split_sample_counts[split]
+            for split in ("train", "validation", "test")
         },
         "cross_split_overlaps_removed": overlaps_removed,
         "augmentation": {
@@ -203,6 +231,16 @@ def load_datasets(
             }),
         },
     }
+    # NativeGame/NativeSample objects retain Python integer tuples that are
+    # much larger than the uint16 training representation.  All provenance
+    # has now been reduced into ``report``; release the game graph, then drop
+    # each sample while materializing its split to keep a ~2M-sample load from
+    # holding both complete representations at once.
+    del games
+    datasets = {
+        split: dataset_from_samples(split_samples[split], release=True)
+        for split in ("train", "validation", "test")
+    }
     return datasets, report
 
 
@@ -229,12 +267,21 @@ def _turn_calibration(
                 "outcome_mse": None,
                 "outcome_sign_accuracy": None,
                 "prediction_mean": None,
+                "prediction_std": None,
+                "prediction_min": None,
+                "prediction_max": None,
+                "prediction_quantiles": None,
                 "outcome_mean": None,
                 "calibration_bias": None,
+                "stable_reanalysis_samples": 0,
+                "exact_reanalysis_samples": 0,
             }
             continue
         predicted = predictions[mask]
         outcome = dataset.outcome[mask]
+        quantiles = np.quantile(
+            predicted, (0.05, 0.25, 0.5, 0.75, 0.95)
+        )
         result[name] = {
             "samples": count,
             "outcome_mse": float(np.mean((predicted - outcome) ** 2)),
@@ -242,8 +289,22 @@ def _turn_calibration(
                 (predicted >= 0.0) == (outcome >= 0.0)
             )),
             "prediction_mean": float(np.mean(predicted)),
+            "prediction_std": float(np.std(predicted)),
+            "prediction_min": float(np.min(predicted)),
+            "prediction_max": float(np.max(predicted)),
+            "prediction_quantiles": {
+                name: float(value) for name, value in zip(
+                    ("p05", "p25", "p50", "p75", "p95"), quantiles
+                )
+            },
             "outcome_mean": float(np.mean(outcome)),
             "calibration_bias": float(np.mean(predicted - outcome)),
+            "stable_reanalysis_samples": int(np.count_nonzero(
+                dataset.auxiliary_mask[mask] & ~dataset.exact_mask[mask]
+            )),
+            "exact_reanalysis_samples": int(np.count_nonzero(
+                dataset.exact_mask[mask]
+            )),
         }
     return result
 
@@ -321,6 +382,240 @@ def quantized_w1_coverage(parameters: Mapping[str, np.ndarray]) -> dict:
     }
 
 
+ROBUST_SCALE_QUANTILES = (
+    ("p800", 800, 1_000),
+    ("p900", 900, 1_000),
+    ("p950", 950, 1_000),
+    ("p975", 975, 1_000),
+    ("p990", 990, 1_000),
+    ("p995", 995, 1_000),
+)
+SCALE_SEARCH_PASSES = 2
+
+
+def _scale_payload(scales: Mapping[str, object]) -> dict[str, float]:
+    return {
+        name: float(np.float32(scales[name]))
+        for name in ("w1", "w2", "w3")
+    }
+
+
+def _fixed_quantize(
+    parameters: Mapping[str, np.ndarray], scales: Mapping[str, object]
+):
+    integer: dict[str, np.ndarray] = {}
+    normalized: dict[str, np.float32] = {}
+    effective: dict[str, np.ndarray] = {}
+    for name in ("w1", "w2", "w3"):
+        scale = np.float32(scales[name])
+        if not math.isfinite(float(scale)) or scale <= 0.0:
+            raise ValueError(f"fixed {name} scale must be finite and positive")
+        normalized[name] = scale
+        integer[name] = np.clip(
+            np.rint(parameters[name] / scale),
+            -QUANTIZATION_MAX,
+            QUANTIZATION_MAX,
+        ).astype(np.int8)
+        effective[name] = integer[name].astype(np.float32) * scale
+    return integer, normalized, effective
+
+
+def _canonical_fixed_quantization(
+    parameters: Mapping[str, np.ndarray], scales: Mapping[str, object]
+):
+    """Return fixed-scale weights in the exporter's exact normal form.
+
+    The runtime format derives each scale from the largest dequantized weight.
+    Normalizing once through that frozen quantizer makes every returned tensor
+    an exact ``q * scale`` checkpoint and guarantees that the existing exporter
+    reproduces the same integers, scales, and float32 tensors byte-for-byte.
+    """
+    _, _, fixed_effective = _fixed_quantize(parameters, scales)
+    integer, canonical_scales, effective = quantize(fixed_effective)
+    again_integer, again_scales, again_effective = quantize(effective)
+    for name in ("w1", "w2", "w3"):
+        if (
+            not np.array_equal(integer[name], again_integer[name])
+            or canonical_scales[name] != again_scales[name]
+            or not np.array_equal(effective[name], again_effective[name])
+        ):
+            raise RuntimeError(
+                f"fixed-scale {name} checkpoint is not exporter-idempotent"
+            )
+    return integer, canonical_scales, effective
+
+
+def _robust_scale_candidates(value: np.ndarray) -> tuple[np.float32, ...]:
+    """Build deterministic clipping scales without consulting max-abs.
+
+    The upper candidate is the lower-rank 99.5th percentile.  Consequently a
+    rare maximum outlier can be clipped but can never determine the layer's
+    only 3-bit step, which is the failure mode of the round-one checkpoint.
+    """
+    ordered = np.sort(np.abs(value).astype(np.float32, copy=False).reshape(-1))
+    if not ordered.size:
+        return (np.float32(1.0),)
+    candidates: list[np.float32] = []
+    for _, numerator, denominator in ROBUST_SCALE_QUANTILES:
+        index = ((ordered.size - 1) * numerator) // denominator
+        threshold = float(ordered[index])
+        if threshold <= 0.0 or not math.isfinite(threshold):
+            continue
+        scale = np.float32(threshold / QUANTIZATION_MAX)
+        if scale > 0.0 and all(scale != prior for prior in candidates):
+            candidates.append(scale)
+    if not candidates:
+        positive = ordered[ordered > 0.0]
+        if not positive.size:
+            return (np.float32(1.0),)
+        candidates.append(np.float32(float(positive[0]) / QUANTIZATION_MAX))
+    return tuple(candidates)
+
+
+def select_fixed_scales(
+    parameters: Mapping[str, np.ndarray], validation: Dataset
+) -> tuple[dict[str, np.float32], dict[str, np.ndarray], dict]:
+    """Choose robust per-layer scales by deterministic coordinate search."""
+    names = ("w1", "w2", "w3")
+    candidates = {
+        name: _robust_scale_candidates(parameters[name]) for name in names
+    }
+    requested = {name: candidates[name][-1] for name in names}
+    trials = []
+    for search_pass in range(SCALE_SEARCH_PASSES):
+        for name in names:
+            best = None
+            for candidate in candidates[name]:
+                trial_requested = dict(requested)
+                trial_requested[name] = candidate
+                _, trial_scales, effective = _canonical_fixed_quantization(
+                    parameters, trial_requested
+                )
+                validation_metrics = metrics(effective, validation)
+                coverage = quantized_w1_coverage(effective)
+                loss = validation_metrics["combined_target_mse"]
+                trial = {
+                    "pass": search_pass + 1,
+                    "layer": name,
+                    "requested_scale": float(candidate),
+                    "canonical_scales": _scale_payload(trial_scales),
+                    "validation_combined_target_mse": loss,
+                    "validation_outcome_mse": validation_metrics["outcome_mse"],
+                    "w1_coverage": coverage,
+                }
+                trials.append(trial)
+                key = (loss, float(candidate))
+                if best is None or key < best[0]:
+                    best = (key, candidate)
+            requested[name] = best[1]
+    _, selected_scales, selected = _canonical_fixed_quantization(
+        parameters, requested
+    )
+    selected_metrics = metrics(selected, validation)
+    report = {
+        "scheme": (
+            "fixed-symmetric-3bit-validation-coordinate-search-"
+            "lower-rank-robust-quantiles/v1"
+        ),
+        "selection_metric": "validation-combined-target-mse",
+        "passes": SCALE_SEARCH_PASSES,
+        "maximum_candidate_quantile": "p995-lower-rank",
+        "max_abs_is_not_a_scale_candidate": True,
+        "candidates": {
+            name: [float(value) for value in candidates[name]]
+            for name in names
+        },
+        "trials": trials,
+        "selected_requested_scales": _scale_payload(requested),
+        "selected_canonical_scales": _scale_payload(selected_scales),
+        "selected_validation_combined_target_mse": selected_metrics[
+            "combined_target_mse"
+        ],
+        "selected_validation_turn_calibration": selected_metrics[
+            "turn_calibration"
+        ],
+        "selected_w1_coverage": quantized_w1_coverage(selected),
+        "exporter_round_trip_verified": True,
+    }
+    return dict(selected_scales), selected, report
+
+
+def train_batch(
+    master: Mapping[str, np.ndarray],
+    optimizer: AdamW,
+    dataset: Dataset,
+    indices: np.ndarray,
+    auxiliary_weight: float,
+    quantization_aware: bool,
+    fixed_scales: Mapping[str, object] | None = None,
+) -> float:
+    if not quantization_aware or fixed_scales is None:
+        return round1_train_batch(
+            master, optimizer, dataset, indices,
+            auxiliary_weight, quantization_aware,
+        )
+
+    active = tuple(dataset.active[int(index)] for index in indices)
+    _, _, effective = _fixed_quantize(master, fixed_scales)
+    prediction, cache = forward(effective, active)
+    first_pre, first, second_pre, second, output_pre = cache
+    outcome = dataset.outcome[indices]
+    difference = prediction - outcome
+    exact_mask = dataset.exact_mask[indices]
+    auxiliary_mask = dataset.auxiliary_mask[indices]
+    outcome_weights = np.where(
+        exact_mask, 0.0,
+        np.where(auxiliary_mask, 1.0 - auxiliary_weight, 1.0),
+    ).astype(np.float32)
+    auxiliary_weights = np.where(
+        exact_mask, 1.0,
+        np.where(auxiliary_mask, auxiliary_weight, 0.0),
+    ).astype(np.float32)
+    loss = float(np.mean(outcome_weights * difference * difference))
+    output_gradient = (
+        2.0 * outcome_weights * difference / max(len(indices), 1)
+    )
+    if np.any(auxiliary_mask):
+        auxiliary_difference = prediction - dataset.auxiliary[indices]
+        loss += float(np.mean(
+            auxiliary_weights * auxiliary_difference * auxiliary_difference
+        ))
+        output_gradient += (
+            2.0 * auxiliary_weights * auxiliary_difference
+            / max(len(indices), 1)
+        )
+
+    output_pre_gradient = (
+        output_gradient * round1_trainer._fast_tanh_derivative(output_pre)
+    )
+    gradients: dict[str, np.ndarray] = {
+        "w3": second.T @ output_pre_gradient,
+    }
+    second_gradient = output_pre_gradient[:, None] * effective["w3"][None, :]
+    second_pre_gradient = (
+        second_gradient * round1_trainer._leaky_relu_derivative(second_pre)
+    )
+    gradients["w2"] = first.T @ second_pre_gradient
+    first_gradient = second_pre_gradient @ effective["w2"].T
+    first_pre_gradient = (
+        first_gradient * round1_trainer._hidden_one_derivative(first_pre)
+    )
+    gradients["w1"] = np.zeros_like(master["w1"])
+    for row, active_indices in enumerate(active):
+        np.add.at(gradients["w1"], active_indices, first_pre_gradient[row])
+
+    squared_norm = sum(
+        float(np.sum(value * value)) for value in gradients.values()
+    )
+    norm = math.sqrt(squared_norm)
+    if norm > 5.0:
+        gradient_scale = np.float32(5.0 / norm)
+        for gradient in gradients.values():
+            gradient *= gradient_scale
+    optimizer.update(master, gradients)
+    return loss
+
+
 def train_seed(
     datasets: Mapping[str, Dataset],
     seed: int,
@@ -348,17 +643,35 @@ def train_seed(
                 order[start:start + batch_size], auxiliary_weight, False,
             ))
         validation = metrics(master, datasets["validation"])
+        _, dynamic_scales, dynamic_effective = quantize(master)
+        dynamic_validation = metrics(
+            dynamic_effective, datasets["validation"]
+        )
         history.append({
             "epoch": epoch,
             "train_combined_mse": float(np.mean(losses)),
             "validation_outcome_mse": validation["outcome_mse"],
+            "validation_combined_target_mse": validation[
+                "combined_target_mse"
+            ],
+            "validation_turn_calibration": validation["turn_calibration"],
+            "dynamic_max_quantization": {
+                "scales": _scale_payload(dynamic_scales),
+                "validation_combined_target_mse": dynamic_validation[
+                    "combined_target_mse"
+                ],
+                "validation_turn_calibration": dynamic_validation[
+                    "turn_calibration"
+                ],
+                "w1_coverage": quantized_w1_coverage(master),
+            },
         })
         print(
-            f"round2 seed {seed} epoch {epoch}: validation outcome MSE "
-            f"{validation['outcome_mse']:.6f}", flush=True,
+            f"round2 seed {seed} epoch {epoch}: validation combined MSE "
+            f"{validation['combined_target_mse']:.6f}", flush=True,
         )
-        if validation["outcome_mse"] < best_float_loss - 1e-8:
-            best_float_loss = validation["outcome_mse"]
+        if validation["combined_target_mse"] < best_float_loss - 1e-8:
+            best_float_loss = validation["combined_target_mse"]
             best_epoch = epoch
             best_float = {name: value.copy() for name, value in master.items()}
         elif epoch - best_epoch >= patience:
@@ -370,11 +683,28 @@ def train_seed(
         split: metrics(best_float, dataset)
         for split, dataset in datasets.items()
     }
-    selected = {name: value.copy() for name, value in best_float.items()}
-    _, _, selected_effective = quantize(selected)
-    selected_loss = metrics(
-        selected_effective, datasets["validation"]
-    )["outcome_mse"]
+    _, dynamic_scales, dynamic_effective = quantize(best_float)
+    dynamic_max_baseline = {
+        "scales": _scale_payload(dynamic_scales),
+        "metrics": {
+            split: metrics(dynamic_effective, dataset)
+            for split, dataset in datasets.items()
+        },
+        "w1_coverage": quantized_w1_coverage(best_float),
+    }
+    fixed_scales, pre_qat_effective, scale_search = select_fixed_scales(
+        best_float, datasets["validation"]
+    )
+    selected = {
+        name: value.copy() for name, value in pre_qat_effective.items()
+    }
+    pre_qat_quantized_metrics = {
+        split: metrics(pre_qat_effective, dataset)
+        for split, dataset in datasets.items()
+    }
+    selected_loss = pre_qat_quantized_metrics["validation"][
+        "combined_target_mse"
+    ]
     selected_qat_epoch = 0
 
     master = {name: value.copy() for name, value in best_float.items()}
@@ -385,22 +715,34 @@ def train_seed(
             train_batch(
                 master, optimizer, datasets["train"],
                 order[start:start + batch_size], auxiliary_weight, True,
+                fixed_scales=fixed_scales,
             )
-        _, _, effective = quantize(master)
-        validation_loss = metrics(
-            effective, datasets["validation"]
-        )["outcome_mse"]
+        _, canonical_scales, effective = _canonical_fixed_quantization(
+            master, fixed_scales
+        )
+        validation = metrics(effective, datasets["validation"])
+        validation_loss = validation["combined_target_mse"]
         history.append({
             "qat_epoch": qat_epoch,
-            "validation_quantized_outcome_mse": validation_loss,
+            "fixed_scales": _scale_payload(fixed_scales),
+            "canonical_scales": _scale_payload(canonical_scales),
+            "validation_quantized_outcome_mse": validation["outcome_mse"],
+            "validation_quantized_combined_target_mse": validation_loss,
+            "validation_turn_calibration": validation["turn_calibration"],
+            "quantized_w1_coverage": quantized_w1_coverage(effective),
         })
         # A tie deliberately retains the pre-QAT best.
         if validation_loss < selected_loss - 1e-8:
             selected_loss = validation_loss
             selected_qat_epoch = qat_epoch
-            selected = {name: value.copy() for name, value in master.items()}
+            selected = {name: value.copy() for name, value in effective.items()}
 
-    _, _, effective = quantize(selected)
+    _, selected_scales, effective = quantize(selected)
+    if any(
+        not np.array_equal(selected[name], effective[name])
+        for name in ("w1", "w2", "w3")
+    ):
+        raise RuntimeError("selected round-two checkpoint is not exporter-idempotent")
     report = {
         "seed": seed,
         "best_float_epoch": best_epoch,
@@ -412,10 +754,21 @@ def train_seed(
             "selected_qat_epoch": selected_qat_epoch,
             "pre_qat_retained": selected_qat_epoch == 0,
             "tie_break": "prefer-pre-qat-best",
+            "selection_metric": "validation-combined-target-mse",
+            "fixed_scale_qat": True,
+            "fixed_scales": _scale_payload(fixed_scales),
+            "selected_export_scales": _scale_payload(selected_scales),
         },
         "history": history,
         "float_best_metrics": float_best_metrics,
+        "dynamic_max_baseline": dynamic_max_baseline,
+        "scale_search": scale_search,
+        "pre_qat_quantized_metrics": pre_qat_quantized_metrics,
         "selected_float_metrics": {
+            split: metrics(selected, dataset)
+            for split, dataset in datasets.items()
+        },
+        "selected_dequantized_metrics": {
             split: metrics(selected, dataset)
             for split, dataset in datasets.items()
         },
@@ -424,8 +777,9 @@ def train_seed(
             for split, dataset in datasets.items()
         },
         "quantized_w1_coverage": quantized_w1_coverage(selected),
+        "exporter_round_trip_verified": True,
     }
-    return selected, report
+    return effective, report
 
 
 def quantization_report(parameters: Mapping[str, np.ndarray]) -> dict:
@@ -457,7 +811,9 @@ def build_report(
     ordering = sorted(
         range(len(seed_reports)),
         key=lambda index: (
-            seed_reports[index]["quantized_metrics"]["validation"]["outcome_mse"],
+            seed_reports[index]["quantized_metrics"]["validation"][
+                "combined_target_mse"
+            ],
             seed_reports[index]["seed"],
         ),
     )
@@ -511,7 +867,8 @@ def build_report(
             "chosen_seed": None,
             "provisional_seed": provisional_report["seed"],
             "selection": (
-                "provisional-minimum-quantized-validation-outcome-mse-then-seed;"
+                "provisional-minimum-quantized-validation-combined-target-"
+                "mse-then-seed;"
                 "final-native-actual-clock-strength-external"
             ),
             "external_actual_clock_selection": {

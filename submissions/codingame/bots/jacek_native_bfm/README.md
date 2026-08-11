@@ -114,6 +114,18 @@ row-major `w1`, `w2`, `w3` order with symmetric per-layer 3-bit quantization
 and signed two's-complement values packed least-significant-bit first. These
 are artifact-format requirements and are checked before header generation.
 
+Round-two training keeps that runtime format but no longer lets one max-abs
+outlier choose a layer's only scale. It forms deterministic lower-rank
+percentile candidates through `p995`, chooses the three scales by two-pass
+held-out coordinate search on the exact combined target, and freezes those
+scales during QAT. The selected tensors are normalized to exact float32
+`q * scale` values and must survive the existing max-derived exporter
+byte-for-byte before they can enter a checkpoint. Per-epoch evidence includes
+the old dynamic-max baseline, scale and W1 row/level coverage, plus turn-binned
+prediction standard deviation, range and quantiles. Exact solved targets are
+also honored during checkpoint selection rather than being overridden again
+by recorded self-play outcomes.
+
 No upstream network checkpoint or unpublished weight is present. See
 `UPSTREAM_NOTICE.md` and `APACHE-2.0.txt` for provenance and license scope.
 

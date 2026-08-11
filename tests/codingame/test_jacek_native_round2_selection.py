@@ -79,7 +79,10 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         reports = [{
             "seed": seed,
             "quantized_metrics": {
-                "validation": {"outcome_mse": loss},
+                "validation": {
+                    "outcome_mse": loss,
+                    "combined_target_mse": loss,
+                },
             },
         } for seed, loss in zip(self.seeds, (0.2, 0.3))]
         source_digest = "a" * 64

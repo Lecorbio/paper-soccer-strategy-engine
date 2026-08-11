@@ -393,6 +393,41 @@ runtime. These are pipeline checks, not strength results. The full league,
 restart corpus, three-seed training round, and actual-clock selection remain
 pending.
 
+Before the full round, a trainer audit reproduced the round-one quantization
+failure mechanism: max-abs scaling gave `w1` a `0.5258222222` step and retained
+only 250 of 36,992 weights. Round two now excludes max-abs from eligible scale
+candidates, uses deterministic lower-rank `p800,p900,p950,p975,p990,p995`
+clipping candidates, performs two-pass per-layer validation coordinate search,
+then keeps the chosen scales fixed throughout straight-through QAT. Float,
+pre-QAT, QAT and provisional seed selection all minimize combined-target MSE,
+so exact solved labels retain their specified override. The final parameters
+are exact exporter-idempotent float32 `q * scale` tensors. An adversarial unit
+test gives `w1` one `100.0` outlier among `0.02` weights and verifies that the
+outlier cannot become an eligible scale, all 1,156 input rows remain represented,
+two scale searches are identical, and exporter round-trip is exact.
+
+The same 32-game pilot then compared one seed (`20260821`), two float epochs and
+two QAT epochs under the old and new quantizers. This deliberately small A/B is
+a trainer diagnostic, not playing-strength evidence:
+
+| Pilot quantizer | Validation outcome / combined MSE | Turns 0-11 MSE / prediction std | W1 row coverage / nonzero weights | W1 scale |
+| --- | ---: | ---: | ---: | ---: |
+| Dynamic max with dynamic-scale QAT | `1.013657 / 1.012237` | `0.984105 / 0.209616` | `100% / 48.108%` | `0.0285402592` |
+| Robust coordinate scales with fixed-scale QAT | `0.949965 / 0.948797` | `0.955827 / 0.140179` | `100% / 70.737%` | `0.0151568940` |
+
+Two independent robust runs produced the identical model SHA-256
+`6aa60da2907a1d6ec4ede7b6d8d47558134c7f4c2d2e947c971dcbb3689875b3`;
+its 14,268-byte packed payload is
+`778c9b342afcef30a1fed616f17c634bd53f65402e45f8e1e10dfb2e48a38b24`.
+The robust run retained its pre-QAT checkpoint; QAT could not replace it without
+a strict combined-MSE improvement. The pilot also exposed that none of its 24
+selected turns 0-11 reanalyses were stable or exact, so early strength still
+depends on the larger diverse outcome corpus and must be judged by the recorded
+early-bin metrics and actual-clock matches. Dataset materialization now stores
+uint16 feature indices and releases Python samples while packing each split,
+reducing the steady sparse representation and avoiding simultaneous full native
+and NumPy copies at the intended million-scale corpus size.
+
 ## Results ledger
 
 | Evaluation | Candidate | Reference | Candidate colors | Unfinished / headroom / operational | Clock |
