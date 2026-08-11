@@ -764,10 +764,6 @@ def train_seed(
         "dynamic_max_baseline": dynamic_max_baseline,
         "scale_search": scale_search,
         "pre_qat_quantized_metrics": pre_qat_quantized_metrics,
-        "selected_float_metrics": {
-            split: metrics(selected, dataset)
-            for split, dataset in datasets.items()
-        },
         "selected_dequantized_metrics": {
             split: metrics(selected, dataset)
             for split, dataset in datasets.items()
