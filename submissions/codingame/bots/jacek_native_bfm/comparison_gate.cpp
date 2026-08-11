@@ -492,7 +492,7 @@ void print_help() {
       << "  --maximum-turns N            decisions after each opening\n"
       << "  --opening-turns A,B,...      procedural opening depths\n"
       << "  --seed N                     deterministic batch seed\n"
-      << "  --equal-clock                both bots at 800/165 ms\n"
+      << "  --equal-clock                both bots at 800/155 ms\n"
       << "  --candidate-first-ms N --candidate-later-ms N\n"
       << "  --reference-first-ms N --reference-later-ms N\n"
       << "  --minimum-candidate-wins N  optional total wins floor\n"

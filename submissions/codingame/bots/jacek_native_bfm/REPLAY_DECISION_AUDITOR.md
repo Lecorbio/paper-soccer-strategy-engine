@@ -66,7 +66,7 @@ build/papersoccer_jacek_native_replay_decision_auditor \
   > native-decisions.clock.tsv
 ```
 
-`--codingame-clocks` freezes 800 ms for the first own decision and 165 ms for
+`--codingame-clocks` freezes 800 ms for the first own decision and 155 ms for
 later own decisions, with the production 250-action, 4,000-root-path,
 80,000-tree-node, 2,000,000-expansion profile. The first budget is keyed to
 `own_decision_index == 0`, including when the candidate plays second. Clocked
@@ -145,5 +145,5 @@ ctest --test-dir build --output-on-failure \
 The focused tests freeze the collector TSV parser and provenance behavior,
 production replay rules, all classification buckets, fixed-work determinism,
 work/action/deque counters, initial/final action diagnostics, JSONL/TSV field
-parity, exact 800/165 clock selection, bounded options, and fail-before-output
+parity, exact 800/155 clock selection, bounded options, and fail-before-output
 validation.

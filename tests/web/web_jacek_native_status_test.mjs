@@ -46,20 +46,21 @@ test("the native status page is semantic, responsive, and independent of Wasm", 
   assert.doesNotMatch(script, /innerHTML/);
 });
 
-test("the checked-in ledger is conservative and exposes no live claim", () => {
+test("the checked-in ledger exposes only an upload-pending live diagnostic", () => {
   assert.equal(statusPage.validate(ledger), ledger);
   assert.equal(ledger.schema, "papersoccer.jacek-native-status.v1");
-  assert.equal(ledger.candidate.stage, "stopped-external-gate");
-  assert.equal(ledger.candidate.status, "failed");
-  assert.match(ledger.candidate.claim, /external Rank 4 screen failed 35–71/i);
-  assert.match(ledger.candidate.claim, /no parity run or upload/i);
-  assert.equal(ledger.live.status, "not-run");
+  assert.equal(ledger.candidate.stage, "live-diagnostic-ready");
+  assert.equal(ledger.candidate.status, "in-progress");
+  assert.match(ledger.candidate.claim, /Historical 800\/165 source lost 35–71/i);
+  assert.match(ledger.candidate.claim, /800\/155 exact-source diagnostic/i);
+  assert.match(ledger.candidate.claim, /pending upload\/source IDs/i);
+  assert.equal(ledger.live.status, "pending");
   assert.equal(ledger.live.submissionId, null);
   assert.equal(ledger.live.agentId, null);
   assert.equal(ledger.live.rank, null);
   assert.equal(ledger.live.score, null);
   assert.equal(ledger.live.sourceBound, false);
-  assert.match(ledger.live.label, /No upload/i);
+  assert.match(ledger.live.label, /pending upload and source IDs/i);
   assert.equal(ledger.training.status, "hardened-bootstrap");
   assert.equal(ledger.training.games, 10_000);
   assert.equal(ledger.training.shards, 14);
@@ -113,6 +114,8 @@ test("the checked-in ledger is conservative and exposes no live claim", () => {
   assert.match(ledger.diagnostics[0].requirement, /not a previous-champion/i);
   assert.doesNotMatch(ledgerText, /matches\.json|protected[_ -]?bank|sealed[_ -]?bank/i);
   assert.match(ledger.links.auditor, /REPLAY_DECISION_AUDITOR\.md$/);
+  assert.match(html, /800 \/ 155 ms/);
+  assert.match(html, /no promotion or parity claim is made/i);
 });
 
 test("every file-backed artifact hash and size matches the repository", async () => {
@@ -142,6 +145,10 @@ test("every file-backed artifact hash and size matches the repository", async ()
                ledger.provenance.untrainedRuntimeSha256);
 
   const submission = artifact("submission");
+  assert.equal(
+    submission.sha256,
+    "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
+  );
   assert.ok(submission.size < ledger.verification.sourceLimit);
   assert.equal(ledger.verification.sourceLimit - submission.size, 471);
 
@@ -189,21 +196,21 @@ test("every file-backed artifact hash and size matches the repository", async ()
 });
 
 test("clock and promotion fields encode the frozen time-based gates", () => {
-  assert.deepEqual(ledger.clock.search, { firstMs: 800, laterMs: 165 });
+  assert.deepEqual(ledger.clock.search, { firstMs: 800, laterMs: 155 });
   assert.deepEqual(ledger.clock.headroom, { firstMs: 900, laterMs: 180 });
   assert.deepEqual(ledger.clock.official, { firstMs: 1000, laterMs: 200 });
   assert.match(html, /P0 and P1 run in separate fresh processes/i);
   assert.deepEqual(ledger.clock.timingProbe.playerZero, {
-    firstMs: 400.968,
-    laterMs: 167.306,
-    maxRssBytes: 81739776,
-    peakFootprintBytes: 76382616,
+    firstMs: 425.910,
+    laterMs: 157.571,
+    maxRssBytes: 81461248,
+    peakFootprintBytes: 76497304,
   });
   assert.deepEqual(ledger.clock.timingProbe.playerOne, {
-    firstMs: 405.716,
-    laterMs: 168.314,
-    maxRssBytes: 91881472,
-    peakFootprintBytes: 78610840,
+    firstMs: 397.385,
+    laterMs: 157.921,
+    maxRssBytes: 91504640,
+    peakFootprintBytes: 78791088,
   });
   assert.ok(ledger.clock.timingProbe.playerZero.firstMs < ledger.clock.headroom.firstMs);
   assert.ok(ledger.clock.timingProbe.playerZero.laterMs < ledger.clock.headroom.laterMs);
@@ -223,23 +230,38 @@ test("clock and promotion fields encode the frozen time-based gates", () => {
     ledger.clock.externalDevelopment.candidateLaterMaxMs >=
       ledger.clock.headroom.laterMs,
   );
+  assert.deepEqual(ledger.clock.diagnosticSafety, {
+    games: 24,
+    candidateWins: 8,
+    referenceWins: 16,
+    candidateColorWins: [5, 3],
+    unfinishedGames: 0,
+    headroomFailures: 0,
+    operationalFailures: 0,
+    candidateLaterMaxMs: 166.726,
+  });
   assert.deepEqual(
     ledger.gates.map((gate) => gate.status),
-    ["passed", "passed", "failed", "not-run"],
+    ["passed", "passed", "failed", "passed", "not-run"],
   );
   assert.match(ledger.gates[0].requirement, /530 wins in 1,000/);
   assert.match(ledger.gates[1].requirement, /112 wins in 212/);
   assert.match(ledger.gates[2].requirement, /106 games \(53 paired openings\)/);
-  assert.match(ledger.gates[3].requirement, /424 games \(212 paired openings\)/);
-  assert.match(ledger.gates[3].requirement, /Wilson 95% lower/);
-  assert.match(ledger.gates[3].requirement, /≥ 102 wins in each color/);
+  assert.match(ledger.gates[3].label, /800\/155 ms exploratory operational screen/);
+  assert.match(ledger.gates[3].requirement, /strength is not assessed/i);
+  assert.match(ledger.gates[4].requirement, /424 games \(212 paired openings\)/);
+  assert.match(ledger.gates[4].requirement, /Wilson 95% lower/);
+  assert.match(ledger.gates[4].requirement, /≥ 102 wins in each color/);
   assert.match(ledger.gates[0].result, /689–311/);
   assert.match(ledger.gates[1].result, /144–68/);
   assert.match(ledger.gates[1].result, /179\.918 ms/);
   assert.match(ledger.gates[2].result, /35–71/);
   assert.match(ledger.gates[2].result, /Wilson lower 0\.24798/);
   assert.match(ledger.gates[2].result, /one 180\.513 ms headroom failure/);
-  assert.match(ledger.gates[3].result, /no second seed/i);
+  assert.match(ledger.gates[3].result, /8–16/);
+  assert.match(ledger.gates[3].result, /colors 5\/3/);
+  assert.match(ledger.gates[3].result, /candidate later max 166\.726 ms/);
+  assert.match(ledger.gates[4].result, /does not establish parity/i);
   assert.equal(ledger.verification.status, "passed");
   assert.deepEqual(
     ledger.verification.checks.map((check) => check.status),

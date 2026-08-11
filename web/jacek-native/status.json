@@ -3,10 +3,10 @@
   "updatedAt": "2026-08-11",
   "candidate": {
     "name": "jacek_native_bfm",
-    "stage": "stopped-external-gate",
-    "stageLabel": "Stopped: external gate failed",
-    "status": "failed",
-    "claim": "Bootstrap gates passed, but the external Rank 4 screen failed 35–71; no parity run or upload"
+    "stage": "live-diagnostic-ready",
+    "stageLabel": "Exploratory diagnostic ready",
+    "status": "in-progress",
+    "claim": "Historical 800/165 source lost 35–71; the user-authorized 800/155 exact-source diagnostic is safety-checked and pending upload/source IDs"
   },
   "architecture": {
     "searchAction": "One complete legal turn",
@@ -138,7 +138,7 @@
       "id": "submission",
       "label": "Generated CodinGame source",
       "path": "submissions/codingame/bots/jacek_native_bfm/submission.cpp",
-      "sha256": "8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3",
+      "sha256": "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
       "size": 94528,
       "sizeUnit": "characters"
     }
@@ -172,19 +172,29 @@
     "trainingExamplesPerSecond": 28380.18,
     "peakRssBytes": 7829962752,
     "peakFootprintBytes": 8256755952,
-    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but lost the external Rank 4 screen 35–71, so development stopped without an upload."
+    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but the historical 800/165 source lost the external Rank 4 screen 35–71. The current 800/155 source is an exploratory diagnostic, not a strength claim."
   },
   "clock": {
-    "search": { "firstMs": 800, "laterMs": 165 },
+    "search": { "firstMs": 800, "laterMs": 155 },
     "headroom": { "firstMs": 900, "laterMs": 180 },
     "official": { "firstMs": 1000, "laterMs": 200 },
     "timingProbe": {
       "status": "passed",
-      "playerZero": { "firstMs": 400.968, "laterMs": 167.306, "maxRssBytes": 81739776, "peakFootprintBytes": 76382616 },
-      "playerOne": { "firstMs": 405.716, "laterMs": 168.314, "maxRssBytes": 91881472, "peakFootprintBytes": 78610840 }
+      "playerZero": { "firstMs": 425.910, "laterMs": 157.571, "maxRssBytes": 81461248, "peakFootprintBytes": 76497304 },
+      "playerOne": { "firstMs": 397.385, "laterMs": 157.921, "maxRssBytes": 91504640, "peakFootprintBytes": 78791088 }
     },
     "decisiveBootstrap": { "candidateFirstMaxMs": 451.303, "candidateLaterMaxMs": 179.918, "headroomFailures": 0 },
-    "externalDevelopment": { "candidateFirstMaxMs": 0, "candidateLaterMaxMs": 180.513, "headroomFailures": 1 }
+    "externalDevelopment": { "candidateFirstMaxMs": 0, "candidateLaterMaxMs": 180.513, "headroomFailures": 1 },
+    "diagnosticSafety": {
+      "games": 24,
+      "candidateWins": 8,
+      "referenceWins": 16,
+      "candidateColorWins": [5, 3],
+      "unfinishedGames": 0,
+      "headroomFailures": 0,
+      "operationalFailures": 0,
+      "candidateLaterMaxMs": 166.726
+    }
   },
   "verification": {
     "status": "passed",
@@ -229,15 +239,21 @@
       "result": "35–71 · colors 16/19 · win rate 0.330189 · Wilson lower 0.24798 · one 180.513 ms headroom failure"
     },
     {
+      "label": "800/155 ms exploratory operational screen",
+      "requirement": "24 actual-clock games with zero unfinished, headroom, or operational failures; strength is not assessed",
+      "status": "passed",
+      "result": "8–16 vs Rank 4 · colors 5/3 · zero unfinished/headroom/operational failures · candidate later max 166.726 ms"
+    },
+    {
       "label": "External Rank 4 final parity gate",
       "requirement": "424 games (212 paired openings): ≥ 233 wins for Wilson 95% lower ≥ 50%, and ≥ 102 wins in each color",
       "status": "not-run",
-      "result": "Stopped after the development failure; no second seed and no 424-game parity run"
+      "result": "Not run; the exploratory upload is diagnostic and does not establish parity"
     }
   ],
   "live": {
-    "status": "not-run",
-    "label": "No upload: stopped after the external strength and timing failure",
+    "status": "pending",
+    "label": "User-authorized exploratory baseline pending upload and source IDs",
     "submissionId": null,
     "agentId": null,
     "rank": null,

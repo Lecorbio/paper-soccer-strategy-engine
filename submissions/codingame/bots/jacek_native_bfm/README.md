@@ -9,10 +9,12 @@ used only as an external opponent in `comparison_gate.cpp`.
 The public-safe checkpoint, training, clock, verification, and live-gate ledger
 is published on the [native bot research status
 page](https://lecorbio.github.io/paper-soccer-strategy-engine/jacek-native/).
-The retained source is a reproducible research checkpoint, but development is
-stopped: it lost the external Rank 4 screen 35-71 and exceeded the 180 ms local
-later-response ceiling once. No second seed, parity run, or CodinGame upload is
-authorized from this result.
+The retained source is a reproducible research checkpoint. Its earlier
+800/165 ms artifact lost the external Rank 4 screen 35-71 and exceeded the
+180 ms local later-response ceiling once. The current artifact reduces the
+later search budget to 155 ms, passes the local operational checks below, and
+is authorized for an exploratory CodinGame diagnostic. Upload and source IDs
+are still pending; this is not a strength, promotion, or parity claim.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -36,7 +38,7 @@ inputs](https://www.codingame.com/playgrounds/157341/inputs-for-neural-networks-
 | Search family | Native best-first minimax, not the incumbent search | Explains BFM/UCT generally | BFM tree allocation and player-relative minimax backup | Single-thread BFM/UCT adapted to the CodinGame clock |
 | Neural input | Follow the disclosed CodinGame representation | 316 used-edge flags followed by 105 eight-way true-turn-distance buckets; rotate Player 2 by 180 degrees | Contains multiple newer desktop schemas; it does not identify the unpublished CodinGame checkpoint | Exact 1,156-input article schema, frozen by integration tests |
 | Neural shape | Train a new native model | Discloses `1156 -> 32 -> 32 -> 1` for the CodinGame bot | Public `NetworkDeep` supplies sparse evaluation and partial reevaluation machinery | Bias-free `1156 -> 32 -> 32 -> 1`, independently trained; artifact schema and hash are recorded below |
-| Runtime | Judge by CodinGame time, not node count | Article reports about 200 ms on one thread | Desktop application is threaded and is not a CodinGame timing contract | One thread; 800 ms first decision and 165 ms later decisions, with construction-inclusive 900/180 ms pre-upload ceilings |
+| Runtime | Judge by CodinGame time, not node count | Article reports about 200 ms on one thread | Desktop application is threaded and is not a CodinGame timing contract | One thread; 800 ms first decision and 155 ms later decisions, with construction-inclusive 900/180 ms pre-upload ceilings |
 | Comparison | Rank 4 is an opponent only | Not applicable | Not applicable | No incumbent source, model, replay, or labels enter the candidate artifact |
 
 The 9:1 schedule and full-boundary deduplication are direct requirements for
@@ -158,7 +160,7 @@ outcomes only. Its frozen identity is:
 | Packed weights | 14,268 bytes; SHA-256 `7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218` |
 | Generated header | 21,736 characters; SHA-256 `b9e6e5765bfc6f69e18a968c06e2f92825f91dfd3732176d94f7cd43608af43f` |
 | Schema | SHA-256 `dd36c1b2800620fab1d5dc88afe95fcbb13864d581a18f01d26b3e1c3a4a6dfd` |
-| Generated submission | 94,528 characters; SHA-256 `8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3` |
+| Generated submission | 94,528 characters; SHA-256 `3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20` |
 
 The project cap leaves 471 characters of explicit source headroom. The
 independent initial-state golden value is `-0.000181343639`; C++ inference must
@@ -168,11 +170,12 @@ partial/full evaluation parity and rejects a one-byte packed-payload mutation.
 ## Verification boundary
 
 Local fixed-work matches are diagnostic: they make regressions reproducible
-but do not establish CodinGame strength. Promotion decisions use equal-clock
-800/165 ms games, both colors, complete batches, and then an exact-source live
-submission. Early unoptimized submissions are legitimate experiments when
-their source hash and configuration are recorded; they are not promoted from a
-single noisy batch.
+but do not establish CodinGame strength. The historical checkpoint and
+external promotion gates below used equal-clock 800/165 ms games. The current
+exploratory source instead uses 800/155 ms for additional operational margin,
+both colors, complete batches, and exact-source binding. Early unoptimized
+submissions are legitimate experiments when their source hash and
+configuration are recorded; they are not promoted from a single noisy batch.
 
 The timing probe and comparison harness build their openings in memory. They
 do not read `matches.json`, replay banks, chronological loss suites, or any
@@ -188,13 +191,19 @@ selection, and application together. It must remain below 900 ms for a first
 response and 180 ms later, leaving margin before CodinGame's 1,000/200 ms
 operational limits. Player 0 and Player 1 are measured by separate fresh
 process invocations so one color cannot inherit a warmed model or allocator
-from the other. The frozen Release measurements were P0 400.968/167.306 ms
-with 81,739,776-byte peak RSS, and P1 405.716/168.314 ms with 91,881,472-byte
-peak RSS. Both pass 900/180; node and expansion counts remain diagnostics only.
-Actual-clock batches exposed less margin: the decisive bootstrap run reached
-179.918 ms later, and the external Rank 4 screen reached 180.513 ms, producing
-one headroom failure. The standalone probe therefore does not establish robust
-upload safety.
+from the other. For the current 800/155 ms artifact, the fresh-process Release
+measurements were P0 425.910/157.571 ms with 81,461,248-byte peak RSS and a
+76,497,304-byte peak footprint, and P1 397.385/157.921 ms with 91,504,640-byte
+peak RSS and a 78,791,088-byte peak footprint. Both pass 900/180; node and
+expansion counts remain diagnostics only.
+
+A separate 24-game actual-clock safety screen against canonical `rank_4`
+finished 8-16, with candidate colors 5/3. It recorded zero unfinished games,
+headroom failures, or operational failures; the candidate's maximum later
+response was 166.726 ms. The score is not strength evidence. It only supports
+using this exact source as a live diagnostic. For historical context, the
+earlier 800/165 ms decisive bootstrap reached 179.918 ms later, and the old
+external Rank 4 source reached 180.513 ms, producing one headroom failure.
 
 ## Build and verification
 

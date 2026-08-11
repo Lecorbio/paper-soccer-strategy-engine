@@ -268,12 +268,12 @@ void jsonl_and_tsv_preserve_required_fields() {
 void clock_and_cli_configuration_are_bounded() {
   const audit::AuditConfig clock = parse_options({"--codingame-clocks"});
   require(clock.mode == audit::AuditMode::Clock &&
-              clock.first_time_ms == 800 && clock.later_time_ms == 165 &&
+              clock.first_time_ms == 800 && clock.later_time_ms == 155 &&
               clock.fixed_work ==
                   papersoccer::jacek_native_bfm::kProductionTreeNodes,
-          "CodinGame mode must freeze the production 800/165 configuration");
+          "CodinGame mode must freeze the production 800/155 configuration");
   require(audit::decision_time_limit(clock, 0) == 800 &&
-              audit::decision_time_limit(clock, 1) == 165,
+              audit::decision_time_limit(clock, 1) == 155,
           "first clock must be keyed to first own decision");
   const audit::AuditConfig fixed =
       parse_options({"--fixed-work", "251", "--format", "tsv"});

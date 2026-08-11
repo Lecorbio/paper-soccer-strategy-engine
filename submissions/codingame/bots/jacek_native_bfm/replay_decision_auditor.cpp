@@ -1195,7 +1195,7 @@ void write_usage(std::ostream &output, std::string_view executable) {
          << "  --exploration X\n"
          << "  --fpu X\n"
          << "  --first-ms N --later-ms N\n"
-         << "  --codingame-clocks    production 800/165 ms configuration\n";
+         << "  --codingame-clocks    production 800/155 ms configuration\n";
 }
 
 int run(int argc, char **argv, std::istream &standard_input,

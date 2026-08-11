@@ -29,7 +29,7 @@ using SearchPosition = detail::SearchPosition;
 using PositionKey = detail::PositionKey;
 
 inline constexpr std::uint32_t kFirstSearchTimeMs = 800;
-inline constexpr std::uint32_t kLaterSearchTimeMs = 165;
+inline constexpr std::uint32_t kLaterSearchTimeMs = 155;
 inline constexpr std::size_t kMaximumActions = 250;
 inline constexpr std::size_t kMaximumPartialPaths = 50'000;
 inline constexpr std::size_t kProductionPartialPaths = 4'000;

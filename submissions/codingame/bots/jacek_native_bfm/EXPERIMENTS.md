@@ -48,9 +48,10 @@ This experiment deliberately adapts the public behavior:
 - repository-neutral rules and position types replace Qt application classes;
 - a separate bounded 64-path tactical witness pass precedes ordinary 9:1
   sampling and reports its own truncation;
-- 800/165 ms is the deployed clock profile, tested construction-inclusively
-  against 900/180 ms pre-upload ceilings (inside 1,000/200 ms operational
-  limits); and
+- 800/155 ms is the current exploratory deployment clock profile, tested
+  construction-inclusively against 900/180 ms pre-upload ceilings (inside
+  1,000/200 ms operational limits); the frozen historical gates below remain
+  recorded at their actual 800/165 ms setting; and
 - the network is trained from scratch without upstream weights or protected
   replay data.
 
@@ -166,7 +167,7 @@ run are final mover-relative outcomes only.
 | Training resources | Total process 1,539.28 s; measured training-loop throughput 28,380.18 examples/s; peak RSS 7,829,962,752 bytes; peak footprint 8,256,755,952 bytes |
 | Search telemetry | 559,786 searches; 25,713,027 expansions; 810,204,372 child evaluations; 2,214,423,957 completed actions; 1,336,772,058 ordinary partial paths; 1,498,776 generator truncations; 524,131 tree-cap searches |
 | Tactical telemetry | 526,604,342 proof paths; 33,781,768 witness classes found; 4,019,650 proof truncations |
-| Submission artifact | 94,528 characters, SHA-256 `8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3`; 471 characters below the 94,999 project cap |
+| Submission artifact | 94,528 characters, SHA-256 `3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20`; 471 characters below the 94,999 project cap |
 
 The metrics are recorded for reproducibility, not advertised as holdout proof.
 The train/validation/test values are similar and near a low-information
@@ -198,9 +199,10 @@ to this bootstrap corpus.
 5. **Build/data lineage:** canonical source/compiler/binary/build records,
    mandatory per-game hashes, whole-game splits, checkpoint ancestry, and
    adversarial rejection of tampered or stale artifacts.
-6. **Runtime:** both colors at 800 ms first decision and 165 ms later decisions,
-   each in a fresh process; fail at 900/180 ms construction-inclusive wall
-   time. Node counts are diagnostics, not the pass criterion.
+6. **Runtime:** both colors at the current 800 ms first decision and 155 ms
+   later decisions, each in a fresh process; fail at 900/180 ms
+   construction-inclusive wall time. Node counts are diagnostics, not the pass
+   criterion.
 7. **External comparison:** procedural in-memory openings, both colors, fixed
    work for CI reproducibility, then equal-clock 800/165 against canonical
    `rank_4` for the deployment decision.
@@ -223,16 +225,21 @@ process. On the recorded local Release build:
 
 | Process | First response | Later response | Maximum RSS | Peak footprint |
 | --- | ---: | ---: | ---: | ---: |
-| P0 | 400.968 ms | 167.306 ms | 81,739,776 bytes | 76,382,616 bytes |
-| P1 | 405.716 ms | 168.314 ms | 91,881,472 bytes | 78,610,840 bytes |
+| P0 | 425.910 ms | 157.571 ms | 81,461,248 bytes | 76,497,304 bytes |
+| P1 | 397.385 ms | 157.921 ms | 91,504,640 bytes | 78,791,088 bytes |
 
 Both processes pass the construction-inclusive 900/180 ms pre-upload ceilings.
 The official operational limits remain 1,000/200 ms. These measurements are a
 local safety gate, not a substitute for CodinGame execution or strength data.
-The later actual-clock batches were less comfortable: the decisive bootstrap
-gate reached 179.918 ms, only 0.082 ms below the ceiling, and the external Rank
-4 screen reached 180.513 ms and recorded one headroom failure. The standalone
-probe therefore cannot be treated as robust upload safety evidence.
+A 24-game actual-clock safety screen against canonical `rank_4` finished 8-16,
+with candidate colors 5/3, zero unfinished games, zero headroom failures, zero
+operational failures, and a 166.726 ms candidate maximum later response. Its
+small score is not strength evidence; it is operational evidence for an
+exploratory upload of the exact 800/155 ms source.
+
+The earlier 800/165 ms batches remain historical evidence: the decisive
+bootstrap gate reached 179.918 ms, only 0.082 ms below the ceiling, and the old
+external Rank 4 source reached 180.513 ms and recorded one headroom failure.
 
 ## Frozen checkpoint-to-checkpoint gates
 
@@ -313,8 +320,23 @@ truncations, a 65,113-node maximum tree, and 315,248 ms. The reference used
 401,637,376 bytes and peak footprint 105,136,800 bytes.
 
 The run failed both the 58-win threshold and the zero-headroom-failure
-condition. Per the frozen ladder, development stopped: there was no second
-seed, no 424-game parity gate, and no CodinGame upload.
+condition. Per the frozen ladder, that phase stopped: there was no second seed,
+no 424-game parity gate, and no CodinGame upload of that historical source.
+
+## Exploratory live diagnostic baseline
+
+The user authorized a new exploratory CodinGame diagnostic even though local
+strength is not established. The only production change from the historical
+artifact is the later search budget reduction from 165 ms to 155 ms. The
+current generated source is 94,528 characters with SHA-256
+`3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20`;
+the model, packed weights, and generated header identities are unchanged.
+
+The exact source passes generated-source compilation, protocol and native
+tests, ASan+UBSan, the fresh-process timing probe above, and the 24-game
+operational safety screen. Upload has not yet completed, and submission and
+agent IDs are still pending. No live result, promotion, parity, or strength
+claim is recorded at this stage.
 
 ## Results ledger
 
@@ -324,12 +346,12 @@ seed, no 424-game parity gate, and no CodinGame upload.
 | Bootstrap fast vs untrained | 689 | 311 | 363 / 326 | 0 / 0 / 0 | 50/10 ms |
 | Bootstrap decisive vs untrained | 144 | 68 | 76 / 68 | 0 / 0 / 0 | 800/165 ms |
 | External Rank 4 development | 35 | 71 | 16 / 19 | 0 / 1 / 0 | equal 800/165 ms |
+| Exploratory operational screen vs Rank 4 | 8 | 16 | 5 / 3 | 0 / 0 / 0 | candidate 800/155 ms |
 | External final parity | not run | not run | not run | stopped | 424-game design |
-| Exact-source live batch | not run | field | not run | stopped | upload withheld |
+| Exact-source live batch | pending | field | pending | no source IDs yet | upload authorized |
 
-The bootstrap passed both comparisons with its untrained ancestor, but lost
-decisively to the external Rank 4 reference and breached the local timing
-headroom once. The supported conclusion is negative: this is an auditable
-starting checkpoint, not a promotion, parity, or superiority result. The
-ASan+UBSan verification suite passed, but functional safety does not override
-the failed strength and timing gates.
+The bootstrap passed both comparisons with its untrained ancestor, but its
+historical 800/165 ms source lost decisively to the external Rank 4 reference
+and breached local timing headroom once. The current 800/155 ms source has
+better measured timing margin and is an auditable exploratory baseline, not a
+promotion, parity, or superiority result. The live batch remains pending.
