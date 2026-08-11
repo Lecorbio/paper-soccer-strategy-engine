@@ -416,7 +416,7 @@ a trainer diagnostic, not playing-strength evidence:
 | Robust coordinate scales with fixed-scale QAT | `0.949965 / 0.948797` | `0.955827 / 0.140179` | `100% / 70.737%` | `0.0151568940` |
 
 Two independent robust runs produced the identical model SHA-256
-`6aa60da2907a1d6ec4ede7b6d8d47558134c7f4c2d2e947c971dcbb3689875b3`;
+`8637b2a2b1958602949fef3b66df15455f6c2a63ecea2b7cdb78fc86138f6824`;
 its 14,268-byte packed payload is
 `778c9b342afcef30a1fed616f17c634bd53f65402e45f8e1e10dfb2e48a38b24`.
 The robust run retained its pre-QAT checkpoint; QAT could not replace it without
