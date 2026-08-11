@@ -7,6 +7,7 @@ A deterministic C++20/WebAssembly game-AI engine whose authentic CodinGame submi
 
 **[Play the live demo](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
 · **[Explore the benchmark](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
+· **[Track the native bot](https://lecorbio.github.io/paper-soccer-strategy-engine/jacek-native/)**
 · [Read the frozen study](benchmarks/flagship_study/REPORT.md)
 
 - **[5/206](submissions/codingame/bots/rank_5/README.md):** verified authentic CodinGame result, tied to an immutable generated submission and SHA-256.

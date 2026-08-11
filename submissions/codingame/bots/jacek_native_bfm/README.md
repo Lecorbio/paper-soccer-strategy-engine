@@ -1,0 +1,346 @@
+# Native Jacek-style best-first minimax candidate
+
+`jacek_native_bfm` is a clean challenger built around complete-turn generation,
+best-first minimax search with UCT-style allocation, and a compact neural value
+function. It is intentionally independent of every incumbent bot, replay table,
+and historical action label in this repository. The established `rank_4` bot is
+used only as an external opponent in `comparison_gate.cpp`.
+
+The public-safe checkpoint, training, clock, verification, and live-gate ledger
+is published on the [native bot research status
+page](https://lecorbio.github.io/paper-soccer-strategy-engine/jacek-native/).
+The retained source is a reproducible research checkpoint, but development is
+stopped: it lost the external Rank 4 screen 35-71 and exceeded the 180 ms local
+later-response ceiling once. No second seed, parity run, or CodinGame upload is
+authorized from this result.
+
+This is an auditable adaptation of public ideas, not a claim that Jacek
+Dermont's unpublished CodinGame source, weights, training corpus, or exact
+competition settings have been reproduced. The public reference is
+[QtPaperSoccer commit
+`366d5304c09c2c820bd3ef4ea94624c034b8d955`](https://github.com/jdermont/QtPaperSoccer/tree/366d5304c09c2c820bd3ef4ea94624c034b8d955),
+dated 2026-03-08. The accompanying public explanations are [Best-First
+Minimax Search with UCT](https://www.codingame.com/playgrounds/55004/best-first-minimax-search-with-uct)
+and [Paper Soccer neural
+inputs](https://www.codingame.com/playgrounds/157341/inputs-for-neural-networks-for-the-board-games/paper-soccer).
+
+## Provenance contract
+
+| Decision | Direct user contract | Public article | Pinned public code | Candidate choice |
+| --- | --- | --- | --- | --- |
+| Search unit | Search complete turns | Describes the evaluator inputs, not action generation | Emits complete paths ending at a goal, block, or handoff | One node is one legal, rebound-complete turn |
+| Candidate cap | At most 250 actions | Not disclosed | `moveLimit = 250` | Hard cap of 250 generated actions per expanded node |
+| Deque schedule | Nine LIFO pops, then one FIFO pop | Not disclosed | Fifteen LIFO pops, then one FIFO pop | **9:1**, deliberately different from the pinned desktop code |
+| Duplicate actions | Deduplicate the full resulting boundary state | Not disclosed | Suppresses path cycles and repeated blocked paths, but does not disclose boundary-state deduplication | Keep one path per full handoff `PositionKey`; the final ball vertex alone is insufficient |
+| Neighbor order | Deterministic tests and reproducible training | Not disclosed | Shuffles neighbors | Seeded shuffling, with the seed explicit in fixed-work tests |
+| Search family | Native best-first minimax, not the incumbent search | Explains BFM/UCT generally | BFM tree allocation and player-relative minimax backup | Single-thread BFM/UCT adapted to the CodinGame clock |
+| Neural input | Follow the disclosed CodinGame representation | 316 used-edge flags followed by 105 eight-way true-turn-distance buckets; rotate Player 2 by 180 degrees | Contains multiple newer desktop schemas; it does not identify the unpublished CodinGame checkpoint | Exact 1,156-input article schema, frozen by integration tests |
+| Neural shape | Train a new native model | Discloses `1156 -> 32 -> 32 -> 1` for the CodinGame bot | Public `NetworkDeep` supplies sparse evaluation and partial reevaluation machinery | Bias-free `1156 -> 32 -> 32 -> 1`, independently trained; artifact schema and hash are recorded below |
+| Runtime | Judge by CodinGame time, not node count | Article reports about 200 ms on one thread | Desktop application is threaded and is not a CodinGame timing contract | One thread; 800 ms first decision and 165 ms later decisions, with construction-inclusive 900/180 ms pre-upload ceilings |
+| Comparison | Rank 4 is an opponent only | Not applicable | Not applicable | No incumbent source, model, replay, or labels enter the candidate artifact |
+
+The 9:1 schedule and full-boundary deduplication are direct requirements for
+this experiment. They must not be described as behavior copied from the pinned
+QtPaperSoccer revision.
+
+The exact deployed search profile is also frozen: 250 retained actions, 4,000
+root partial paths, 512 non-root partial paths, 80,000 tree nodes, a maximum of
+2,000,000 expansions, `C = 0.95`, `FPU = 0.5`, and final ordering by
+`value + log(visits)`. The full 50,000 partial-path and 120,000-node ceilings
+are diagnostic limits, not upload defaults. `comparison_gate --equal-clock`
+uses the deployed 4,000/512/80,000 profile; larger limits require explicit
+flags and cannot be reported as evidence for the uploaded bot.
+
+## Bounded tactical witness pass
+
+Before the ordinary 9:1 sampler, each expanded boundary runs a separate FIFO
+pass over at most 64 partial paths. It keeps the lexicographically smallest
+complete-turn witness it discovers for each of `ForcedCutoff`, `SafeHandoff`,
+and `OpponentImmediateGoal`. Discovered witnesses are exact classifications of
+their resulting boundary states and enter the same tactical, cap-prioritized
+top-k as other actions. Separate exhaustive rebound-component reachability
+retains an attacking-goal path and an own-goal path when either is reachable.
+
+This is a bounded discovery guarantee, not an exhaustive claim for the three
+witness classes. If the 64-path queue or the decision deadline truncates the
+pass, an undiscovered class may still exist. The native harnesses expose this
+explicitly as `tactical_proof_paths`, `tactical_classes_found`, and
+`tactical_proof_truncations`; a found witness remains exact even when the pass
+reports truncation.
+
+## Frozen neural input order
+
+The input vector is mover-relative. Player 1 uses the board's canonical
+orientation. Player 2 is rotated 180 degrees before either feature family is
+indexed.
+
+1. Indices `0..315` are the 316 canonical undirected playable-edge flags in
+   the order emitted by the candidate's checked geometry table. A value is one
+   exactly when that edge is already used.
+2. Indices `316..1155` are 105 consecutive blocks of eight. Board vertices
+   use the same canonical vertex order as the candidate's checked geometry
+   table. Within vertex block `v`, bucket `d` is at `316 + 8*v + d` and is one
+   exactly when the true-turn distance from the ball is `d`; distances at or
+   beyond seven use bucket seven.
+3. No incumbent score, replay identity, move history, player name, or arena
+   result is an input.
+
+`submission_test.cpp` freezes the edge table, vertex rotation, feature-family
+boundaries, one-hot distance layout, and Player 1/Player 2 rotational
+equivalence. Changing the ordering is a model-format change, not a harmless
+refactor.
+
+## Model artifact
+
+The checked model header is generated from a versioned JSON artifact. Its
+metadata must declare the input schema, dimensions, activation family,
+quantization/storage format, training seed, and source JSON SHA-256. Generation
+fails closed when those declarations disagree with the engine. The retained
+artifact hash and final generated-submission hash are added only after the
+reproducible training and source-generation checks have passed; see
+`EXPERIMENTS.md` for the evidence record.
+
+The frozen feature-schema identifier is
+`canonical-edges316-onehot-true-turn-distance105x8-v1`. The model schema is
+`jacek_native_model/v1`. It has no biases. Hidden layer one uses `x*x` for
+nonnegative preactivations and `0.01*x` for negative preactivations; hidden
+layer two uses `x` and `0.01*x`; the output uses `tanh`. Weights are stored in
+row-major `w1`, `w2`, `w3` order with symmetric per-layer 3-bit quantization
+and signed two's-complement values packed least-significant-bit first. These
+are artifact-format requirements and are checked before header generation.
+
+No upstream network checkpoint or unpublished weight is present. See
+`UPSTREAM_NOTICE.md` and `APACHE-2.0.txt` for provenance and license scope.
+
+## Ground-up build and corpus provenance
+
+The bootstrap workflow compiles its self-play producer from a frozen nine-file
+source list and writes one canonical `build-provenance.json` beside every shard
+set. That compact, sorted, newline-terminated record binds the ordered source
+hashes and their recomputed producer hash; canonical path-independent build
+arguments; compiler executable, binary, and version hashes; and the archived
+`selfplay-binary` hash. The archived executable is mode-checked before any
+shard starts.
+
+The build-provenance SHA-256 is mandatory in every game record. The corpus
+validator requires the sibling record, checks canonical encoding, source order,
+producer agreement, safe repository-relative paths, and per-game agreement,
+then carries the deduplicated full contracts and hashes into the corpus summary
+and model artifact. Training additionally verifies the current source bytes,
+archived producer binary, and compiler identity. Later portable reads retain
+the structural and cryptographic checks without requiring the original build
+machine to remain installed.
+
+The hardened ground-up bootstrap uses only the frozen untrained native seed on
+both sides, opening depth zero, final mover-relative outcomes, and no incumbent,
+protected replay, live-game, or action-policy labels. Nonzero deterministic
+prefixes are tested separately; only subsequent native league rounds may use
+opening depths 0, 4, 8, and 12. The frozen run produced 10,000 games across 14
+shards and completed its build, corpus, training, export, and source-generation
+checks before the identities below were recorded.
+
+## Retained checkpoint identity
+
+The retained checkpoint is a **hardened ground-up bootstrap**, not evidence that
+the value function is competitive. All 10,000 self-play games use opening depth
+zero and the same frozen untrained native runtime on both sides, so the initial
+checkpoint cannot depend on a prior trained model. There are no eligible stable
+or exact reanalysis targets; the effective labels are final mover-relative
+outcomes only. Its frozen identity is:
+
+| Artifact | Frozen value |
+| --- | --- |
+| Self-play manifest/report | SHA-256 `dce7fb5017b0dec93f6b69dca7f2b7aa4e4e06a02592cd5b2df4d74931a032b9`; `bc8db8bbfe3954dd27d44f50f2bde57a7f79d3442450ecb1c7775d17bc934100` |
+| Build/producer/binary | SHA-256 `19e5b3d73b2dd2345fb647c8836177b906544dbb17e78ddae5dd5dafc6796919`; `8d53e59681d7ae9fa2eb0d8cc279945fbf78e49cf40dc29ac139d272eab24542`; `6eb2b47c658f50c4c1d08d76e79a770e2775cce73c0c0eb9c28278981d04e07d` |
+| Untrained runtime/corpus | SHA-256 `6773c3b76c8df3e5b824d524bed938b45263215bd3198295f3bed1d082c8c6c2`; `c0200bd13c300081187b544098f4dcf2823f907a39a6769c58cfd8b5af04c9e6` |
+| Training seed | `20260813` (selected from `20260811,20260812,20260813`) |
+| JSON | 3,516,698 bytes; SHA-256 `19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc` |
+| Packed weights | 14,268 bytes; SHA-256 `7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218` |
+| Generated header | 21,736 characters; SHA-256 `b9e6e5765bfc6f69e18a968c06e2f92825f91dfd3732176d94f7cd43608af43f` |
+| Schema | SHA-256 `dd36c1b2800620fab1d5dc88afe95fcbb13864d581a18f01d26b3e1c3a4a6dfd` |
+| Generated submission | 94,528 characters; SHA-256 `8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3` |
+
+The project cap leaves 471 characters of explicit source headroom. The
+independent initial-state golden value is `-0.000181343639`; C++ inference must
+match it within `2e-6`. The integration test also freezes rotational and
+partial/full evaluation parity and rejects a one-byte packed-payload mutation.
+
+## Verification boundary
+
+Local fixed-work matches are diagnostic: they make regressions reproducible
+but do not establish CodinGame strength. Promotion decisions use equal-clock
+800/165 ms games, both colors, complete batches, and then an exact-source live
+submission. Early unoptimized submissions are legitimate experiments when
+their source hash and configuration are recorded; they are not promoted from a
+single noisy batch.
+
+The timing probe and comparison harness build their openings in memory. They
+do not read `matches.json`, replay banks, chronological loss suites, or any
+other protected data. Once a live batch influences development it is
+development evidence and cannot serve as a later promotion holdout.
+
+Source-bound public live games can be diagnosed with the separate, read-only
+[replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
+evidence only and never enters the candidate model or promotion holdout.
+
+The timing probe measures model construction, search construction, action
+selection, and application together. It must remain below 900 ms for a first
+response and 180 ms later, leaving margin before CodinGame's 1,000/200 ms
+operational limits. Player 0 and Player 1 are measured by separate fresh
+process invocations so one color cannot inherit a warmed model or allocator
+from the other. The frozen Release measurements were P0 400.968/167.306 ms
+with 81,739,776-byte peak RSS, and P1 405.716/168.314 ms with 91,881,472-byte
+peak RSS. Both pass 900/180; node and expansion counts remain diagnostics only.
+Actual-clock batches exposed less margin: the decisive bootstrap run reached
+179.918 ms later, and the external Rank 4 screen reached 180.513 ms, producing
+one headroom failure. The standalone probe therefore does not establish robust
+upload safety.
+
+## Build and verification
+
+From the repository root:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  submissions/codingame/bots/jacek_native_bfm/check_purity.py
+node submissions/codingame/tools/generate_submission.mjs jacek_native_bfm
+node submissions/codingame/tools/generate_submission.mjs jacek_native_bfm --check
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j8 --target \
+  papersoccer_codingame_jacek_native_bfm_submission_test \
+  papersoccer_codingame_jacek_native_bfm_timing_probe \
+  papersoccer_codingame_jacek_native_bfm_comparison_gate \
+  papersoccer_jacek_native_selfplay \
+  papersoccer_jacek_native_model_gate \
+  papersoccer_jacek_native_replay_decision_auditor \
+  papersoccer_jacek_native_replay_decision_auditor_test
+ctest --test-dir build --output-on-failure -R jacek_native
+```
+
+The corpus/exporter contract tests that do not need NumPy run under ordinary
+Python. To run all trainer and quantization tests locally, use the repository's
+pinned research environment (or the bundled Python selected for the workspace):
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-research.txt
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest \
+  tests.codingame.test_jacek_native_training
+```
+
+CMake registers the dedicated numerical trainer test only when its configured
+Python can import NumPy. The broader Python discovery test remains safe on a
+minimal CI interpreter because numerical cases explicitly skip there.
+The final candidate also passes the native AddressSanitizer and
+UndefinedBehaviorSanitizer suite.
+
+The submission configuration reserves explicit source headroom with a
+94,999-character project limit. The exact generated length and SHA-256 belong
+in the experiment record and must be refreshed after every production change.
+
+## Checkpoint promotion gate
+
+The exporter can materialize any retained seed as a compact runtime checkpoint
+without recompiling the engine:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  submissions/codingame/tools/generate_jacek_native_model.py \
+  --model models/jacek_native_bootstrap_model.json --seed 20260813 \
+  --output build/candidate-model.hpp \
+  --runtime-output build/candidate.runtime
+```
+
+`papersoccer_jacek_native_model_gate` loads two such files, validates their
+model and packed hashes, and prints the SHA-256 of each complete runtime file.
+It plays every procedural opening in both colors with the exact production
+250/4,000/512/80,000 search profile. Checkpoint promotion is frozen as:
+
+```sh
+# Fast screen: 1,000 games.
+build/papersoccer_jacek_native_model_gate \
+  --candidate-checkpoint build/candidate.runtime \
+  --baseline-checkpoint build/baseline.runtime \
+  --pairs 500 --first-ms 50 --later-ms 10 \
+  --opening-turns 0,4,8,12 --minimum-candidate-wins 530
+
+# Decisive clock: 212 games, with a color floor.
+build/papersoccer_jacek_native_model_gate \
+  --candidate-checkpoint build/candidate.runtime \
+  --baseline-checkpoint build/baseline.runtime \
+  --pairs 106 --first-ms 800 --later-ms 165 \
+  --opening-turns 0,4,8,12 --minimum-candidate-wins 112 \
+  --minimum-wins-per-color 50
+```
+
+Both commands fail on any unfinished game, official operational timeout, or
+construction-inclusive response at or above 900/180 ms. A fixed-work self-play
+score is not a substitute for either actual-clock gate.
+
+The selected seed-20260813 runtime is
+`877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d`.
+A diagnostic against sibling seed 20260812 runtime
+`d6236e108fcb563d630db73c8e0c41a009efb8dbd3fc2f7e05f529daae685c4f`
+lost 484-516 at 50/10 ms (candidate colors 244/240), with zero unfinished
+games or timing failures. This is a failed sibling diagnostic, not a
+previous-champion promotion gate.
+
+The official bootstrap baseline is the frozen untrained runtime
+`6773c3b76c8df3e5b824d524bed938b45263215bd3198295f3bed1d082c8c6c2`.
+Against it, the retained runtime passed both preregistered screens:
+
+- 50/10 ms: 689-311 over 1,000 games, colors 363/326, zero unfinished or
+  timing failures; candidate maxima 51.1998/12.6256 ms.
+- 800/165 ms: 144-68 over 212 games, colors 76/68, zero unfinished or
+  timing failures; candidate maxima 451.303/179.918 ms. The later maximum
+  passed by only 0.082 ms.
+
+These results show learning over the untrained seed. They do not establish
+parity with the incumbent or safety on CodinGame.
+
+## External Rank 4 gates
+
+Checkpoint promotion and external comparison answer different questions. The
+checkpoint gate above compares weights with the engine held fixed. The
+external gate treats canonical `rank_4` only as an opponent and always uses
+actual equal clocks.
+
+The early development screen is 53 paired openings, hence 106 games. It must
+score at least 58 wins and is repeated with a different deterministic seed
+before the result influences promotion:
+
+```sh
+build/papersoccer_codingame_jacek_native_bfm_comparison_gate \
+  --equal-clock --pairs 53 --opening-turns 8 \
+  --seed 6510615555426900575 --maximum-turns 384 \
+  --minimum-candidate-wins 58
+```
+
+The final parity declaration is deliberately larger: 212 paired openings and
+424 games. With four opening depths, `--pairs 53` means 53 openings at each
+depth. A pass requires the candidate's 95% Wilson lower confidence bound to be
+at least 50% (233 wins when all 424 games finish), at least 48% wins in each
+color (`ceil(0.48 * 212) = 102`), and zero unfinished games, timing failures,
+or operational timeouts:
+
+```sh
+build/papersoccer_codingame_jacek_native_bfm_comparison_gate \
+  --equal-clock --pairs 53 --opening-turns 0,4,8,12 \
+  --seed 6510615555426900575 --minimum-wilson-lower 0.5 \
+  --minimum-wins-per-color 102
+```
+
+The harness prints the paired-opening/game counts, raw color split, win rate,
+Wilson lower bound, exact search limits, maximum first/later response times,
+and pass/fail state for every enabled threshold. “Paired opening” always means
+the same opening played once in each color; it is never used as a synonym for
+one game.
+
+The exact generated source
+`8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3`
+failed the first external screen 35-71 over 106 games, with candidate colors
+16/19. Its win rate was 0.330189 and the 95% Wilson lower bound was 0.24798.
+There were no unfinished games or operational timeouts, but one candidate
+later response reached 180.513 ms and failed the pre-upload ceiling. The
+58-win development threshold failed, so the second-seed repeat, 424-game
+parity gate, and CodinGame upload were not run.

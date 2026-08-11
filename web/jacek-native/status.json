@@ -1,0 +1,252 @@
+{
+  "schema": "papersoccer.jacek-native-status.v1",
+  "updatedAt": "2026-08-11",
+  "candidate": {
+    "name": "jacek_native_bfm",
+    "stage": "stopped-external-gate",
+    "stageLabel": "Stopped: external gate failed",
+    "status": "failed",
+    "claim": "Bootstrap gates passed, but the external Rank 4 screen failed 35–71; no parity run or upload"
+  },
+  "architecture": {
+    "searchAction": "One complete legal turn",
+    "actionCap": 250,
+    "dequeSchedule": "9 LIFO : 1 FIFO",
+    "network": "1156 → 32 → 32 → 1",
+    "search": "Best-first minimax with UCT allocation",
+    "productionLimits": "4,000 root paths · 512 non-root paths · 80,000 tree nodes",
+    "tacticalWitness": "64-state FIFO pass before 9:1 sampling; exact found witnesses, explicit truncation",
+    "trainingProvenance": "Canonical source, compiler, build, and archived-binary contract",
+    "dependencyBoundary": "No incumbent source, replay data, or action labels"
+  },
+  "provenance": {
+    "workflowSha256": "66300709838982dce4c3eb2ce0b5677653ddf61fc974dc69b566671f5f27d6f2",
+    "manifestSha256": "dce7fb5017b0dec93f6b69dca7f2b7aa4e4e06a02592cd5b2df4d74931a032b9",
+    "corpusReportSha256": "bc8db8bbfe3954dd27d44f50f2bde57a7f79d3442450ecb1c7775d17bc934100",
+    "buildProvenanceSha256": "19e5b3d73b2dd2345fb647c8836177b906544dbb17e78ddae5dd5dafc6796919",
+    "producerSha256": "8d53e59681d7ae9fa2eb0d8cc279945fbf78e49cf40dc29ac139d272eab24542",
+    "selfplayBinarySha256": "6eb2b47c658f50c4c1d08d76e79a770e2775cce73c0c0eb9c28278981d04e07d",
+    "untrainedRuntimeSha256": "6773c3b76c8df3e5b824d524bed938b45263215bd3198295f3bed1d082c8c6c2",
+    "corpusSha256": "c0200bd13c300081187b544098f4dcf2823f907a39a6769c58cfd8b5af04c9e6"
+  },
+  "artifacts": [
+    {
+      "id": "workflow",
+      "label": "Self-play workflow",
+      "path": "tools/jacek_native_workflow.py",
+      "sha256": "66300709838982dce4c3eb2ce0b5677653ddf61fc974dc69b566671f5f27d6f2",
+      "size": 14964,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "corpus-validator",
+      "label": "Corpus validator",
+      "path": "tools/jacek_native_corpus.py",
+      "sha256": "8ec6cf38bfb9a998464fb72eb1c7438b042d1f4b5fe1deea2970023777c089fb",
+      "size": 47291,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "trainer",
+      "label": "Native trainer",
+      "path": "tools/train_jacek_native.py",
+      "sha256": "924ae40597377f4dd3823c7e4df8369756cb7a3713006c6cc576087af47b7089",
+      "size": 25576,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "untrained-runtime",
+      "label": "Untrained seed runtime",
+      "path": "models/jacek_native_untrained_seed.runtime",
+      "sha256": "6773c3b76c8df3e5b824d524bed938b45263215bd3198295f3bed1d082c8c6c2",
+      "size": 19287,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "build-provenance",
+      "label": "Canonical build contract",
+      "path": null,
+      "sha256": "19e5b3d73b2dd2345fb647c8836177b906544dbb17e78ddae5dd5dafc6796919",
+      "size": 1934,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "producer-contract",
+      "label": "Ordered producer source contract",
+      "path": null,
+      "sha256": "8d53e59681d7ae9fa2eb0d8cc279945fbf78e49cf40dc29ac139d272eab24542",
+      "size": 9,
+      "sizeUnit": "source files"
+    },
+    {
+      "id": "selfplay-binary",
+      "label": "Archived self-play binary",
+      "path": null,
+      "sha256": "6eb2b47c658f50c4c1d08d76e79a770e2775cce73c0c0eb9c28278981d04e07d",
+      "size": 242464,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "selfplay-manifest",
+      "label": "10k self-play manifest",
+      "path": null,
+      "sha256": "dce7fb5017b0dec93f6b69dca7f2b7aa4e4e06a02592cd5b2df4d74931a032b9",
+      "size": 32604,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "corpus-report",
+      "label": "Validated corpus report",
+      "path": null,
+      "sha256": "bc8db8bbfe3954dd27d44f50f2bde57a7f79d3442450ecb1c7775d17bc934100",
+      "size": 7133,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "corpus-identity",
+      "label": "Hardened bootstrap corpus",
+      "path": null,
+      "sha256": "c0200bd13c300081187b544098f4dcf2823f907a39a6769c58cfd8b5af04c9e6",
+      "size": 10000,
+      "sizeUnit": "games"
+    },
+    {
+      "id": "model-json",
+      "label": "Bootstrap model JSON",
+      "path": "models/jacek_native_bootstrap_model.json",
+      "sha256": "19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc",
+      "size": 3516698,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "packed-weights",
+      "label": "Packed 3-bit weights",
+      "path": null,
+      "sha256": "7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218",
+      "size": 14268,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "model-header",
+      "label": "Generated model header",
+      "path": "submissions/codingame/bots/jacek_native_bfm/jacek_native_model.hpp",
+      "sha256": "b9e6e5765bfc6f69e18a968c06e2f92825f91dfd3732176d94f7cd43608af43f",
+      "size": 21736,
+      "sizeUnit": "bytes"
+    },
+    {
+      "id": "submission",
+      "label": "Generated CodinGame source",
+      "path": "submissions/codingame/bots/jacek_native_bfm/submission.cpp",
+      "sha256": "8e67a0c795809e17490f719b2130d172c8aea2fd8df51ad0d44ca2d97614c1e3",
+      "size": 94528,
+      "sizeUnit": "characters"
+    }
+  ],
+  "training": {
+    "status": "hardened-bootstrap",
+    "games": 10000,
+    "shards": 14,
+    "runSeconds": 522.476,
+    "gamesPerSecond": 19.1396,
+    "augmentedSamples": 1106236,
+    "openingSchema": "deterministic-procedural-complete-turn-prefix/v1",
+    "openingDepths": [0],
+    "leagueOpeningDepths": [0, 4, 8, 12],
+    "temperatureTurns": 12,
+    "provenance": "Per-game build SHA → canonical source/compiler/binary contract → corpus and model lineage",
+    "chosenSeed": 20260813,
+    "splitGames": { "train": 8000, "validation": 999, "test": 1001 },
+    "trainSamples": 884764,
+    "validationSamples": 100260,
+    "testSamples": 100931,
+    "overlapsRemoved": { "train": 0, "validation": 10112, "test": 10169 },
+    "trainMse": 0.9189119935,
+    "trainSignAccuracy": 0.5638170179,
+    "validationMse": 0.9142891169,
+    "validationSignAccuracy": 0.5619489328,
+    "testMse": 0.9178740978,
+    "testSignAccuracy": 0.5681207954,
+    "predictionMeans": { "train": 0.0081043784, "validation": 0.0092751384, "test": 0.0088693192 },
+    "trainingSeconds": 1539.28,
+    "trainingExamplesPerSecond": 28380.18,
+    "peakRssBytes": 7829962752,
+    "peakFootprintBytes": 8256755952,
+    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but lost the external Rank 4 screen 35–71, so development stopped without an upload."
+  },
+  "clock": {
+    "search": { "firstMs": 800, "laterMs": 165 },
+    "headroom": { "firstMs": 900, "laterMs": 180 },
+    "official": { "firstMs": 1000, "laterMs": 200 },
+    "timingProbe": {
+      "status": "passed",
+      "playerZero": { "firstMs": 400.968, "laterMs": 167.306, "maxRssBytes": 81739776, "peakFootprintBytes": 76382616 },
+      "playerOne": { "firstMs": 405.716, "laterMs": 168.314, "maxRssBytes": 91881472, "peakFootprintBytes": 78610840 }
+    },
+    "decisiveBootstrap": { "candidateFirstMaxMs": 451.303, "candidateLaterMaxMs": 179.918, "headroomFailures": 0 },
+    "externalDevelopment": { "candidateFirstMaxMs": 0, "candidateLaterMaxMs": 180.513, "headroomFailures": 1 }
+  },
+  "verification": {
+    "status": "passed",
+    "sourceLimit": 94999,
+    "checks": [
+      { "label": "Rules, generator, feature, model, and search tests", "status": "passed" },
+      { "label": "Generated-source compile and protocol smoke", "status": "passed" },
+      { "label": "Hardened 10k corpus and model lineage", "status": "passed" },
+      { "label": "Transitive purity and provenance audit", "status": "passed" },
+      { "label": "Fresh-process timing and model-gate smoke", "status": "passed" },
+      { "label": "Native replay decision auditor", "status": "passed" },
+      { "label": "Native ASan and UBSan pass", "status": "passed" }
+    ]
+  },
+  "diagnostics": [
+    {
+      "label": "Selected seed vs sibling seed",
+      "status": "failed",
+      "requirement": "Diagnostic only: seed 20260813 vs sibling 20260812; not a previous-champion promotion gate",
+      "result": "484–516 / 1,000 at 50/10 ms · candidate colors 244/240 · zero incomplete or timing failures",
+      "candidateRuntimeSha256": "877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d",
+      "referenceRuntimeSha256": "d6236e108fcb563d630db73c8e0c41a009efb8dbd3fc2f7e05f529daae685c4f"
+    }
+  ],
+  "gates": [
+    {
+      "label": "50/10 ms bootstrap checkpoint gate",
+      "requirement": "530 wins in 1,000 paired-color games",
+      "status": "passed",
+      "result": "689–311 vs frozen untrained runtime · colors 363/326 · zero incomplete or timing failures · max 51.1998/12.6256 ms"
+    },
+    {
+      "label": "800/165 ms bootstrap checkpoint gate",
+      "requirement": "112 wins in 212 games and at least 50 in each color",
+      "status": "passed",
+      "result": "144–68 vs frozen untrained runtime · colors 76/68 · zero incomplete or timing failures · max 451.303/179.918 ms"
+    },
+    {
+      "label": "External Rank 4 development screen",
+      "requirement": "At least 58 wins in 106 games (53 paired openings), repeated under a second seed",
+      "status": "failed",
+      "result": "35–71 · colors 16/19 · win rate 0.330189 · Wilson lower 0.24798 · one 180.513 ms headroom failure"
+    },
+    {
+      "label": "External Rank 4 final parity gate",
+      "requirement": "424 games (212 paired openings): ≥ 233 wins for Wilson 95% lower ≥ 50%, and ≥ 102 wins in each color",
+      "status": "not-run",
+      "result": "Stopped after the development failure; no second seed and no 424-game parity run"
+    }
+  ],
+  "live": {
+    "status": "not-run",
+    "label": "No upload: stopped after the external strength and timing failure",
+    "submissionId": null,
+    "agentId": null,
+    "rank": null,
+    "score": null,
+    "sourceBound": false
+  },
+  "links": {
+    "readme": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/README.md",
+    "experiments": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/EXPERIMENTS.md",
+    "auditor": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/REPLAY_DECISION_AUDITOR.md"
+  }
+}

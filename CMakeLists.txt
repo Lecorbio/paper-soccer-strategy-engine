@@ -214,6 +214,33 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(
+    NAME papersoccer_codingame_jacek_native_bfm_purity
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/jacek_native_bfm/check_purity.py)
+  set_tests_properties(
+    papersoccer_codingame_jacek_native_bfm_purity PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} -c "import numpy"
+    RESULT_VARIABLE PAPERSOCCER_JACEK_NATIVE_NUMPY_STATUS
+    OUTPUT_QUIET
+    ERROR_QUIET)
+  if(PAPERSOCCER_JACEK_NATIVE_NUMPY_STATUS EQUAL 0)
+    add_test(
+      NAME papersoccer_codingame_jacek_native_training_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_native_training)
+    set_tests_properties(
+      papersoccer_codingame_jacek_native_training_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
+
+  add_test(
     NAME papersoccer_codingame_promotion_banks_current
     COMMAND ${CMAKE_COMMAND} -E env
             PYTHONDONTWRITEBYTECODE=1
@@ -236,6 +263,7 @@ endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
   alpha_beta rank_5 rank_4 rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  jacek_native_bfm
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
@@ -343,6 +371,7 @@ if(NOT EMSCRIPTEN)
        PAPERSOCCER_CODINGAME_BOT STREQUAL "frontier_proof" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "conservative_frontier_proof" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_fullturn_bfm" OR
+       PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm" OR
        PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_exchange")
       target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
@@ -355,8 +384,25 @@ if(NOT EMSCRIPTEN)
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
-      add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
-               COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe)
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe 0)
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe 1)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+          ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
+          PROPERTIES RUN_SERIAL TRUE)
+        if(PAPERSOCCER_SANITIZERS_ENABLED)
+          set_tests_properties(
+            ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+            ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
+            PROPERTIES DISABLED TRUE)
+        endif()
+      else()
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
+                 COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe)
+      endif()
     endif()
 
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
@@ -379,6 +425,34 @@ if(NOT EMSCRIPTEN)
             --pairs-per-depth 1 --candidate-work 2000
             --reference-nodes 2000 --max-turns 200
             --opening-turns 0,1,2,3)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --pairs 1 --candidate-iterations 2
+            --candidate-actions 16 --candidate-partial-paths 500
+            --candidate-tree-nodes 128 --reference-nodes 200
+            --maximum-turns 384 --opening-turns 0)
+        add_test(
+          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_unfinished
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --pairs 1 --candidate-iterations 1
+            --candidate-actions 8 --candidate-partial-paths 32
+            --candidate-tree-nodes 32 --reference-nodes 10
+            --maximum-turns 1 --opening-turns 0)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_unfinished
+          PROPERTIES WILL_FAIL TRUE)
+        add_test(
+          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_score
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --pairs 1 --candidate-iterations 2
+            --candidate-actions 16 --candidate-partial-paths 500
+            --candidate-tree-nodes 128 --reference-nodes 200
+            --maximum-turns 384 --opening-turns 0
+            --minimum-wilson-lower 1.0)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_score
+          PROPERTIES WILL_FAIL TRUE)
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
@@ -465,6 +539,126 @@ if(NOT EMSCRIPTEN)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(papersoccer_jacek_training_data
     PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_selfplay
+    tools/jacek_native_selfplay.cpp)
+  target_include_directories(papersoccer_jacek_native_selfplay
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_selfplay
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_selfplay_smoke_prepare
+    COMMAND ${CMAKE_COMMAND} -E rm -f
+      ${CMAKE_CURRENT_BINARY_DIR}/jacek-native-selfplay-smoke.jsonl)
+  set_tests_properties(papersoccer_jacek_native_selfplay_smoke_prepare
+    PROPERTIES FIXTURES_SETUP papersoccer_jacek_native_selfplay_output)
+  add_test(NAME papersoccer_jacek_native_selfplay_smoke
+    COMMAND papersoccer_jacek_native_selfplay
+      --output
+      ${CMAKE_CURRENT_BINARY_DIR}/jacek-native-selfplay-smoke.jsonl
+      --games 2 --seed 17 --work 251 --samples-per-game 1
+      --temperature 0 --temperature-turns 12 --opening-depths 0,4
+      --max-complete-turns 384
+      --producer-sha256
+      0000000000000000000000000000000000000000000000000000000000000000
+      --build-provenance-sha256
+      1111111111111111111111111111111111111111111111111111111111111111)
+  set_tests_properties(papersoccer_jacek_native_selfplay_smoke
+    PROPERTIES FIXTURES_REQUIRED papersoccer_jacek_native_selfplay_output)
+
+  add_executable(papersoccer_jacek_native_replay_decision_auditor
+    submissions/codingame/bots/jacek_native_bfm/replay_decision_auditor.cpp)
+  target_include_directories(
+    papersoccer_jacek_native_replay_decision_auditor
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_jacek_native_replay_decision_auditor
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_replay_decision_auditor_test
+    submissions/codingame/bots/jacek_native_bfm/replay_decision_auditor_test.cpp)
+  target_include_directories(
+    papersoccer_jacek_native_replay_decision_auditor_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_jacek_native_replay_decision_auditor_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_replay_decision_auditor_test
+    COMMAND papersoccer_jacek_native_replay_decision_auditor_test)
+
+  add_executable(papersoccer_jacek_native_model_gate
+    tools/jacek_native_model_gate.cpp)
+  target_include_directories(papersoccer_jacek_native_model_gate
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_model_gate
+    PRIVATE papersoccer_core)
+  if(Python3_Interpreter_FOUND)
+    set(PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT
+      "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-current.runtime")
+    set(PAPERSOCCER_JACEK_NATIVE_RUNTIME_HEADER
+      "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-current.hpp")
+    set(PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT
+      "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-seed-20260812.runtime")
+    set(PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER
+      "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-seed-20260812.hpp")
+    add_custom_command(
+      OUTPUT
+        ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+        ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_HEADER}
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_jacek_native_model.py
+        --model ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_bootstrap_model.json
+        --output ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_HEADER}
+        --runtime-output ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+      DEPENDS
+        models/jacek_native_bootstrap_model.json
+        submissions/codingame/tools/generate_jacek_native_model.py
+        tools/train_jacek_native.py
+        tools/jacek_native_corpus.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      VERBATIM)
+    add_custom_command(
+      OUTPUT
+        ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
+        ${PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER}
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_jacek_native_model.py
+        --model ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_bootstrap_model.json
+        --seed 20260812
+        --output ${PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER}
+        --runtime-output ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
+      DEPENDS
+        models/jacek_native_bootstrap_model.json
+        submissions/codingame/tools/generate_jacek_native_model.py
+        tools/train_jacek_native.py
+        tools/jacek_native_corpus.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      VERBATIM)
+    add_custom_target(papersoccer_jacek_native_runtime_checkpoint
+      DEPENDS
+        ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+        ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_HEADER}
+        ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
+        ${PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER})
+    add_dependencies(papersoccer_jacek_native_model_gate
+      papersoccer_jacek_native_runtime_checkpoint)
+    add_test(NAME papersoccer_jacek_native_model_gate_checkpoint_smoke
+      COMMAND papersoccer_jacek_native_model_gate
+        --candidate-checkpoint ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+        --baseline-checkpoint ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+        --verify-only)
+    if(NOT PAPERSOCCER_SANITIZERS_ENABLED)
+      add_test(NAME papersoccer_jacek_native_model_gate_match_smoke
+        COMMAND papersoccer_jacek_native_model_gate
+          --candidate-checkpoint ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+          --baseline-checkpoint ${PAPERSOCCER_JACEK_NATIVE_BASELINE_CHECKPOINT}
+          --pairs 1 --first-ms 50 --later-ms 10 --opening-turns 0
+          --seed 6510615555426900575)
+    endif()
+  endif()
 endif()
 
 find_program(PAPERSOCCER_NODE_EXECUTABLE NAMES node)
@@ -500,6 +694,11 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       NAME papersoccer_web_benchmark_ui_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_benchmark_ui_test.mjs
+    )
+    add_test(
+      NAME papersoccer_web_jacek_native_status_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_jacek_native_status_test.mjs
     )
     add_test(
       NAME papersoccer_web_replay_setup_tests

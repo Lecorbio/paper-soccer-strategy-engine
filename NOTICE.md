@@ -29,6 +29,20 @@ unpublished weights, or copied submission code, and the article itself is not
 licensed by this repository:
 [Inputs for Neural Networks for the Board Games: Paper Soccer](https://www.codingame.com/playgrounds/157341/inputs-for-neural-networks-for-the-board-games/paper-soccer).
 
+## QtPaperSoccer-derived architecture
+
+The `jacek_native_bfm` CodinGame research track is an independent adaptation
+of public architectural behavior in Jacek Dermont's
+[QtPaperSoccer](https://github.com/jdermont/QtPaperSoccer), pinned at commit
+`366d5304c09c2c820bd3ef4ea94624c034b8d955` (2026-03-08). The upstream project
+is Apache-2.0 licensed. Its full license and the adaptation's modification and
+provenance notice are retained in
+`submissions/codingame/bots/jacek_native_bfm/`.
+
+The repository's MIT license does not relicense Apache-licensed upstream
+portions. No upstream network checkpoint or unpublished CodinGame source is
+included.
+
 ## Emscripten-generated browser module
 
 `web/papersoccer-wasm.js` is generated with Emscripten 6.0.2 and includes

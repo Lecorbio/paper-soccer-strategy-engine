@@ -1,0 +1,30 @@
+{
+  "schema": "papersoccer.codingame-submission.v1",
+  "sources": "sources.txt",
+  "output": "submission.cpp",
+  "source_limit": 94999,
+  "strip_leading_whitespace": true,
+  "allowed_local_includes": [
+    "jacek_native_model.hpp",
+    "mcts_internal.hpp",
+    "papersoccer/geometry.hpp",
+    "papersoccer/rules.hpp",
+    "papersoccer/types.hpp"
+  ],
+  "generators": [
+    "generate_jacek_native_model_header.mjs"
+  ],
+  "purity_dependencies": [
+    "models/jacek_native_bootstrap_model.json",
+    "models/jacek_native_untrained_seed.json",
+    "models/jacek_native_untrained_seed.runtime",
+    "submissions/codingame/tools/generate_jacek_native_model.py",
+    "tools/generate_jacek_native_seed.py",
+    "tools/train_jacek_native.py",
+    "tools/jacek_native_selfplay.cpp",
+    "tools/jacek_native_workflow.py"
+  ],
+  "purity_semantic_dependencies": [
+    "tools/jacek_native_corpus.py"
+  ]
+}
