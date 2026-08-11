@@ -62,24 +62,33 @@ counters in a write-once JSON report. Fixed work remains a reproducibility and
 profiling tool, not a strength criterion.
 
 The synchronized generated source is 99,955 ASCII characters, SHA-256
-`c268286020ae841e4b5442e3578107ab32ded151e460a5bbe0495cb9b0b19d87`.
+`5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da`.
 Regenerate and recheck both values after any source change.
-Its exploratory policy uses final visit weight `0`, the full 250-action cap at
-root and deeper nodes, and normal BFM expansion. Root-only and narrower-deeper
-settings remain explicit diagnostic hooks; both were rejected in clock screens.
+Its exploratory policy uses UCT exploration `0.5`, final visit weight `0`, the
+full 250-action cap at root and deeper nodes, and normal BFM expansion.
+Root-only and narrower-deeper settings remain explicit diagnostic hooks; both
+were rejected in clock screens.
 
 The exact formulas, tactical guarantees, frozen promotion gates, commands,
 and results are recorded in [EXPERIMENTS.md](EXPERIMENTS.md). The final
 equal-clock result was 24-82 over 106 games, with both deterministic seed
 batches and both color thresholds failing. That remains a reproducible
 promotion rejection, but it no longer forbids exploratory live submissions.
+The clock-led development ladder and pivot criteria are in
+[IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md).
 An asserted `dd1192...` artifact was later tested publicly as agent `6606663`,
 submission `41119120`; public APIs cannot prove the editor bytes, so replay
 evidence retains `source_binding_status=asserted-not-api-verified`.
-The current `c268...` artifact was then copy-back verified in the authenticated
+The `c268...` artifact was then copy-back verified in the authenticated
 editor immediately before exploratory upload as history version 60. Public
 battle metadata identifies it as agent `6608659`, submission `41121957`; this
 is diagnostic only and retains the same conservative public-API binding label.
+Its complete public window was 55-35 raw and 42-35 after removing 13 opponent
+operational failures, with zero candidate operational failures and positive
+clean records in both colors. The batch contained no current top-10 opponents,
+so it does not establish elite strength.
+The current `567210...` local artifact changes only the default UCT exploration
+constant from `1.5` to `0.5`; it has not been uploaded.
 
 `collect_arena_batch.py` archives complete public batches behind a frozen
 ID-only exclusion registry, and `papersoccer_fullturn_replay_decision_auditor`

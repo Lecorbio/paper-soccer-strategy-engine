@@ -33,7 +33,7 @@ namespace audit_reference = papersoccer::rank4_replay_audit_reference;
 
 namespace papersoccer::fullturn_replay_audit {
 
-constexpr std::string_view kSchemaVersion = "fullturn-decision-audit-v2";
+constexpr std::string_view kSchemaVersion = "fullturn-decision-audit-v3";
 constexpr std::string_view kInputHeader =
     "game_id\tcandidate_player\twinner\tturns";
 constexpr std::size_t kMaximumGames = 4'096;
@@ -122,6 +122,22 @@ struct RetainedActionMatch {
   std::string tactical_class{"not-retained"};
 };
 
+struct InitialEvaluationMatch {
+  std::optional<int> score;
+  int rank{-1};
+};
+
+struct InitialEvaluationDiagnostics {
+  std::string best_action;
+  int best_score{};
+  int best_retained_ordinal{-1};
+  InitialEvaluationMatch actual;
+  InitialEvaluationMatch candidate;
+  InitialEvaluationMatch reference;
+  bool candidate_bfm_change_assessable{};
+  bool candidate_bfm_changed_from_initial_best{};
+};
+
 struct RootCoverage {
   std::uint64_t actions{};
   std::uint64_t partial_paths{};
@@ -132,6 +148,7 @@ struct RootCoverage {
   RetainedActionMatch actual;
   RetainedActionMatch candidate;
   RetainedActionMatch reference;
+  InitialEvaluationDiagnostics initial_evaluation;
 };
 
 struct DecisionAudit {
@@ -494,6 +511,25 @@ std::string reconstruct_deployed_action(
                                  : std::string(raw_bfm_action);
 }
 
+audit_candidate::SearchConfig candidate_search_config(
+    const AuditConfig &audit_config) {
+  audit_candidate::SearchConfig config;
+  config.max_work = audit_config.candidate_work;
+  config.max_tree_nodes = audit_config.candidate_tree_nodes;
+  config.max_actions = audit_config.candidate_max_actions;
+  config.nonroot_actions = audit_config.candidate_nonroot_actions;
+  config.max_partial_paths = audit_config.candidate_max_partial_paths;
+  config.replay_value_blend_percent =
+      audit_config.replay_value_blend_percent;
+  config.teacher_residual_weight_percent =
+      audit_config.teacher_residual_weight_percent;
+  config.exploration_constant = audit_config.candidate_exploration;
+  config.first_play_urgency = audit_config.candidate_fpu;
+  config.final_visit_weight = audit_config.candidate_final_visit_weight;
+  config.root_only = audit_config.candidate_root_only;
+  return config;
+}
+
 template <typename EncodeDirection>
 std::string encode_complete_action(const GameState &root,
                                    const std::vector<Move> &moves,
@@ -522,20 +558,8 @@ CandidateDecision choose_candidate(const GameState &state,
                                    const AuditConfig &audit_config,
                                    std::uint32_t time_limit_ms) {
   CandidateDecision decision;
-  audit_candidate::SearchConfig config;
-  config.max_work = audit_config.candidate_work;
-  config.max_tree_nodes = audit_config.candidate_tree_nodes;
-  config.max_actions = audit_config.candidate_max_actions;
-  config.nonroot_actions = audit_config.candidate_nonroot_actions;
-  config.max_partial_paths = audit_config.candidate_max_partial_paths;
-  config.replay_value_blend_percent =
-      audit_config.replay_value_blend_percent;
-  config.teacher_residual_weight_percent =
-      audit_config.teacher_residual_weight_percent;
-  config.exploration_constant = audit_config.candidate_exploration;
-  config.first_play_urgency = audit_config.candidate_fpu;
-  config.final_visit_weight = audit_config.candidate_final_visit_weight;
-  config.root_only = audit_config.candidate_root_only;
+  audit_candidate::SearchConfig config =
+      candidate_search_config(audit_config);
 
   const auto started = audit_candidate::SearchClock::now();
   if (time_limit_ms != 0) {
@@ -645,6 +669,171 @@ RetainedActionMatch find_retained_action(
   return match;
 }
 
+int initial_proven_score(Player winning_player,
+                         std::uint32_t turn_depth) noexcept {
+  const int distance = static_cast<int>(std::min<std::uint32_t>(
+      turn_depth, audit_candidate::kMaximumMateDistance));
+  return winning_player == Player::One
+             ? audit_candidate::kMateScore - distance
+             : -audit_candidate::kMateScore + distance;
+}
+
+bool initial_action_is_proven(
+    const audit_candidate::CompleteTurnAction &action) noexcept {
+  return action.result.is_terminal() ||
+         action.tactical == audit_candidate::TacticalClass::ForcedCutoff ||
+         action.tactical ==
+             audit_candidate::TacticalClass::OpponentImmediateWin;
+}
+
+int initial_heuristic_score(
+    const GameState &root,
+    const audit_candidate::CompleteTurnAction &action,
+    const AuditConfig &config) {
+  GameState boundary = root;
+  audit_candidate::apply_encoded_turn(boundary, action.encoded);
+  audit_candidate::SearchConfig evaluator_config =
+      candidate_search_config(config);
+  evaluator_config.evaluation_entries = 2;
+  audit_candidate::FullTurnBfmSearch evaluator(boundary, evaluator_config);
+  const audit_candidate::EvaluationSnapshot snapshot =
+      evaluator.evaluation_snapshot();
+  int score = snapshot.anchor_score;
+  static_assert(audit_candidate::teacher_residual_model::kInputCount ==
+                audit_candidate::kTeacherResidualInputs);
+  const bool teacher_residual_root_enabled =
+      root.used_segments.size() >=
+      static_cast<std::size_t>(
+          audit_candidate::kTeacherResidualMinimumUsedEdges);
+  if (config.teacher_residual_weight_percent != 0 &&
+      teacher_residual_root_enabled) {
+    float prediction = audit_candidate::teacher_residual_model::kBias;
+    for (std::size_t input = 0; input < snapshot.features.size(); ++input) {
+      prediction += snapshot.features[input] *
+                    audit_candidate::teacher_residual_model::kWeights[input];
+    }
+    prediction = std::clamp(prediction, -1.0F, 1.0F);
+    const int mover_correction = static_cast<int>(std::lround(
+        prediction * audit_candidate::kTeacherResidualTargetScale *
+        config.teacher_residual_weight_percent / 100.0F));
+    const int confidence_cap = std::max(
+        0, audit_candidate::kTeacherResidualHardCap -
+               std::abs(snapshot.anchor_score) / 10);
+    const int correction =
+        snapshot.features[20] != 0.0F ||
+                snapshot.features[23] * 64.0F <
+                    audit_candidate::kTeacherResidualMinimumUsedEdges
+            ? 0
+            : snapshot.mover_sign *
+                  std::clamp(mover_correction, -confidence_cap,
+                             confidence_cap);
+    score += correction;
+  }
+  return std::clamp(score, -audit_candidate::kMaximumEvaluation,
+                    audit_candidate::kMaximumEvaluation);
+}
+
+int initial_action_score(
+    const GameState &root,
+    const audit_candidate::CompleteTurnAction &action,
+    const AuditConfig &config) {
+  constexpr std::uint32_t kChildDepth = 1;
+  if (action.result.is_terminal()) {
+    const std::optional<Player> winning_player = action.result.winner();
+    if (!winning_player.has_value()) {
+      throw std::logic_error("terminal retained action has no winner");
+    }
+    return initial_proven_score(*winning_player, kChildDepth);
+  }
+  if (action.tactical == audit_candidate::TacticalClass::ForcedCutoff) {
+    return initial_proven_score(opponent(action.result.to_move()),
+                                kChildDepth + 1U);
+  }
+  if (action.tactical ==
+      audit_candidate::TacticalClass::OpponentImmediateWin) {
+    return initial_proven_score(action.result.to_move(), kChildDepth + 1U);
+  }
+  return initial_heuristic_score(root, action, config);
+}
+
+InitialEvaluationDiagnostics inspect_initial_evaluation(
+    const GameState &state, const AuditConfig &config,
+    const audit_candidate::GenerationResult &generated,
+    const RetainedActionMatch &actual,
+    const RetainedActionMatch &candidate,
+    const RetainedActionMatch &reference) {
+  struct RankedAction {
+    std::size_t retained_ordinal{};
+    int score{};
+    bool proven{};
+  };
+
+  std::vector<RankedAction> ranked;
+  ranked.reserve(generated.actions.size());
+  for (std::size_t ordinal = 0; ordinal < generated.actions.size(); ++ordinal) {
+    const auto &action = generated.actions[ordinal];
+    ranked.push_back(RankedAction{ordinal,
+                                  initial_action_score(state, action, config),
+                                  initial_action_is_proven(action)});
+  }
+  if (ranked.empty()) {
+    throw std::logic_error("diagnostic root generation returned no actions");
+  }
+  std::sort(ranked.begin(), ranked.end(), [&](const RankedAction &left,
+                                               const RankedAction &right) {
+    const double left_value =
+        audit_candidate::player_sign(state.to_move) *
+        audit_candidate::normalized_search_value(left.score, left.proven);
+    const double right_value =
+        audit_candidate::player_sign(state.to_move) *
+        audit_candidate::normalized_search_value(right.score, right.proven);
+    if (left_value != right_value) {
+      return left_value > right_value;
+    }
+    const std::string &left_action =
+        generated.actions[left.retained_ordinal].encoded;
+    const std::string &right_action =
+        generated.actions[right.retained_ordinal].encoded;
+    if (left_action != right_action) {
+      return left_action < right_action;
+    }
+    return left.retained_ordinal < right.retained_ordinal;
+  });
+
+  InitialEvaluationDiagnostics diagnostics;
+  diagnostics.best_retained_ordinal =
+      static_cast<int>(ranked.front().retained_ordinal);
+  diagnostics.best_action =
+      generated.actions[ranked.front().retained_ordinal].encoded;
+  diagnostics.best_score = ranked.front().score;
+
+  const auto locate = [&](const RetainedActionMatch &match) {
+    InitialEvaluationMatch result;
+    if (match.boundary_ordinal < 0) {
+      return result;
+    }
+    const std::size_t ordinal =
+        static_cast<std::size_t>(match.boundary_ordinal);
+    for (std::size_t rank = 0; rank < ranked.size(); ++rank) {
+      if (ranked[rank].retained_ordinal == ordinal) {
+        result.score = ranked[rank].score;
+        result.rank = static_cast<int>(rank + 1U);
+        return result;
+      }
+    }
+    throw std::logic_error("retained boundary lacks an initial evaluation");
+  };
+  diagnostics.actual = locate(actual);
+  diagnostics.candidate = locate(candidate);
+  diagnostics.reference = locate(reference);
+  diagnostics.candidate_bfm_change_assessable =
+      candidate.boundary_ordinal >= 0;
+  diagnostics.candidate_bfm_changed_from_initial_best =
+      diagnostics.candidate_bfm_change_assessable &&
+      candidate.boundary_ordinal != diagnostics.best_retained_ordinal;
+  return diagnostics;
+}
+
 RootCoverage inspect_root_coverage(const GameState &state,
                                    const AuditConfig &config,
                                    std::string_view actual_action,
@@ -675,6 +864,9 @@ RootCoverage inspect_root_coverage(const GameState &state,
   coverage.reference = find_retained_action(
       generated, reference_action,
       action_boundary_key(state, reference_action, topology));
+  coverage.initial_evaluation = inspect_initial_evaluation(
+      state, config, generated, coverage.actual, coverage.candidate,
+      coverage.reference);
   return coverage;
 }
 
@@ -794,6 +986,22 @@ std::string provenance_json(const ProvenanceMetadata &provenance) {
   return result;
 }
 
+void write_json_optional_integer(std::ostream &output,
+                                 const std::optional<int> &value) {
+  if (value.has_value()) {
+    output << *value;
+  } else {
+    output << "null";
+  }
+}
+
+void write_tsv_optional_integer(std::ostream &output,
+                                const std::optional<int> &value) {
+  if (value.has_value()) {
+    output << *value;
+  }
+}
+
 void write_json_line(std::ostream &output, const DecisionAudit &audit,
                      const AuditConfig &config) {
   output << '{'
@@ -863,6 +1071,38 @@ void write_json_line(std::ostream &output, const DecisionAudit &audit,
          << audit.root_coverage.reference.boundary_ordinal
          << ',' << "\"reference_retained_tactical_class\":"
          << json_quote(audit.root_coverage.reference.tactical_class)
+         << ',' << "\"initial_eval_best_action\":"
+         << json_quote(
+                audit.root_coverage.initial_evaluation.best_action)
+         << ',' << "\"initial_eval_best_score\":"
+         << audit.root_coverage.initial_evaluation.best_score
+         << ',' << "\"initial_eval_best_retained_ordinal\":"
+         << audit.root_coverage.initial_evaluation.best_retained_ordinal
+         << ',' << "\"actual_initial_eval_score\":";
+  write_json_optional_integer(
+      output, audit.root_coverage.initial_evaluation.actual.score);
+  output << ',' << "\"actual_initial_eval_rank\":"
+         << audit.root_coverage.initial_evaluation.actual.rank
+         << ',' << "\"candidate_initial_eval_score\":";
+  write_json_optional_integer(
+      output, audit.root_coverage.initial_evaluation.candidate.score);
+  output << ',' << "\"candidate_initial_eval_rank\":"
+         << audit.root_coverage.initial_evaluation.candidate.rank
+         << ',' << "\"reference_initial_eval_score\":";
+  write_json_optional_integer(
+      output, audit.root_coverage.initial_evaluation.reference.score);
+  output << ',' << "\"reference_initial_eval_rank\":"
+         << audit.root_coverage.initial_evaluation.reference.rank
+         << ',' << "\"candidate_bfm_change_assessable\":"
+         << (audit.root_coverage.initial_evaluation
+                     .candidate_bfm_change_assessable
+                 ? "true"
+                 : "false")
+         << ',' << "\"candidate_bfm_changed_from_initial_best\":"
+         << (audit.root_coverage.initial_evaluation
+                     .candidate_bfm_changed_from_initial_best
+                 ? "true"
+                 : "false")
          << ',' << "\"candidate_work_limit\":" << config.candidate_work
          << ',' << "\"candidate_tree_node_limit\":"
          << config.candidate_tree_nodes
@@ -957,6 +1197,13 @@ constexpr std::string_view kTsvHeader =
     "reference_action_retained_ordinal\t"
     "reference_boundary_retained_ordinal\t"
     "reference_retained_tactical_class\t"
+    "initial_eval_best_action\tinitial_eval_best_score\t"
+    "initial_eval_best_retained_ordinal\t"
+    "actual_initial_eval_score\tactual_initial_eval_rank\t"
+    "candidate_initial_eval_score\tcandidate_initial_eval_rank\t"
+    "reference_initial_eval_score\treference_initial_eval_rank\t"
+    "candidate_bfm_change_assessable\t"
+    "candidate_bfm_changed_from_initial_best\t"
     "candidate_work_limit\t"
     "candidate_tree_node_limit\tcandidate_max_actions\t"
     "candidate_nonroot_actions\t"
@@ -1010,7 +1257,28 @@ void write_tsv_line(std::ostream &output, const DecisionAudit &audit,
          << audit.root_coverage.reference.exact_ordinal << '\t'
          << audit.root_coverage.reference.boundary_ordinal << '\t'
          << audit.root_coverage.reference.tactical_class << '\t'
-         << config.candidate_work << '\t' << config.candidate_tree_nodes << '\t'
+         << audit.root_coverage.initial_evaluation.best_action << '\t'
+         << audit.root_coverage.initial_evaluation.best_score << '\t'
+         << audit.root_coverage.initial_evaluation.best_retained_ordinal
+         << '\t';
+  write_tsv_optional_integer(
+      output, audit.root_coverage.initial_evaluation.actual.score);
+  output << '\t' << audit.root_coverage.initial_evaluation.actual.rank << '\t';
+  write_tsv_optional_integer(
+      output, audit.root_coverage.initial_evaluation.candidate.score);
+  output << '\t' << audit.root_coverage.initial_evaluation.candidate.rank
+         << '\t';
+  write_tsv_optional_integer(
+      output, audit.root_coverage.initial_evaluation.reference.score);
+  output << '\t' << audit.root_coverage.initial_evaluation.reference.rank
+         << '\t'
+         << audit.root_coverage.initial_evaluation
+                .candidate_bfm_change_assessable
+         << '\t'
+         << audit.root_coverage.initial_evaluation
+                .candidate_bfm_changed_from_initial_best
+         << '\t' << config.candidate_work << '\t'
+         << config.candidate_tree_nodes << '\t'
          << config.candidate_max_actions << '\t'
          << config.candidate_nonroot_actions << '\t'
          << config.candidate_max_partial_paths << '\t' << std::setprecision(9)

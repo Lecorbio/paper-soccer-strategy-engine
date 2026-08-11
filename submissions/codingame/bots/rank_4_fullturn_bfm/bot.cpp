@@ -32,7 +32,7 @@ constexpr std::size_t kMaximumActions = 250;
 constexpr std::uint64_t kMaximumPartialPaths = 50'000;
 constexpr std::uint64_t kTacticalPartialPaths = 32;
 constexpr std::size_t kEvaluationEntries = 131'072;
-constexpr double kExplorationConstant = 1.5;
+constexpr double kExplorationConstant = 0.5;
 constexpr double kFirstPlayUrgency = 0.5;
 
 constexpr int kMateScore = 1'000'000;

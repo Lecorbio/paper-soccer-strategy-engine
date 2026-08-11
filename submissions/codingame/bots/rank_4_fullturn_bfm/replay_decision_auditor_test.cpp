@@ -417,6 +417,69 @@ void replay_book_path_reconstructs_the_deployed_action() {
           "Without a correction, the deployed reconstruction must use BFM.");
 }
 
+void initial_evaluation_reproduces_root_only_and_terminal_proofs() {
+  std::vector<audit::GameRecord> records = read(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "initial-eval\t1\t0\t0/0/0/0/0/0\n");
+  audit::validate_records(records);
+  audit::AuditConfig config = fast_config();
+  config.candidate_root_only = true;
+  const std::vector<audit::DecisionAudit> decisions =
+      audit::audit_records(records, config);
+  require(decisions.size() == 3,
+          "Player Two must have three audited decisions in the fixture.");
+  for (const audit::DecisionAudit &decision : decisions) {
+    const audit::InitialEvaluationDiagnostics &initial =
+        decision.root_coverage.initial_evaluation;
+    require(initial.best_retained_ordinal >= 0 &&
+                initial.best_retained_ordinal <
+                    static_cast<int>(decision.root_coverage.actions) &&
+                !initial.best_action.empty(),
+            "Every generated root needs a deterministic initial best action.");
+    require(decision.candidate.action == initial.best_action &&
+                decision.candidate.root_score == initial.best_score &&
+                initial.candidate.score.has_value() &&
+                initial.candidate.rank == 1 &&
+                initial.candidate_bfm_change_assessable &&
+                !initial.candidate_bfm_changed_from_initial_best,
+            "Root-only search must reproduce the diagnostic initial ordering.");
+  }
+
+  const audit::DecisionAudit &terminal_decision = decisions.back();
+  require(terminal_decision.actual_action == "0" &&
+              terminal_decision.root_coverage.actual.tactical_class ==
+                  "terminal-loss" &&
+              terminal_decision.root_coverage.initial_evaluation.actual.score ==
+                  audit_candidate::kMateScore - 1,
+          "A retained terminal action must use the search's depth-one proof score.");
+
+  papersoccer::GameState residual_state =
+      papersoccer::make_initial_state(audit::codingame_rules());
+  const std::vector<std::string_view> replay_actions =
+      audit::split_preserving_empty(
+          audit_candidate::replay_book::kReplays.front().transcript, '/');
+  require(replay_actions.size() > 8,
+          "Replay fixture must contain a residual-enabled prefix.");
+  for (std::size_t turn = 0; turn < 8; ++turn) {
+    audit_reference::apply_encoded_turn(residual_state, replay_actions[turn]);
+  }
+  require(!papersoccer::is_terminal(residual_state) &&
+              residual_state.used_segments.size() >=
+                  static_cast<std::size_t>(
+                      audit_candidate::kTeacherResidualMinimumUsedEdges),
+          "Replay prefix must enable the root-scoped teacher residual.");
+  const audit::CandidateDecision residual_root_only =
+      audit::choose_candidate(residual_state, config, 0);
+  const audit::RootCoverage residual_coverage = audit::inspect_root_coverage(
+      residual_state, config, residual_root_only.action,
+      residual_root_only.action, residual_root_only.action);
+  require(residual_coverage.initial_evaluation.best_action ==
+                  residual_root_only.action &&
+              residual_coverage.initial_evaluation.best_score ==
+                  residual_root_only.root_score,
+          "Initial evaluation must reproduce a residual-enabled root-only score.");
+}
+
 void fixed_work_audit_is_reproducible_and_complete() {
   const std::vector<audit::GameRecord> records = read(
       "# agent_id=6606663\n"
@@ -481,6 +544,34 @@ void fixed_work_audit_is_reproducible_and_complete() {
                 left.root_coverage.actual.boundary_ordinal >= 0 &&
                 left.root_coverage.candidate.boundary_ordinal >= 0,
             "Deterministic root coverage must locate actual and BFM actions.");
+    const audit::InitialEvaluationDiagnostics &left_initial =
+        left.root_coverage.initial_evaluation;
+    const audit::InitialEvaluationDiagnostics &right_initial =
+        right.root_coverage.initial_evaluation;
+    require(left_initial.best_action == right_initial.best_action &&
+                left_initial.best_score == right_initial.best_score &&
+                left_initial.best_retained_ordinal ==
+                    right_initial.best_retained_ordinal &&
+                left_initial.actual.score == right_initial.actual.score &&
+                left_initial.actual.rank == right_initial.actual.rank &&
+                left_initial.candidate.score ==
+                    right_initial.candidate.score &&
+                left_initial.candidate.rank ==
+                    right_initial.candidate.rank &&
+                left_initial.reference.score ==
+                    right_initial.reference.score &&
+                left_initial.reference.rank ==
+                    right_initial.reference.rank,
+            "Initial action scores and ranks must reproduce exactly.");
+    require(left_initial.actual.score.has_value() &&
+                left_initial.actual.rank >= 1 &&
+                left_initial.candidate.score.has_value() &&
+                left_initial.candidate.rank >= 1 &&
+                left_initial.candidate_bfm_change_assessable &&
+                left_initial.candidate_bfm_changed_from_initial_best ==
+                    (left.root_coverage.candidate.boundary_ordinal !=
+                     left_initial.best_retained_ordinal),
+            "Retained matches must expose consistent scores, ranks, and BFM change state.");
   }
   require(first[0].state_id != first[1].state_id &&
               first[1].state_id != first[2].state_id,
@@ -490,7 +581,7 @@ void fixed_work_audit_is_reproducible_and_complete() {
   audit::write_audits(json, first, config);
   const std::string json_text = json.str();
   for (const std::string_view required : {
-           "\"schema_version\":\"fullturn-decision-audit-v2\"",
+           "\"schema_version\":\"fullturn-decision-audit-v3\"",
            "\"input_provenance\":{\"agent_id\":\"6606663\"",
            "\"transcript_prefix\"", "\"actual_action\"",
            "\"candidate_action\"", "\"reference_action\"",
@@ -505,6 +596,17 @@ void fixed_work_audit_is_reproducible_and_complete() {
            "\"diagnostic_root_actions\"",
            "\"actual_action_retained_ordinal\"",
            "\"reference_boundary_retained_ordinal\"",
+           "\"initial_eval_best_action\"",
+           "\"initial_eval_best_score\"",
+           "\"initial_eval_best_retained_ordinal\"",
+           "\"actual_initial_eval_score\"",
+           "\"actual_initial_eval_rank\"",
+           "\"candidate_initial_eval_score\"",
+           "\"candidate_initial_eval_rank\"",
+           "\"reference_initial_eval_score\"",
+           "\"reference_initial_eval_rank\"",
+           "\"candidate_bfm_change_assessable\"",
+           "\"candidate_bfm_changed_from_initial_best\"",
            "\"candidate_later_time_limit_ms\"",
            "\"candidate_time_limit_ms\"", "\"candidate_work\"",
            "\"candidate_tree_nodes\"",
@@ -585,6 +687,8 @@ int main() {
        clock_modes_select_limits_by_own_decision_index},
       {"replay_book_path_reconstructs_the_deployed_action",
        replay_book_path_reconstructs_the_deployed_action},
+      {"initial_evaluation_reproduces_root_only_and_terminal_proofs",
+       initial_evaluation_reproduces_root_only_and_terminal_proofs},
       {"fixed_work_audit_is_reproducible_and_complete",
        fixed_work_audit_is_reproducible_and_complete},
       {"command_validates_all_games_before_emitting_rows",

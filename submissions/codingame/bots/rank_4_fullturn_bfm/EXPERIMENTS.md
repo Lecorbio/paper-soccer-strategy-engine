@@ -35,7 +35,10 @@ normalized by 100,000 only when used in a UCT formula. Proven mate values map
 to `+10000` or `-10000` in those formulas, preserving the article's terminal
 dominance.
 
-- Selection constant: `C = 1.5`.
+- Current selection constant: `C = 0.5`. The original frozen promotion
+  candidate and the source-bound `c268...` live diagnostic used `C = 1.5`;
+  the isolated continuation screens below justify the current exploratory
+  change without revising that historical evidence.
 - First-play urgency: `FPU = 0.5`.
 - Visited-child selection at a node whose mover has sign `s` (`+1` for Player
   One, `-1` for Player Two):
@@ -363,7 +366,7 @@ The append-only diagnostic archive and auditor input are content-addressed:
   `ac5d335a8e084e782be93f9c53635896f16344f08e9164481dc7b54eaf923a60`.
 - Collector source SHA-256:
   `ea2760b5153219a2e844076b5cbf198b34a631286c8db8b694b7436b6380492a`.
-- Replay auditor source SHA-256:
+- v2 replay-auditor source SHA-256 used for the first archive:
   `d61beda7e8ea1d330adc0080f1a496c3870f62eafa737c80fd85686763f83a50`.
 
 The collector validates cached receipts, normalized records, replay payloads,
@@ -404,7 +407,7 @@ curated fixed-work states retained byte-identical chosen actions and generator
 statistics. An alternating benchmark improved from 465.855 ms to 459.911 ms,
 about 1.28 percent; this is a performance optimization, not a strength claim.
 
-The current generated local artifact is 99,955 ASCII characters, SHA-256
+The copy-back-verified live artifact is 99,955 ASCII characters, SHA-256
 `c268286020ae841e4b5442e3578107ab32ded151e460a5bbe0495cb9b0b19d87`.
 It is distinct from the earlier asserted live `dd119224...` artifact. On
 2026-08-11 it was copied into the authenticated CodinGame editor, copied back,
@@ -414,6 +417,109 @@ history recorded version 60 and public battle metadata assigned agent
 but the public API still cannot return editor bytes; exported replay metadata
 therefore continues to use `source_binding_status=asserted-not-api-verified`.
 The upload is an exploratory search diagnostic, not promotion evidence.
+
+The 90-game arena window completed at rank 21/208 with score 35.56 and a raw
+55-35 record. Strict frame and rule validation found no candidate timeout,
+empty output, invalid action, or crash. Thirteen wins were opponent operational
+failures (five timeouts and eight illegal actions), leaving 77 clean terminal
+games and a 42-35 record. The clean color split was 22-21 as player 0 and
+20-14 as player 1. The frozen opponent snapshot contained no top-10 games;
+against ranks 11-20 the clean record was 11-18. The live result therefore
+confirms protocol safety, both-color viability, and positive play in this
+particular pool, but it is not evidence of parity with elite bots or with the
+canonical rank-4 control.
+
+It also does not establish that final-visit weight 0 improved on the earlier
+live artifact. The earlier batch was 40-36 clean and 20-35 against its frozen
+top-20 opponents; the new batch was 42-35 clean but sampled no top-10 opponent
+and went 11-18 against ranks 11-20. Nineteen exact opponent-agent/submission
+builds occurred in both archives, but with different multiplicities and
+openings: the earlier record over those games was 21-8 and the new record was
+30-27. This is confounded observational evidence, not a paired test. It is
+consistent with the local screen's small policy improvement, but cannot
+confirm it.
+The 95-percent Wilson intervals overlap almost completely: 41.6-63.5 percent
+for the earlier 40/76 clean score and 43.5-65.2 percent for the new 42/77.
+
+This second append-only archive is bound to repository commit
+`456ddf17771d3aba16acba3b92a33d88a4138244` and records:
+
+- Batch manifest SHA-256:
+  `08207d6ba028a05fb7b9904e6ed48ea895f6c6013c73dbae05f27773c92c4f5b`.
+- Clean 77-game auditor TSV SHA-256:
+  `5907e1f089f2972515ebc2d2ff0af8bbdf0399d58973b693d29fbcde5939fcce`.
+- The same approved exclusion-registry SHA-256:
+  `ac5d335a8e084e782be93f9c53635896f16344f08e9164481dc7b54eaf923a60`.
+- Collector source SHA-256:
+  `ea2760b5153219a2e844076b5cbf198b34a631286c8db8b694b7436b6380492a`.
+- Current v3 replay-auditor source SHA-256:
+  `6af84259dfe1a08677d6c05828d89308543456cf4573dce388cfc94de741ab75`.
+
+The v3 auditor adds the candidate evaluator's complete retained-root ranking:
+it reports the initial best boundary and the evaluator score/rank of the
+observed, BFM, and rank-4 actions. This routes a loss between generator
+omission, initial evaluator ordering, and a later BFM override without treating
+fixed work as a strength result.
+
+The deterministic 30,000-work audit covered all 1,663 candidate decisions in
+the 77 clean games. Its JSONL SHA-256 is
+`b8043e50bef32a913e00eb3271555853faf1aef6b1ef30010ba085b0c3301ed3`.
+Every observed and BFM boundary was present in the independent retained root
+set; only 48 rank-4 boundaries (2.9 percent) were absent. The observed boundary
+was the candidate evaluator's initial best on 760 decisions (45.7 percent),
+while shallow BFM finished on that initial best on 472 (28.4 percent) and
+changed boundaries on 1,191 (71.6 percent). Relative to the observed boundary,
+BFM changed from another initial boundary to the observed one 190 times,
+displaced an observed initial-best boundary 355 times, and changed one
+non-observed boundary to another 646 times.
+The diagnostic root itself truncated on 137 decisions (8.2 percent), whereas
+the complete search reported a truncated generator somewhere on 1,590 (95.6
+percent). This strongly prioritizes allocation/backup stability over increasing
+the root cap, but the 35.8-percent shallow-BFM observed-boundary agreement is
+not a deployed clock reproduction or an optimality label. A separate 800/165 audit is needed
+before translating these counts into a search-policy experiment.
+
+The complete 800/165 replay-audit JSONL has SHA-256
+`be8586f3d8f3f173a54262d1f23f479a8fa6d8b5adb9cd14388ec07945f4ff11`.
+The local candidate reached its deadline on 1,558 decisions (93.7 percent),
+with construction-inclusive maxima of 800.043 ms first and 166.076 ms later;
+both remain below the contest's 1,000/200 ms hard limits. Its mean work rose
+from 28,199 in the fixed audit to 44,978, yet its action agreement with the
+observed upload fell from 35.8 to 31.4 percent. Candidate actions changed on
+603 decisions across 76 of 77 games between the two local budgets. At clock
+limits BFM still changed away from the initial evaluator boundary on 1,198
+decisions (72.0 percent), corrected an observed initial mismatch 138 times,
+and displaced an observed initial-best boundary 376 times.
+
+The strict first/later slice makes the cross-machine warning especially clear.
+The deterministic 30,000-work run reproduced 63 of 77 recorded first decisions,
+whereas the local 800 ms run reproduced only 2; later-decision agreement was
+532 of 1,586 versus 520. This does not recover CodinGame's hidden work count or
+make recorded actions optimal labels. It does show that the first-decision
+policy can move far away from the uploaded action as the local machine spends
+more work under the same nominal clock.
+
+This low action stability is evidence of cutoff/hardware sensitivity, not of a
+source mismatch: the authenticated editor copy-back matched the archived
+source exactly, while the public platform and local machine necessarily
+complete different amounts of work before the same nominal deadline. The next
+search experiment should stabilize the root decision across 100/165 ms and
+moderate work changes; spending more work without a robust final policy is not
+the current priority.
+
+The controlled 800/100 replay audit has JSONL SHA-256
+`808499b44101a3597b91e6e9bacdc10f7a5143d023ac4e73a18c629f0c49a6e3`.
+For the candidate, it kept the same 800 ms first-decision limit and changed
+only later decisions from 165 to 100 ms. The unused reference search was
+reduced to one node, so reference-action deltas from this pair are intentionally
+discarded. All 77 candidate first decisions were identical between the two
+audits, while 653 of 1,586 later decisions (41.2 percent) changed across 72 of
+77 games. Mean later-decision work fell from 39,122 to 23,881 and the measured
+later maximum fell from 166.076 to 100.102 ms. Agreement with the recorded
+later boundary happened to rise from 520 to 540 decisions, but the recorded
+action is neither an optimality label nor a counterfactual game result. The
+useful conclusion is the large policy instability under the isolated candidate
+clock change, not that the shorter search is stronger.
 
 ### Exploratory actual-clock parameter screens
 
@@ -436,14 +542,59 @@ default batch-1 screen used the same clock-led setup.
 | Final-visit weight `0`, independent batch 2 | 2 | 3-21 |
 | Final-visit `0`, root `250` / deeper `64` | 0 | 3-21 |
 | Root evaluator only; no deeper BFM | 0 | 1-23 |
+| `C=1.5`, `FPU=0.5`, final-visit `0` control | 4 | 5-19 |
+| `C=0.5`, `FPU=0.5`, final-visit `0` | 4 | 11-13 |
+| `C=1.5`, `FPU=0.5`, final-visit `0` control | 5 | 3-21 |
+| `C=0.5`, `FPU=0.5`, final-visit `0` | 5 | 6-18 |
 
-The completed screens reject low exploration, replay-only evaluation,
-residual removal, final-visit weight `0.25`, deeper cap `64`, and root-only
-selection as tested. Final-visit weight `0` improved from 8-16 to 9-15 on
+The earlier screens reject the bundled `C=0.25`/`FPU=0` variant, replay-only
+evaluation, residual removal, final-visit weight `0.25`, deeper cap `64`, and
+root-only selection as tested. Final-visit weight `0` improved from 8-16 to 9-15 on
 batch 0, from 5-19 to 8-16 on batch 1, and from 0-24 to 3-21 on batch 2: it is
-20-52 combined versus the former default's 13-59. The maintained exploratory
-default is therefore final-visit weight `0`, with full `250` width at every
-depth and deeper BFM enabled. This repeat is sufficient to justify one
+20-52 combined versus the former default's 13-59. This established
+final-visit weight `0`, full `250` width at every depth, and deeper BFM as the
+maintained baseline for the later isolated exploration test. That repeat was
+sufficient to justify one
 source-bound exploratory live upload, not promotion: neither configuration
 approached parity and no 24-game screen supersedes the frozen multi-batch
 promotion gate.
+
+After the replay audit exposed clock sensitivity, batches 4 and 5 isolated
+only the UCT exploration constant. Both used the exact `c268...` source and
+gate SHA-256 `9d0361031abd6a81d36b4b3a206385ad6e810c34ea75df49c9530563020d5ccd`.
+The `C=0.5` variant improved the two full screen totals from 5-19 to 11-13 and
+from 3-21 to 6-18. Those totals are not 48 independent openings: each screen
+contains the same ten curated games plus fourteen games from its distinct
+seed batch. On only the fresh seeded games, batch 4 improved 5-9 to 8-6 while
+batch 5 stayed 2-12; combined fresh results moved from 7-21 to 10-18, with
+seven loss-to-win and four win-to-loss flips. Across the full screens, the
+control was 8-40 and the variant 17-31; candidate color scores improved from 4
+to 7 and from 4 to 10. Every run had zero
+unfinished games and zero operational timeouts. The variant hit the safe
+120,000-node ceiling once in each batch; its measured response maxima remained
+809.759/167.039 ms and 809.107/167.016 ms, below the 900/180 local headroom.
+
+The write-once report SHA-256 values are:
+
+- batch-4 control:
+  `db75516bde7927cf51491babbe50e4fec16a3de9333669b3eb41c5a5e555cf1e`;
+- batch-4 `C=0.5`:
+  `a68a9d2e9b17a9b3c3818173ab841aac5db51752e3f603f8027c7a82dd33f472`;
+- batch-5 control:
+  `69a2f48a99ec0b87065fcbfe975123d966aa370007cf35c37a5572d864b6b35d`;
+- batch-5 `C=0.5`:
+  `81aa85eeaa29ee10570b5f3ca0a3537be3189e29583e101d14da167697bc1e7b`.
+
+This is enough to provisionally set `C=0.5` as the next exploratory default,
+not to claim independent confirmation, parity, or promotion. The regenerated
+current local artifact is 99,955
+ASCII characters, SHA-256
+`5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da`.
+It has not been uploaded; the active source-bound live evidence remains tied to
+`c268...` and `C=1.5`.
+The exact `567210...` artifact passes the generated-source freshness check,
+five focused Release CTests, four focused ASan+UBSan CTests, and all 26 replay
+analysis/collector/clock-screen Python tests. Its direct Release timing probe
+reported Player 0 first/later responses of 809.388/166.212 ms and Player 1
+responses of 807.370/166.231 ms. These are source-bound safety checks, not a
+strength result or a live submission.
