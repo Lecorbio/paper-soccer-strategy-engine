@@ -939,19 +939,23 @@ constexpr std::array<Point, 8> kDirectionDeltas{{
 }};
 
 using SearchClock = std::chrono::steady_clock;
+using PositionKey = detail::PositionKey;
+using SearchTopology = detail::SearchTopology;
 
 struct SearchConfig {
 std::uint64_t max_work{kMaximumWork};
 std::size_t max_tree_nodes{kMaximumTreeNodes};
 std::size_t max_actions{kMaximumActions};
+std::size_t nonroot_actions{};
 std::uint64_t max_partial_paths{kMaximumPartialPaths};
 std::size_t evaluation_entries{kEvaluationEntries};
-std::uint32_t max_time_ms{};
 std::optional<SearchClock::time_point> absolute_deadline{};
 int replay_value_blend_percent{};
 int teacher_residual_weight_percent{};
 double exploration_constant{kExplorationConstant};
 double first_play_urgency{kFirstPlayUrgency};
+double final_visit_weight{};
+bool root_only{};
 };
 
 struct SearchStats {
@@ -973,7 +977,7 @@ bool node_cap_reached{};
 };
 
 struct EvaluationEntry {
-detail::PositionKey key{};
+PositionKey key{};
 int score{};
 bool occupied{};
 };
@@ -982,7 +986,7 @@ class EvaluationTable {
 public:
 explicit EvaluationTable(std::size_t entries) : entries_(entries) {}
 
-std::optional<int> find(detail::PositionKey key) const noexcept {
+std::optional<int> find(PositionKey key) const noexcept {
 if (entries_.size() < 2) {
 return std::nullopt;
 }
@@ -996,7 +1000,7 @@ return entry.score;
 return std::nullopt;
 }
 
-void store(detail::PositionKey key, int score) noexcept {
+void store(PositionKey key, int score) noexcept {
 if (entries_.size() < 2) {
 return;
 }
@@ -1015,11 +1019,11 @@ EvaluationEntry{key, score, true};
 private:
 std::vector<EvaluationEntry> entries_;
 
-static std::uint64_t combined_key(detail::PositionKey key) noexcept {
+static std::uint64_t combined_key(PositionKey key) noexcept {
 return key.first ^ ((key.second << 29U) | (key.second >> 35U));
 }
 
-std::size_t bucket_index(detail::PositionKey key) const noexcept {
+std::size_t bucket_index(PositionKey key) const noexcept {
 return 2U * static_cast<std::size_t>(
 combined_key(key) % (entries_.size() / 2U));
 }
@@ -1070,9 +1074,9 @@ return static_cast<char>('0' + index);
 throw std::invalid_argument("");
 }
 
-detail::PositionKey boundary_key(
+PositionKey boundary_key(
 const detail::SearchPosition &position) noexcept {
-detail::PositionKey key = position.position_key();
+PositionKey key = position.position_key();
 detail::xor_position_key(
 key, detail::position_key_component(6, position.ball_vertex()));
 return key;
@@ -1161,7 +1165,7 @@ enum class ReboundOutcome { Unknown, Win, Loss };
 
 class FullTurnGenerator {
 public:
-FullTurnGenerator(std::shared_ptr<const detail::SearchTopology> topology,
+FullTurnGenerator(std::shared_ptr<const SearchTopology> topology,
 const detail::SearchPosition &root,
 GeneratorConfig config = {})
 : topology_(std::move(topology)), root_(root), config_(config),
@@ -1191,7 +1195,7 @@ GenerationResult run() {
 if (root_.is_terminal()) {
 throw std::invalid_argument("");
 }
-retained_keys_.clear();
+retained_keys_.fill({});
 deadline_reached_ = false;
 
 GenerationResult output;
@@ -1325,14 +1329,14 @@ Partial(detail::SearchPosition state, std::vector<Move> action)
 : position(std::move(state)), moves(std::move(action)) {}
 };
 
-std::shared_ptr<const detail::SearchTopology> topology_;
+std::shared_ptr<const SearchTopology> topology_;
 detail::SearchPosition root_;
 GeneratorConfig config_;
 std::vector<int> parents_;
-std::vector<detail::SearchTopology::VertexIndex> queue_;
-std::vector<detail::PositionKey> retained_keys_;
-std::vector<std::pair<detail::SearchTopology::VertexIndex,
-detail::SearchTopology::VertexIndex>> edge_vertices_;
+std::vector<SearchTopology::VertexIndex> queue_;
+std::array<std::optional<PositionKey>, 512> retained_keys_;
+std::vector<std::pair<SearchTopology::VertexIndex,
+SearchTopology::VertexIndex>> edge_vertices_;
 bool deadline_reached_{};
 
 bool deadline_expired() {
@@ -1511,7 +1515,7 @@ continue;
 parents_[arc.destination] = static_cast<int>(vertex);
 std::vector<Move> path;
 for (auto current = arc.destination; current != start;
-current = static_cast<detail::SearchTopology::VertexIndex>(
+current = static_cast<SearchTopology::VertexIndex>(
 parents_[current])) {
 path.push_back(Move{topology_->point(current)});
 }
@@ -1617,13 +1621,16 @@ return;
 output.stats.max_action_edges = std::max<std::uint32_t>(
 output.stats.max_action_edges,
 static_cast<std::uint32_t>(moves.size()));
-const detail::PositionKey key = boundary_key(result);
-if (std::find(retained_keys_.begin(), retained_keys_.end(), key) !=
-retained_keys_.end()) {
+const PositionKey key = boundary_key(result);
+auto slot = (key.first ^ key.second) & 511U;
+while (retained_keys_[slot] && *retained_keys_[slot] != key)
+slot = (slot + 1U) & 511U;
+auto &entry = retained_keys_[slot];
+if (entry) {
 ++output.stats.duplicates;
 return;
 }
-retained_keys_.push_back(key);
+entry = key;
 const TacticalClass tactical = classify(result);
 if (deadline_reached_) {
 return;
@@ -1793,14 +1800,16 @@ kMaximumEvaluation;
 
 double uct_selection_score(int value, Player mover,
 std::uint32_t parent_visits,
-std::uint32_t child_visits) noexcept {
+std::uint32_t child_visits, bool proven = true,
+double exploration = kExplorationConstant,
+double fpu = kFirstPlayUrgency) noexcept {
 const double exploitation =
-player_sign(mover) * normalized_search_value(value);
+player_sign(mover) * normalized_search_value(value, proven);
 if (child_visits == 0) {
-return exploitation + kFirstPlayUrgency;
+return exploitation + fpu;
 }
 return exploitation +
-kExplorationConstant *
+exploration *
 std::sqrt(std::log(static_cast<double>(
 std::max<std::uint32_t>(1, parent_visits))) /
 static_cast<double>(child_visits));
@@ -1819,7 +1828,7 @@ class FullTurnBfmSearch {
 public:
 FullTurnBfmSearch(const GameState &state, SearchConfig config)
 : config_(config),
-topology_(std::make_shared<detail::SearchTopology>(state.config)),
+topology_(std::make_shared<SearchTopology>(state.config)),
 root_position_(topology_, state), position_(root_position_),
 evaluations_(config.evaluation_entries),
 distances_(topology_->vertex_count(), -1),
@@ -1831,6 +1840,7 @@ if (config_.max_work == 0 || config_.max_work > kMaximumWork ||
 config_.max_tree_nodes < 2 ||
 config_.max_tree_nodes > kMaximumTreeNodes ||
 config_.max_actions == 0 || config_.max_actions > kMaximumActions ||
+config_.nonroot_actions > kMaximumActions ||
 config_.max_partial_paths == 0 ||
 config_.max_partial_paths > kMaximumPartialPaths ||
 config_.evaluation_entries < 2 ||
@@ -1840,15 +1850,14 @@ config_.teacher_residual_weight_percent < 0 ||
 config_.teacher_residual_weight_percent > 100 ||
 !std::isfinite(config_.exploration_constant) ||
 config_.exploration_constant < 0.0 ||
-!std::isfinite(config_.first_play_urgency)) {
+!std::isfinite(config_.first_play_urgency) ||
+!std::isfinite(config_.final_visit_weight) ||
+config_.final_visit_weight < 0.0) {
 throw std::invalid_argument("");
 }
 initialize_rotation_maps();
 if (config_.absolute_deadline.has_value()) {
 deadline_ = config_.absolute_deadline;
-} else if (config_.max_time_ms != 0) {
-deadline_ =
-SearchClock::now() + std::chrono::milliseconds(config_.max_time_ms);
 }
 nodes_.reserve(config_.max_tree_nodes);
 }
@@ -1879,7 +1888,7 @@ return fallback;
 ++nodes_[0].visits;
 refresh_node(0);
 
-while (!nodes_[0].closed && budget_available()) {
+while (!config_.root_only && !nodes_[0].closed && budget_available()) {
 const std::optional<std::vector<std::size_t>> selected = select_path();
 if (!selected.has_value() || selected->empty()) {
 break;
@@ -1938,16 +1947,16 @@ solved(proven), exhaustive(proven), closed(proven) {}
 };
 
 SearchConfig config_;
-std::shared_ptr<const detail::SearchTopology> topology_;
+std::shared_ptr<const SearchTopology> topology_;
 detail::SearchPosition root_position_;
 detail::SearchPosition position_;
 EvaluationTable evaluations_;
 SearchStats stats_;
 std::vector<int> distances_;
-std::vector<detail::SearchTopology::VertexIndex> queue_;
-std::deque<detail::SearchTopology::VertexIndex> distance_queue_;
-std::vector<detail::SearchTopology::VertexIndex> rotated_vertices_;
-std::vector<detail::SearchTopology::EdgeIndex> rotated_edges_;
+std::vector<SearchTopology::VertexIndex> queue_;
+std::deque<SearchTopology::VertexIndex> distance_queue_;
+std::vector<SearchTopology::VertexIndex> rotated_vertices_;
+std::vector<SearchTopology::EdgeIndex> rotated_edges_;
 std::optional<SearchClock::time_point> deadline_;
 std::vector<TreeNode> nodes_;
 bool teacher_residual_root_enabled_{};
@@ -2017,7 +2026,9 @@ return false;
 }
 const std::uint64_t remaining_work = config_.max_work - stats_.work;
 GeneratorConfig generator_config;
-generator_config.max_actions = config_.max_actions;
+generator_config.max_actions =
+node_index && config_.nonroot_actions ? config_.nonroot_actions
+: config_.max_actions;
 generator_config.max_partial_paths = config_.max_partial_paths;
 generator_config.max_work = remaining_work;
 generator_config.absolute_deadline = deadline_;
@@ -2155,18 +2166,9 @@ refresh_node(*iterator);
 
 double selection_score(const TreeNode &parent,
 const TreeNode &child) const noexcept {
-const double exploitation =
-player_sign(parent.position.to_move()) *
-normalized_search_value(child.value, child.solved);
-if (child.visits == 0) {
-return exploitation + config_.first_play_urgency;
-}
-return exploitation +
-config_.exploration_constant *
-std::sqrt(std::log(static_cast<double>(
-std::max<std::uint32_t>(1,
-parent.visits))) /
-static_cast<double>(child.visits));
+return uct_selection_score(
+child.value, parent.position.to_move(), parent.visits, child.visits,
+child.solved, config_.exploration_constant, config_.first_play_urgency);
 }
 
 std::optional<std::vector<std::size_t>> select_path() const {
@@ -2207,7 +2209,7 @@ const TreeNode &child = nodes_[child_index];
 const double score =
 player_sign(root.position.to_move()) *
 normalized_search_value(child.value, child.solved) +
-std::log(static_cast<double>(
+config_.final_visit_weight * std::log(static_cast<double>(
 std::max<std::uint32_t>(1, child.visits)));
 if (score > best_score ||
 (score == best_score &&
@@ -2262,8 +2264,8 @@ topology_->config().height + 2 - point.y};
 }
 
 void initialize_rotation_maps() {
-using VertexIndex = detail::SearchTopology::VertexIndex;
-using EdgeIndex = detail::SearchTopology::EdgeIndex;
+using VertexIndex = SearchTopology::VertexIndex;
+using EdgeIndex = SearchTopology::EdgeIndex;
 constexpr EdgeIndex kMissingEdge =
 std::numeric_limits<EdgeIndex>::max();
 rotated_vertices_.resize(topology_->vertex_count());
@@ -2440,7 +2442,7 @@ replay_value_model::kW1Scale;
 };
 for (std::size_t edge = 0; edge < topology_->edge_count(); ++edge) {
 if (!position_.edge_used(
-static_cast<detail::SearchTopology::EdgeIndex>(edge))) {
+static_cast<SearchTopology::EdgeIndex>(edge))) {
 continue;
 }
 ++output.used_edges;
@@ -2625,7 +2627,7 @@ return std::clamp(score, -kMaximumEvaluation, kMaximumEvaluation);
 }
 
 int cached_evaluate() {
-const detail::PositionKey key = boundary_key(position_);
+const PositionKey key = boundary_key(position_);
 if (const std::optional<int> cached = evaluations_.find(key)) {
 return *cached;
 }

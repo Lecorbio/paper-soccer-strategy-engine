@@ -3,16 +3,6 @@
 #include "../rank_4/bot.cpp"
 #undef turn_action_v2
 
-#if defined(__GNUC__) && !defined(__clang__)
-namespace papersoccer::candidate_engine {
-namespace replay_book = ::papersoccer::rank4_reference_engine::replay_book;
-namespace replay_value_model =
-    ::papersoccer::rank4_reference_engine::replay_value_model;
-namespace teacher_residual_model =
-    ::papersoccer::rank4_reference_engine::teacher_residual_model;
-}
-#endif
-
 #define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
 #define turn_action_v2 candidate_engine
 #include "bot.cpp"
@@ -22,6 +12,7 @@ namespace teacher_residual_model =
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -43,7 +34,6 @@ namespace {
 
 constexpr std::uint64_t kOpeningSeedSalt = 0x8f3f73b5cf1c9d6bULL;
 constexpr std::uint64_t kOpeningRetryStride = 0x9e3779b97f4a7c15ULL;
-constexpr std::array<int, 4> kOpeningTurns{{2, 6, 12, 20}};
 constexpr std::uint32_t kFirstOperationalLimitMs = 1'000;
 constexpr std::uint32_t kLaterOperationalLimitMs = 200;
 
@@ -54,12 +44,21 @@ struct HarnessConfig {
   int maximum_turns{200};
   std::uint64_t batch_start{};
   std::uint64_t batch_count{1};
+  std::vector<int> opening_turns{2, 6, 12, 20};
   std::uint32_t candidate_first_time_ms{};
   std::uint32_t candidate_later_time_ms{};
   std::uint32_t reference_first_time_ms{};
   std::uint32_t reference_later_time_ms{};
   bool candidate_replay_corrections{true};
   bool reference_replay_corrections{true};
+  std::size_t candidate_max_actions{candidate::kMaximumActions};
+  std::size_t candidate_nonroot_actions{};
+  double candidate_exploration{candidate::kExplorationConstant};
+  double candidate_fpu{candidate::kFirstPlayUrgency};
+  double candidate_final_visit_weight{};
+  int candidate_replay_blend{15};
+  int candidate_residual_weight{100};
+  bool candidate_root_only{};
   std::uint32_t position_time_ms{};
   std::optional<std::string> position{};
 };
@@ -162,7 +161,6 @@ ps::RulesConfig codingame_rules() {
   return ps::RulesConfig{8, 10, ps::GoalRule::OwnGoalsAllowed,
                          ps::BlockedRule::MoverLoses};
 }
-
 int player_id(ps::Player player) {
   return player == ps::Player::One ? 0 : 1;
 }
@@ -195,6 +193,63 @@ int parse_positive_int(std::string_view raw, std::string_view label) {
     throw std::invalid_argument(std::string(label) + " is too large");
   }
   return static_cast<int>(value);
+}
+
+int parse_nonnegative_int(std::string_view raw, std::string_view label) {
+  const unsigned int value =
+      parse_unsigned<unsigned int>(raw, label, true);
+  if (value > static_cast<unsigned int>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(std::string(label) + " is too large");
+  }
+  return static_cast<int>(value);
+}
+
+double parse_finite_double(std::string_view raw, std::string_view label) {
+  const std::string owned(raw);
+  std::size_t consumed = 0;
+  double value{};
+  try {
+    value = std::stod(owned, &consumed);
+  } catch (const std::exception &) {
+    throw std::invalid_argument(std::string(label) + " is invalid");
+  }
+  if (consumed != owned.size() || !std::isfinite(value)) {
+    throw std::invalid_argument(std::string(label) + " is invalid");
+  }
+  return value;
+}
+
+std::vector<int> parse_opening_turns(std::string_view raw) {
+  std::vector<int> turns;
+  std::size_t begin = 0;
+  while (begin <= raw.size()) {
+    const std::size_t separator = raw.find(',', begin);
+    const std::size_t end =
+        separator == std::string_view::npos ? raw.size() : separator;
+    const int value = parse_nonnegative_int(
+        raw.substr(begin, end - begin), "opening turn count");
+    if (std::find(turns.begin(), turns.end(), value) != turns.end()) {
+      throw std::invalid_argument("opening turn counts must be unique");
+    }
+    turns.push_back(value);
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    begin = separator + 1U;
+  }
+  if (turns.empty() || turns.size() > 64U) {
+    throw std::invalid_argument("opening turn list is invalid");
+  }
+  return turns;
+}
+
+bool parse_bool(std::string_view raw, std::string_view label) {
+  const unsigned int value =
+      parse_unsigned<unsigned int>(raw, label, true);
+  if (value > 1U) {
+    throw std::invalid_argument(std::string(label) + " must be 0 or 1");
+  }
+  return value != 0U;
 }
 
 void apply_environment(HarnessConfig &config) {
@@ -265,6 +320,21 @@ void print_usage() {
          "  --max-turns N\n"
          "  --batch-start N\n"
          "  --batch-count N\n"
+         "  --opening-turns N[,N...]\n"
+         "  --candidate-first-ms N\n"
+         "  --candidate-later-ms N\n"
+         "  --reference-first-ms N\n"
+         "  --reference-later-ms N\n"
+         "  --candidate-replay 0|1\n"
+         "  --reference-replay 0|1\n"
+         "  --candidate-max-actions N\n"
+         "  --candidate-nonroot-actions N (0 reuses root cap)\n"
+         "  --candidate-exploration X\n"
+         "  --candidate-fpu X\n"
+         "  --candidate-final-visit-weight X\n"
+         "  --candidate-replay-blend N\n"
+         "  --candidate-residual-weight N\n"
+         "  --candidate-root-only 0|1\n"
          "  --position-time-ms N\n"
          "  --position TRANSCRIPT\n";
 }
@@ -305,6 +375,63 @@ HarnessConfig parse_options(int argc, char **argv) {
     } else if (argument == "--batch-count") {
       config.batch_count =
           parse_unsigned<std::uint64_t>(value, argument);
+    } else if (argument == "--opening-turns") {
+      config.opening_turns = parse_opening_turns(value);
+    } else if (argument == "--candidate-first-ms") {
+      config.candidate_first_time_ms =
+          parse_unsigned<std::uint32_t>(value, argument, true);
+    } else if (argument == "--candidate-later-ms") {
+      config.candidate_later_time_ms =
+          parse_unsigned<std::uint32_t>(value, argument, true);
+    } else if (argument == "--reference-first-ms") {
+      config.reference_first_time_ms =
+          parse_unsigned<std::uint32_t>(value, argument, true);
+    } else if (argument == "--reference-later-ms") {
+      config.reference_later_time_ms =
+          parse_unsigned<std::uint32_t>(value, argument, true);
+    } else if (argument == "--candidate-replay") {
+      config.candidate_replay_corrections = parse_bool(value, argument);
+    } else if (argument == "--reference-replay") {
+      config.reference_replay_corrections = parse_bool(value, argument);
+    } else if (argument == "--candidate-max-actions") {
+      config.candidate_max_actions =
+          parse_unsigned<std::size_t>(value, argument);
+      if (config.candidate_max_actions > candidate::kMaximumActions) {
+        throw std::invalid_argument("candidate action cap exceeds 250");
+      }
+    } else if (argument == "--candidate-nonroot-actions") {
+      const unsigned int cap =
+          parse_unsigned<unsigned int>(value, argument, true);
+      if (cap > candidate::kMaximumActions) {
+        throw std::invalid_argument("candidate non-root cap exceeds 250");
+      }
+      config.candidate_nonroot_actions = cap;
+    } else if (argument == "--candidate-exploration") {
+      config.candidate_exploration = parse_finite_double(value, argument);
+      if (config.candidate_exploration < 0.0) {
+        throw std::invalid_argument("candidate exploration must be nonnegative");
+      }
+    } else if (argument == "--candidate-fpu") {
+      config.candidate_fpu = parse_finite_double(value, argument);
+    } else if (argument == "--candidate-final-visit-weight") {
+      config.candidate_final_visit_weight =
+          parse_finite_double(value, argument);
+      if (config.candidate_final_visit_weight < 0.0) {
+        throw std::invalid_argument("final visit weight must be nonnegative");
+      }
+    } else if (argument == "--candidate-replay-blend") {
+      config.candidate_replay_blend = parse_nonnegative_int(value, argument);
+      if (config.candidate_replay_blend > 100) {
+        throw std::invalid_argument("candidate replay blend exceeds 100");
+      }
+    } else if (argument == "--candidate-residual-weight") {
+      config.candidate_residual_weight =
+          parse_nonnegative_int(value, argument);
+      if (config.candidate_residual_weight > 100) {
+        throw std::invalid_argument("candidate residual weight exceeds 100");
+      }
+    } else if (argument == "--candidate-root-only") {
+      config.candidate_root_only = parse_bool(value, argument);
     } else if (argument == "--position-time-ms") {
       config.position_time_ms =
           parse_unsigned<std::uint32_t>(value, argument, true);
@@ -394,12 +521,31 @@ void set_candidate_work_budget(Config &config, std::uint64_t work) {
 }
 
 template <typename Config>
-void configure_candidate_evaluator(Config &config) {
+void configure_candidate_search(Config &config,
+                                const HarnessConfig &harness) {
+  if constexpr (requires { config.max_actions = std::size_t{}; }) {
+    config.max_actions = harness.candidate_max_actions;
+  }
+  if constexpr (requires { config.nonroot_actions = std::size_t{}; }) {
+    config.nonroot_actions = harness.candidate_nonroot_actions;
+  }
   if constexpr (requires { config.replay_value_blend_percent = 15; }) {
-    config.replay_value_blend_percent = 15;
+    config.replay_value_blend_percent = harness.candidate_replay_blend;
   }
   if constexpr (requires { config.teacher_residual_weight_percent = 100; }) {
-    config.teacher_residual_weight_percent = 100;
+    config.teacher_residual_weight_percent = harness.candidate_residual_weight;
+  }
+  if constexpr (requires { config.exploration_constant = 1.0; }) {
+    config.exploration_constant = harness.candidate_exploration;
+  }
+  if constexpr (requires { config.first_play_urgency = 0.0; }) {
+    config.first_play_urgency = harness.candidate_fpu;
+  }
+  if constexpr (requires { config.final_visit_weight = 0.0; }) {
+    config.final_visit_weight = harness.candidate_final_visit_weight;
+  }
+  if constexpr (requires { config.root_only = false; }) {
+    config.root_only = harness.candidate_root_only;
   }
 }
 
@@ -464,7 +610,7 @@ Decision choose_candidate(ps::GameState &state, std::string_view transcript,
                                         transcript, decision.action)) {
     candidate::SearchConfig config;
     set_candidate_work_budget(config, harness.candidate_work);
-    configure_candidate_evaluator(config);
+    configure_candidate_search(config, harness);
     const auto started = candidate::SearchClock::now();
     if (time_budget_ms != 0) {
       config.absolute_deadline =
@@ -982,7 +1128,7 @@ int main(int argc, char **argv) {
       const std::uint64_t batch = harness.batch_start + offset;
       const std::string batch_tag = "seed-" + std::to_string(batch);
       Summary batch_summary;
-      for (const int turns : kOpeningTurns) {
+      for (const int turns : harness.opening_turns) {
         for (int pair = 0; pair < harness.pairs_per_depth; ++pair) {
           const std::uint64_t seed = opening_seed(batch, turns, pair);
           const std::string label =
@@ -1000,6 +1146,25 @@ int main(int argc, char **argv) {
               << " batch_start=" << harness.batch_start
               << " batch_count=" << harness.batch_count
               << " maximum_turns=" << harness.maximum_turns
+              << " opening_turns=";
+    for (std::size_t index = 0; index < harness.opening_turns.size(); ++index) {
+      if (index != 0) {
+        std::cout << ',';
+      }
+      std::cout << harness.opening_turns[index];
+    }
+    std::cout << " candidate_exploration=" << harness.candidate_exploration
+              << " candidate_max_actions=" << harness.candidate_max_actions
+              << " candidate_nonroot_actions="
+              << harness.candidate_nonroot_actions
+              << " candidate_fpu=" << harness.candidate_fpu
+              << " candidate_final_visit_weight="
+              << harness.candidate_final_visit_weight
+              << " candidate_replay_blend="
+              << harness.candidate_replay_blend
+              << " candidate_residual_weight="
+              << harness.candidate_residual_weight
+              << " candidate_root_only=" << harness.candidate_root_only
               << " opening_seed_salt=" << kOpeningSeedSalt << '\n';
     return overall.unfinished == 0 &&
                    overall.candidate.operational_timeouts == 0 &&

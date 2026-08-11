@@ -334,3 +334,116 @@ overall, seed batches 0 and 1 are below 25 wins at 12 and 9, and both color
 splits are below 25 wins at 16 and 8. Together with the residual cap-one
 stabilizer limitation, this is an unambiguous no-submission decision. The
 maintained rank-4 bot and active CodinGame submission remain unchanged.
+
+## Post-frozen live diagnostics and development (2026-08-11)
+
+This section records later exploratory work and does not revise the frozen
+design, gates, or 24-82 result above. Fixed-work replay is useful for
+reproducibility and diagnosis, but Codingame's 800 ms first / 165 ms later
+clocks remain the decisive measure of playing strength.
+
+### Live batch and provenance
+
+The public battle window for experimental agent `6606663`, submission
+`41119120`, contained 90 games. The source binding is explicitly
+**asserted, not API-verified**: the asserted uploaded artifact has SHA-256
+`dd119224a296672daed6c897d1f848b3ee37a66046b6f165724b6393b6e4f995`,
+but the public APIs do not expose editor bytes with which to prove that
+binding. Strict rules/frame validation excluded 14 opponent operational
+failures. The remaining clean terminal set is 76 games with a 40-36 record;
+no own operational failure was found in that window.
+
+The append-only diagnostic archive and auditor input are content-addressed:
+
+- Batch manifest SHA-256:
+  `f74bab7af4e7a9988b50104428bf2211f0b5bac7fb70098f11b4a9aa231f4572`.
+- Clean 76-game auditor TSV SHA-256:
+  `b78eb173d58c155a698d359e413caaf47166117264ebcb332b0768c63731e392`.
+- Approved protected-ID exclusion-registry SHA-256:
+  `ac5d335a8e084e782be93f9c53635896f16344f08e9164481dc7b54eaf923a60`.
+- Collector source SHA-256:
+  `ea2760b5153219a2e844076b5cbf198b34a631286c8db8b694b7436b6380492a`.
+- Replay auditor source SHA-256:
+  `d61beda7e8ea1d330adc0080f1a496c3870f62eafa737c80fd85686763f83a50`.
+
+The collector validates cached receipts, normalized records, replay payloads,
+cross-references, exact terminal ranks, and the caller-approved exclusion
+registry. The TSV carries the manifest, source/submission assertion,
+collector, exclusion-registry, repository, and run provenance into every
+auditor output. Registry completeness remains an external caller contract;
+the collector does not inspect protected banks to infer it.
+
+### Replay diagnosis and generator coverage
+
+At deterministic 30,000-work replay across all 1,663 own decisions, the
+candidate reproduced the recorded action 772 times, canonical rank 4 did so
+376 times, and the two local policies agreed 478 times. Candidate generation
+reported truncation on 1,598 decisions, so action agreement alone is not a
+clock-strength measure.
+
+Root-coverage instrumentation gives a more useful explanation. In the first
+10 clean games (165 decisions), every recorded action was present both as an
+exact retained action and as a retained resulting boundary state. Rank 4's
+chosen action was present exactly 133 times and by boundary state 162 times.
+Across 10 loss games (152 decisions), the recorded action again had exact and
+boundary coverage on all 152 decisions; rank 4 had exact coverage on 119 and
+boundary coverage on 151. Only 25 of the first sample's roots and seven of
+the loss sample's roots filled the 250-action cap. These samples argue against
+generator omission as the main cause of the live losses; evaluator and search
+selection are the stronger current hypotheses.
+
+Clock-mode replay uses the actual 800/165 ms deadlines, but local hardware and
+timing do not recreate the uploaded process exactly. Its action matches are
+therefore stability and coverage diagnostics, not proof of uploaded decisions.
+
+### Behavior-preserving generator optimization
+
+Complete-turn boundary deduplication now uses a fixed 512-slot,
+allocation-free open-addressed table instead of a linear vector scan. Five
+curated fixed-work states retained byte-identical chosen actions and generator
+statistics. An alternating benchmark improved from 465.855 ms to 459.911 ms,
+about 1.28 percent; this is a performance optimization, not a strength claim.
+
+The current generated local artifact is 99,955 ASCII characters, SHA-256
+`c268286020ae841e4b5442e3578107ab32ded151e460a5bbe0495cb9b0b19d87`.
+It is distinct from the earlier asserted live `dd119224...` artifact. On
+2026-08-11 it was copied into the authenticated CodinGame editor, copied back,
+and verified byte-for-byte immediately before the arena action. CodinGame
+history recorded version 60 and public battle metadata assigned agent
+`6608659`, submission `41121957`. This establishes the local editor procedure,
+but the public API still cannot return editor bytes; exported replay metadata
+therefore continues to use `source_binding_status=asserted-not-api-verified`.
+The upload is an exploratory search diagnostic, not promotion evidence.
+
+### Exploratory actual-clock parameter screens
+
+Each batch-0 screen below used 24 games over mixed opening depths
+`0,1,2,3,6,7,12`, the 800/165 ms clocks, replay enabled, and 3,000,000 work
+and node ceilings. They completed without operational failures. The independent
+default batch-1 screen used the same clock-led setup.
+
+| Configuration | Seed batch | Candidate-reference |
+| --- | ---: | ---: |
+| Former default: `C=1.5`, `FPU=0.5`, final-visit weight `1`, replay blend `15`, residual weight `100` | 0 | 8-16 |
+| Final-visit weight `0`; other defaults unchanged | 0 | 9-15 |
+| Low exploration: `C=0.25`, `FPU=0`, final-visit weight `0.25` | 0 | 5-19 |
+| Replay-only evaluator: replay blend `100`, residual weight `0` | 0 | 7-17 |
+| Residual disabled: replay blend `15`, residual weight `0` | 0 | 1-23 |
+| Final-visit weight `0.25`; default exploration/evaluator | 0 | 6-18 |
+| Former default configuration, independent openings | 1 | 5-19 |
+| Final-visit weight `0`, independent openings | 1 | 8-16 |
+| Former default, independent batch 2 | 2 | 0-24 |
+| Final-visit weight `0`, independent batch 2 | 2 | 3-21 |
+| Final-visit `0`, root `250` / deeper `64` | 0 | 3-21 |
+| Root evaluator only; no deeper BFM | 0 | 1-23 |
+
+The completed screens reject low exploration, replay-only evaluation,
+residual removal, final-visit weight `0.25`, deeper cap `64`, and root-only
+selection as tested. Final-visit weight `0` improved from 8-16 to 9-15 on
+batch 0, from 5-19 to 8-16 on batch 1, and from 0-24 to 3-21 on batch 2: it is
+20-52 combined versus the former default's 13-59. The maintained exploratory
+default is therefore final-visit weight `0`, with full `250` width at every
+depth and deeper BFM enabled. This repeat is sufficient to justify one
+source-bound exploratory live upload, not promotion: neither configuration
+approached parity and no 24-game screen supersedes the frozen multi-batch
+promotion gate.

@@ -25,7 +25,6 @@ void require(bool condition, const std::string &message) {
     throw std::runtime_error(message);
   }
 }
-
 template <typename Function>
 void require_invalid_argument(Function &&function, const std::string &message) {
   bool threw = false;
@@ -518,6 +517,14 @@ void generator_cap_deduplication_and_mixed_deque_schedule_are_exact() {
   const std::set<std::string> unique(encodings.begin(), encodings.end());
   require(unique.size() == encodings.size(),
           "The capped action set must not expose duplicates.");
+  for (std::size_t left = 0; left < result.actions.size(); ++left) {
+    for (std::size_t right = left + 1; right < result.actions.size();
+         ++right) {
+      require(cg::boundary_key(result.actions[left].result) !=
+                  cg::boundary_key(result.actions[right].result),
+              "Deduplication must retain each boundary state exactly once.");
+    }
+  }
   require(result.stats.explored_partial_paths >= 10 &&
               result.stats.fifo_extractions ==
                   result.stats.explored_partial_paths / 10 &&
@@ -753,7 +760,9 @@ void fixed_work_bfm_is_deterministic_and_evaluates_each_child() {
   config.teacher_residual_weight_percent = 100;
 
   cg::FullTurnBfmSearch first(state, config);
-  cg::FullTurnBfmSearch second(state, config);
+  cg::SearchConfig explicit_cap = config;
+  explicit_cap.nonroot_actions = config.max_actions;
+  cg::FullTurnBfmSearch second(state, explicit_cap);
   const std::vector<ps::Move> first_action = first.run();
   const std::vector<ps::Move> second_action = second.run();
   const cg::SearchStats &first_stats = first.stats();
@@ -775,6 +784,46 @@ void fixed_work_bfm_is_deterministic_and_evaluates_each_child() {
               first_stats.expansions <= first_stats.child_evaluations,
           "Every newly expanded complete-turn child must be evaluated once within bounds.");
   (void)replay_complete_action(state, first_action);
+}
+
+void nonroot_action_cap_changes_only_deeper_expansion_width() {
+  const ps::GameState state = forced_two_move_rebound();
+  cg::SearchConfig narrow;
+  narrow.max_work = 512;
+  narrow.max_tree_nodes = 3;
+  narrow.max_actions = 8;
+  narrow.nonroot_actions = 1;
+  narrow.max_partial_paths = 512;
+  cg::FullTurnBfmSearch narrow_search(state, narrow);
+  (void)narrow_search.run();
+
+  cg::SearchConfig wide = narrow;
+  wide.nonroot_actions = 8;
+  cg::FullTurnBfmSearch wide_search(state, wide);
+  (void)wide_search.run();
+  require(narrow_search.stats().tree_nodes == 3 &&
+              narrow_search.stats().expansions == 2 &&
+              wide_search.stats().tree_nodes == 2 &&
+              wide_search.stats().expansions == 1 &&
+              wide_search.stats().node_cap_reached,
+          "The non-root cap must preserve the root action and bound only deeper batches.");
+}
+
+void root_only_search_evaluates_exactly_one_complete_turn_layer() {
+  const ps::GameState state = ps::make_initial_state(codingame_rules());
+  cg::SearchConfig config;
+  config.max_work = 2'000;
+  config.max_tree_nodes = 64;
+  config.max_actions = 8;
+  config.max_partial_paths = 2'000;
+  config.root_only = true;
+  cg::FullTurnBfmSearch search(state, config);
+  const std::vector<ps::Move> action = search.run();
+  require(search.stats().expansions == 1 &&
+              search.stats().child_evaluations == 8 &&
+              search.stats().tree_nodes == 9,
+          "Root-only mode must evaluate the full root batch without expanding a child.");
+  (void)replay_complete_action(state, action);
 }
 
 void interrupted_bfm_still_returns_a_complete_turn() {
@@ -969,6 +1018,16 @@ void invalid_generator_limits_are_rejected() {
         (void)generator.run();
       },
       "A work limit above the production hard cap must be rejected.");
+  cg::SearchConfig search_config;
+  search_config.final_visit_weight = -1.0;
+  require_invalid_argument(
+      [&] { cg::FullTurnBfmSearch search(state, search_config); },
+      "A negative final visit weight must be rejected.");
+  search_config.final_visit_weight = 1.0;
+  search_config.nonroot_actions = 251;
+  require_invalid_argument(
+      [&] { cg::FullTurnBfmSearch search(state, search_config); },
+      "A non-root action cap above 250 must be rejected.");
 }
 
 }  // namespace
@@ -1004,6 +1063,10 @@ int main() {
        evaluator_is_invariant_under_player_rotation},
       {"fixed_work_bfm_is_deterministic_and_evaluates_each_child",
        fixed_work_bfm_is_deterministic_and_evaluates_each_child},
+      {"nonroot_action_cap_changes_only_deeper_expansion_width",
+       nonroot_action_cap_changes_only_deeper_expansion_width},
+      {"root_only_search_evaluates_exactly_one_complete_turn_layer",
+       root_only_search_evaluates_exactly_one_complete_turn_layer},
       {"interrupted_bfm_still_returns_a_complete_turn",
        interrupted_bfm_still_returns_a_complete_turn},
       {"bfm_reports_and_obeys_a_reached_tree_node_cap",

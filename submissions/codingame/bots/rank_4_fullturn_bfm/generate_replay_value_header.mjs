@@ -41,6 +41,7 @@ const floats = (values) => values
 
 const lines = [
   "#pragma once",
+  "//f",
   "",
   "#include <array>",
   "#include <cstddef>",

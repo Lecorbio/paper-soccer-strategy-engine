@@ -38,8 +38,9 @@ Received opponent turns and replay corrections are applied atomically to a
 copy before the authoritative state is updated.
 
 This directory owns its generated CodinGame source, focused tests, timing
-probe, comparison harness, and experiment ledger. Generate and check it from
-the repository root:
+probe, comparison harness, clock-screen recorder, replay decision auditor,
+strict offline decision-audit analyzer, and experiment ledger. Generate and
+check it from the repository root:
 
 ```sh
 node submissions/codingame/tools/generate_submission.mjs rank_4_fullturn_bfm
@@ -54,19 +55,35 @@ ctest --test-dir build --output-on-failure \
 
 The comparison harness uses only its five public in-source openings and
 deterministically generated seed batches; it has no promotion-bank or
-`matches.json` input. Its summaries include colour and per-batch wins, maximum
-first/later response time, deadline and node-cap counts, and operational
-timeouts against the 1,000/200 ms platform limits. They also expose the
-required generator counters, the maximum reported post-search tree-node count,
-and maximum pending-deque and action sizes; peak resident memory is measured
-externally because those structural counts are not an RSS measurement.
+`matches.json` input. Mixed even/odd opening depths and explicit search-policy
+knobs support small 800/165 ms hypothesis screens. `run_clock_screen.py`
+records the exact command, source and gate hashes, clock maxima, and operational
+counters in a write-once JSON report. Fixed work remains a reproducibility and
+profiling tool, not a strength criterion.
 
-The synchronized generated source is 99,925 ASCII characters, SHA-256
-`dd119224a296672daed6c897d1f848b3ee37a66046b6f165724b6393b6e4f995`.
+The synchronized generated source is 99,955 ASCII characters, SHA-256
+`c268286020ae841e4b5442e3578107ab32ded151e460a5bbe0495cb9b0b19d87`.
 Regenerate and recheck both values after any source change.
+Its exploratory policy uses final visit weight `0`, the full 250-action cap at
+root and deeper nodes, and normal BFM expansion. Root-only and narrower-deeper
+settings remain explicit diagnostic hooks; both were rejected in clock screens.
 
 The exact formulas, tactical guarantees, frozen promotion gates, commands,
 and results are recorded in [EXPERIMENTS.md](EXPERIMENTS.md). The final
 equal-clock result was 24-82 over 106 games, with both deterministic seed
-batches and both color thresholds failing. The experiment is preserved as a
-reproducible negative result; it was not submitted and did not replace rank 4.
+batches and both color thresholds failing. That remains a reproducible
+promotion rejection, but it no longer forbids exploratory live submissions.
+An asserted `dd1192...` artifact was later tested publicly as agent `6606663`,
+submission `41119120`; public APIs cannot prove the editor bytes, so replay
+evidence retains `source_binding_status=asserted-not-api-verified`.
+The current `c268...` artifact was then copy-back verified in the authenticated
+editor immediately before exploratory upload as history version 60. Public
+battle metadata identifies it as agent `6608659`, submission `41121957`; this
+is diagnostic only and retains the same conservative public-API binding label.
+
+`collect_arena_batch.py` archives complete public batches behind a frozen
+ID-only exclusion registry, and `papersoccer_fullturn_replay_decision_auditor`
+compares observed actions with raw BFM, replay-book control flow, rank 4, and a
+deterministic root action set. The current continuation results and rejected
+search/evaluator ablations are appended to the ledger rather than rewriting
+the frozen promotion result.

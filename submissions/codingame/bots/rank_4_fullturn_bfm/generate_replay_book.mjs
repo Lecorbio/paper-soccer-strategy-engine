@@ -41,6 +41,7 @@ for (const [index, replay] of book.replays.entries()) {
 
 const lines = [
   "#pragma once",
+  "//f",
   "",
   "#include <array>",
   "#include <cstdint>",

@@ -304,6 +304,22 @@ if(NOT EMSCRIPTEN)
             --bootstrap 100
             --max-plies 1024)
 
+  add_executable(papersoccer_fullturn_replay_decision_auditor
+    submissions/codingame/bots/rank_4_fullturn_bfm/replay_decision_auditor.cpp)
+  target_include_directories(papersoccer_fullturn_replay_decision_auditor
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_fullturn_replay_decision_auditor
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_fullturn_replay_decision_auditor_test
+    submissions/codingame/bots/rank_4_fullturn_bfm/replay_decision_auditor_test.cpp)
+  target_include_directories(papersoccer_fullturn_replay_decision_auditor_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_fullturn_replay_decision_auditor_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_fullturn_replay_decision_auditor_test
+    COMMAND papersoccer_fullturn_replay_decision_auditor_test)
+
   add_executable(papersoccer_arena_smoke_test
     tests/arena/arena_smoke_test.cpp)
   target_link_libraries(papersoccer_arena_smoke_test
@@ -357,6 +373,12 @@ if(NOT EMSCRIPTEN)
             --incumbent-nodes 200 --opening-limit 1 --max-turns 320
             --output
             ${CMAKE_CURRENT_BINARY_DIR}/neural-puct-comparison-smoke.json)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_fullturn_bfm")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --pairs-per-depth 1 --candidate-work 2000
+            --reference-nodes 2000 --max-turns 200
+            --opening-turns 0,1,2,3)
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR

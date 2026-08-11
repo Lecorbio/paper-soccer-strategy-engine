@@ -41,6 +41,7 @@ if (!Array.isArray(weights) || weights.length !== report.input_count ||
 const scalar = (value) => Number(value).toPrecision(9) + "F";
 const lines = [
   "#pragma once",
+  "//f",
   "",
   "#include <array>",
   "#include <cstddef>",
