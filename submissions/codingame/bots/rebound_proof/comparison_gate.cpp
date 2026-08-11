@@ -5,8 +5,9 @@
 
 #if defined(__GNUC__) && !defined(__clang__)
 namespace papersoccer::rebound_proof_engine {
-namespace replay_value_model =
-    ::papersoccer::rank5_engine::replay_value_model;
+namespace replay_value_model {
+using namespace ::papersoccer::rank5_engine::replay_value_model;
+}
 }
 #endif
 

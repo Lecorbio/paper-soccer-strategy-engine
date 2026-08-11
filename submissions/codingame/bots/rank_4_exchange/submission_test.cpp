@@ -5,8 +5,9 @@
 
 #if defined(__GNUC__) && !defined(__clang__)
 namespace papersoccer::leaf_reference_engine {
-namespace replay_value_model =
-    ::papersoccer::turn_action_v2::replay_value_model;
+namespace replay_value_model {
+using namespace ::papersoccer::turn_action_v2::replay_value_model;
+}
 }
 #endif
 

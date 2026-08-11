@@ -27,6 +27,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Stabilize duplicate pragma-once headers
+        run: |
+          find submissions/codingame/bots -type f \
+            \( -name replay_book.hpp \
+            -o -name replay_value_model.hpp \
+            -o -name teacher_residual_model.hpp \) \
+            -exec touch -t 200001010000.00 {} +
+
       - name: Build and test
         run: ./scripts/build-and-test.sh
 

@@ -5,11 +5,15 @@
 
 #if defined(__GNUC__) && !defined(__clang__)
 namespace papersoccer::candidate_engine {
-namespace replay_book = ::papersoccer::rank4_reference_engine::replay_book;
-namespace replay_value_model =
-    ::papersoccer::rank4_reference_engine::replay_value_model;
-namespace teacher_residual_model =
-    ::papersoccer::rank4_reference_engine::teacher_residual_model;
+namespace replay_book {
+using namespace ::papersoccer::rank4_reference_engine::replay_book;
+}
+namespace replay_value_model {
+using namespace ::papersoccer::rank4_reference_engine::replay_value_model;
+}
+namespace teacher_residual_model {
+using namespace ::papersoccer::rank4_reference_engine::teacher_residual_model;
+}
 }
 #endif
 
