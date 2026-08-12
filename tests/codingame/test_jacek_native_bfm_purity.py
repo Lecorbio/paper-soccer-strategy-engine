@@ -506,14 +506,26 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             bot = pathlib.Path(temporary) / "jacek_native_bfm"
             bot.mkdir()
             header = bot / "jacek_native_model.hpp"
-            canonical = (
+            exporter_path = (
                 ROOT
-                / "submissions/codingame/bots/jacek_native_bfm/"
-                "jacek_native_model.hpp"
-            ).read_bytes()
-            header.write_bytes(canonical)
+                / "submissions/codingame/tools/"
+                "generate_jacek_native_model.py"
+            )
+            exporter_spec = importlib.util.spec_from_file_location(
+                "jacek_native_round1_exporter_test", exporter_path
+            )
+            exporter = importlib.util.module_from_spec(exporter_spec)
+            exporter_spec.loader.exec_module(exporter)
+            model_path = ROOT / purity.ROUND1_PURITY_DEPENDENCIES[0]
+            model_raw = model_path.read_bytes()
+            canonical, _ = exporter.render(
+                json.loads(model_raw), hashlib.sha256(model_raw).hexdigest()
+            )
+            header.write_text(canonical, encoding="utf-8")
             purity._validate_round1_header(ROOT, bot, [header.resolve()])
-            header.write_bytes(canonical + b"// stale round-two bytes\n")
+            header.write_text(
+                canonical + "// stale round-two bytes\n", encoding="utf-8"
+            )
             with self.assertRaisesRegex(ValueError, "round-one model header"):
                 purity._validate_round1_header(ROOT, bot, [header.resolve()])
 
