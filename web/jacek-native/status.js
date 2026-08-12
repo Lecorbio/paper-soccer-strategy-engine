@@ -1,14 +1,18 @@
 (function nativeStatusPage(root) {
   "use strict";
 
-  const EXPECTED_SCHEMA = "papersoccer.jacek-native-status.v1";
+  const EXPECTED_SCHEMA = "papersoccer.jacek-native-status.v2";
+
+  function validSha256(value) {
+    return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+  }
 
   function validate(ledger) {
     if (!ledger || ledger.schema !== EXPECTED_SCHEMA) {
       throw new Error("Unsupported or missing native status ledger.");
     }
     for (const key of [
-      "candidate", "architecture", "provenance", "training", "clock",
+      "candidate", "architecture", "provenance", "training", "round2", "clock",
       "verification", "live", "links",
     ]) {
       if (!ledger[key] || typeof ledger[key] !== "object") {
@@ -38,19 +42,18 @@
       throw new Error("Native next-round status is incomplete.");
     }
     for (const [key, value] of Object.entries(ledger.provenance)) {
-      if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+      if (!validSha256(value)) {
         throw new Error(`Native provenance identity ${key} is incomplete.`);
       }
     }
     for (const artifact of ledger.artifacts) {
-      if (typeof artifact.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(artifact.sha256)) {
+      if (!validSha256(artifact.sha256)) {
         throw new Error("Native artifact identity is incomplete.");
       }
     }
     for (const diagnostic of ledger.diagnostics) {
       for (const key of ["candidateRuntimeSha256", "referenceRuntimeSha256"]) {
-        if (typeof diagnostic[key] !== "string" ||
-            !/^[0-9a-f]{64}$/.test(diagnostic[key])) {
+        if (!validSha256(diagnostic[key])) {
           throw new Error(`Native diagnostic identity ${key} is incomplete.`);
         }
       }
@@ -62,19 +65,68 @@
       }
     }
     for (const [key, value] of Object.entries(ledger.live.evidence)) {
-      if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+      if (!validSha256(value)) {
         throw new Error(`Native live evidence identity ${key} is incomplete.`);
       }
     }
     for (const key of ["sourceSha256", "modelSha256", "packedSha256"]) {
-      if (typeof ledger.live[key] !== "string" ||
-          !/^[0-9a-f]{64}$/.test(ledger.live[key])) {
+      if (!validSha256(ledger.live[key])) {
         throw new Error(`Native live identity ${key} is incomplete.`);
       }
     }
     if (typeof ledger.live.sourceCommit !== "string" ||
         !/^[0-9a-f]{40}$/.test(ledger.live.sourceCommit)) {
       throw new Error("Native live source commit is incomplete.");
+    }
+    const round2 = ledger.round2;
+    if (round2.scope !== "local-research" || round2.uploaded !== false ||
+        round2.status !== "passed" || !Array.isArray(round2.gates) ||
+        round2.gates.length !== 6) {
+      throw new Error("Native round-two local activation status is incomplete.");
+    }
+    for (const key of [
+      "corpus", "model", "selection", "deployment", "verification", "timing",
+    ]) {
+      if (!round2[key] || typeof round2[key] !== "object") {
+        throw new Error(`Native round-two ledger is missing ${key}.`);
+      }
+    }
+    for (const value of [
+      round2.corpus.corpusSha256, round2.corpus.trainerSha256,
+      round2.corpus.validatorSha256, round2.corpus.restartValidatorSha256,
+      round2.model.sha256, round2.model.checkpointSha256,
+      round2.model.runtimeSha256, round2.model.packedSha256,
+      round2.selection.sha256, round2.selection.payloadSha256,
+      round2.deployment.sha256, round2.deployment.headerSha256,
+      round2.deployment.sourceSha256,
+    ]) {
+      if (!validSha256(value)) {
+        throw new Error("Native round-two artifact identity is incomplete.");
+      }
+    }
+    if (round2.model.chosenSeedInModel !== null ||
+        round2.model.selectedSeed !== 20260822 ||
+        round2.selection.kind !== "promotion" ||
+        round2.selection.promotionEligible !== true ||
+        round2.deployment.activated !== true) {
+      throw new Error("Native round-two selection state is inconsistent.");
+    }
+    for (const gate of round2.gates) {
+      if (!validSha256(gate.reportSha256) || !validSha256(gate.stdoutSha256) ||
+          !["screen", "decisive"].includes(gate.profile) ||
+          !["passed", "failed"].includes(gate.status)) {
+        throw new Error("Native round-two gate identity is incomplete.");
+      }
+    }
+    if (round2.timing.status !== "passed" ||
+        !round2.timing.playerZero || !round2.timing.playerOne) {
+      throw new Error("Native round-two fresh-process timing is incomplete.");
+    }
+    if (round2.verification.status !== "passed" ||
+        !Array.isArray(round2.verification.checks) ||
+        round2.verification.checks.length !== 6 ||
+        round2.verification.checks.some((check) => check.status !== "passed")) {
+      throw new Error("Native round-two verification status is incomplete.");
     }
     return ledger;
   }
@@ -123,8 +175,9 @@
       stage: ledger.candidate.stageLabel,
       updatedAt: ledger.updatedAt,
       candidateName: ledger.candidate.name,
-      trainingGames: formatInteger(ledger.training.games),
+      trainingGames: formatInteger(ledger.round2.corpus.games),
       clockProfile: `${ledger.clock.search.firstMs} / ${ledger.clock.search.laterMs} ms`,
+      localActivationLabel: ledger.round2.label,
       liveLabel: ledger.live.label,
     });
     for (const element of doc.querySelectorAll('[data-field="stage"]')) {
@@ -182,6 +235,32 @@
     const warning = doc.getElementById("trainingWarning");
     if (warning) warning.textContent = ledger.training.warning;
 
+    const round2Status = doc.getElementById("round2Status");
+    if (round2Status) {
+      round2Status.className = `status-pill ${statusClass(ledger.round2.status)}`;
+      round2Status.textContent = statusLabel(ledger.round2.status);
+    }
+    const round2Details = doc.getElementById("round2Details");
+    if (round2Details) {
+      const corpus = ledger.round2.corpus;
+      const model = ledger.round2.model;
+      const timing = ledger.round2.timing;
+      round2Details.replaceChildren(
+        definition(doc, "Scope", "Local research · not uploaded"),
+        definition(doc, "Cumulative corpus", `${formatInteger(corpus.games)} games · ${formatInteger(corpus.samples)} retained samples`),
+        definition(doc, "Whole-game split", `${formatInteger(corpus.splitGames.train)} / ${formatInteger(corpus.splitGames.validation)} / ${formatInteger(corpus.splitGames.test)}`),
+        definition(doc, "Corpus lineage", `${formatInteger(corpus.lineage.strictCurrent.games)} native league + ${formatInteger(corpus.lineage.archivedRound1.games)} archived + ${formatInteger(corpus.lineage.liveRestartRound2.games)} restart games`),
+        definition(doc, "Observed move labels", String(corpus.observedMovePolicyLabels)),
+        definition(doc, "Training seeds", model.seeds.join(", ")),
+        definition(doc, "Selection", `provisional ${model.provisionalSeed} · actual-clock ${model.selectedSeed} · ${ledger.round2.selection.kind}`),
+        definition(doc, "Selected validation", `outcome MSE ${model.validation.outcomeMse.toFixed(4)} · combined ${model.validation.combinedMse.toFixed(4)}`),
+        definition(doc, "Selected test", `outcome MSE ${model.test.outcomeMse.toFixed(4)} · combined ${model.test.combinedMse.toFixed(4)}`),
+        definition(doc, "Focused verification", ledger.round2.verification.checks.map((check) => check.label).join(" · ")),
+        definition(doc, "Activated timing", `P0 ${timing.playerZero.firstMs.toFixed(3)} / ${timing.playerZero.laterMs.toFixed(3)} · P1 ${timing.playerOne.firstMs.toFixed(3)} / ${timing.playerOne.laterMs.toFixed(3)} ms`),
+        definition(doc, "Generated source", `${formatInteger(ledger.round2.deployment.sourceCharacters)} characters · ${ledger.round2.deployment.sourceHeadroom} below project cap`),
+      );
+    }
+
     const clock = doc.getElementById("clockDetails");
     if (clock) {
       const probe = ledger.clock.timingProbe;
@@ -223,6 +302,18 @@
         card.append(createElement(doc, "h3", "", gate.label));
         card.append(createElement(doc, "p", "", gate.requirement));
         card.append(createElement(doc, "p", "gate-result", gate.result));
+        return card;
+      }));
+    }
+
+    const round2GateGrid = doc.getElementById("round2GateGrid");
+    if (round2GateGrid) {
+      round2GateGrid.replaceChildren(...ledger.round2.gates.map((gate) => {
+        const card = createElement(doc, "article", "gate-card");
+        card.append(createElement(doc, "span", `status-pill ${statusClass(gate.status)}`, statusLabel(gate.status)));
+        card.append(createElement(doc, "h3", "", `Seed ${gate.seed} · ${gate.profile}`));
+        card.append(createElement(doc, "p", "", `${gate.candidateWins}–${gate.baselineWins} · colors ${gate.candidateColorWins.join("/")}`));
+        card.append(createElement(doc, "p", "gate-result", `candidate max ${gate.candidateMaxFirstMs} / ${gate.candidateMaxLaterMs} ms · zero operational failures`));
         return card;
       }));
     }

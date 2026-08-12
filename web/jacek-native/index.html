@@ -27,7 +27,7 @@
           <p class="eyebrow">Jacek-inspired complete-turn engine</p>
           <h1 id="pageTitle">Native bot research status</h1>
           <p class="hero-copy" data-field="claim">
-            The exact-source 800/155 CodinGame diagnostic completed 52–38 raw and 41–38 clean at rank 9; it is development evidence, not a promotion or parity claim.
+            Round-two seed 20260822 passed both previous-native-champion gates and post-activation timing, and is activated locally; CodinGame upload remains pending.
           </p>
         </div>
         <div class="hero-status">
@@ -42,9 +42,10 @@
 
       <dl class="summary-grid" aria-label="Current research summary">
         <div><dt>Candidate</dt><dd data-field="candidateName">jacek_native_bfm</dd></div>
-        <div><dt>Training corpus</dt><dd><span data-field="trainingGames">—</span> games</dd></div>
+        <div><dt>Round-two corpus</dt><dd><span data-field="trainingGames">—</span> games</dd></div>
         <div><dt>Search clock</dt><dd data-field="clockProfile">800 / 155 ms</dd></div>
-        <div><dt>Live status</dt><dd data-field="liveLabel">90-game diagnostic archived</dd></div>
+        <div><dt>Local activation</dt><dd data-field="localActivationLabel">Round-two activation loading…</dd></div>
+        <div><dt>Historical live</dt><dd data-field="liveLabel">90-game diagnostic archived</dd></div>
       </dl>
 
       <section class="panel" aria-labelledby="architectureHeading">
@@ -57,22 +58,40 @@
 
       <section class="panel" aria-labelledby="artifactHeading">
         <div class="section-heading">
-          <div><p class="eyebrow">Exact identity</p><h2 id="artifactHeading">Current artifacts</h2></div>
+          <div><p class="eyebrow">Exact identity</p><h2 id="artifactHeading">Current and historical artifacts</h2></div>
           <p>Full SHA-256 values bind every result to the source and model that produced it.</p>
         </div>
         <div class="table-scroll" tabindex="0" aria-label="Scrollable artifact identities">
           <table>
-            <caption>Build, corpus, checkpoint, and generated submission identities</caption>
+            <caption>Build, corpus, checkpoint, activation, and historical live identities</caption>
             <thead><tr><th scope="col">Artifact</th><th scope="col">Size</th><th scope="col">SHA-256</th></tr></thead>
             <tbody id="artifactRows"><tr><td colspan="3">Loading artifact ledger…</td></tr></tbody>
           </table>
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="round2Heading">
+        <div class="section-heading">
+          <div><p class="eyebrow">Local research activation</p><h2 id="round2Heading">Round-two checkpoint</h2></div>
+          <span id="round2Status" class="status-pill status-in-progress">Loading…</span>
+        </div>
+        <p data-field="localActivationLabel">Seed 20260822 promoted over the previous native checkpoint and activated locally · CodinGame upload pending.</p>
+        <dl id="round2Details" class="detail-grid"></dl>
+        <p class="panel-note">The live-loss transcript supplies starting positions only. Observed candidate and opponent moves are never policy or value labels.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="round2GatesHeading">
+        <div class="section-heading">
+          <div><p class="eyebrow">Previous-native-champion selection</p><h2 id="round2GatesHeading">Round-two actual-clock gates</h2></div>
+          <p>All runs were operationally clean. Seed 20260822 alone passed both the screen and decisive color floor.</p>
+        </div>
+        <div id="round2GateGrid" class="gate-grid"></div>
+      </section>
+
       <section class="two-column">
         <article class="panel" aria-labelledby="trainingHeading">
-          <p class="eyebrow">Ground-up checkpoint</p>
-          <h2 id="trainingHeading">Current checkpoint</h2>
+          <p class="eyebrow">Historical ground-up checkpoint</p>
+          <h2 id="trainingHeading">Round-one baseline</h2>
           <dl id="trainingDetails" class="stacked-details"></dl>
           <p id="trainingWarning" class="warning-copy"></p>
         </article>
@@ -95,7 +114,7 @@
       <section class="panel" aria-labelledby="gatesHeading">
         <div class="section-heading">
           <div><p class="eyebrow">Promotion decision</p><h2 id="gatesHeading">Recorded gate outcomes</h2></div>
-          <p>The historical external gate failed. The 800/155 source completed one exploratory live batch; no promotion or parity claim is made.</p>
+          <p>The historical external Rank 4 gate failed. Round two passed its native-checkpoint promotion gates locally; no Rank 4 parity claim is made.</p>
         </div>
         <div id="gateGrid" class="gate-grid"></div>
       </section>
@@ -103,7 +122,7 @@
       <section class="live-panel" aria-labelledby="liveHeading">
         <div>
           <p class="eyebrow">CodinGame</p>
-          <h2 id="liveHeading">Live evidence</h2>
+          <h2 id="liveHeading">Historical live evidence</h2>
           <p data-field="liveLabel">90-game diagnostic archived · 52–38 raw · 41–38 clean · no promotion claim.</p>
         </div>
         <span id="liveStatus" class="status-pill status-passed">Passed</span>
@@ -115,7 +134,7 @@
         <div>
           <p class="eyebrow">Reproduce it</p>
           <h2 id="docsHeading">Methods and experiment log</h2>
-          <p>The native replay auditor is read-only diagnostic tooling; its games and alternatives never become training labels or promotion evidence.</p>
+          <p>The replay auditor remains diagnostic. Selected clean states may seed fresh native continuations, but observed moves and counterfactual alternatives never become policy or value labels.</p>
         </div>
         <div>
           <a id="readmeLink" href="#">Implementation README <span aria-hidden="true">↗</span></a>

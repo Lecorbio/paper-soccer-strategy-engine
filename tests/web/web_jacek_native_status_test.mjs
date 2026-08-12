@@ -47,14 +47,15 @@ test("the native status page is semantic, responsive, and independent of Wasm", 
   assert.doesNotMatch(script, /innerHTML/);
 });
 
-test("the checked-in ledger binds the completed exploratory live diagnostic", () => {
+test("the checked-in v2 ledger separates local round two from historical live evidence", () => {
   assert.equal(statusPage.validate(ledger), ledger);
-  assert.equal(ledger.schema, "papersoccer.jacek-native-status.v1");
-  assert.equal(ledger.candidate.stage, "live-diagnostic-analyzed");
+  assert.equal(ledger.schema, "papersoccer.jacek-native-status.v2");
+  assert.equal(ledger.candidate.stage, "round2-locally-activated");
   assert.equal(ledger.candidate.status, "in-progress");
-  assert.match(ledger.candidate.claim, /52–38 raw and 41–38 clean/i);
-  assert.match(ledger.candidate.claim, /rank 9/i);
-  assert.match(ledger.candidate.claim, /not a promotion or parity claim/i);
+  assert.match(ledger.candidate.claim, /seed 20260822/i);
+  assert.match(ledger.candidate.claim, /post-activation timing/i);
+  assert.match(ledger.candidate.claim, /activated locally/i);
+  assert.match(ledger.candidate.claim, /upload remains pending/i);
   assert.equal(ledger.live.status, "passed");
   assert.equal(ledger.live.batchStatus, "complete");
   assert.equal(ledger.live.submissionId, 41123817);
@@ -134,11 +135,11 @@ test("the checked-in ledger binds the completed exploratory live diagnostic", ()
   assert.match(ledger.architecture.dependencyBoundary, /action labels/i);
   assert.match(ledger.training.provenance, /Per-game build SHA/i);
   assert.match(ledger.training.provenance, /source\/compiler\/binary contract/i);
-  assert.match(ledger.training.nextRound, /round-two native league/i);
-  assert.match(ledger.training.nextRound, /pilot execution/i);
-  assert.match(ledger.training.nextRound, /no checkpoint or result is retained/i);
-  assert.match(html, /replay auditor is read-only diagnostic tooling/i);
-  assert.match(html, /never become training labels or promotion evidence/i);
+  assert.match(ledger.training.nextRound, /historical round-one checkpoint/i);
+  assert.match(ledger.training.nextRound, /seed 20260822/i);
+  assert.match(ledger.training.nextRound, /activated locally/i);
+  assert.match(html, /selected clean states may seed fresh native continuations/i);
+  assert.match(html, /never become policy or value labels/i);
   assert.throws(
     () => statusPage.validate({
       ...ledger,
@@ -187,9 +188,60 @@ test("the checked-in ledger binds the completed exploratory live diagnostic", ()
   assert.match(ledger.live.audit.interpretation, /not correct-move or promotion labels/i);
   assert.match(ledger.live.audit.interpretation, /evaluator, reanalysis, and BFM allocation/i);
   assert.match(html, /800 \/ 155 ms/);
-  assert.match(html, /no promotion or parity claim is made/i);
+  assert.match(html, /no Rank 4 parity claim is made/i);
   assert.match(html, /development-contaminated/i);
   assert.match(html, /not correct-move labels/i);
+  assert.match(html, /Historical live evidence/i);
+  assert.equal(ledger.round2.scope, "local-research");
+  assert.equal(ledger.round2.uploaded, false);
+  assert.equal(ledger.round2.status, "passed");
+  assert.equal(ledger.round2.corpus.games, 22_238);
+  assert.equal(ledger.round2.corpus.samples, 2_151_889);
+  assert.equal(ledger.round2.corpus.observedMovePolicyLabels, 0);
+  assert.deepEqual(ledger.round2.corpus.splitGames, {
+    train: 17_779, validation: 2_230, test: 2_229,
+  });
+  assert.deepEqual(ledger.round2.corpus.splitSamples, {
+    train: 1_755_307, validation: 198_858, test: 197_724,
+  });
+  assert.deepEqual(ledger.round2.corpus.overlapsRemoved, {
+    train: 0, validation: 21_961, test: 23_469,
+  });
+  assert.equal(ledger.round2.corpus.lineage.strictCurrent.games, 12_000);
+  assert.equal(ledger.round2.corpus.lineage.archivedRound1.games, 10_000);
+  assert.equal(ledger.round2.corpus.lineage.liveRestartRound2.games, 238);
+  assert.equal(
+    ledger.round2.corpus.lineage.liveRestartRound2.selectedPrefixes, 119,
+  );
+  assert.equal(
+    ledger.round2.corpus.lineage.liveRestartRound2.sourceBinding,
+    "asserted-not-api-verified",
+  );
+  assert.deepEqual(ledger.round2.model.seeds, [20260821, 20260822, 20260823]);
+  assert.equal(ledger.round2.model.provisionalSeed, 20260823);
+  assert.equal(ledger.round2.model.chosenSeedInModel, null);
+  assert.equal(ledger.round2.model.selectedSeed, 20260822);
+  assert.equal(ledger.round2.selection.kind, "promotion");
+  assert.equal(ledger.round2.selection.promotionEligible, true);
+  assert.deepEqual(ledger.round2.selection.thresholdShortfalls, []);
+  assert.equal(ledger.round2.deployment.activated, true);
+  assert.equal(ledger.round2.deployment.sourceCharacters, 94_771);
+  assert.equal(ledger.round2.deployment.sourceHeadroom, 228);
+  assert.equal(ledger.round2.gates.length, 6);
+  assert.equal(ledger.round2.verification.status, "passed");
+  assert.deepEqual(
+    ledger.round2.verification.checks.map(({ id, status, tests }) => ({
+      id, status, tests,
+    })),
+    [
+      { id: "activation", status: "passed", tests: undefined },
+      { id: "purity", status: "passed", tests: undefined },
+      { id: "source", status: "passed", tests: undefined },
+      { id: "gcc", status: "passed", tests: 3 },
+      { id: "appleclang", status: "passed", tests: 7 },
+      { id: "sanitizers", status: "passed", tests: 4 },
+    ],
+  );
 });
 
 test("every file-backed artifact hash and size matches the repository", async () => {
@@ -201,6 +253,46 @@ test("every file-backed artifact hash and size matches the repository", async ()
       ? bytes.toString("utf8").length
       : bytes.length;
     assert.equal(observed, item.size, item.label);
+  }
+  for (const gate of ledger.round2.gates) {
+    const [reportBytes, stdoutBytes] = await Promise.all([
+      readFile(new URL(gate.reportPath, root)),
+      readFile(new URL(gate.stdoutPath, root)),
+    ]);
+    assert.equal(sha256(reportBytes), gate.reportSha256);
+    assert.equal(sha256(stdoutBytes), gate.stdoutSha256);
+    assert.match(gate.reportPath, new RegExp(`${gate.reportSha256}\\.json$`));
+    assert.match(
+      gate.stdoutPath, new RegExp(`${gate.stdoutSha256}\\.stdout\\.txt$`),
+    );
+    const report = JSON.parse(reportBytes.toString("utf8"));
+    assert.equal(report.candidate.seed, gate.seed);
+    assert.equal(report.profile.name, gate.profile);
+    assert.equal(report.result.candidate, gate.candidateWins);
+    assert.equal(report.result.baseline, gate.baselineWins);
+    assert.deepEqual(
+      [report.result.candidate_player_one,
+        report.result.candidate_player_two],
+      gate.candidateColorWins,
+    );
+    assert.equal(report.result.passed, gate.status === "passed");
+    assert.equal(report.result.unfinished, gate.unfinishedGames);
+    assert.equal(
+      report.result.candidate_headroom_failures,
+      gate.candidateHeadroomFailures,
+    );
+    assert.equal(
+      report.result.candidate_operational_timeouts,
+      gate.candidateOperationalTimeouts,
+    );
+    assert.equal(
+      report.result.baseline_headroom_failures,
+      gate.baselineHeadroomFailures,
+    );
+    assert.equal(
+      report.result.baseline_operational_timeouts,
+      gate.baselineOperationalTimeouts,
+    );
   }
   assert.equal(artifact("workflow").sha256, ledger.provenance.workflowSha256);
   assert.equal(artifact("build-provenance").sha256,
@@ -249,13 +341,80 @@ test("every file-backed artifact hash and size matches the repository", async ()
     new URL("submissions/codingame/bots/jacek_native_bfm/jacek_native_model.hpp", root),
     "utf8",
   );
-  const model = artifact("model-json");
-  const packed = artifact("packed-weights");
-  assert.match(header, new RegExp(`kModelSha256 = "${model.sha256}"`));
-  assert.match(header, new RegExp(`kPackedSha256 = "${packed.sha256}"`));
-  assert.match(header, new RegExp(`kPackedByteCount = ${packed.size};`));
-  assert.match(header, new RegExp(`kTrainingSeed = ${ledger.training.chosenSeed}ULL;`));
+  const round2Model = artifact("round2-model-json");
+  const round2Runtime = artifact("round2-runtime");
+  const round2Selection = artifact("round2-selection");
+  const round2Deployment = artifact("round2-deployment");
+  const round2Header = artifact("round2-model-header");
+  const round2Source = artifact("round2-source");
+  assert.equal(round2Model.sha256, ledger.round2.model.sha256);
+  assert.equal(round2Runtime.sha256, ledger.round2.model.runtimeSha256);
+  assert.equal(round2Selection.sha256, ledger.round2.selection.sha256);
+  assert.equal(round2Deployment.sha256, ledger.round2.deployment.sha256);
+  assert.equal(round2Header.sha256, ledger.round2.deployment.headerSha256);
+  assert.equal(round2Source.sha256, ledger.round2.deployment.sourceSha256);
+  assert.ok(round2Source.size < ledger.round2.deployment.sourceLimit);
+  assert.equal(
+    ledger.round2.deployment.sourceLimit - round2Source.size,
+    ledger.round2.deployment.sourceHeadroom,
+  );
+  assert.match(header, new RegExp(`kModelSha256 = "${round2Model.sha256}"`));
+  assert.match(
+    header, new RegExp(`kPackedSha256 = "${ledger.round2.model.packedSha256}"`),
+  );
+  assert.match(header, /kPackedByteCount = 14268;/);
+  assert.match(
+    header, new RegExp(`kTrainingSeed = ${ledger.round2.model.selectedSeed}ULL;`),
+  );
 
+  const round2ModelDocument = JSON.parse(await readFile(
+    new URL("models/jacek_native_round2_candidate.json", root), "utf8",
+  ));
+  const selectionDocument = JSON.parse(await readFile(
+    new URL("models/jacek_native_round2_selection.json", root), "utf8",
+  ));
+  const deploymentDocument = JSON.parse(await readFile(
+    new URL("models/jacek_native_round2_deployment.json", root), "utf8",
+  ));
+  assert.equal(round2ModelDocument.training.chosen_seed, null);
+  assert.equal(
+    round2ModelDocument.training.provisional_seed,
+    ledger.round2.model.provisionalSeed,
+  );
+  assert.equal(
+    round2ModelDocument.provenance.corpus_sha256,
+    ledger.round2.corpus.corpusSha256,
+  );
+  assert.equal(
+    round2ModelDocument.provenance.observed_move_policy_labels,
+    ledger.round2.corpus.observedMovePolicyLabels,
+  );
+  assert.equal(selectionDocument.decision.kind, ledger.round2.selection.kind);
+  assert.equal(
+    selectionDocument.decision.promotion_eligible,
+    ledger.round2.selection.promotionEligible,
+  );
+  assert.equal(
+    selectionDocument.selection_payload_sha256,
+    ledger.round2.selection.payloadSha256,
+  );
+  assert.equal(selectionDocument.selected.seed, ledger.round2.model.selectedSeed);
+  assert.equal(
+    selectionDocument.selected.runtime_sha256,
+    ledger.round2.model.runtimeSha256,
+  );
+  assert.equal(
+    selectionDocument.selected.packed_sha256,
+    ledger.round2.model.packedSha256,
+  );
+  assert.equal(deploymentDocument.selected_seed, ledger.round2.model.selectedSeed);
+  assert.equal(deploymentDocument.decision.kind, ledger.round2.selection.kind);
+  assert.equal(
+    deploymentDocument.runtime.sha256,
+    ledger.round2.model.runtimeSha256,
+  );
+
+  const model = artifact("model-json");
   const modelDocument = JSON.parse(await readFile(
     new URL("models/jacek_native_bootstrap_model.json", root), "utf8",
   ));
@@ -365,5 +524,31 @@ test("clock and promotion fields encode the frozen time-based gates", () => {
   assert.deepEqual(
     ledger.verification.checks.map((check) => check.status),
     ledger.verification.checks.map(() => "passed"),
+  );
+  assert.equal(ledger.round2.timing.status, "passed");
+  assert.deepEqual(ledger.round2.timing.playerZero, {
+    firstMs: 424.894, laterMs: 157.944,
+  });
+  assert.deepEqual(ledger.round2.timing.playerOne, {
+    firstMs: 419.405, laterMs: 157.479,
+  });
+  for (const player of [
+    ledger.round2.timing.playerZero, ledger.round2.timing.playerOne,
+  ]) {
+    assert.ok(player.firstMs < ledger.clock.headroom.firstMs);
+    assert.ok(player.laterMs < ledger.clock.headroom.laterMs);
+  }
+  assert.deepEqual(
+    ledger.round2.gates.map(({ seed, profile, status }) => ({
+      seed, profile, status,
+    })),
+    [
+      { seed: 20260821, profile: "screen", status: "passed" },
+      { seed: 20260821, profile: "decisive", status: "failed" },
+      { seed: 20260822, profile: "screen", status: "passed" },
+      { seed: 20260822, profile: "decisive", status: "passed" },
+      { seed: 20260823, profile: "screen", status: "passed" },
+      { seed: 20260823, profile: "decisive", status: "failed" },
+    ],
   );
 });

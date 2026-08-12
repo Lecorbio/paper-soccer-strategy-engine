@@ -384,14 +384,14 @@ It short-circuits duplicate-boundary tactical classification and adds
 root/non-root truncation, depth, leader-change, entropy, margin, and cap
 telemetry. It is local research code, not a second live submission.
 
-The corrected round-two pipeline pilot validated 32 paired-schedule games and
+The historical corrected round-two pipeline pilot validated 32 paired-schedule games and
 1,430 augmented samples. Of 122 reanalysed boundaries, 21 passed the frozen
 30k-to-100k stability contract, including 17 non-exact auxiliary labels; zero
 had a deadline interruption. A deterministic two-epoch train/export smoke also
 produced byte-identical repeated JSON artifacts and a loadable 14,268-byte
-runtime. These are pipeline checks, not strength results. The full league,
-restart corpus, three-seed training round, and actual-clock selection remain
-pending.
+runtime. These were pipeline checks, not strength results. The full league,
+restart corpus, three-seed training round, and actual-clock selection described
+below supersede the pilot's pending status.
 
 Before the full round, a trainer audit reproduced the round-one quantization
 failure mechanism: max-abs scaling gave `w1` a `0.5258222222` step and retained
@@ -428,6 +428,82 @@ uint16 feature indices and releases Python samples while packing each split,
 reducing the steady sparse representation and avoiding simultaneous full native
 and NumPy copies at the intended million-scale corpus size.
 
+## Round-two corpus, model, and local activation
+
+The completed cumulative corpus contains 22,238 games and has SHA-256
+`87cf43fe841dfe7d00fc98ff8d560dfea10a9c3a1832b19eaf092fd0e07edf47`.
+Its whole-game split contains 17,779/2,230/2,229 train/validation/test games and
+1,755,307/198,858/197,724 retained samples after 0/21,961/23,469 canonical
+cross-split overlap removals. The corpus records
+`observed_move_policy_labels: 0`; a live transcript can construct a restart
+position, but neither the observed candidate move nor the opponent move becomes
+a policy or value label.
+
+| Lineage component | Games | Frozen identity |
+| --- | ---: | --- |
+| Strict-current native league | 12,000 | manifests `4b5fd9d85c94cd6090e322326d6d85e36eb5032b3fb39782e115825e41d8b0ae`, `a11f22c251329ffdc36c9a8e6928c610dfe41829f8ec5350c73a63b57f918c83`, `5d980ffdf49c8ed41ada20c54bd1d5a186417bc85448061a00ae11f2dd2f3158`, `a87c9c0f0d5ad41ff5140a7021de3924b64075ab1b9c0eda60eb3ddda8b102c3`; build `c031aeffc9bbb6805c2956b43c90e5a87dc06b51a9b51b17c1bffacf1a104b7c`; binary `9224b4fd1597f442f9f4764b5787144e620b3380c81ca5f52efd5586e1af88ae` |
+| Archived round one | 10,000 | manifest `dce7fb5017b0dec93f6b69dca7f2b7aa4e4e06a02592cd5b2df4d74931a032b9`; build `19e5b3d73b2dd2345fb647c8836177b906544dbb17e78ddae5dd5dafc6796919`; binary `6eb2b47c658f50c4c1d08d76e79a770e2775cce73c0c0eb9c28278981d04e07d` |
+| Live-loss restart continuations | 238 from 119 prefixes | manifest `b9aeb2e6b903a2e8be42f2553b7cca6d64aca00ad2ea7846849e936dcc5bb192`; build `3c241eaa6f446c0fd0bd950bc03f1644c311108047588d570341d05ba41aff5b`; binary `dfd79e108b28946fa1968cd43d0ca27c401c2b499ae86c9afb7ef758a84619f2` |
+
+The restart component is additionally bound to collector TSV
+`d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b`,
+arena manifest
+`0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf`,
+exclusion registry
+`ac5d335a8e084e782be93f9c53635896f16344f08e9164481dc7b54eaf923a60`,
+and historical asserted source
+`3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20`.
+This is disclosed development lineage, not independent live promotion evidence.
+
+The immutable 2,550,520-byte model JSON has SHA-256
+`b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14`.
+It retains seeds `20260821,20260822,20260823`, provisional seed `20260823`,
+and `chosen_seed: null`. Actual-clock selection chose seed `20260822`. Its
+quantized validation outcome/combined MSE is `0.918977857/0.906705831`, sign
+accuracy `0.568647`; test outcome/combined MSE is
+`0.924110413/0.912629976`, sign accuracy `0.571918`. The validation turns 0-11
+bin remains difficult at `0.999271512` outcome MSE and `0.503871` sign
+accuracy. These metrics describe the selected value model; the promotion
+decision comes from the actual-clock matches, not validation loss.
+
+All six gate transcripts use the frozen constant-shuffle-seed profiles and
+record zero unfinished games, candidate/baseline headroom failures, and
+candidate/baseline operational timeouts:
+
+| Seed / profile | Result and colors | Candidate / baseline maxima | Status | Report / stdout SHA-256 |
+| --- | --- | --- | --- | --- |
+| `20260821` screen | 688-312; 421/267 | 51.1642/15.7647; 51.4621/11.3183 ms | pass | `2baee0a80f18b045357aef2686d58bacc89a1cf147e3699b1538be3e6c788ee2`; `8eeadd7083536d26e87d0971422767cb4d7ee025af1b1df146439acd1b1886e8` |
+| `20260821` decisive | 130-82; 86/44 | 468.073/164.123; 465.607/162.886 ms | fail: second-color floor | `b44c1cec78c5c86421ea693af329662451ac9301665dd8fd3db0997721e3854a`; `56791ba0eaed563c9774b0b8eac3e070f27aa842320367d8f2bbc4a943b450d1` |
+| `20260822` screen | 803-197; 419/384 | 51.4645/14.5919; 51.0783/14.9628 ms | pass | `41c8dc7c19f3ccacaf74de7e318fee129a4eedc7735ce5d0d2e940f2e3e9a983`; `bbdc5056c6aeb1d3e51362a6303b384179a758c628d5d70a9e3cf74bb25cd62c` |
+| `20260822` decisive | 146-66; 84/62 | 472.797/162.355; 451.195/163.006 ms | pass | `28138eab2218e7a574dc4b7379fd19f8219a5efdbca5f107f507540f0761a98d`; `4e956927891e51b6380d63b10e4bcd487b7201c595c21e821cf8f490c7e34091` |
+| `20260823` screen | 672-328; 415/257 | 51.2916/11.2645; 51.1338/13.5631 ms | pass | `662122aba29156f3400c34f0b4dc4b25068c9f05b5027583f8eb8efdbfe73f19`; `ac5b58aca9ae8635de89489e498da52e08adb9f1010072926b763a6d7740dd67` |
+| `20260823` decisive | 133-79; 89/44 | 474.352/163.964; 458.947/169.484 ms | fail: second-color floor | `93ac04d0d020015d270738785b75225960d88280b4a4c62bd438d47f549db938`; `a23a6390b3e32e6fe858bcae6a2f524cb6635c53cc602d972de0c4e8d01a7f1d` |
+
+Only seed `20260822` passed both gates. The promotion-eligible selection sidecar
+has SHA-256
+`5597e4228850cd44aac4adc5f11e3d6533e5528e3e04c51700d2f04b2cbe2cef`
+and payload SHA-256
+`3b8afae23304fbdb9505b6646ea8f7339ad70e652109aefefd057806ce83f529`.
+It binds exact tested/deployed runtime
+`17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3`
+and packed weights
+`e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb`.
+Deployment descriptor
+`88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f`
+activates that selection locally. The generated header/source identities are
+`3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458`
+(21,736 characters) and
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
+(94,771 characters). Post-activation fresh-process timing measured P0 at
+424.894/157.944 ms and P1 at 419.405/157.479 ms. Both pass the 900/180 ms
+construction-inclusive pre-upload ceilings. This is local operational evidence,
+not a new live result. Focused verification also passed immutable activation,
+transitive purity, exact-source freshness, three GCC activation tests, the
+AppleClang 21 Release build and seven focused tests, and four exact ASan/UBSan
+tests. The sanitizer statement refers only to those four built targets; a broad
+pattern that also names unrelated unbuilt targets is not evidence and is not
+reported as a failure.
+
 ## Results ledger
 
 | Evaluation | Candidate | Reference | Candidate colors | Unfinished / headroom / operational | Clock |
@@ -439,13 +515,22 @@ and NumPy copies at the intended million-scale corpus size.
 | Exploratory operational screen vs Rank 4 | 8 | 16 | 5 / 3 | 0 / 0 / 0 | candidate 800/155 ms |
 | Constant-seed fidelity diagnostic | 4 | 20 | not a gate | 0 / 0 / 0 | candidate 800/155 ms |
 | Varied-seed fidelity diagnostic | 5 | 19 | not a gate | 0 / 0 / 0 | candidate 800/155 ms |
+| Round-two seed21 screen vs bootstrap | 688 | 312 | 421 / 267 | 0 / 0 / 0 | 50/10 ms |
+| Round-two seed21 decisive vs bootstrap | 130 | 82 | 86 / 44 | 0 / 0 / 0; color floor failed | 800/155 ms |
+| Round-two seed22 screen vs bootstrap | 803 | 197 | 419 / 384 | 0 / 0 / 0 | 50/10 ms |
+| Round-two seed22 decisive vs bootstrap | 146 | 66 | 84 / 62 | 0 / 0 / 0 | 800/155 ms |
+| Round-two seed23 screen vs bootstrap | 672 | 328 | 415 / 257 | 0 / 0 / 0 | 50/10 ms |
+| Round-two seed23 decisive vs bootstrap | 133 | 79 | 89 / 44 | 0 / 0 / 0; color floor failed | 800/155 ms |
 | External final parity | not run | not run | not run | stopped | 424-game design |
 | Exact-source live batch, raw | 52 | 38 | 29 / 23 | our operational 0 | CodinGame 90 games |
 | Exact-source live batch, clean | 41 | 38 | 21 / 20 | 11 opponent forfeits removed | CodinGame 79 games |
 
 The bootstrap passed both comparisons with its untrained ancestor, but its
 historical 800/165 ms source lost decisively to the external Rank 4 reference
-and breached local timing headroom once. The current 800/155 ms source has
-better measured timing margin and is an auditable exploratory baseline, not a
-promotion, parity, or superiority result. The completed live batch is now
-diagnostic development evidence and cannot serve as an independent holdout.
+and breached local timing headroom once. The historically uploaded 800/155 ms
+source has better measured timing margin and is an auditable exploratory
+baseline, not a promotion, parity, or superiority result. The completed live
+batch is now diagnostic development evidence and cannot serve as an independent
+holdout. Round-two seed `20260822` is promoted over the previous native
+checkpoint and activated locally, but remains distinct from that historical
+live evidence until its exact source is actually uploaded and collected.

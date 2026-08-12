@@ -156,7 +156,7 @@ opening depths 0, 4, 8, and 12. The frozen run produced 10,000 games across 14
 shards and completed its build, corpus, training, export, and source-generation
 checks before the identities below were recorded.
 
-## Retained checkpoint identity
+## Retained round-one checkpoint identity
 
 The retained checkpoint is a **hardened ground-up bootstrap**, not evidence that
 the value function is competitive. All 10,000 self-play games use opening depth
@@ -185,6 +185,39 @@ independent initial-state golden value is `-0.000181343639`; C++ inference must
 match it within `2e-6`. The integration test also freezes rotational and
 partial/full evaluation parity and rejects a one-byte packed-payload mutation.
 
+## Activated round-two checkpoint identity
+
+Round two is now selected and activated locally through the immutable
+deployment descriptor. The training JSON remains evidence rather than a
+mutable deployment pointer: its `chosen_seed` is still `null`, its provisional
+minimum-validation-loss seed is `20260823`, and the actual-clock gates selected
+seed `20260822`. This is a **local native-checkpoint promotion**, not a new
+CodinGame upload or live-strength result.
+
+| Artifact | Activated round-two value |
+| --- | --- |
+| Cumulative corpus | 22,238 games; SHA-256 `87cf43fe841dfe7d00fc98ff8d560dfea10a9c3a1832b19eaf092fd0e07edf47` |
+| Corpus composition | 12,000 strict-current native league games, 10,000 archived round-one games, and 238 continuations from 119 clean live-loss prefixes |
+| Whole-game split | 17,779/2,230/2,229 train/validation/test games; 1,755,307/198,858/197,724 retained rows after 0/21,961/23,469 overlap removals |
+| Label boundary | `observed_move_policy_labels: 0`; observed live moves construct restart states only |
+| Training artifact | 2,550,520 bytes; SHA-256 `b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14` |
+| Retained seeds | `20260821,20260822,20260823`; provisional seed `20260823`; `chosen_seed: null` |
+| Selected checkpoint | seed `20260822`; checkpoint SHA-256 `efe76094835fe727e546e5c31c5d4717b796086e636e02a4b05c5aa13b84769a` |
+| Selection sidecar | promotion, eligible; 4,494 bytes; SHA-256 `5597e4228850cd44aac4adc5f11e3d6533e5528e3e04c51700d2f04b2cbe2cef`; payload SHA-256 `3b8afae23304fbdb9505b6646ea8f7339ad70e652109aefefd057806ce83f529` |
+| Selected runtime | 19,308 bytes; SHA-256 `17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3`; packed SHA-256 `e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb` |
+| Deployment descriptor | 5,325 bytes; SHA-256 `88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f` |
+| Activated header | 21,736 characters; SHA-256 `3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458` |
+| Generated local source | 94,771 characters; SHA-256 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`; 228 characters below the 94,999 project cap |
+
+The cumulative restart lineage binds collector TSV SHA-256
+`d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b`,
+arena manifest SHA-256
+`0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf`,
+exclusion-registry SHA-256
+`ac5d335a8e084e782be93f9c53635896f16344f08e9164481dc7b54eaf923a60`,
+and the historical asserted source identity. That lineage discloses the live
+origin without converting an observed action into a policy or value label.
+
 ## Verification boundary
 
 Local fixed-work matches are diagnostic: they make regressions reproducible
@@ -208,9 +241,11 @@ descriptor binds that model, sidecar, runtime, decision kind, and cumulative
 native checkpoint files, plus the exact baseline and content-addressed gate
 reports/stdout. Loading it recomputes the selection from those transcripts and
 verifies recursive checkpoint ancestry before any production generation.
-Merely copying a header or setting `chosen_seed` is not activation. Until the
-descriptor is deliberately installed, both the Node and CMake production
-generators remain on the round-one bootstrap.
+Merely copying a header or setting `chosen_seed` is not activation. The tracked
+descriptor is now deliberately installed, and both the Node and CMake
+production generators resolve seed `20260822` through the selection-aware
+activation path. The descriptor, not a mutation of the training JSON, is the
+production switch.
 
 Source-bound public live games can be diagnosed with the separate, read-only
 [replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
@@ -224,11 +259,21 @@ selection, and application together. It must remain below 900 ms for a first
 response and 180 ms later, leaving margin before CodinGame's 1,000/200 ms
 operational limits. Player 0 and Player 1 are measured by separate fresh
 process invocations so one color cannot inherit a warmed model or allocator
-from the other. For the uploaded 800/155 ms artifact, the fresh-process Release
+from the other. For the historically uploaded 800/155 ms artifact, the fresh-process Release
 measurements were P0 425.910/157.571 ms with 81,461,248-byte peak RSS and a
 76,497,304-byte peak footprint, and P1 397.385/157.921 ms with 91,504,640-byte
 peak RSS and a 78,791,088-byte peak footprint. Both pass 900/180; node and
 expansion counts remain diagnostics only.
+
+The activated round-two source passed its post-activation fresh-process timing
+probe: P0 measured 424.894/157.944 ms and P1 measured 419.405/157.479 ms.
+Both construction-inclusive processes clear the 900/180 ms pre-upload ceilings.
+The independent focused post-activation checks also pass: descriptor
+validation, transitive purity, exact-source freshness, three GCC activation
+tests, the AppleClang 21 Release build and seven focused tests, and four exact
+ASan/UBSan tests. The intentionally focused sanitizer scope excludes unrelated
+unbuilt CTest targets. These local checks establish operational readiness, not
+a CodinGame result or source binding to a future upload.
 
 A separate 24-game actual-clock safety screen against canonical `rank_4`
 finished 8-16, with candidate colors 5/3. It recorded zero unfinished games,
@@ -433,6 +478,11 @@ counterfactual would have won. The very small omission count directs the next
 iteration toward evaluator/reanalysis and BFM allocation rather than broader
 action generation.
 
-Round-two native league, reanalysis, calibration, and training infrastructure
-is being exercised in a pilot. No round-two checkpoint or result has yet met
-the actual-clock promotion gates, so none is retained or reported here.
+Round-two native league, reanalysis, restart training, and actual-clock
+selection are complete. Seed `20260822` passed 803-197 at 50/10 ms and 146-66
+at 800/155 ms, with decisive colors 84/62 and zero unfinished games, headroom
+failures, or operational timeouts for either side. The checkpoint is activated
+locally through deployment descriptor SHA-256
+`88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f`.
+It has not been uploaded to CodinGame, so the completed 90-game batch above
+remains the only live evidence.
