@@ -44,7 +44,8 @@ python3 tools/jacek_native_round2_selection.py record \
   --candidate-runtime build/round2-gates/20260821.runtime \
   --baseline-model models/jacek_native_bootstrap_model.json \
   --baseline-seed 20260813 \
-  --baseline-runtime models/jacek_native_bootstrap_seed_20260813.runtime \
+  --baseline-runtime \
+    results/jacek_native_bfm/round2-runtime-inputs-632c731/seed-20260813.runtime \
   --gate-binary build/release/papersoccer_jacek_native_model_gate \
   --output-dir results/jacek_native_bfm/round2-gates
 ```
@@ -63,7 +64,8 @@ python3 tools/jacek_native_round2_selection.py finalize \
   --model models/jacek_native_round2_candidate.json \
   --baseline-model models/jacek_native_bootstrap_model.json \
   --baseline-seed 20260813 \
-  --baseline-runtime models/jacek_native_bootstrap_seed_20260813.runtime \
+  --baseline-runtime \
+    results/jacek_native_bfm/round2-runtime-inputs-632c731/seed-20260813.runtime \
   --reports results/jacek_native_bfm/round2-gates \
   --output models/jacek_native_round2_selection.json
 ```
@@ -79,3 +81,85 @@ wins, screen worst-color wins, validation outcome MSE, then numeric seed. The
 selected runtime SHA-256 is recorded identically as both the tested and
 deployment runtime identity. Activation must use the immutable model, selected
 seed, and sidecar together; it must never rewrite the training model.
+
+## Exploratory fallback
+
+If and only if no retained seed passes both strength gates, the same complete
+report set may produce a non-promoting exploratory selection:
+
+```sh
+python3 tools/jacek_native_round2_selection.py finalize-exploratory \
+  --model models/jacek_native_round2_candidate.json \
+  --baseline-model models/jacek_native_bootstrap_model.json \
+  --baseline-seed 20260813 \
+  --baseline-runtime \
+    results/jacek_native_bfm/round2-runtime-inputs-632c731/seed-20260813.runtime \
+  --reports results/jacek_native_bfm/round2-gates \
+  --output models/jacek_native_round2_selection.json
+```
+
+This command refuses to run if any seed passed canonically. It also refuses a
+failed seed unless both its screen and decisive reports have zero unfinished
+games, candidate/baseline headroom failures, and candidate/baseline operational
+timeouts. Safe failed seeds use the canonical ranking order. The sidecar says
+`promotion_eligible: false` and records every positive strength-threshold
+shortfall; it cannot be mistaken for promotion evidence.
+
+## Immutable production activation
+
+Selection does not alter the training JSON. Export the selected runtime to a
+tracked path. Before activation, copy the complete content-addressed reports
+and stdout transcripts into the tracked evidence directory and reproduce the
+three bootstrap checkpoint runtimes named by the current cumulative training
+model:
+
+```sh
+mkdir -p models/jacek_native_round2_gate_evidence
+cp results/jacek_native_bfm/round2-gates/*.json \
+  results/jacek_native_bfm/round2-gates/*.stdout.txt \
+  models/jacek_native_round2_gate_evidence/
+
+for seed in 20260811 20260812 20260813; do
+  python3 submissions/codingame/tools/generate_jacek_native_model.py \
+    --model models/jacek_native_bootstrap_model.json \
+    --seed "$seed" \
+    --output "build/jacek-native-bootstrap-$seed.hpp" \
+    --runtime-output "models/jacek_native_bootstrap_seed_$seed.runtime"
+done
+
+python3 submissions/codingame/tools/generate_jacek_native_model_round2.py \
+  --model models/jacek_native_round2_candidate.json \
+  --seed SELECTED_SEED \
+  --output build/round2-selected.hpp \
+  --runtime-output models/jacek_native_round2_selected.runtime
+
+python3 submissions/codingame/tools/jacek_native_round2_activation.py create \
+  --model models/jacek_native_round2_candidate.json \
+  --selection models/jacek_native_round2_selection.json \
+  --runtime models/jacek_native_round2_selected.runtime \
+  --baseline-model models/jacek_native_bootstrap_model.json \
+  --baseline-seed 20260813 \
+  --baseline-runtime models/jacek_native_bootstrap_seed_20260813.runtime \
+  --reports models/jacek_native_round2_gate_evidence \
+  --checkpoint models/jacek_native_bootstrap_model.json \
+    models/jacek_native_bootstrap_seed_20260811.runtime \
+  --checkpoint models/jacek_native_bootstrap_model.json \
+    models/jacek_native_bootstrap_seed_20260812.runtime \
+  --checkpoint models/jacek_native_bootstrap_model.json \
+    models/jacek_native_bootstrap_seed_20260813.runtime \
+  --output models/jacek_native_round2_deployment.json
+```
+
+The `--checkpoint` declarations must exactly cover the model's non-seed
+checkpoint artifacts; the tracked untrained seed root is verified implicitly.
+No extra, missing, self-referential, or non-generated runtime is accepted.
+
+The descriptor binds the exact model, sidecar, selected runtime, selected seed,
+decision kind, baseline, every report/stdout byte, tool identities, and the
+complete recursive checkpoint ancestry. Loading it reruns report/stdout
+validation and deterministic selection, rather than trusting a rehashable
+sidecar. Its presence is the deliberate production switch. Without it, the
+Node and CMake generators remain on the checked-in round-one bootstrap. With
+it, both route through the selection-aware activation tool. Generation and
+purity fail closed on a changed byte, stale tool, path escape, ambiguous
+selection, or mutated `chosen_seed`/selection status.

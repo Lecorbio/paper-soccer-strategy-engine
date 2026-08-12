@@ -163,7 +163,9 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             self.candidate_runtimes[seed] = path
 
     def _stdout(self, profile_name, seed, player_one_wins, player_two_wins,
-                headroom_failures=0):
+                headroom_failures=0, baseline_headroom_failures=0,
+                candidate_operational_timeouts=0,
+                baseline_operational_timeouts=0):
         profile = self.selection.PROFILES[profile_name]
         candidate, _ = self.selection._round2_identity(
             self.model_path, seed, self.candidate_runtimes[seed]
@@ -200,6 +202,9 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             and player_one_wins >= profile.minimum_wins_per_color
             and player_two_wins >= profile.minimum_wins_per_color
             and headroom_failures == 0
+            and baseline_headroom_failures == 0
+            and candidate_operational_timeouts == 0
+            and baseline_operational_timeouts == 0
         )
         fields = {
             "candidate": candidate_wins,
@@ -217,13 +222,13 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             "candidate_max_later_ms": 9.0,
             "candidate_deadline_searches": 12,
             "candidate_headroom_failures": headroom_failures,
-            "candidate_operational_timeouts": 0,
+            "candidate_operational_timeouts": candidate_operational_timeouts,
             "baseline_decisions": profile.pairs * 10,
             "baseline_expansions": profile.pairs * 100,
             "baseline_max_first_ms": 49.0,
             "baseline_max_later_ms": 9.0,
-            "baseline_headroom_failures": 0,
-            "baseline_operational_timeouts": 0,
+            "baseline_headroom_failures": baseline_headroom_failures,
+            "baseline_operational_timeouts": baseline_operational_timeouts,
             "profile": f"{profile.first_ms}/{profile.later_ms}",
             "shuffle_seed_policy": "deployment-constant",
             "required_total": profile.minimum_candidate_wins,
@@ -236,10 +241,13 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         return ("\n".join(lines) + "\n").encode(), 0 if passed else 1
 
     def _record(self, profile, seed, player_one_wins, player_two_wins,
-                headroom_failures=0):
+                headroom_failures=0, baseline_headroom_failures=0,
+                candidate_operational_timeouts=0,
+                baseline_operational_timeouts=0):
         stdout, returncode = self._stdout(
             profile, seed, player_one_wins, player_two_wins,
-            headroom_failures,
+            headroom_failures, baseline_headroom_failures,
+            candidate_operational_timeouts, baseline_operational_timeouts,
         )
         completed = subprocess.CompletedProcess(
             args=[], returncode=returncode, stdout=stdout, stderr=b""
@@ -347,6 +355,21 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         with self.assertRaisesRegex(self.selection.SelectionError, "coverage"):
             self._finalize(paths[:-1])
 
+    def test_mixed_gate_binary_identities_are_rejected(self):
+        paths = [
+            self._record("screen", 101, 270, 270),
+            self._record("decisive", 101, 56, 56),
+        ]
+        self.gate_binary.write_text("#!/bin/sh\nexit 98\n")
+        paths.extend((
+            self._record("screen", 102, 275, 275),
+            self._record("decisive", 102, 57, 56),
+        ))
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "one exact gate binary"
+        ):
+            self._finalize(paths)
+
     def test_no_seed_passing_both_thresholds_is_rejected(self):
         paths = self._all_reports({
             seed: {"screen": (260, 260), "decisive": (49, 49)}
@@ -354,6 +377,91 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         })
         with self.assertRaisesRegex(self.selection.SelectionError, "no retained seed"):
             self._finalize(paths)
+
+    def test_exploratory_finalize_selects_strongest_clean_failed_seed(self):
+        paths = self._all_reports({
+            101: {"screen": (260, 260), "decisive": (54, 54)},
+            102: {"screen": (263, 262), "decisive": (55, 55)},
+        })
+        sidecar = self.selection.finalize_exploratory_selection(
+            model_path=self.model_path,
+            baseline_model=self.baseline_model,
+            baseline_seed=self.baseline_seed,
+            baseline_runtime=self.baseline_runtime,
+            report_paths=list(reversed(paths)),
+            output=self.output,
+        )
+        self.assertEqual(sidecar["selected"]["seed"], 102)
+        self.assertEqual(sidecar["decision"]["kind"], "exploratory")
+        self.assertFalse(sidecar["decision"]["promotion_eligible"])
+        self.assertTrue(sidecar["decision"]["threshold_shortfalls"])
+        self.assertEqual(
+            sidecar["ranking"]["operationally_safe_failed_seeds"][0][
+                "seed"
+            ],
+            102,
+        )
+
+    def test_exploratory_finalize_refuses_passing_or_unsafe_only_evidence(self):
+        passing = self._all_reports()
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "canonical promotion"
+        ):
+            self.selection.finalize_exploratory_selection(
+                model_path=self.model_path,
+                baseline_model=self.baseline_model,
+                baseline_seed=self.baseline_seed,
+                baseline_runtime=self.baseline_runtime,
+                report_paths=passing,
+                output=self.output,
+            )
+
+        self.output = self.directory / "unsafe-selection.json"
+        self.reports = self.directory / "unsafe-reports"
+        unsafe = []
+        for seed in self.seeds:
+            unsafe.append(self._record("screen", seed, 260, 260))
+            unsafe.append(self._record(
+                "decisive", seed, 55, 55,
+                baseline_headroom_failures=1,
+            ))
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "operationally clean"
+        ):
+            self.selection.finalize_exploratory_selection(
+                model_path=self.model_path,
+                baseline_model=self.baseline_model,
+                baseline_seed=self.baseline_seed,
+                baseline_runtime=self.baseline_runtime,
+                report_paths=unsafe,
+                output=self.output,
+            )
+
+    def test_exploratory_ranking_excludes_stronger_unsafe_seed(self):
+        paths = [
+            self._record("screen", 101, 260, 260),
+            self._record("decisive", 101, 54, 54),
+            self._record("screen", 102, 264, 264),
+            self._record(
+                "decisive", 102, 55, 56,
+                candidate_operational_timeouts=1,
+            ),
+        ]
+        sidecar = self.selection.finalize_exploratory_selection(
+            model_path=self.model_path,
+            baseline_model=self.baseline_model,
+            baseline_seed=self.baseline_seed,
+            baseline_runtime=self.baseline_runtime,
+            report_paths=paths,
+            output=self.output,
+        )
+        self.assertEqual(sidecar["selected"]["seed"], 101)
+        self.assertEqual(
+            [row["seed"] for row in sidecar["ranking"][
+                "operationally_safe_failed_seeds"
+            ]],
+            [101],
+        )
 
     def test_tampered_full_stdout_is_rejected(self):
         paths = self._all_reports()

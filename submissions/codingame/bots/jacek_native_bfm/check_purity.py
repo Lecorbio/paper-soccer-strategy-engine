@@ -8,6 +8,7 @@ import ast
 import base64
 import binascii
 import hashlib
+import importlib.util
 import json
 import math
 import pathlib
@@ -30,11 +31,13 @@ ROUND1_PURITY_DEPENDENCIES = (
 )
 ROUND1_SEMANTIC_DEPENDENCIES = ("tools/jacek_native_corpus.py",)
 ROUND2_PURITY_DEPENDENCIES = (
-    "models/jacek_native_bootstrap_model.json",
+    "models/jacek_native_round2_candidate.json",
     "models/jacek_native_untrained_seed.json",
     "models/jacek_native_untrained_seed.runtime",
     "submissions/codingame/tools/generate_jacek_native_model_round2.py",
+    "submissions/codingame/tools/jacek_native_round2_activation.py",
     "submissions/codingame/tools/generate_jacek_native_model.py",
+    "tools/jacek_native_round2_selection.py",
     "tools/generate_jacek_native_seed.py",
     "tools/train_jacek_native_round2.py",
     "tools/train_jacek_native.py",
@@ -45,6 +48,9 @@ ROUND2_PURITY_DEPENDENCIES = (
     "tools/jacek_native_restart_round2.py",
     "tools/jacek_native_workflow.py",
 )
+ROUND2_DEPLOYMENT_PATH = "models/jacek_native_round2_deployment.json"
+ROUND2_SELECTION_PATH = "models/jacek_native_round2_selection.json"
+ROUND2_RUNTIME_PATH = "models/jacek_native_round2_selected.runtime"
 ROUND2_SEMANTIC_DEPENDENCIES = (
     "tools/jacek_native_corpus_round2.py",
     "tools/jacek_native_restart_corpus_round2.py",
@@ -572,12 +578,12 @@ def _validate_round2_model_metadata(
         raise ValueError("round-two checkpoint order disagrees with training seeds")
     external = training.get("external_actual_clock_selection")
     if (
-        training.get("chosen_seed") not in observed
+        training.get("chosen_seed") is not None
         or training.get("provisional_seed") not in observed
         or not isinstance(external, dict)
         or external.get("required") is not True
         or external.get("criterion") != "native-actual-clock-match-strength"
-        or external.get("status") != "complete"
+        or external.get("status") != "pending"
         or not isinstance(external.get("eligible_seed_order"), list)
         or sorted(external["eligible_seed_order"]) != sorted(observed)
     ):
@@ -1125,14 +1131,128 @@ def _validate_round2_corpus_semantics(repository_root: pathlib.Path) -> None:
         )
 
 
+def _load_round2_activation(path: pathlib.Path):
+    spec = importlib.util.spec_from_file_location(
+        "papersoccer_jacek_native_round2_activation_purity", path
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError("cannot load round-two activation contract")
+    activation = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, activation)
+    spec.loader.exec_module(activation)
+    return activation
+
+
+def _validate_round1_header(
+    repository_root: pathlib.Path,
+    bot_directory: pathlib.Path,
+    production_files: list[pathlib.Path],
+) -> None:
+    header_path = (bot_directory / "jacek_native_model.hpp").resolve()
+    if header_path not in production_files:
+        return
+    exporter_path = (
+        repository_root
+        / "submissions/codingame/tools/generate_jacek_native_model.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "papersoccer_jacek_native_round1_exporter_purity", exporter_path
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError("cannot load frozen round-one model exporter")
+    exporter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(exporter)
+    model_path = repository_root / ROUND1_PURITY_DEPENDENCIES[0]
+    model_raw = model_path.read_bytes()
+    model = json.loads(model_raw)
+    expected, _ = exporter.render(
+        model, hashlib.sha256(model_raw).hexdigest()
+    )
+    if header_path.read_text(encoding="utf-8") != expected:
+        raise ValueError("active round-one model header is stale")
+
+
 def purity_violations(
     bot_directory: pathlib.Path = BOT_DIRECTORY,
     repository_root: pathlib.Path = REPOSITORY_ROOT,
 ) -> list[str]:
     repository_root = repository_root.resolve()
     config, files = production_files(bot_directory.resolve(), repository_root)
-    track = _purity_track(config)
-    model = _validate_model_provenance(repository_root, track)
+    deployment_path = repository_root / ROUND2_DEPLOYMENT_PATH
+    activated = None
+    if deployment_path.is_file():
+        activation_path = (
+            repository_root
+            / "submissions/codingame/tools/jacek_native_round2_activation.py"
+        )
+        activation = _load_round2_activation(activation_path)
+        activated = activation.load_deployment(
+            deployment_path, repository_root
+        )
+        expected_model_path = (
+            repository_root / ROUND2_PURITY_DEPENDENCIES[0]
+        ).resolve()
+        if activated["model_path"] != expected_model_path:
+            raise ValueError(
+                "round-two deployment does not use the frozen candidate model path"
+            )
+        if activated["selection_path"] != (
+            repository_root / ROUND2_SELECTION_PATH
+        ).resolve() or activated["runtime_path"] != (
+            repository_root / ROUND2_RUNTIME_PATH
+        ).resolve():
+            raise ValueError(
+                "round-two deployment does not use the frozen selection/runtime paths"
+            )
+        track = "round2"
+        model = _validate_native_model_provenance(
+            activated["model_path"],
+            repository_root / "tools/train_jacek_native_round2.py",
+            repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0],
+            track,
+        )
+        expected_header, _ = activation.render_deployment(activated)
+        header_path = bot_directory / "jacek_native_model.hpp"
+        if header_path.read_text(encoding="utf-8") != expected_header:
+            raise ValueError("active round-two model header is stale")
+        for relative in ROUND2_PURITY_DEPENDENCIES:
+            path = repository_root / relative
+            if not path.is_file():
+                raise ValueError(f"missing round-two purity dependency: {relative}")
+            if path not in files:
+                files.append(path)
+        for path in (
+            deployment_path,
+            activated["selection_path"],
+            activated["runtime_path"],
+            activated["baseline_model_path"],
+            activated["baseline_runtime_path"],
+            *activated["evidence_paths"],
+        ):
+            if path not in files:
+                files.append(path)
+        config = dict(config)
+        config["native_checkpoint_provenance"] = []
+        for checkpoint in activated["checkpoint_paths"]:
+            model_path = checkpoint["model"]
+            runtime_path = checkpoint["runtime"]
+            if model_path == activated["model_path"]:
+                raise ValueError(
+                    "native checkpoint provenance must not self-reference the "
+                    "active round-two model"
+                )
+            config["native_checkpoint_provenance"].append({
+                "model": model_path.relative_to(repository_root).as_posix(),
+                "runtime": runtime_path.relative_to(repository_root).as_posix(),
+            })
+            for path in (model_path, runtime_path):
+                if path not in files:
+                    files.append(path)
+    else:
+        track = _purity_track(config)
+        model = _validate_model_provenance(repository_root, track)
+        if track == "round1":
+            _validate_round1_header(repository_root, bot_directory, files)
     seed_identity = _validate_seed_provenance(repository_root)
     _validate_checkpoint_provenance(
         repository_root, config, model, seed_identity, track

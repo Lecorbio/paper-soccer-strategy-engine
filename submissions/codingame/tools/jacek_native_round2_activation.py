@@ -1,0 +1,1137 @@
+#!/usr/bin/env python3
+"""Activate one immutable Jacek-native round-two selection.
+
+The trained model remains pending (`chosen_seed: null`).  A selection sidecar
+names the tested seed and runtime; this tool binds those immutable files in a
+small deployment descriptor and is the only production header-generation path
+for round two.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import hashlib
+import json
+import math
+import pathlib
+import sys
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+
+TOOL_DIRECTORY = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+REPOSITORY_TOOLS = ROOT / "tools"
+for directory in (TOOL_DIRECTORY, REPOSITORY_TOOLS):
+    if str(directory) in sys.path:
+        sys.path.remove(str(directory))
+sys.path[:0] = [str(TOOL_DIRECTORY), str(REPOSITORY_TOOLS)]
+
+import generate_jacek_native_model_round2 as round2_exporter  # noqa: E402
+import jacek_native_round2_selection as selection_tool  # noqa: E402
+
+
+def _validate_module_origins() -> None:
+    expected_modules = (
+        (
+            round2_exporter,
+            TOOL_DIRECTORY / "generate_jacek_native_model_round2.py",
+        ),
+        (
+            round2_exporter.round1_exporter,
+            TOOL_DIRECTORY / "generate_jacek_native_model.py",
+        ),
+        (
+            selection_tool,
+            REPOSITORY_TOOLS / "jacek_native_round2_selection.py",
+        ),
+        (
+            selection_tool.round1_exporter,
+            TOOL_DIRECTORY / "generate_jacek_native_model.py",
+        ),
+        (
+            selection_tool.round2_exporter,
+            TOOL_DIRECTORY / "generate_jacek_native_model_round2.py",
+        ),
+    )
+    for module, expected_path in expected_modules:
+        expected_path = expected_path.resolve()
+        actual_path = pathlib.Path(getattr(module, "__file__", "")).resolve()
+        if actual_path != expected_path:
+            raise ImportError(
+                f"native activation module origin mismatch: {actual_path} != "
+                f"{expected_path}"
+            )
+
+
+_validate_module_origins()
+
+
+DEPLOYMENT_SCHEMA = "papersoccer.jacek-native-round2-deployment/v1"
+DEFAULT_DEPLOYMENT = ROOT / "models/jacek_native_round2_deployment.json"
+DEFAULT_HEADER = (
+    ROOT / "submissions/codingame/bots/jacek_native_bfm/"
+    "jacek_native_model.hpp"
+)
+SELECTION_SCHEMAS = {
+    selection_tool.SELECTION_SCHEMA: ("promotion", True),
+    selection_tool.EXPLORATORY_SELECTION_SCHEMA: ("exploratory", False),
+}
+EVIDENCE_DIRECTORY = pathlib.PurePosixPath(
+    "models/jacek_native_round2_gate_evidence"
+)
+MODEL_ARTIFACT_DIRECTORY = pathlib.PurePosixPath("models")
+UNTRAINED_DESCRIPTOR = pathlib.PurePosixPath(
+    "models/jacek_native_untrained_seed.json"
+)
+UNTRAINED_RUNTIME = pathlib.PurePosixPath(
+    "models/jacek_native_untrained_seed.runtime"
+)
+UNTRAINED_GENERATOR = pathlib.PurePosixPath(
+    "tools/generate_jacek_native_seed.py"
+)
+CANONICAL_BASELINE_MODEL = pathlib.PurePosixPath(
+    "models/jacek_native_bootstrap_model.json"
+)
+CANONICAL_BASELINE_RUNTIME = pathlib.PurePosixPath(
+    "models/jacek_native_bootstrap_seed_20260813.runtime"
+)
+CANONICAL_BASELINE_SEED = 20260813
+CANONICAL_BASELINE_MODEL_SHA256 = (
+    "19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc"
+)
+CANONICAL_BASELINE_RUNTIME_SHA256 = (
+    "877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d"
+)
+
+
+class ActivationError(ValueError):
+    """An immutable selection or deployment binding is invalid."""
+
+
+def _sha256(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return selection_tool.canonical_json_bytes(value)
+
+
+def _load_canonical(path: pathlib.Path, label: str) -> tuple[bytes, Any]:
+    try:
+        raw = path.read_bytes()
+        value = selection_tool._strict_json(raw, label)
+    except (OSError, selection_tool.SelectionError) as error:
+        raise ActivationError(f"cannot validate {label}: {path}") from error
+    return raw, value
+
+
+def _contained(root: pathlib.Path, path: pathlib.Path, label: str) -> pathlib.Path:
+    root = root.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise ActivationError(f"{label} escapes the repository: {path}") from error
+    return resolved
+
+
+def _relative(root: pathlib.Path, path: pathlib.Path, label: str) -> str:
+    return _contained(root, path, label).relative_to(root.resolve()).as_posix()
+
+
+def _resolve_relative(root: pathlib.Path, value: object, label: str) -> pathlib.Path:
+    if not isinstance(value, str) or not value or pathlib.PurePath(value).is_absolute():
+        raise ActivationError(f"{label} must be a repository-relative path")
+    return _contained(root, root / value, label)
+
+
+def validate_selection(
+    model_path: pathlib.Path,
+    selection_path: pathlib.Path,
+    *,
+    baseline_model: pathlib.Path,
+    baseline_seed: int,
+    baseline_runtime: pathlib.Path,
+    report_paths: Sequence[pathlib.Path],
+) -> dict[str, Any]:
+    model_raw, model = _load_canonical(model_path, "round-two model")
+    sidecar_raw, sidecar = _load_canonical(selection_path, "selection sidecar")
+    if not isinstance(model, Mapping) or not isinstance(sidecar, Mapping):
+        raise ActivationError("model and selection roots must be objects")
+    if sidecar.get("schema") not in SELECTION_SCHEMAS:
+        raise ActivationError("selection sidecar schema is not deployable")
+    try:
+        expected = selection_tool.finalize_selection(
+            model_path=model_path,
+            baseline_model=baseline_model,
+            baseline_seed=baseline_seed,
+            baseline_runtime=baseline_runtime,
+            report_paths=report_paths,
+            output=None,
+            exploratory=(
+                sidecar.get("schema")
+                == selection_tool.EXPLORATORY_SELECTION_SCHEMA
+            ),
+        )
+    except (OSError, selection_tool.SelectionError) as error:
+        raise ActivationError(
+            "selection cannot be reproduced from frozen gate evidence"
+        ) from error
+    if sidecar_raw != _canonical_json_bytes(expected):
+        raise ActivationError(
+            "selection does not match deterministic frozen gate evidence"
+        )
+
+    model_sha = _sha256(model_raw)
+    selected = expected["selected"]
+    runtime_raw = round2_exporter.render_runtime(
+        model, model_sha, selected["seed"]
+    ).encode()
+
+    return {
+        "decision": dict(expected["decision"]),
+        "model": model,
+        "model_bytes": model_raw,
+        "model_sha256": model_sha,
+        "runtime_bytes": runtime_raw,
+        "selected": dict(selected),
+        "selection": expected,
+        "selection_bytes": sidecar_raw,
+        "selection_sha256": _sha256(sidecar_raw),
+    }
+
+
+def _file_identity(
+    root: pathlib.Path, path: pathlib.Path, label: str
+) -> dict[str, Any]:
+    resolved = _contained(root, path, label)
+    raw = resolved.read_bytes()
+    return {
+        "path": resolved.relative_to(root.resolve()).as_posix(),
+        "sha256": _sha256(raw),
+        "bytes": len(raw),
+    }
+
+
+def _validate_file_identity(
+    root: pathlib.Path, identity: object, label: str
+) -> pathlib.Path:
+    if (
+        not isinstance(identity, Mapping)
+        or set(identity) != {"path", "sha256", "bytes"}
+        or not _valid_sha256(identity.get("sha256"))
+        or isinstance(identity.get("bytes"), bool)
+        or not isinstance(identity.get("bytes"), int)
+        or identity["bytes"] <= 0
+    ):
+        raise ActivationError(f"{label} file identity is malformed")
+    path = _resolve_relative(root, identity["path"], label)
+    raw = path.read_bytes()
+    if _sha256(raw) != identity["sha256"] or len(raw) != identity["bytes"]:
+        raise ActivationError(f"{label} bytes are stale")
+    return path
+
+
+def _validate_canonical_baseline(
+    root: pathlib.Path,
+    model_path: pathlib.Path,
+    seed: int,
+    runtime_path: pathlib.Path,
+) -> None:
+    root = root.resolve()
+    if (
+        _relative(root, model_path, "baseline model")
+        != CANONICAL_BASELINE_MODEL.as_posix()
+        or _relative(root, runtime_path, "baseline runtime")
+        != CANONICAL_BASELINE_RUNTIME.as_posix()
+        or seed != CANONICAL_BASELINE_SEED
+        or _sha256(model_path.read_bytes()) != CANONICAL_BASELINE_MODEL_SHA256
+        or _sha256(runtime_path.read_bytes())
+        != CANONICAL_BASELINE_RUNTIME_SHA256
+    ):
+        raise ActivationError(
+            "deployment baseline is not the frozen canonical bootstrap"
+        )
+
+
+def _require_evidence_path(
+    root: pathlib.Path, path: pathlib.Path, label: str
+) -> pathlib.Path:
+    resolved = _contained(root, path, label)
+    relative = pathlib.PurePosixPath(
+        resolved.relative_to(root.resolve()).as_posix()
+    )
+    try:
+        relative.relative_to(EVIDENCE_DIRECTORY)
+    except ValueError as error:
+        raise ActivationError(
+            f"{label} must be installed under {EVIDENCE_DIRECTORY}"
+        ) from error
+    return resolved
+
+
+def _require_model_artifact_path(
+    root: pathlib.Path, path: pathlib.Path, label: str, suffix: str
+) -> pathlib.Path:
+    resolved = _contained(root, path, label)
+    relative = pathlib.PurePosixPath(
+        resolved.relative_to(root.resolve()).as_posix()
+    )
+    try:
+        relative.relative_to(MODEL_ARTIFACT_DIRECTORY)
+    except ValueError as error:
+        raise ActivationError(
+            f"{label} must be installed under {MODEL_ARTIFACT_DIRECTORY}"
+        ) from error
+    if resolved.suffix != suffix:
+        raise ActivationError(f"{label} must use the {suffix} suffix")
+    return resolved
+
+
+def _gate_evidence_identities(
+    root: pathlib.Path, report_paths: Sequence[pathlib.Path]
+) -> tuple[list[dict[str, Any]], list[pathlib.Path]]:
+    try:
+        reports = selection_tool._report_paths(report_paths)
+    except selection_tool.SelectionError as error:
+        raise ActivationError("gate report set is invalid") from error
+    entries: list[dict[str, Any]] = []
+    for report_path in reports:
+        report_path = _require_evidence_path(root, report_path, "gate report")
+        _, report = _load_canonical(report_path, "gate report")
+        candidate = report.get("candidate") if isinstance(report, Mapping) else None
+        profile = report.get("profile") if isinstance(report, Mapping) else None
+        stdout = report.get("stdout") if isinstance(report, Mapping) else None
+        seed = candidate.get("seed") if isinstance(candidate, Mapping) else None
+        profile_name = profile.get("name") if isinstance(profile, Mapping) else None
+        stdout_name = stdout.get("path") if isinstance(stdout, Mapping) else None
+        if (
+            isinstance(seed, bool)
+            or not isinstance(seed, int)
+            or seed < 0
+            or profile_name not in selection_tool.PROFILES
+            or not isinstance(stdout_name, str)
+            or pathlib.PurePath(stdout_name).name != stdout_name
+        ):
+            raise ActivationError("gate evidence index is malformed")
+        stdout_path = _require_evidence_path(
+            root, report_path.parent / stdout_name, "gate stdout"
+        )
+        entries.append({
+            "seed": seed,
+            "profile": profile_name,
+            "report": _file_identity(root, report_path, "gate report"),
+            "stdout": _file_identity(root, stdout_path, "gate stdout"),
+        })
+    entries.sort(key=lambda entry: (entry["seed"], entry["profile"]))
+    keys = [(entry["seed"], entry["profile"]) for entry in entries]
+    if len(keys) != len(set(keys)):
+        raise ActivationError("gate evidence declarations are duplicated")
+    return entries, [
+        _resolve_relative(root, entry["report"]["path"], "gate report")
+        for entry in entries
+    ]
+
+
+def _load_gate_evidence(
+    root: pathlib.Path, value: object
+) -> tuple[list[pathlib.Path], list[pathlib.Path]]:
+    if not isinstance(value, list) or not value:
+        raise ActivationError("deployment gate evidence is missing")
+    report_paths: list[pathlib.Path] = []
+    all_paths: list[pathlib.Path] = []
+    keys: list[tuple[int, str]] = []
+    for entry in value:
+        if not isinstance(entry, Mapping) or set(entry) != {
+            "seed", "profile", "report", "stdout"
+        }:
+            raise ActivationError("deployment gate evidence is malformed")
+        seed = entry.get("seed")
+        profile = entry.get("profile")
+        if (
+            isinstance(seed, bool)
+            or not isinstance(seed, int)
+            or seed < 0
+            or profile not in selection_tool.PROFILES
+        ):
+            raise ActivationError("deployment gate evidence key is malformed")
+        report_path = _validate_file_identity(
+            root, entry.get("report"), "gate report"
+        )
+        stdout_path = _validate_file_identity(
+            root, entry.get("stdout"), "gate stdout"
+        )
+        _require_evidence_path(root, report_path, "gate report")
+        _require_evidence_path(root, stdout_path, "gate stdout")
+        _, report = _load_canonical(report_path, "gate report")
+        expected_candidate = (
+            report.get("candidate") if isinstance(report, Mapping) else None
+        )
+        expected_profile = (
+            report.get("profile") if isinstance(report, Mapping) else None
+        )
+        expected_stdout = (
+            report.get("stdout") if isinstance(report, Mapping) else None
+        )
+        if (
+            not isinstance(report, Mapping)
+            or not isinstance(expected_candidate, Mapping)
+            or expected_candidate.get("seed") != seed
+            or not isinstance(expected_profile, Mapping)
+            or expected_profile.get("name") != profile
+            or not isinstance(expected_stdout, Mapping)
+            or report_path.parent / expected_stdout.get("path", "")
+            != stdout_path
+            or expected_stdout.get("sha256") != entry["stdout"]["sha256"]
+            or expected_stdout.get("bytes") != entry["stdout"]["bytes"]
+        ):
+            raise ActivationError("gate report/stdout binding is stale")
+        keys.append((seed, profile))
+        report_paths.append(report_path)
+        all_paths.extend((report_path, stdout_path))
+    if keys != sorted(keys) or len(keys) != len(set(keys)):
+        raise ActivationError("gate evidence declarations are not canonical")
+    return report_paths, all_paths
+
+
+def _runtime_identity(raw: bytes, label: str) -> dict[str, str]:
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeError as error:
+        raise ActivationError(f"{label} is not UTF-8") from error
+    if (
+        len(lines) != 7
+        or lines[:3] != [
+            "papersoccer.jacek-native-runtime-model/v1",
+            round2_exporter.MODEL_SCHEMA,
+            round2_exporter.FEATURE_SCHEMA,
+        ]
+        or not _valid_sha256(lines[3])
+        or not _valid_sha256(lines[4])
+    ):
+        raise ActivationError(f"{label} runtime metadata is malformed")
+    return {
+        "artifact_sha256": _sha256(raw),
+        "model_sha256": lines[3],
+        "packed_sha256": lines[4],
+    }
+
+
+def _checkpoint_provenance(
+    model: Mapping[str, Any], label: str
+) -> tuple[str, list[dict[str, str]]]:
+    generation = model.get("provenance", {}).get("generation")
+    checkpoint = (
+        generation.get("checkpoint_provenance")
+        if isinstance(generation, Mapping) else None
+    )
+    if (
+        not isinstance(checkpoint, Mapping)
+        or set(checkpoint) != {"mode", "artifacts"}
+    ):
+        raise ActivationError(f"{label} checkpoint provenance is malformed")
+    mode = checkpoint.get("mode")
+    if mode not in {
+        "untrained-seed-bootstrap/v1",
+        "native-runtime-models/v1",
+        "cumulative-native-runtime-models/v2",
+    }:
+        raise ActivationError(f"{label} checkpoint provenance mode is invalid")
+    artifacts = checkpoint.get("artifacts")
+    normalized: list[dict[str, str]] = []
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ActivationError(f"{label} checkpoint provenance is empty")
+    for artifact in artifacts:
+        if (
+            not isinstance(artifact, Mapping)
+            or set(artifact) != {
+                "artifact_sha256", "model_sha256", "packed_sha256"
+            }
+            or not all(_valid_sha256(artifact.get(field)) for field in artifact)
+        ):
+            raise ActivationError(f"{label} checkpoint identity is malformed")
+        normalized.append(dict(artifact))
+    key = lambda item: (
+        item["artifact_sha256"], item["model_sha256"], item["packed_sha256"]
+    )
+    if normalized != sorted(normalized, key=key) or len({
+        item["artifact_sha256"] for item in normalized
+    }) != len(normalized):
+        raise ActivationError(
+            f"{label} checkpoint identities are not canonical/unique"
+        )
+    if generation.get("model_artifact_sha256") != [
+        item["artifact_sha256"] for item in normalized
+    ]:
+        raise ActivationError(
+            f"{label} checkpoint artifact summary is incomplete"
+        )
+    return mode, normalized
+
+
+def _untrained_seed_identity(root: pathlib.Path) -> dict[str, str]:
+    descriptor_path = root / UNTRAINED_DESCRIPTOR
+    runtime_path = root / UNTRAINED_RUNTIME
+    generator_path = root / UNTRAINED_GENERATOR
+    descriptor_raw, descriptor = _load_canonical(
+        descriptor_path, "untrained seed descriptor"
+    )
+    runtime_raw = runtime_path.read_bytes()
+    identity = _runtime_identity(runtime_raw, "untrained seed")
+    if (
+        not isinstance(descriptor, Mapping)
+        or descriptor.get("schema")
+        != "papersoccer.jacek-native-untrained-seed/v1"
+        or descriptor.get("model_schema") != round2_exporter.MODEL_SCHEMA
+        or descriptor.get("feature_schema") != round2_exporter.FEATURE_SCHEMA
+        or descriptor.get("training") is not None
+        or descriptor.get("incumbent_dependencies") is not False
+        or descriptor.get("protected_data") is not False
+        or descriptor.get("generator_sha256")
+        != _sha256(generator_path.read_bytes())
+        or identity["model_sha256"] != _sha256(descriptor_raw)
+    ):
+        raise ActivationError("untrained seed descriptor/runtime is stale")
+    lines = runtime_raw.decode("utf-8").splitlines()
+    try:
+        payload = base64.b64decode(lines[6], validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ActivationError("untrained seed payload is invalid") from error
+    weights = descriptor.get("weights")
+    counts = weights.get("counts") if isinstance(weights, Mapping) else None
+    scales = weights.get("scales") if isinstance(weights, Mapping) else None
+    try:
+        runtime_scales = [float(value) for value in lines[5].split()]
+        descriptor_scales = [
+            float(scales[name]) for name in ("w1", "w2", "w3")
+        ]
+    except (KeyError, OverflowError, TypeError, ValueError) as error:
+        raise ActivationError("untrained seed scales are invalid") from error
+    if (
+        not isinstance(counts, Mapping)
+        or set(counts) != {"w1", "w2", "w3"}
+        or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in counts.values()
+        )
+        or len(payload) != (sum(counts.values()) * 3 + 7) // 8
+        or _sha256(payload) != identity["packed_sha256"]
+        or weights.get("packed_sha256") != identity["packed_sha256"]
+        or runtime_scales != descriptor_scales
+        or len(runtime_scales) != 3
+        or any(not math.isfinite(value) or value <= 0.0 for value in runtime_scales)
+    ):
+        raise ActivationError("untrained seed runtime payload is stale")
+    return identity
+
+
+def _checkpoint_model_identity(
+    model_path: pathlib.Path, runtime_path: pathlib.Path
+) -> tuple[dict[str, str], Mapping[str, Any]]:
+    model_raw, model = _load_canonical(model_path, "checkpoint model")
+    if not isinstance(model, Mapping):
+        raise ActivationError("checkpoint model root is not an object")
+    trainer_sha = model.get("provenance", {}).get("trainer_sha256")
+    round1 = selection_tool.round1_exporter
+    if trainer_sha == _sha256(round1.TRAINER.read_bytes()):
+        exporter = round1
+    elif trainer_sha == _sha256(round2_exporter.ROUND2_TRAINER.read_bytes()):
+        exporter = round2_exporter
+    else:
+        raise ActivationError("checkpoint model trainer lineage is unrecognized")
+    try:
+        exporter.validate_model(model)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ActivationError("checkpoint model export contract is invalid") from error
+    runtime_raw = runtime_path.read_bytes()
+    model_sha = _sha256(model_raw)
+    checkpoints = model.get("checkpoints")
+    seeds = [
+        checkpoint.get("seed") for checkpoint in checkpoints or []
+        if isinstance(checkpoint, Mapping)
+    ]
+    matches = []
+    for seed in seeds:
+        try:
+            rendered = exporter.render_runtime(model, model_sha, seed).encode()
+        except (KeyError, TypeError, ValueError) as error:
+            raise ActivationError(
+                "checkpoint model retained runtime cannot be exported"
+            ) from error
+        if rendered == runtime_raw:
+            matches.append(seed)
+    if len(matches) != 1:
+        raise ActivationError(
+            "checkpoint runtime is not one exact unique retained model export"
+        )
+    return _runtime_identity(runtime_raw, "checkpoint"), model
+
+
+def _validate_checkpoint_ancestry(
+    root: pathlib.Path,
+    active_model_path: pathlib.Path,
+    active_model: Mapping[str, Any],
+    checkpoint_pairs: Sequence[tuple[pathlib.Path, pathlib.Path]],
+) -> None:
+    root = root.resolve()
+    seed_identity = _untrained_seed_identity(root)
+    active_mode, active_artifacts = _checkpoint_provenance(
+        active_model, "active round-two model"
+    )
+    declarations: dict[
+        str, tuple[dict[str, str], Mapping[str, Any], pathlib.Path]
+    ] = {}
+    seen_pairs: set[tuple[pathlib.Path, pathlib.Path]] = set()
+    seen_runtimes: set[pathlib.Path] = set()
+    for index, (model_path, runtime_path) in enumerate(checkpoint_pairs):
+        model_path = _contained(root, model_path, f"checkpoint {index} model")
+        runtime_path = _contained(root, runtime_path, f"checkpoint {index} runtime")
+        if model_path == active_model_path.resolve():
+            raise ActivationError(
+                "checkpoint ancestry must not self-reference the active model"
+            )
+        pair = (model_path, runtime_path)
+        if pair in seen_pairs or runtime_path in seen_runtimes:
+            raise ActivationError("checkpoint file declarations are duplicated")
+        seen_pairs.add(pair)
+        seen_runtimes.add(runtime_path)
+        identity, model = _checkpoint_model_identity(model_path, runtime_path)
+        artifact_sha = identity["artifact_sha256"]
+        if artifact_sha in declarations:
+            raise ActivationError("checkpoint runtime artifacts are duplicated")
+        declarations[artifact_sha] = (identity, model, model_path)
+
+    if active_mode == "untrained-seed-bootstrap/v1":
+        if active_artifacts != [seed_identity] or declarations:
+            raise ActivationError(
+                "bootstrap ancestry must contain only the exact untrained seed"
+            )
+        return
+    cumulative = active_mode == "cumulative-native-runtime-models/v2"
+    if active_mode != "native-runtime-models/v1" and not cumulative:
+        raise ActivationError("unsupported active checkpoint provenance mode")
+    if not cumulative and seed_identity in active_artifacts:
+        raise ActivationError("native ancestry must not mix the untrained seed")
+    if cumulative and (
+        seed_identity not in active_artifacts or len(active_artifacts) < 2
+    ):
+        raise ActivationError(
+            "cumulative ancestry requires the seed root and a native checkpoint"
+        )
+    if not declarations:
+        raise ActivationError(
+            "native checkpoint ancestry requires file-backed declarations"
+        )
+
+    reachable: set[str] = set()
+    visiting: set[str] = set()
+
+    def validate_lineage(identity: dict[str, str]) -> None:
+        if identity == seed_identity:
+            return
+        artifact_sha = identity["artifact_sha256"]
+        declaration = declarations.get(artifact_sha)
+        if declaration is None or declaration[0] != identity:
+            raise ActivationError(
+                "checkpoint artifacts do not match file-backed ancestry"
+            )
+        if artifact_sha in visiting:
+            raise ActivationError("checkpoint ancestry contains a cycle")
+        if artifact_sha in reachable:
+            return
+        visiting.add(artifact_sha)
+        _, parent_model, parent_path = declaration
+        parent_mode, parents = _checkpoint_provenance(
+            parent_model,
+            f"checkpoint model {_relative(root, parent_path, 'checkpoint model')}",
+        )
+        if parent_mode == "untrained-seed-bootstrap/v1":
+            if parents != [seed_identity]:
+                raise ActivationError(
+                    "checkpoint bootstrap ancestry is not the exact seed root"
+                )
+        elif parent_mode in {
+            "native-runtime-models/v1", "cumulative-native-runtime-models/v2"
+        }:
+            parent_cumulative = (
+                parent_mode == "cumulative-native-runtime-models/v2"
+            )
+            if seed_identity in parents and not parent_cumulative:
+                raise ActivationError(
+                    "native checkpoint ancestry illegally mixes the seed root"
+                )
+            if parent_cumulative and seed_identity not in parents:
+                raise ActivationError(
+                    "cumulative checkpoint ancestry omits its seed root"
+                )
+            for parent in parents:
+                validate_lineage(parent)
+        else:
+            raise ActivationError("unsupported checkpoint ancestry mode")
+        visiting.remove(artifact_sha)
+        reachable.add(artifact_sha)
+
+    for artifact in active_artifacts:
+        validate_lineage(artifact)
+    if reachable != set(declarations):
+        raise ActivationError(
+            "checkpoint ancestry contains unused file declarations"
+        )
+
+
+def create_deployment(
+    *,
+    model_path: pathlib.Path,
+    selection_path: pathlib.Path,
+    runtime_path: pathlib.Path,
+    baseline_model: pathlib.Path,
+    baseline_seed: int,
+    baseline_runtime: pathlib.Path,
+    report_paths: Sequence[pathlib.Path],
+    checkpoint_pairs: Sequence[tuple[pathlib.Path, pathlib.Path]],
+    output: pathlib.Path,
+    repository_root: pathlib.Path = ROOT,
+) -> dict[str, Any]:
+    repository_root = repository_root.resolve()
+    output = _contained(repository_root, output, "deployment output")
+    if output.exists():
+        raise ActivationError("refusing to overwrite immutable deployment")
+    model_path = _require_model_artifact_path(
+        repository_root, model_path, "round-two model", ".json"
+    )
+    selection_path = _require_model_artifact_path(
+        repository_root, selection_path, "selection sidecar", ".json"
+    )
+    runtime_path = _require_model_artifact_path(
+        repository_root, runtime_path, "selected runtime", ".runtime"
+    )
+    baseline_model = _require_model_artifact_path(
+        repository_root, baseline_model, "baseline model", ".json"
+    )
+    baseline_runtime = _require_model_artifact_path(
+        repository_root, baseline_runtime, "baseline runtime", ".runtime"
+    )
+    if (
+        isinstance(baseline_seed, bool)
+        or not isinstance(baseline_seed, int)
+        or baseline_seed < 0
+    ):
+        raise ActivationError("baseline seed is invalid")
+    _validate_canonical_baseline(
+        repository_root,
+        baseline_model,
+        baseline_seed,
+        baseline_runtime,
+    )
+    evidence, canonical_reports = _gate_evidence_identities(
+        repository_root, report_paths
+    )
+    validated = validate_selection(
+        model_path,
+        selection_path,
+        baseline_model=baseline_model,
+        baseline_seed=baseline_seed,
+        baseline_runtime=baseline_runtime,
+        report_paths=canonical_reports,
+    )
+    runtime_raw = _contained(
+        repository_root, runtime_path, "selected runtime"
+    ).read_bytes()
+    if runtime_raw != validated["runtime_bytes"]:
+        raise ActivationError("installed runtime is not the selected tested runtime")
+    normalized_pairs = [
+        (
+            _require_model_artifact_path(
+                repository_root, model, "checkpoint model", ".json"
+            ),
+            _require_model_artifact_path(
+                repository_root, runtime, "checkpoint runtime", ".runtime"
+            ),
+        )
+        for model, runtime in checkpoint_pairs
+    ]
+    _validate_checkpoint_ancestry(
+        repository_root, model_path, validated["model"], normalized_pairs
+    )
+    checkpoints = []
+    for model, runtime in normalized_pairs:
+        checkpoints.append({
+            "model": _file_identity(
+                repository_root, model, "checkpoint model"
+            ),
+            "runtime": _file_identity(
+                repository_root, runtime, "checkpoint runtime"
+            ),
+        })
+    checkpoints.sort(key=lambda item: (
+        item["model"]["path"], item["runtime"]["path"]
+    ))
+    if len({
+        (item["model"]["path"], item["runtime"]["path"])
+        for item in checkpoints
+    }) != len(checkpoints):
+        raise ActivationError("checkpoint provenance declarations are duplicated")
+    descriptor = {
+        "schema": DEPLOYMENT_SCHEMA,
+        "decision": validated["decision"],
+        "model": _file_identity(repository_root, model_path, "round-two model"),
+        "selection": {
+            **_file_identity(
+                repository_root, selection_path, "selection sidecar"
+            ),
+            "payload_sha256": validated["selection"][
+                "selection_payload_sha256"
+            ],
+        },
+        "runtime": {
+            **_file_identity(
+                repository_root, runtime_path, "selected runtime"
+            ),
+            "packed_sha256": validated["selected"]["packed_sha256"],
+        },
+        "baseline": {
+            "seed": baseline_seed,
+            "model": _file_identity(
+                repository_root, baseline_model, "baseline model"
+            ),
+            "runtime": _file_identity(
+                repository_root, baseline_runtime, "baseline runtime"
+            ),
+        },
+        "gate_evidence": evidence,
+        "selected_seed": validated["selected"]["seed"],
+        "native_checkpoint_provenance": checkpoints,
+        "activation_tool_sha256": _sha256(pathlib.Path(__file__).read_bytes()),
+        "selection_tool_sha256": _sha256(
+            pathlib.Path(selection_tool.__file__).read_bytes()
+        ),
+        "round2_exporter_sha256": _sha256(
+            pathlib.Path(round2_exporter.__file__).read_bytes()
+        ),
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with output.open("xb") as stream:
+            stream.write(_canonical_json_bytes(descriptor))
+    except FileExistsError as error:
+        raise ActivationError("refusing to overwrite immutable deployment") from error
+    return descriptor
+
+
+def load_deployment(
+    deployment_path: pathlib.Path,
+    repository_root: pathlib.Path = ROOT,
+) -> dict[str, Any]:
+    repository_root = repository_root.resolve()
+    descriptor_raw, descriptor = _load_canonical(
+        deployment_path, "round-two deployment"
+    )
+    expected_keys = {
+        "schema", "decision", "model", "selection", "runtime", "baseline",
+        "gate_evidence", "selected_seed", "native_checkpoint_provenance",
+        "activation_tool_sha256", "selection_tool_sha256",
+        "round2_exporter_sha256",
+    }
+    if (
+        not isinstance(descriptor, Mapping)
+        or set(descriptor) != expected_keys
+        or descriptor.get("schema") != DEPLOYMENT_SCHEMA
+    ):
+        raise ActivationError("deployment descriptor schema is not frozen")
+    if descriptor.get("activation_tool_sha256") != _sha256(
+        pathlib.Path(__file__).read_bytes()
+    ):
+        raise ActivationError("deployment activation-tool SHA-256 is stale")
+    if descriptor.get("selection_tool_sha256") != _sha256(
+        pathlib.Path(selection_tool.__file__).read_bytes()
+    ) or descriptor.get("round2_exporter_sha256") != _sha256(
+        pathlib.Path(round2_exporter.__file__).read_bytes()
+    ):
+        raise ActivationError("deployment selector/exporter identity is stale")
+
+    resolved: dict[str, pathlib.Path] = {}
+    for name in ("model", "selection", "runtime"):
+        identity = descriptor.get(name)
+        extra = {"payload_sha256"} if name == "selection" else (
+            {"packed_sha256"} if name == "runtime" else set()
+        )
+        if (
+            not isinstance(identity, Mapping)
+            or set(identity) != {"path", "sha256", "bytes"} | extra
+            or not _valid_sha256(identity.get("sha256"))
+            or any(not _valid_sha256(identity.get(field)) for field in extra)
+            or isinstance(identity.get("bytes"), bool)
+            or not isinstance(identity.get("bytes"), int)
+            or identity["bytes"] <= 0
+        ):
+            raise ActivationError(f"deployment {name} identity is malformed")
+        path = _resolve_relative(repository_root, identity["path"], name)
+        raw = path.read_bytes()
+        if _sha256(raw) != identity["sha256"] or len(raw) != identity["bytes"]:
+            raise ActivationError(f"deployment {name} bytes are stale")
+        resolved[name] = path
+    _require_model_artifact_path(
+        repository_root, resolved["model"], "round-two model", ".json"
+    )
+    _require_model_artifact_path(
+        repository_root, resolved["selection"], "selection sidecar", ".json"
+    )
+    _require_model_artifact_path(
+        repository_root, resolved["runtime"], "selected runtime", ".runtime"
+    )
+
+    baseline = descriptor.get("baseline")
+    if (
+        not isinstance(baseline, Mapping)
+        or set(baseline) != {"seed", "model", "runtime"}
+        or isinstance(baseline.get("seed"), bool)
+        or not isinstance(baseline.get("seed"), int)
+        or baseline["seed"] < 0
+    ):
+        raise ActivationError("deployment baseline identity is malformed")
+    baseline_model = _validate_file_identity(
+        repository_root, baseline.get("model"), "baseline model"
+    )
+    baseline_runtime = _validate_file_identity(
+        repository_root, baseline.get("runtime"), "baseline runtime"
+    )
+    _require_model_artifact_path(
+        repository_root, baseline_model, "baseline model", ".json"
+    )
+    _require_model_artifact_path(
+        repository_root, baseline_runtime, "baseline runtime", ".runtime"
+    )
+    _validate_canonical_baseline(
+        repository_root,
+        baseline_model,
+        baseline["seed"],
+        baseline_runtime,
+    )
+    report_paths, evidence_paths = _load_gate_evidence(
+        repository_root, descriptor.get("gate_evidence")
+    )
+    validated = validate_selection(
+        resolved["model"],
+        resolved["selection"],
+        baseline_model=baseline_model,
+        baseline_seed=baseline["seed"],
+        baseline_runtime=baseline_runtime,
+        report_paths=report_paths,
+    )
+    if (
+        descriptor.get("decision") != validated["decision"]
+        or descriptor.get("selected_seed") != validated["selected"]["seed"]
+        or descriptor["selection"]["payload_sha256"]
+        != validated["selection"]["selection_payload_sha256"]
+        or descriptor["runtime"]["packed_sha256"]
+        != validated["selected"]["packed_sha256"]
+        or resolved["runtime"].read_bytes() != validated["runtime_bytes"]
+    ):
+        raise ActivationError("deployment contradicts the immutable selection")
+
+    checkpoints = descriptor.get("native_checkpoint_provenance")
+    if not isinstance(checkpoints, list):
+        raise ActivationError("deployment checkpoint provenance is missing")
+    normalized = []
+    seen: set[tuple[str, str]] = set()
+    for entry in checkpoints:
+        if not isinstance(entry, Mapping) or set(entry) != {"model", "runtime"}:
+            raise ActivationError("deployment checkpoint entry is malformed")
+        checked = {}
+        for name in ("model", "runtime"):
+            identity = entry.get(name)
+            if (
+                not isinstance(identity, Mapping)
+                or set(identity) != {"path", "sha256", "bytes"}
+                or not _valid_sha256(identity.get("sha256"))
+                or isinstance(identity.get("bytes"), bool)
+                or not isinstance(identity.get("bytes"), int)
+                or identity["bytes"] <= 0
+            ):
+                raise ActivationError("checkpoint file identity is malformed")
+            path = _resolve_relative(
+                repository_root, identity["path"], f"checkpoint {name}"
+            )
+            raw = path.read_bytes()
+            if _sha256(raw) != identity["sha256"] or len(raw) != identity["bytes"]:
+                raise ActivationError("checkpoint file bytes are stale")
+            checked[name] = path
+        _require_model_artifact_path(
+            repository_root, checked["model"], "checkpoint model", ".json"
+        )
+        _require_model_artifact_path(
+            repository_root, checked["runtime"], "checkpoint runtime", ".runtime"
+        )
+        key = (entry["model"]["path"], entry["runtime"]["path"])
+        if key in seen:
+            raise ActivationError("checkpoint declarations are duplicated")
+        seen.add(key)
+        normalized.append((key, checked))
+    if [item[0] for item in normalized] != sorted(item[0] for item in normalized):
+        raise ActivationError("checkpoint declarations are not canonical")
+    checkpoint_pairs = [
+        (item[1]["model"], item[1]["runtime"]) for item in normalized
+    ]
+    _validate_checkpoint_ancestry(
+        repository_root,
+        resolved["model"],
+        validated["model"],
+        checkpoint_pairs,
+    )
+
+    return {
+        **validated,
+        "checkpoint_paths": [item[1] for item in normalized],
+        "baseline_model_path": baseline_model,
+        "baseline_runtime_path": baseline_runtime,
+        "evidence_paths": evidence_paths,
+        "deployment": descriptor,
+        "deployment_bytes": descriptor_raw,
+        "deployment_path": deployment_path.resolve(),
+        "deployment_sha256": _sha256(descriptor_raw),
+        "model_path": resolved["model"],
+        "runtime_path": resolved["runtime"],
+        "selection_path": resolved["selection"],
+    }
+
+
+def render_deployment(validated: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    header, metadata = round2_exporter.render(
+        validated["model"],
+        validated["model_sha256"],
+        validated["selected"]["seed"],
+    )
+    return header, {
+        **metadata,
+        "deployment_sha256": validated["deployment_sha256"],
+        "selection_sha256": validated["selection_sha256"],
+        "selection_payload_sha256": validated["selection"][
+            "selection_payload_sha256"
+        ],
+        "runtime_sha256": validated["selected"]["runtime_sha256"],
+        "selection_kind": validated["decision"]["kind"],
+        "promotion_eligible": validated["decision"]["promotion_eligible"],
+    }
+
+
+def _write_or_check(path: pathlib.Path, raw: bytes, check: bool, label: str) -> None:
+    if check:
+        if not path.is_file() or path.read_bytes() != raw:
+            raise ActivationError(f"{label} is stale: {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    create = commands.add_parser("create", help="bind an immutable deployment")
+    create.add_argument("--model", type=pathlib.Path, required=True)
+    create.add_argument("--selection", type=pathlib.Path, required=True)
+    create.add_argument("--runtime", type=pathlib.Path, required=True)
+    create.add_argument("--baseline-model", type=pathlib.Path, required=True)
+    create.add_argument("--baseline-seed", type=int, required=True)
+    create.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    create.add_argument(
+        "--reports", nargs="+", type=pathlib.Path, required=True
+    )
+    create.add_argument(
+        "--checkpoint", nargs=2, action="append", default=[],
+        metavar=("MODEL", "RUNTIME"), type=pathlib.Path,
+    )
+    create.add_argument("--output", type=pathlib.Path, default=DEFAULT_DEPLOYMENT)
+
+    validate = commands.add_parser("validate", help="validate a deployment")
+    validate.add_argument(
+        "--deployment", type=pathlib.Path, default=DEFAULT_DEPLOYMENT
+    )
+
+    generate = commands.add_parser(
+        "generate", help="generate the exact selected production header"
+    )
+    generate.add_argument(
+        "--deployment", type=pathlib.Path, default=DEFAULT_DEPLOYMENT
+    )
+    generate.add_argument("--output", type=pathlib.Path, default=DEFAULT_HEADER)
+    generate.add_argument("--runtime-output", type=pathlib.Path)
+    generate.add_argument("--check", action="store_true")
+    generate.add_argument("--metadata", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = _parser().parse_args(argv)
+    try:
+        if arguments.command == "create":
+            descriptor = create_deployment(
+                model_path=arguments.model,
+                selection_path=arguments.selection,
+                runtime_path=arguments.runtime,
+                baseline_model=arguments.baseline_model,
+                baseline_seed=arguments.baseline_seed,
+                baseline_runtime=arguments.baseline_runtime,
+                report_paths=arguments.reports,
+                checkpoint_pairs=[tuple(pair) for pair in arguments.checkpoint],
+                output=arguments.output,
+            )
+            print(json.dumps({
+                "output": str(arguments.output),
+                "selected_seed": descriptor["selected_seed"],
+                "selection_kind": descriptor["decision"]["kind"],
+            }, indent=2, sort_keys=True))
+            return 0
+
+        validated = load_deployment(arguments.deployment)
+        if arguments.command == "validate":
+            print(json.dumps({
+                "deployment_sha256": validated["deployment_sha256"],
+                "promotion_eligible": validated["decision"][
+                    "promotion_eligible"
+                ],
+                "runtime_sha256": validated["selected"]["runtime_sha256"],
+                "selected_seed": validated["selected"]["seed"],
+                "selection_kind": validated["decision"]["kind"],
+            }, indent=2, sort_keys=True))
+            return 0
+
+        header, metadata = render_deployment(validated)
+        _write_or_check(
+            arguments.output, header.encode(), arguments.check, "model header"
+        )
+        if arguments.runtime_output is not None:
+            _write_or_check(
+                arguments.runtime_output,
+                validated["runtime_bytes"],
+                arguments.check,
+                "runtime checkpoint",
+            )
+        if arguments.metadata:
+            print(json.dumps(metadata, indent=2, sort_keys=True))
+        elif not arguments.check:
+            print(f"wrote {arguments.output}")
+        return 0
+    except (
+        ActivationError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        print(f"round-two activation failed: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -20,9 +20,22 @@ from typing import Mapping
 
 
 TOOL_DIRECTORY = pathlib.Path(__file__).resolve().parent
-if str(TOOL_DIRECTORY) not in sys.path:
-    sys.path.insert(0, str(TOOL_DIRECTORY))
+if str(TOOL_DIRECTORY) in sys.path:
+    sys.path.remove(str(TOOL_DIRECTORY))
+sys.path.insert(0, str(TOOL_DIRECTORY))
 import generate_jacek_native_model as round1_exporter  # noqa: E402
+
+EXPECTED_ROUND1_EXPORTER = (
+    TOOL_DIRECTORY / "generate_jacek_native_model.py"
+).resolve()
+ACTUAL_ROUND1_EXPORTER = pathlib.Path(
+    getattr(round1_exporter, "__file__", "")
+).resolve()
+if ACTUAL_ROUND1_EXPORTER != EXPECTED_ROUND1_EXPORTER:
+    raise ImportError(
+        "round-one exporter module origin mismatch: "
+        f"{ACTUAL_ROUND1_EXPORTER} != {EXPECTED_ROUND1_EXPORTER}"
+    )
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]

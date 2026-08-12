@@ -6,6 +6,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -388,6 +389,10 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
         trainer = root / "tools/train_jacek_native_round2.py"
         trainer.write_text("def train_round_two():\n    return None\n", encoding="utf-8")
         model_path = root / purity.ROUND2_PURITY_DEPENDENCIES[0]
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_path.write_bytes(
+            (root / purity.EXPECTED_PURITY_DEPENDENCIES[0]).read_bytes()
+        )
         model = json.loads(model_path.read_text(encoding="utf-8"))
         seed_runtime = root / "models/jacek_native_untrained_seed.runtime"
         seed_lines = seed_runtime.read_text(encoding="utf-8").splitlines()
@@ -449,9 +454,9 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             },
             "checkpoints": [checkpoint],
             "training": {
-                "seeds": [31], "chosen_seed": 31, "provisional_seed": 31,
+                "seeds": [31], "chosen_seed": None, "provisional_seed": 31,
                 "external_actual_clock_selection": {
-                    "required": True, "status": "complete",
+                    "required": True, "status": "pending",
                     "criterion": "native-actual-clock-match-strength",
                     "eligible_seed_order": [31],
                 },
@@ -496,6 +501,22 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             root, bot = self.fixture(temporary)
             self.assertEqual(purity.purity_violations(bot, root), [])
 
+    def test_round1_header_guard_rejects_stale_deployment_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bot = pathlib.Path(temporary) / "jacek_native_bfm"
+            bot.mkdir()
+            header = bot / "jacek_native_model.hpp"
+            canonical = (
+                ROOT
+                / "submissions/codingame/bots/jacek_native_bfm/"
+                "jacek_native_model.hpp"
+            ).read_bytes()
+            header.write_bytes(canonical)
+            purity._validate_round1_header(ROOT, bot, [header.resolve()])
+            header.write_bytes(canonical + b"// stale round-two bytes\n")
+            with self.assertRaisesRegex(ValueError, "round-one model header"):
+                purity._validate_round1_header(ROOT, bot, [header.resolve()])
+
     def test_round2_purity_branch_accepts_native_reanalysis_teacher_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, bot, _ = self.round2_fixture(temporary)
@@ -504,13 +525,12 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             )
             self.assertEqual(purity.purity_violations(bot, root), [])
 
-    def test_round2_purity_requires_completed_clock_selection_and_restart_hash(self):
+    def test_round2_purity_requires_immutable_pending_selection_and_restart_hash(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, bot, model_path = self.round2_fixture(temporary)
             model = json.loads(model_path.read_text(encoding="utf-8"))
-            model["training"]["external_actual_clock_selection"]["status"] = (
-                "pending"
-            )
+            model["training"]["chosen_seed"] = 31
+            model["training"]["external_actual_clock_selection"]["status"] = "complete"
             model_path.write_text(json.dumps(model), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "actual-clock selection"):
                 purity.purity_violations(bot, root)
@@ -522,6 +542,42 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             model_path.write_text(json.dumps(model), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "restart corpus-validator"):
                 purity.purity_violations(bot, root)
+
+    def test_deployment_routes_pending_model_through_activation_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, bot, model_path = self.round2_fixture(temporary)
+            deployment_path = root / purity.ROUND2_DEPLOYMENT_PATH
+            deployment_path.write_text("{}\n", encoding="utf-8")
+            selection_path = root / purity.ROUND2_SELECTION_PATH
+            runtime_path = root / purity.ROUND2_RUNTIME_PATH
+            selection_path.write_text("{}\n", encoding="utf-8")
+            runtime_path.write_text("selected runtime\n", encoding="utf-8")
+            header = "#pragma once\n// selected pending model\n"
+            (bot / "jacek_native_model.hpp").write_text(
+                header, encoding="utf-8"
+            )
+            activation = mock.Mock()
+            activation.load_deployment.return_value = {
+                "model_path": model_path.resolve(),
+                "selection_path": selection_path.resolve(),
+                "runtime_path": runtime_path.resolve(),
+                "checkpoint_paths": [],
+                "baseline_model_path": (
+                    root / "models/jacek_native_bootstrap_model.json"
+                ).resolve(),
+                "baseline_runtime_path": (
+                    root / "models/jacek_native_untrained_seed.runtime"
+                ).resolve(),
+                "evidence_paths": [],
+            }
+            activation.render_deployment.return_value = (header, {})
+            with mock.patch.object(
+                purity, "_load_round2_activation", return_value=activation
+            ):
+                self.assertEqual(purity.purity_violations(bot, root), [])
+            activation.load_deployment.assert_called_once_with(
+                deployment_path.resolve(), root.resolve()
+            )
 
     def test_incumbent_and_label_dependencies_are_rejected(self):
         forbidden = {

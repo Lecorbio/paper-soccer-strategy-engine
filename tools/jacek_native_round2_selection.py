@@ -27,14 +27,30 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXPORTER_DIRECTORY = ROOT / "submissions" / "codingame" / "tools"
-if str(EXPORTER_DIRECTORY) not in sys.path:
-    sys.path.insert(0, str(EXPORTER_DIRECTORY))
+if str(EXPORTER_DIRECTORY) in sys.path:
+    sys.path.remove(str(EXPORTER_DIRECTORY))
+sys.path.insert(0, str(EXPORTER_DIRECTORY))
 import generate_jacek_native_model as round1_exporter  # noqa: E402
 import generate_jacek_native_model_round2 as round2_exporter  # noqa: E402
+
+for module, expected_name in (
+    (round1_exporter, "generate_jacek_native_model.py"),
+    (round2_exporter, "generate_jacek_native_model_round2.py"),
+):
+    expected_path = (EXPORTER_DIRECTORY / expected_name).resolve()
+    actual_path = pathlib.Path(getattr(module, "__file__", "")).resolve()
+    if actual_path != expected_path:
+        raise ImportError(
+            f"native exporter module origin mismatch: {actual_path} != "
+            f"{expected_path}"
+        )
 
 
 REPORT_SCHEMA = "papersoccer.jacek-native-round2-gate-report/v1"
 SELECTION_SCHEMA = "papersoccer.jacek-native-round2-selection/v1"
+EXPLORATORY_SELECTION_SCHEMA = (
+    "papersoccer.jacek-native-round2-exploratory-selection/v1"
+)
 OPENING_TURNS = (0, 4, 8, 12)
 OPENING_SEED = 6_517_766_227_279_252_335
 MAXIMUM_TURNS = 384
@@ -76,7 +92,6 @@ PROFILES = {
 GATE_SOURCE_PATHS = (
     "tools/jacek_native_model_gate.cpp",
     "submissions/codingame/bots/jacek_native_bfm/bot.cpp",
-    "submissions/codingame/bots/jacek_native_bfm/jacek_native_model.hpp",
     "src/core/rules.cpp",
     "src/core/geometry.cpp",
     "src/bots/mcts_internal.hpp",
@@ -698,6 +713,48 @@ def _validation_mse(model: Mapping[str, Any], seed: int) -> float:
     return value
 
 
+def _operationally_clean(result: Mapping[str, Any]) -> bool:
+    return all(result.get(field) == 0 for field in (
+        "unfinished",
+        "candidate_headroom_failures",
+        "candidate_operational_timeouts",
+        "baseline_headroom_failures",
+        "baseline_operational_timeouts",
+    ))
+
+
+def _threshold_shortfalls(
+    reports: Mapping[tuple[int, str], tuple[dict[str, Any], str]],
+    seed: int,
+) -> list[dict[str, Any]]:
+    shortfalls: list[dict[str, Any]] = []
+    for profile_name in sorted(PROFILES):
+        profile = PROFILES[profile_name]
+        result = reports[(seed, profile_name)][0]["result"]
+        metrics = (
+            ("candidate_wins", result["candidate"],
+             profile.minimum_candidate_wins),
+            ("candidate_player_one_wins", result["candidate_player_one"],
+             profile.minimum_wins_per_color),
+            ("candidate_player_two_wins", result["candidate_player_two"],
+             profile.minimum_wins_per_color),
+        )
+        for metric, observed, required in metrics:
+            if observed < required:
+                shortfalls.append({
+                    "metric": metric,
+                    "observed": observed,
+                    "profile": profile_name,
+                    "required": required,
+                    "shortfall": required - observed,
+                })
+    if not shortfalls:
+        raise SelectionError(
+            "exploratory selection has no frozen strength-threshold shortfall"
+        )
+    return shortfalls
+
+
 def _selection_payload_hash(sidecar: Mapping[str, Any]) -> str:
     payload = dict(sidecar)
     payload.pop("selection_payload_sha256", None)
@@ -711,9 +768,10 @@ def finalize_selection(
     baseline_seed: int,
     baseline_runtime: pathlib.Path,
     report_paths: Sequence[pathlib.Path],
-    output: pathlib.Path,
+    output: pathlib.Path | None,
+    exploratory: bool = False,
 ) -> dict[str, Any]:
-    if output.exists():
+    if output is not None and output.exists():
         raise SelectionError("refusing to overwrite immutable selection sidecar")
     model_raw, model = _load_canonical(model_path, "round-two model")
     if not isinstance(model, Mapping):
@@ -771,6 +829,17 @@ def finalize_selection(
         raise SelectionError(
             f"gate report coverage is incomplete (missing={missing}, extra={extra})"
         )
+    gate_binaries = {
+        (
+            report["execution"]["gate_binary_sha256"],
+            report["execution"]["gate_binary_bytes"],
+        )
+        for report, _ in reports.values()
+    }
+    if len(gate_binaries) != 1:
+        raise SelectionError(
+            "all actual-clock reports must use one exact gate binary"
+        )
 
     ranking_rows = []
     for seed in seeds:
@@ -780,6 +849,10 @@ def finalize_selection(
         ranking_rows.append({
             "seed": seed,
             "passed": passed,
+            "operationally_clean": bool(
+                _operationally_clean(screen)
+                and _operationally_clean(decisive)
+            ),
             "decisive_wins": decisive["candidate"],
             "decisive_worst_color_wins": min(
                 decisive["candidate_player_one"],
@@ -792,9 +865,6 @@ def finalize_selection(
             ),
             "quantized_validation_outcome_mse": _validation_mse(model, seed),
         })
-    passing = [row for row in ranking_rows if row["passed"]]
-    if not passing:
-        raise SelectionError("no retained seed passed both frozen actual-clock gates")
     order_key = lambda row: (
         -row["decisive_wins"],
         -row["decisive_worst_color_wins"],
@@ -803,7 +873,27 @@ def finalize_selection(
         row["quantized_validation_outcome_mse"],
         row["seed"],
     )
-    ranked = sorted(passing, key=order_key)
+    passing = [row for row in ranking_rows if row["passed"]]
+    if exploratory:
+        if passing:
+            raise SelectionError(
+                "a retained seed passed both gates; canonical promotion is required"
+            )
+        eligible = [
+            row for row in ranking_rows
+            if row["operationally_clean"] and not row["passed"]
+        ]
+        if not eligible:
+            raise SelectionError(
+                "no failed seed is operationally clean in both frozen gates"
+            )
+    else:
+        if not passing:
+            raise SelectionError(
+                "no retained seed passed both frozen actual-clock gates"
+            )
+        eligible = passing
+    ranked = sorted(eligible, key=order_key)
     selected_seed = ranked[0]["seed"]
     selected = expected_candidates[selected_seed]
     report_index = [{
@@ -815,7 +905,17 @@ def finalize_selection(
         "passed": reports[(seed, profile)][0]["result"]["passed"],
     } for seed in sorted(seeds) for profile in sorted(PROFILES)]
     sidecar: dict[str, Any] = {
-        "schema": SELECTION_SCHEMA,
+        "schema": (
+            EXPLORATORY_SELECTION_SCHEMA if exploratory else SELECTION_SCHEMA
+        ),
+        "decision": {
+            "kind": "exploratory" if exploratory else "promotion",
+            "promotion_eligible": not exploratory,
+            "threshold_shortfalls": (
+                _threshold_shortfalls(reports, selected_seed)
+                if exploratory else []
+            ),
+        },
         "model": {
             "sha256": model_sha,
             "bytes": len(model_raw),
@@ -835,7 +935,10 @@ def finalize_selection(
                 "quantized-validation-outcome-mse-ascending",
                 "seed-ascending",
             ],
-            "passing_seeds": ranked,
+            (
+                "operationally_safe_failed_seeds"
+                if exploratory else "passing_seeds"
+            ): ranked,
         },
         "selected": {
             **selected,
@@ -849,9 +952,14 @@ def finalize_selection(
         ),
     }
     sidecar["selection_payload_sha256"] = _selection_payload_hash(sidecar)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _write_exclusive(output, canonical_json_bytes(sidecar))
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _write_exclusive(output, canonical_json_bytes(sidecar))
     return sidecar
+
+
+def finalize_exploratory_selection(**arguments: Any) -> dict[str, Any]:
+    return finalize_selection(**arguments, exploratory=True)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -879,6 +987,18 @@ def _parser() -> argparse.ArgumentParser:
     finalize.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
     finalize.add_argument("--reports", nargs="+", type=pathlib.Path, required=True)
     finalize.add_argument("--output", type=pathlib.Path, required=True)
+    exploratory = commands.add_parser(
+        "finalize-exploratory",
+        help="select the strongest operationally safe failed seed",
+    )
+    exploratory.add_argument("--model", type=pathlib.Path, required=True)
+    exploratory.add_argument("--baseline-model", type=pathlib.Path, required=True)
+    exploratory.add_argument("--baseline-seed", type=int, required=True)
+    exploratory.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    exploratory.add_argument(
+        "--reports", nargs="+", type=pathlib.Path, required=True
+    )
+    exploratory.add_argument("--output", type=pathlib.Path, required=True)
     return parser
 
 
@@ -902,7 +1022,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "report_sha256": path.stem,
             }, indent=2, sort_keys=True))
         else:
-            sidecar = finalize_selection(
+            finalizer = (
+                finalize_exploratory_selection
+                if arguments.command == "finalize-exploratory"
+                else finalize_selection
+            )
+            sidecar = finalizer(
                 model_path=arguments.model,
                 baseline_model=arguments.baseline_model,
                 baseline_seed=arguments.baseline_seed,

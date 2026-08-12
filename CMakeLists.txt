@@ -7,6 +7,15 @@ project(papersoccer LANGUAGES CXX)
 # incremental post-selection build cannot retain the pre-lock branch.
 file(GLOB PAPERSOCCER_GAME_REVIEW_LOCK_FILES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/game_review_gate/game_review_calibration_lock.hpp")
+file(GLOB PAPERSOCCER_JACEK_NATIVE_ROUND2_DEPLOYMENTS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_round2_deployment.json")
+file(GLOB_RECURSE PAPERSOCCER_JACEK_NATIVE_ROUND2_ACTIVATION_INPUTS
+  CONFIGURE_DEPENDS LIST_DIRECTORIES false
+  "${CMAKE_CURRENT_SOURCE_DIR}/models/*.json"
+  "${CMAKE_CURRENT_SOURCE_DIR}/models/*.runtime")
+file(GLOB_RECURSE PAPERSOCCER_JACEK_NATIVE_ROUND2_GATE_EVIDENCE
+  CONFIGURE_DEPENDS LIST_DIRECTORIES false
+  "${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_round2_gate_evidence/*")
 if(PAPERSOCCER_GAME_REVIEW_LOCK_FILES)
   set(PAPERSOCCER_GAME_REVIEW_LOCK_PRESENT 1)
 else()
@@ -265,6 +274,15 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_native_round2_selection)
     set_tests_properties(
       papersoccer_codingame_jacek_native_round2_selection_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME papersoccer_codingame_jacek_native_round2_activation_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_native_round2_activation)
+    set_tests_properties(
+      papersoccer_codingame_jacek_native_round2_activation_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
@@ -660,6 +678,55 @@ if(NOT EMSCRIPTEN)
       "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-seed-20260812.runtime")
     set(PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER
       "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-seed-20260812.hpp")
+    if(PAPERSOCCER_JACEK_NATIVE_ROUND2_DEPLOYMENTS)
+      set(PAPERSOCCER_JACEK_NATIVE_GENERATION_ROUTE "round2")
+      set(PAPERSOCCER_JACEK_NATIVE_CURRENT_GENERATOR
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/jacek_native_round2_activation.py
+        generate
+        --deployment
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_round2_deployment.json)
+      set(PAPERSOCCER_JACEK_NATIVE_CURRENT_DEPENDS
+        models/jacek_native_round2_deployment.json
+        models/jacek_native_round2_candidate.json
+        models/jacek_native_round2_selection.json
+        models/jacek_native_round2_selected.runtime
+        submissions/codingame/tools/jacek_native_round2_activation.py
+        submissions/codingame/tools/generate_jacek_native_model_round2.py
+        submissions/codingame/tools/generate_jacek_native_model.py
+        tools/jacek_native_round2_selection.py
+        tools/generate_jacek_native_seed.py
+        tools/train_jacek_native_round2.py
+        tools/train_jacek_native.py
+        tools/jacek_native_corpus_round2.py
+        tools/jacek_native_restart_corpus_round2.py
+        tools/jacek_native_corpus.py
+        tools/jacek_native_model_gate.cpp
+        submissions/codingame/bots/jacek_native_bfm/bot.cpp
+        src/core/rules.cpp
+        src/core/geometry.cpp
+        src/bots/mcts_internal.hpp
+        include/papersoccer/types.hpp
+        include/papersoccer/geometry.hpp
+        include/papersoccer/rules.hpp
+        ${PAPERSOCCER_JACEK_NATIVE_ROUND2_ACTIVATION_INPUTS}
+        ${PAPERSOCCER_JACEK_NATIVE_ROUND2_GATE_EVIDENCE})
+    else()
+      set(PAPERSOCCER_JACEK_NATIVE_GENERATION_ROUTE "round1")
+      set(PAPERSOCCER_JACEK_NATIVE_CURRENT_GENERATOR
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_jacek_native_model.py
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_bootstrap_model.json)
+      set(PAPERSOCCER_JACEK_NATIVE_CURRENT_DEPENDS
+        models/jacek_native_bootstrap_model.json
+        submissions/codingame/tools/generate_jacek_native_model.py
+        tools/train_jacek_native.py
+        tools/jacek_native_corpus.py)
+    endif()
+    set(PAPERSOCCER_JACEK_NATIVE_ROUTE_STATE
+      "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-generation-route.txt")
+    file(GENERATE
+      OUTPUT "${PAPERSOCCER_JACEK_NATIVE_ROUTE_STATE}"
+      CONTENT "${PAPERSOCCER_JACEK_NATIVE_GENERATION_ROUTE}\n")
     add_custom_command(
       OUTPUT
         ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
@@ -667,15 +734,12 @@ if(NOT EMSCRIPTEN)
       COMMAND ${CMAKE_COMMAND} -E env
         PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_jacek_native_model.py
-        --model ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_bootstrap_model.json
+        ${PAPERSOCCER_JACEK_NATIVE_CURRENT_GENERATOR}
         --output ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_HEADER}
         --runtime-output ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
       DEPENDS
-        models/jacek_native_bootstrap_model.json
-        submissions/codingame/tools/generate_jacek_native_model.py
-        tools/train_jacek_native.py
-        tools/jacek_native_corpus.py
+        ${PAPERSOCCER_JACEK_NATIVE_CURRENT_DEPENDS}
+        ${PAPERSOCCER_JACEK_NATIVE_ROUTE_STATE}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       VERBATIM)
     add_custom_command(

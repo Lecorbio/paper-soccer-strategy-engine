@@ -203,7 +203,14 @@ development evidence and cannot serve as a later promotion holdout.
 Round-two seed promotion uses the separate immutable
 [actual-clock selection contract](ROUND2_SELECTION.md). The training JSON
 keeps `chosen_seed: null`; complete content-addressed gate evidence selects an
-exact runtime without rewriting the model.
+exact runtime without rewriting the model. A separately generated deployment
+descriptor binds that model, sidecar, runtime, decision kind, and cumulative
+native checkpoint files, plus the exact baseline and content-addressed gate
+reports/stdout. Loading it recomputes the selection from those transcripts and
+verifies recursive checkpoint ancestry before any production generation.
+Merely copying a header or setting `chosen_seed` is not activation. Until the
+descriptor is deliberately installed, both the Node and CMake production
+generators remain on the round-one bootstrap.
 
 Source-bound public live games can be diagnosed with the separate, read-only
 [replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
