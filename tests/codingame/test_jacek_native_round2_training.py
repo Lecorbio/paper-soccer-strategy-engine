@@ -93,7 +93,9 @@ def compiler_identity():
     }
 
 
-def write_round2_run(directory, records, seed=2026082101):
+def write_round2_run(
+    directory, records, seed=2026082101, *, matches_local_build=True,
+):
     directory.mkdir(parents=True, exist_ok=True)
     binary = directory / corpus.ARCHIVED_BINARY_NAME
     binary.write_bytes(b"round-two archived self-play fixture\n")
@@ -102,6 +104,19 @@ def write_round2_run(directory, records, seed=2026082101):
         "path": path,
         "sha256": hashlib.sha256((ROOT / path).read_bytes()).hexdigest(),
     } for path in corpus.BUILD_SOURCE_PATHS]
+    if not matches_local_build:
+        sources[0]["sha256"] = (
+            "0" * 64 if sources[0]["sha256"] != "0" * 64 else "1" * 64
+        )
+        archived_version = "archived compiler identity"
+        compiler = {
+            "executable": "archived-cxx",
+            "sha256": "2" * 64,
+            "version": archived_version,
+            "version_sha256": hashlib.sha256(
+                archived_version.encode()
+            ).hexdigest(),
+        }
     producer = hashlib.sha256(json.dumps(
         [[entry["path"], entry["sha256"]] for entry in sources],
         separators=(",", ":"),
@@ -370,6 +385,59 @@ class JacekNativeRound2CorpusTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "round-one binary is stale"):
                 corpus.load_games([current], [archived])
 
+    def test_explicit_archived_round2_keeps_full_archive_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            current = write_round2_run(
+                root / "current",
+                [round2_record(0, 0), round2_record(1, 1)],
+                seed=81,
+            )
+            archived_records = [round2_record(0, 0), round2_record(1, 1)]
+            for index, record in enumerate(archived_records):
+                record["seed"] = str(70_000 + index)
+                record["split_group"] = (
+                    f"native-round2:{70_000 + index}:{index}"
+                )
+            archived = write_round2_run(
+                root / "archived", archived_records, seed=82,
+                matches_local_build=False,
+            )
+
+            games, _, lineage = corpus.load_games(
+                [current], archived_round2_paths=[archived]
+            )
+            self.assertEqual(len(games), 4)
+            self.assertEqual(len(lineage["strict_current"]), 1)
+            self.assertEqual(len(lineage["archived_round2"]), 1)
+
+            with self.assertRaisesRegex(ValueError, "build source is stale"):
+                corpus.load_games([archived])
+
+            manifest = archived.parent / corpus.MANIFEST_NAME
+            decoded = json.loads(manifest.read_bytes())
+            manifest.write_text(json.dumps(decoded, indent=2, sort_keys=True) + "\n")
+            with self.assertRaisesRegex(ValueError, "not canonical JSON"):
+                corpus.load_games(
+                    [current], archived_round2_paths=[archived]
+                )
+
+    def test_archived_round2_never_weakens_strict_current_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            stale = write_round2_run(
+                root / "stale",
+                [round2_record(0, 0), round2_record(1, 1)],
+                matches_local_build=False,
+            )
+            current = write_round2_run(
+                root / "current",
+                [round2_record(2, 0), round2_record(3, 1)],
+                seed=2026082102,
+            )
+            with self.assertRaisesRegex(ValueError, "build source is stale"):
+                corpus.load_games([stale], archived_round2_paths=[current])
+
     def test_round2_run_seeds_must_be_unique(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -498,6 +566,118 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         self.assertEqual(sum(coverage["levels"].values()),
                          corpus.INPUT_COUNT * self.trainer.HIDDEN_ONE)
 
+    def test_phase_weighted_metrics_apply_after_exact_override(self):
+        dataset = self.trainer.Dataset(
+            active=tuple(
+                np.asarray([index], dtype=np.uint16) for index in range(3)
+            ),
+            outcome=np.asarray([0.5, -1.0, 1.0], dtype=np.float32),
+            auxiliary=np.asarray([-1.0, 1.0, 0.0], dtype=np.float32),
+            auxiliary_mask=np.asarray([True, True, False], dtype=bool),
+            exact_mask=np.asarray([True, False, False], dtype=bool),
+            game_keys=("exact", "stable", "outcome"),
+            turn=np.asarray([11, 12, 24], dtype=np.int32),
+        )
+        predictions = np.asarray([0.5, 0.5, 0.5], dtype=np.float32)
+        with mock.patch.object(
+            self.trainer, "forward", return_value=(predictions, None)
+        ):
+            result = self.trainer.metrics({}, dataset, batch_size=3)
+
+        # Exact reanalysis replaces the zero-error outcome target before its
+        # turn-11 phase multiplier is applied: (0.5 - -1.0)^2 * 3.0.
+        expected_unweighted = (2.25 + 1.75 + 0.25) / 3.0
+        expected_weighted = (2.25 * 3.0 + 1.75 * 1.5 + 0.25) / 3.0
+        self.assertAlmostEqual(
+            result["unweighted_combined_target_mse"], expected_unweighted
+        )
+        self.assertAlmostEqual(
+            result["weighted_combined_target_mse"], expected_weighted,
+            places=6,
+        )
+        self.assertEqual(
+            result["combined_target_mse"],
+            result["weighted_combined_target_mse"],
+        )
+        phases = result["phase_metrics"]
+        self.assertEqual(
+            [phases[name]["weight"] for name, _, _, _
+             in self.trainer.PHASE_WEIGHTS],
+            [3.0, 1.5, 1.0],
+        )
+        self.assertEqual(
+            [phases[name]["samples"] for name, _, _, _
+             in self.trainer.PHASE_WEIGHTS],
+            [1, 1, 1],
+        )
+        self.assertAlmostEqual(
+            phases["turns_0_11"]["weighted_combined_target_mse"], 6.75
+        )
+        np.testing.assert_array_equal(
+            self.trainer._phase_weights(
+                np.asarray([0, 11, 12, 23, 24, 100], dtype=np.int32)
+            ),
+            np.asarray([3.0, 3.0, 1.5, 1.5, 1.0, 1.0], dtype=np.float32),
+        )
+
+    def test_phase_weights_scale_float_and_fixed_qat_gradients(self):
+        parameters = {
+            "w1": np.zeros(
+                (self.trainer.INPUT_COUNT, self.trainer.HIDDEN_ONE),
+                dtype=np.float32,
+            ),
+            "w2": np.full(
+                (self.trainer.HIDDEN_ONE, self.trainer.HIDDEN_TWO),
+                0.01,
+                dtype=np.float32,
+            ),
+            "w3": np.full(self.trainer.HIDDEN_TWO, 0.01, dtype=np.float32),
+        }
+        parameters["w1"][0] = np.float32(0.01)
+
+        class CaptureOptimizer:
+            def __init__(self):
+                self.gradients = None
+
+            def update(self, _parameters, gradients):
+                self.gradients = {
+                    name: value.copy() for name, value in gradients.items()
+                }
+
+        def run(turn, quantization_aware):
+            dataset = self.trainer.Dataset(
+                active=(np.asarray([0], dtype=np.uint16),),
+                outcome=np.asarray([1.0], dtype=np.float32),
+                auxiliary=np.zeros(1, dtype=np.float32),
+                auxiliary_mask=np.zeros(1, dtype=bool),
+                exact_mask=np.zeros(1, dtype=bool),
+                game_keys=(f"turn-{turn}",),
+                turn=np.asarray([turn], dtype=np.int32),
+            )
+            optimizer = CaptureOptimizer()
+            loss = self.trainer.train_batch(
+                {name: value.copy() for name, value in parameters.items()},
+                optimizer,
+                dataset,
+                np.asarray([0], dtype=np.int64),
+                0.25,
+                quantization_aware,
+                fixed_scales={"w1": 0.01, "w2": 0.01, "w3": 0.01},
+            )
+            return loss, optimizer.gradients
+
+        for quantization_aware in (False, True):
+            early_loss, early_gradients = run(11, quantization_aware)
+            late_loss, late_gradients = run(24, quantization_aware)
+            self.assertAlmostEqual(early_loss, 3.0 * late_loss, places=5)
+            for name in ("w1", "w2", "w3"):
+                np.testing.assert_allclose(
+                    early_gradients[name],
+                    3.0 * late_gradients[name],
+                    rtol=2e-6,
+                    atol=1e-12,
+                )
+
     def test_robust_fixed_scale_rejects_a_single_max_outlier_and_roundtrips(self):
         parameters = self.trainer.initialize(19)
         pattern = np.where(
@@ -541,12 +721,16 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             "quantized_metrics": {"validation": {
                 "outcome_mse": 0.1,
                 "combined_target_mse": 0.4,
+                "weighted_combined_target_mse": 0.4,
+                "unweighted_combined_target_mse": 0.2,
             }},
         }, {
             "seed": 2,
             "quantized_metrics": {"validation": {
                 "outcome_mse": 0.2,
                 "combined_target_mse": 0.3,
+                "weighted_combined_target_mse": 0.3,
+                "unweighted_combined_target_mse": 0.3,
             }},
         }]
         arguments = argparse.Namespace(
@@ -559,6 +743,54 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         )
         self.assertEqual(model["training"]["provisional_seed"], 2)
         self.assertIn("combined-target", model["training"]["selection"])
+        self.assertEqual(model["target"]["phase_weights"], {
+            "turns_0_11": 3.0,
+            "turns_12_23": 1.5,
+            "turns_24_plus": 1.0,
+        })
+        self.assertEqual(
+            model["target"]["phase_weight_application"],
+            self.trainer.PHASE_WEIGHT_APPLICATION,
+        )
+
+    def test_provisional_order_uses_explicit_weighted_metric_and_ties(self):
+        candidates = [self.trainer.initialize(seed) for seed in (3, 2, 1)]
+        reports = []
+        for seed, weighted, unweighted, outcome, legacy in (
+            (3, 0.2, 0.3, 0.1, -100.0),
+            (2, 0.2, 0.2, 0.3, -200.0),
+            (1, 0.2, 0.2, 0.2, 100.0),
+        ):
+            reports.append({
+                "seed": seed,
+                "quantized_metrics": {"validation": {
+                    "outcome_mse": outcome,
+                    "combined_target_mse": legacy,
+                    "weighted_combined_target_mse": weighted,
+                    "unweighted_combined_target_mse": unweighted,
+                }},
+            })
+        arguments = argparse.Namespace(
+            auxiliary_weight=0.25, batch_size=256, epochs=50,
+            patience=8, learning_rate=0.001, weight_decay=1e-5,
+            qat_epochs=4,
+        )
+        model = self.trainer.build_report(
+            candidates, reports, {"corpus_sha256": "a" * 64}, arguments
+        )
+        self.assertEqual(model["training"]["provisional_seed"], 1)
+        self.assertEqual(
+            model["training"]["external_actual_clock_selection"]
+            ["eligible_seed_order"],
+            [1, 2, 3],
+        )
+        self.assertEqual(
+            self.trainer._weighted_validation_loss({
+                "weighted_combined_target_mse": 0.25,
+                "combined_target_mse": -100.0,
+            }),
+            0.25,
+        )
 
     def test_dataset_release_uses_uint16_sparse_indices(self):
         samples = [corpus.NativeSample(
@@ -589,6 +821,12 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         self.assertIn(
             "turn_calibration", report["quantized_metrics"]["validation"]
         )
+        self.assertIn(
+            "phase_metrics", report["quantized_metrics"]["validation"]
+        )
+        self.assertTrue(all(
+            "validation_phase_metrics" in item for item in qat_history
+        ))
 
     def test_model_selection_is_explicitly_provisional(self):
         candidates = [self.trainer.initialize(1), self.trainer.initialize(2)]
@@ -598,6 +836,8 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
                 "validation": {
                     "outcome_mse": loss,
                     "combined_target_mse": loss,
+                    "weighted_combined_target_mse": loss,
+                    "unweighted_combined_target_mse": loss,
                 }
             },
         } for seed, loss in ((1, 0.2), (2, 0.3))]
@@ -641,6 +881,22 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             report["mode"], "cumulative-native-runtime-models/v2"
         )
 
+    def test_training_output_is_atomic_exclusive_and_explicit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "fresh-model.json"
+            self.trainer.write_output_exclusive(output, b"first\n")
+            self.assertEqual(output.read_bytes(), b"first\n")
+            with self.assertRaisesRegex(FileExistsError, "refusing to overwrite"):
+                self.trainer.write_output_exclusive(output, b"second\n")
+            self.assertEqual(output.read_bytes(), b"first\n")
+            self.assertEqual(list(output.parent.glob(f".{output.name}.*")), [])
+
+        with mock.patch.object(
+            sys, "argv", ["train_jacek_native_round2.py", "shard.jsonl"]
+        ), self.assertRaises(SystemExit) as raised:
+            self.trainer.main()
+        self.assertEqual(raised.exception.code, 2)
+
     def exportable_model(self):
         candidates = [self.trainer.initialize(1), self.trainer.initialize(2)]
         reports = [{
@@ -649,6 +905,8 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
                 "validation": {
                     "outcome_mse": loss,
                     "combined_target_mse": loss,
+                    "weighted_combined_target_mse": loss,
+                    "unweighted_combined_target_mse": loss,
                 }
             },
         } for seed, loss in ((1, 0.2), (2, 0.3))]
@@ -659,6 +917,10 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             "model_sha256": "c" * 64,
             "packed_sha256": "d" * 64,
         }
+        build_contract = {"binary": {"sha256": "3" * 64}}
+        build_sha = hashlib.sha256(
+            self.exporter._canonical_json_bytes(build_contract)
+        ).hexdigest()
         corpus_report = {
             "source_sha256": source_sha256,
             "corpus_sha256": hashlib.sha256(json.dumps(
@@ -680,16 +942,23 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             "lineage": {
                 "strict_current": [{
                     "manifest_sha256": "1" * 64,
-                    "build_provenance_sha256": "2" * 64,
+                    "build_provenance_sha256": build_sha,
                     "binary_sha256": "3" * 64,
                     "shard_sha256": ["4" * 64],
                     "games": 8,
                     "seed": 17,
                 }],
                 "archived_round1": [],
+                "archived_round2": [],
                 "live_restart_round2": [],
+                "archived_restart_round2": [],
             },
             "generation": {
+                "build_provenance_sha256": [build_sha],
+                "build_contracts": [{
+                    "sha256": build_sha,
+                    "contract": build_contract,
+                }],
                 "checkpoint_provenance": {
                     "mode": "native-runtime-models/v1",
                     "artifacts": [artifact],
@@ -736,6 +1005,55 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checkpoint SHA-256"):
             self.exporter.render_runtime(model, "e" * 64, seed=1)
 
+    def test_round2_exporter_accepts_exact_legacy_or_extended_lineage(self):
+        extended = self.exportable_model()
+        self.exporter.render_runtime(extended, "e" * 64, seed=1)
+
+        legacy = copy.deepcopy(extended)
+        legacy["provenance"]["lineage"].pop("archived_round2")
+        legacy["provenance"]["lineage"].pop("archived_restart_round2")
+        self.exporter.render_runtime(legacy, "e" * 64, seed=1)
+
+        partial = copy.deepcopy(extended)
+        partial["provenance"]["lineage"].pop("archived_restart_round2")
+        with self.assertRaisesRegex(ValueError, "lineage is malformed"):
+            self.exporter.render_runtime(partial, "e" * 64, seed=1)
+
+    def test_round2_exporter_rejects_noncanonical_archived_lineage(self):
+        model = self.exportable_model()
+        lineage = model["provenance"]["lineage"]
+        template = copy.deepcopy(lineage["strict_current"][0])
+        later = {**template, "seed": 9, "manifest_sha256": "9" * 64}
+        earlier = {**template, "seed": 8, "manifest_sha256": "8" * 64}
+        lineage["archived_round2"] = [later, earlier]
+        with self.assertRaisesRegex(ValueError, "not canonical"):
+            self.exporter.render_runtime(model, "e" * 64, seed=1)
+
+    def test_round2_exporter_reconciles_archived_lineage_build_identity(self):
+        model = self.exportable_model()
+        lineage = model["provenance"]["lineage"]
+        entry = copy.deepcopy(lineage["strict_current"][0])
+        entry["manifest_sha256"] = "9" * 64
+        entry["build_provenance_sha256"] = "8" * 64
+        lineage["archived_round2"] = [entry]
+        with self.assertRaisesRegex(ValueError, "lineage/build provenance"):
+            self.exporter.render_runtime(model, "e" * 64, seed=1)
+
+    def test_round2_exporter_rejects_missing_or_tampered_phase_weights(self):
+        for mutation in ("missing", "tampered", "application", "boolean"):
+            with self.subTest(mutation=mutation):
+                model = self.exportable_model()
+                if mutation == "missing":
+                    model["target"].pop("phase_weights")
+                elif mutation == "tampered":
+                    model["target"]["phase_weights"]["turns_0_11"] = 1.0
+                elif mutation == "application":
+                    model["target"]["phase_weight_application"] = "before/v0"
+                else:
+                    model["target"]["phase_weights"]["turns_24_plus"] = True
+                with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+                    self.exporter.render_runtime(model, "e" * 64, seed=1)
+
     def test_explicit_restart_paths_merge_without_observed_labels(self):
         artifact = corpus.NativeModelArtifact(
             artifact_sha256="1" * 64,
@@ -777,7 +1095,11 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             "games": 1,
             "selected_prefixes": 1,
         }
-        base_lineage = {"strict_current": [], "archived_round1": []}
+        base_lineage = {
+            "strict_current": [],
+            "archived_round1": [],
+            "archived_round2": [],
+        }
         with (
             mock.patch.object(
                 corpus, "load_games",
@@ -805,6 +1127,96 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             report["lineage"]["live_restart_round2"], [restart_lineage]
         )
         self.assertEqual(report["games"], 2)
+
+    def test_explicit_archived_inputs_route_without_fallback(self):
+        artifact = corpus.NativeModelArtifact(
+            artifact_sha256="1" * 64,
+            model_sha256="2" * 64,
+            packed_sha256="3" * 64,
+        )
+        sample = corpus.NativeSample(
+            game_key="sample", split_group="sample", turn=0, player=0,
+            active=(0,), outcome=1.0, auxiliary_value=None, exact=False,
+            symmetry="identity",
+        )
+
+        def native_game(key, group, winner, producer):
+            return corpus.NativeGame(
+                key=key, split_group=group, seed=1, game=0,
+                shard_index=0, winner=winner, samples=(sample,),
+                producer_sha256=producer,
+                build_provenance_sha256="5" * 64,
+                model_artifacts=(artifact,), search_stats={"searches": 1},
+                opening_depth=0, temperature_turns=12,
+                transcript_sha256="6" * 64, build_contract={"fixture": True},
+            )
+
+        base = native_game("base", "base", 0, "4" * 64)
+        live = native_game("live", "live", 1, "7" * 64)
+        archived = native_game("archived", "archived", 0, "8" * 64)
+        lineage = {
+            "strict_current": [],
+            "archived_round1": [],
+            "archived_round2": [{"manifest_sha256": "9" * 64}],
+        }
+        restart_lineages = [{
+            "manifest_sha256": digest * 64,
+            "collector_tsv_sha256": collector * 64,
+        } for digest, collector in (("a", "b"), ("c", "d"))]
+        splits = {name: [sample] for name in ("train", "validation", "test")}
+        assignments = {"base": "train", "live": "validation",
+                       "archived": "test"}
+        with (
+            mock.patch.object(
+                corpus, "load_games",
+                return_value=([base], {"sha256:" + "e" * 64: "e" * 64},
+                              lineage),
+            ) as base_loader,
+            mock.patch.object(
+                self.trainer.restart_contract, "load_games",
+                side_effect=[
+                    ([live], {"sha256:" + "f" * 64: "f" * 64},
+                     restart_lineages[0]),
+                    ([archived], {"sha256:" + "0" * 64: "0" * 64},
+                     restart_lineages[1]),
+                ],
+            ) as restart_loader,
+            mock.patch.object(
+                corpus, "prepare_splits",
+                return_value=(splits, {name: 0 for name in splits}, assignments),
+            ),
+            mock.patch.object(corpus, "build_contracts", return_value=[]),
+        ):
+            _, report = self.trainer.load_datasets(
+                [pathlib.Path("current/shard.jsonl")],
+                archived_round1_paths=[pathlib.Path("round1/shard.jsonl")],
+                restart_round2_paths=[pathlib.Path("live/shard.jsonl")],
+                archived_round2_paths=[pathlib.Path("round2/shard.jsonl")],
+                archived_restart_round2_paths=[
+                    pathlib.Path("archived-restart/shard.jsonl")
+                ],
+            )
+
+        base_loader.assert_called_once_with(
+            [pathlib.Path("current/shard.jsonl")],
+            [pathlib.Path("round1/shard.jsonl")],
+            [pathlib.Path("round2/shard.jsonl")],
+        )
+        self.assertEqual(
+            [call.kwargs["verify_local_build"]
+             for call in restart_loader.call_args_list],
+            [True, False],
+        )
+        self.assertEqual(
+            report["lineage"]["live_restart_round2"],
+            [restart_lineages[0]],
+        )
+        self.assertEqual(
+            report["lineage"]["archived_restart_round2"],
+            [restart_lineages[1]],
+        )
+        self.assertEqual(report["observed_move_policy_labels"], 0)
+        self.assertEqual(report["games"], 3)
 
 
 if __name__ == "__main__":

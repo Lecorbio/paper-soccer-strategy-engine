@@ -152,6 +152,40 @@ void native_diagnostics_are_complete_and_deterministic() {
   }
 }
 
+void decision_limit_preserves_full_replay_and_first_decision_semantics() {
+  const auto records = read(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "first-only\t0\t0\t0/0/0/0/0/0\n");
+  audit::AuditConfig unlimited = fast_config();
+  audit::validate_records(records);
+  require(audit::audit_records(records, unlimited).size() == 3,
+          "the default must continue to audit every candidate decision");
+
+  audit::AuditConfig first_only = fast_config();
+  first_only.max_own_decisions_per_game = 1;
+  const auto limited = audit::audit_records(records, first_only);
+  require(limited.size() == 1 && limited.front().own_decision_index == 0 &&
+              limited.front().turn_index == 0 &&
+              limited.front().time_limit_ms == 0,
+          "a one-decision limit must audit only candidate decision zero");
+
+  std::istringstream invalid_tail(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "turn-after-terminal\t0\t0\t0/0/0/0/0/0/0\n");
+  std::ostringstream output;
+  std::ostringstream error;
+  std::vector<std::string> options{
+      "auditor", "--fixed-work", "64", "--max-actions", "16",
+      "--max-partial-paths", "64", "--max-own-decisions-per-game", "1"};
+  std::vector<char *> arguments;
+  for (std::string &option : options) arguments.push_back(option.data());
+  const int status = audit::run(static_cast<int>(arguments.size()),
+                                arguments.data(), invalid_tail, output, error);
+  require(status == 2 && output.str().empty() &&
+              error.str().find("after terminal") != std::string::npos,
+          "decision filtering must not skip full transcript validation");
+}
+
 audit::ActionDiagnostic retained(std::string action, int boundary,
                                  std::string tactical, int rank,
                                  bool final_value = true) {
@@ -230,13 +264,16 @@ void jsonl_and_tsv_preserve_required_fields() {
       "game_id\tcandidate_player\twinner\tturns\n"
       "output\t0\t0\t0/0/0/0/0/0\n");
   audit::AuditConfig config = fast_config();
+  config.max_own_decisions_per_game = 1;
   audit::validate_records(records);
   const auto rows = audit::audit_records(records, config);
+  require(rows.size() == 1,
+          "the bound output configuration must match the filtered rows");
 
   std::ostringstream jsonl;
   audit::write_audits(jsonl, rows, config);
   const std::string json = jsonl.str();
-  require(json.find("\"schema_version\":\"jacek-native-decision-audit-v1\"") !=
+  require(json.find("\"schema_version\":\"jacek-native-decision-audit-v2\"") !=
               std::string::npos &&
               json.find("\"input_provenance\":{\"agent_id\":\"6600001\"") !=
                   std::string::npos &&
@@ -249,6 +286,8 @@ void jsonl_and_tsv_preserve_required_fields() {
               json.find("\"search_tactical_proof_paths\":") !=
                   std::string::npos &&
               json.find("\"diagnostic_root_tactical_proof_truncated\":") !=
+                  std::string::npos &&
+              json.find("\"max_own_decisions_per_game\":1") !=
                   std::string::npos,
           "JSONL must retain provenance and native decision diagnostics");
 
@@ -270,11 +309,23 @@ void clock_and_cli_configuration_are_bounded() {
   require(clock.mode == audit::AuditMode::Clock &&
               clock.first_time_ms == 800 && clock.later_time_ms == 155 &&
               clock.fixed_work ==
-                  papersoccer::jacek_native_bfm::kProductionTreeNodes,
+                  papersoccer::jacek_native_bfm::kProductionTreeNodes &&
+              !clock.max_own_decisions_per_game.has_value(),
           "CodinGame mode must freeze the production 800/155 configuration");
+  const audit::AuditConfig first_only = parse_options(
+      {"--codingame-clocks", "--max-own-decisions-per-game", "1"});
+  require(first_only.max_own_decisions_per_game == 1,
+          "the bounded first-decision panel option must compose with clocks");
   require(audit::decision_time_limit(clock, 0) == 800 &&
               audit::decision_time_limit(clock, 1) == 155,
           "first clock must be keyed to first own decision");
+  const audit::AuditConfig larger_clock_tree =
+      parse_options({"--codingame-clocks", "--tree-nodes", "120000"});
+  require(larger_clock_tree.mode == audit::AuditMode::Clock &&
+              larger_clock_tree.fixed_work == 120000 &&
+              larger_clock_tree.first_time_ms == 800 &&
+              larger_clock_tree.later_time_ms == 155,
+          "clock mode must honor an explicit supported tree-node cap");
   const audit::AuditConfig fixed =
       parse_options({"--fixed-work", "251", "--format", "tsv"});
   require(fixed.mode == audit::AuditMode::FixedWork &&
@@ -293,6 +344,24 @@ void clock_and_cli_configuration_are_bounded() {
             {"--codingame-clocks", "--first-ms", "900", "--later-ms", "180"});
       },
       "canonical and custom clock modes must not be conflated");
+  require_invalid_argument(
+      [] {
+        (void)parse_options(
+            {"--codingame-clocks", "--fixed-work", "120000"});
+      },
+      "clock mode must use the explicit tree-node option, not fixed work");
+  require_invalid_argument(
+      [] {
+        (void)parse_options(
+            {"--codingame-clocks", "--tree-nodes", "120001"});
+      },
+      "clock-mode tree caps above the native maximum must fail closed");
+  require_invalid_argument(
+      [] { (void)parse_options({"--max-own-decisions-per-game", "0"}); },
+      "a zero decision limit must fail closed");
+  require_invalid_argument(
+      [] { (void)parse_options({"--max-own-decisions-per-game", "1025"}); },
+      "a decision limit above the transcript bound must fail closed");
 }
 
 void run_validates_all_input_before_writing() {
@@ -320,6 +389,7 @@ int main() {
     strict_collector_contract_and_provenance();
     replay_validation_uses_exact_codingame_rules();
     native_diagnostics_are_complete_and_deterministic();
+    decision_limit_preserves_full_replay_and_first_decision_semantics();
     classification_taxonomy_is_explicit();
     jsonl_and_tsv_preserve_required_fields();
     clock_and_cli_configuration_are_bounded();

@@ -832,8 +832,10 @@ def load_games(
     return games, dict(sorted(source_hashes.items())), lineage
 
 
-def summarize(paths: Sequence[pathlib.Path]) -> dict:
-    games, sources, lineage = load_games(paths)
+def summarize(
+    paths: Sequence[pathlib.Path], verify_local_build: bool = True
+) -> dict:
+    games, sources, lineage = load_games(paths, verify_local_build)
     splits, removed, assignments = prepare_splits(games)
     return {
         "schema": "papersoccer.jacek-native-restart-corpus-report/v1",
@@ -858,9 +860,18 @@ def main() -> int:
         description="Validate explicit provenance-safe live-restart shards."
     )
     parser.add_argument("corpus", nargs="+", type=pathlib.Path)
+    parser.add_argument(
+        "--archived", action="store_true",
+        help=(
+            "validate explicit historical identities without requiring the "
+            "archived compiler/source bytes to equal the current workspace"
+        ),
+    )
     parser.add_argument("--report", type=pathlib.Path)
     arguments = parser.parse_args()
-    report = summarize(arguments.corpus)
+    report = summarize(
+        arguments.corpus, verify_local_build=not arguments.archived
+    )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if arguments.report:
         arguments.report.parent.mkdir(parents=True, exist_ok=True)

@@ -307,6 +307,8 @@ cmake --build build -j8 --target \
   papersoccer_codingame_jacek_native_bfm_comparison_gate \
   papersoccer_jacek_native_selfplay \
   papersoccer_jacek_native_model_gate \
+  papersoccer_jacek_native_search_ab_gate \
+  papersoccer_jacek_native_search_ab_gate_test \
   papersoccer_jacek_native_replay_decision_auditor \
   papersoccer_jacek_native_replay_decision_auditor_test
 ctest --test-dir build --output-on-failure -R jacek_native
@@ -372,6 +374,44 @@ build/papersoccer_jacek_native_model_gate \
 Both commands fail on any unfinished game, official operational timeout, or
 construction-inclusive response at or above 900/180 ms. A fixed-work self-play
 score is not a substitute for either actual-clock gate.
+
+### Same-runtime search A/B gate
+
+Search experiments use a separate gate so weight changes cannot masquerade as
+search improvements. `papersoccer_jacek_native_search_ab_gate` loads one exact
+runtime once, plays every procedural opening in both colors, gives both sides
+the same clocks and deployment-constant shuffle seed, and varies only the
+declared candidate/baseline search profiles. Pair parity reverses which color
+runs first: even pairs run the candidate as Player 1 and then Player 2, while
+odd pairs run Player 2 and then Player 1. This balances process warm-up and
+time drift across profiles:
+
+```sh
+# Generated from the canonical deployment descriptor by the CMake runtime target.
+build/papersoccer_jacek_native_search_ab_gate \
+  --checkpoint build/jacek-native-current.runtime \
+  --pairs 64 --first-ms 800 --later-ms 155 \
+  --opening-turns 0,4,8,12 --seed 6510615555426900575 \
+  --candidate-tree-nodes 120000 --baseline-tree-nodes 80000 \
+  --candidate-c 0.95 --baseline-c 0.95 \
+  --candidate-fpu 0.5 --baseline-fpu 0.5 \
+  --candidate-final value-log-visits \
+  --baseline-final value-log-visits
+```
+
+The supported final selectors are the deployed `value-log-visits`,
+`value-only`, `value-log-visits-plus3`, and
+`value-log-selection-visits-plus3`. The gate records both complete profiles,
+the one runtime/model/packed identity, color results, tree/deadline pressure,
+formula overrides, elapsed maxima, and safety failures. Its explicit timing
+scope is `search-through-apply`: checkpoint/model loading happens before the
+timer, so this search A/B does not replace the construction-inclusive final
+production timing probe required before upload. Search-through-apply still
+fails closed at the 900/180 ms headroom limits. The gate never imports the
+Rank-4 engine and does not change production constants or generated source.
+Run it through `tools/jacek_native_search_ab_record.py` for immutable evidence;
+the recorder holds a serial actual-clock lock and writes the complete stdout
+and canonical report under their SHA-256 names.
 
 The selected seed-20260813 runtime is
 `877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d`.

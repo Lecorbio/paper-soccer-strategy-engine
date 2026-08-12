@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Strict round-two corpus validation with cumulative round-one lineage.
+"""Strict round-two corpus validation with cumulative archived lineage.
 
 Round-one validation stays frozen because the active model records its exact
-validator hash.  This module accepts archived, manifest-complete round-one runs
-and a strict-current round-two run, then returns one whole-game dataset without
-introducing policy or incumbent labels.
+validator hash.  This module accepts archived, manifest-complete round-one and
+round-two runs plus a strict-current round-two run, then returns one whole-game
+dataset without introducing policy or incumbent labels.  Archived round-two
+runs retain every canonical archive check but deliberately do not claim that
+their recorded source and compiler identities match the current checkout.
 
 For round-two auxiliary eligibility, "non-truncated" means the configured,
 fixed-work capped BFM completed without a deadline or other operational
@@ -650,27 +652,33 @@ def _directory_paths(paths: Sequence[pathlib.Path]) -> dict[pathlib.Path, list[p
 def load_games(
     current_paths: Sequence[pathlib.Path],
     archived_round1_paths: Sequence[pathlib.Path] = (),
+    archived_round2_paths: Sequence[pathlib.Path] = (),
 ) -> tuple[list[NativeGame], dict[str, str], dict]:
     if not current_paths:
         raise ValueError("strict-current round-two corpus is required")
     games: list[NativeGame] = []
     sources: dict[str, str] = {}
     seen_keys: set[str] = set()
-    lineage = {"strict_current": [], "archived_round1": []}
-    current_seeds: set[int] = set()
+    lineage = {
+        "strict_current": [],
+        "archived_round1": [],
+        "archived_round2": [],
+    }
+    round2_seeds: set[int] = set()
 
     def load_group(
         directory: pathlib.Path,
         paths: Sequence[pathlib.Path],
-        current: bool,
+        category: str,
     ) -> None:
         provenance_path = directory / BUILD_PROVENANCE_NAME
         if not provenance_path.is_file():
             raise ValueError(f"missing sibling build provenance: {provenance_path}")
         raw_contract = provenance_path.read_bytes()
-        if current:
+        round2_run = category != "archived_round1"
+        if round2_run:
             contract_digest, contract = _validate_round2_build_contract(
-                raw_contract, directory, True
+                raw_contract, directory, category == "strict_current"
             )
             manifest_schema = RUN_SCHEMA
         else:
@@ -680,15 +688,15 @@ def load_games(
             manifest_schema = "papersoccer.jacek-native-selfplay-run/v1"
         manifest_digest, manifest = _validate_manifest(
             directory, paths, manifest_schema, contract_digest, contract,
-            require_canonical=current,
+            require_canonical=round2_run,
         )
-        if current:
+        if round2_run:
             seed = manifest.get("config", {}).get("seed")
             if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
                 raise ValueError("round-two manifest seed is invalid")
-            if seed in current_seeds:
+            if seed in round2_seeds:
                 raise ValueError("round-two league run seeds must be unique")
-            current_seeds.add(seed)
+            round2_seeds.add(seed)
 
         records: list[dict] = []
         for path in sorted(paths):
@@ -704,7 +712,7 @@ def load_games(
                 record = json.loads(raw_line)
                 game = (
                     validate_record(record, line_number)
-                    if current else round1.validate_record(record, line_number)
+                    if round2_run else round1.validate_record(record, line_number)
                 )
                 if game.build_provenance_sha256 != contract_digest:
                     raise ValueError("game/build-provenance identity mismatch")
@@ -715,11 +723,11 @@ def load_games(
                     raise ValueError(f"duplicate game key {game.key}")
                 seen_keys.add(game.key)
                 games.append(game)
-                if current:
+                if round2_run:
                     records.append(record)
-        if current:
+        if round2_run:
             _validate_run_schedule(records, manifest)
-        lineage["strict_current" if current else "archived_round1"].append({
+        lineage[category].append({
             "manifest_sha256": manifest_digest,
             "build_provenance_sha256": contract_digest,
             "binary_sha256": contract["binary"]["sha256"],
@@ -730,9 +738,11 @@ def load_games(
         })
 
     for directory, paths in sorted(_directory_paths(current_paths).items()):
-        load_group(directory, paths, True)
+        load_group(directory, paths, "strict_current")
     for directory, paths in sorted(_directory_paths(archived_round1_paths).items()):
-        load_group(directory, paths, False)
+        load_group(directory, paths, "archived_round1")
+    for directory, paths in sorted(_directory_paths(archived_round2_paths).items()):
+        load_group(directory, paths, "archived_round2")
     if not games:
         raise ValueError("cumulative corpus contains no games")
     games.sort(key=round1._game_sort_key)
@@ -748,9 +758,10 @@ def build_contracts(games: Sequence[NativeGame]) -> list[dict]:
 def summarize(
     current_paths: Sequence[pathlib.Path],
     archived_round1_paths: Sequence[pathlib.Path] = (),
+    archived_round2_paths: Sequence[pathlib.Path] = (),
 ) -> dict:
     games, source_hashes, lineage = load_games(
-        current_paths, archived_round1_paths
+        current_paths, archived_round1_paths, archived_round2_paths
     )
     splits, overlaps_removed, assignment = prepare_splits(games)
     builds = build_contracts(games)
@@ -787,15 +798,27 @@ def summarize(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate strict-current round-two and archived round-one corpora."
+        description=(
+            "Validate strict-current round-two and explicit archived corpora."
+        )
     )
     parser.add_argument("corpus", nargs="+", type=pathlib.Path)
     parser.add_argument(
         "--archived-round1", nargs="*", type=pathlib.Path, default=[]
     )
+    parser.add_argument(
+        "--archived-round2", nargs="*", type=pathlib.Path, default=[],
+        help=(
+            "explicit canonical round-two archives; archived build identities "
+            "are verified without requiring the current checkout/compiler"
+        ),
+    )
     parser.add_argument("--report", type=pathlib.Path)
     arguments = parser.parse_args()
-    report = summarize(arguments.corpus, arguments.archived_round1)
+    report = summarize(
+        arguments.corpus, arguments.archived_round1,
+        arguments.archived_round2,
+    )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if arguments.report:
         arguments.report.parent.mkdir(parents=True, exist_ok=True)

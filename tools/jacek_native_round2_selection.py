@@ -10,6 +10,8 @@ valid screen and decisive report.
 from __future__ import annotations
 
 import argparse
+import base64
+import copy
 import contextlib
 import dataclasses
 import fcntl
@@ -54,6 +56,82 @@ EXPLORATORY_SELECTION_SCHEMA = (
 OPENING_TURNS = (0, 4, 8, 12)
 OPENING_SEED = 6_517_766_227_279_252_335
 MAXIMUM_TURNS = 384
+
+# The first deployed round-two champion predates the phase-weighted trainer.
+# Its trainer was used from an uncommitted workspace, so there is no honest
+# source file to pretend to re-run.  Preserve the upgrade chain through one
+# exact, content-addressed deployment identity instead: every byte that can
+# affect the retained model and runtime is pinned here.  No other historical
+# trainer hash is accepted.
+HISTORICAL_ROUND2_BASELINES = {
+    "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14": {
+        "schema": "papersoccer.jacek-native-retained-baseline/v1",
+        "trainer_sha256": (
+            "a84b038e675765ed7e849fea89583dc6188fdd0635b58ef79afb655796a5d711"
+        ),
+        "corpus_validator_sha256": (
+            "bd908ec96f3e64b010cfe07404e005ad3587d8b354b1f327659e7f9575827f74"
+        ),
+        "restart_corpus_validator_sha256": (
+            "990a0f99745fe0420ea446d9553eea25de725e8366946fd6b7f311e2b0b5981f"
+        ),
+        "seed": 20260822,
+        "checkpoint_sha256": (
+            "efe76094835fe727e546e5c31c5d4717b796086e636e02a4b05c5aa13b84769a"
+        ),
+        "runtime_sha256": (
+            "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3"
+        ),
+        "runtime_bytes": 19308,
+        "packed_sha256": (
+            "e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb"
+        ),
+        "retained_checkpoints": {
+            20260821: {
+                "checkpoint_sha256": (
+                    "089b4b3728f277801edff9c259157428414cff83a58367599531f0c657c06f00"
+                ),
+                "runtime_sha256": (
+                    "1f8d5696742c94aec74df1cf107cf478cdf885d1a9866b46a93e4ec32359b9c8"
+                ),
+                "packed_sha256": (
+                    "5a758726b1332b797d56329a2adb26b45b801ee39930869d5e6b292046cc5497"
+                ),
+            },
+            20260822: {
+                "checkpoint_sha256": (
+                    "efe76094835fe727e546e5c31c5d4717b796086e636e02a4b05c5aa13b84769a"
+                ),
+                "runtime_sha256": (
+                    "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3"
+                ),
+                "packed_sha256": (
+                    "e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb"
+                ),
+            },
+            20260823: {
+                "checkpoint_sha256": (
+                    "2db8a2d469efb98d8746dc6c694ba8f31bfbd40f57c3944d9480971148d9602f"
+                ),
+                "runtime_sha256": (
+                    "d0d5478385f52dd80b8073ce24ae587afe7f8b55d3123f0939d55716b5451ed0"
+                ),
+                "packed_sha256": (
+                    "6b7b6cab57c92080de862a901fc870597c5becd38b51eb77b1776b0846cc0d84"
+                ),
+            },
+        },
+        "exporter_sha256": (
+            "72cac1b847aa1dcaad14af53b002128c19cf5ec5036800da0f4ad8de837ff7c2"
+        ),
+        "selection_sha256": (
+            "5597e4228850cd44aac4adc5f11e3d6533e5528e3e04c51700d2f04b2cbe2cef"
+        ),
+        "deployment_sha256": (
+            "88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f"
+        ),
+    },
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -258,22 +336,52 @@ def _integer(value: object, label: str, minimum: int = 0) -> int:
 
 
 def _model_seed_metadata(model: Mapping[str, Any], seed: int) -> dict[str, Any]:
+    return _retained_seed_metadata(
+        model, seed, label="round-two", require_pending=True
+    )
+
+
+def _retained_seed_metadata(
+    model: Mapping[str, Any],
+    seed: int,
+    *,
+    label: str,
+    require_pending: bool,
+) -> dict[str, Any]:
     training = model.get("training")
     checkpoints = model.get("checkpoints")
     if not isinstance(training, Mapping) or not isinstance(checkpoints, list):
-        raise SelectionError("round-two model has no retained checkpoints")
-    if training.get("chosen_seed") is not None:
+        raise SelectionError(f"{label} model has no retained checkpoints")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise SelectionError(f"{label} seed is invalid")
+    if require_pending and training.get("chosen_seed") is not None:
         raise SelectionError("round-two model was mutated after training")
+    seeds = training.get("seeds")
+    if (
+        not isinstance(seeds, list)
+        or seed not in seeds
+        or len(seeds) != len(set(seeds))
+    ):
+        raise SelectionError(f"{label} seed {seed} is not retained")
     matches = [
         checkpoint
         for checkpoint in checkpoints
         if isinstance(checkpoint, Mapping) and checkpoint.get("seed") == seed
     ]
     if len(matches) != 1:
-        raise SelectionError(f"round-two seed {seed} is not retained exactly once")
-    checkpoint_sha = matches[0].get("checkpoint_sha256")
-    if not _valid_sha256(checkpoint_sha):
-        raise SelectionError(f"round-two seed {seed} has no checkpoint identity")
+        raise SelectionError(f"{label} seed {seed} is not retained exactly once")
+    checkpoint = matches[0]
+    if not all(name in checkpoint for name in ("model", "quantization")):
+        raise SelectionError(f"{label} seed {seed} has no checkpoint payload")
+    checkpoint_payload = {
+        "seed": seed,
+        "model": checkpoint["model"],
+        "quantization": checkpoint["quantization"],
+    }
+    computed_sha = _sha256(canonical_json_bytes(checkpoint_payload))
+    checkpoint_sha = checkpoint.get("checkpoint_sha256", computed_sha)
+    if not _valid_sha256(checkpoint_sha) or checkpoint_sha != computed_sha:
+        raise SelectionError(f"{label} seed {seed} checkpoint identity is stale")
     return {"seed": seed, "checkpoint_sha256": checkpoint_sha}
 
 
@@ -314,15 +422,281 @@ def _round2_identity(
     }, model)
 
 
-def _round1_identity(
-    model_path: pathlib.Path, seed: int, runtime_path: pathlib.Path
-) -> dict[str, Any]:
-    model_raw, model = _load_canonical(model_path, "baseline model")
-    if not isinstance(model, Mapping):
-        raise SelectionError("baseline model root is not an object")
-    model_sha = _sha256(model_raw)
+def _baseline_model(
+    model_path: pathlib.Path,
+) -> tuple[bytes, Mapping[str, Any], str, Any]:
     try:
-        expected = round1_exporter.render_runtime(model, model_sha, seed).encode()
+        raw = model_path.read_bytes()
+    except OSError as error:
+        raise SelectionError(f"cannot read baseline model: {model_path}") from error
+    parsed = _strict_json(raw, "baseline model", canonical=False)
+    if not isinstance(parsed, Mapping):
+        raise SelectionError("baseline model root is not an object")
+    model_sha = _sha256(raw)
+    historical = HISTORICAL_ROUND2_BASELINES.get(model_sha)
+    if historical is not None:
+        model_raw, model = _load_round2_model(model_path, "baseline model")
+        return model_raw, model, "round2-archive", historical
+    provenance = parsed.get("provenance")
+    trainer_sha = (
+        provenance.get("trainer_sha256")
+        if isinstance(provenance, Mapping) else None
+    )
+    round1_sha = _sha256(pathlib.Path(round1_exporter.TRAINER).read_bytes())
+    round2_sha = _sha256(pathlib.Path(round2_exporter.ROUND2_TRAINER).read_bytes())
+    if trainer_sha == round1_sha:
+        model_raw, model = _load_canonical(model_path, "baseline model")
+        return model_raw, model, "round1", round1_exporter
+    if trainer_sha == round2_sha:
+        model_raw, model = _load_round2_model(model_path, "baseline model")
+        return model_raw, model, "round2", round2_exporter
+    raise SelectionError("baseline model trainer lineage is unrecognized")
+
+
+def _render_historical_round2_runtime(
+    model: Mapping[str, Any], model_sha: str, seed: int
+) -> bytes:
+    try:
+        selected, _ = round1_exporter.select_checkpoint(model, seed)
+        compatible = copy.deepcopy(selected)
+        compatible["provenance"]["trainer_sha256"] = _sha256(
+            pathlib.Path(round1_exporter.TRAINER).read_bytes()
+        )
+        compatible["provenance"]["corpus_validator_sha256"] = _sha256(
+            pathlib.Path(round1_exporter.CORPUS_VALIDATOR).read_bytes()
+        )
+        weights, scales = round1_exporter.validate_model(compatible)
+        payload = round1_exporter.pack_signed_three_bit(weights)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SelectionError(
+            "historical baseline checkpoint structure is invalid"
+        ) from error
+    packed_sha = _sha256(payload)
+    return (
+        "papersoccer.jacek-native-runtime-model/v1\n"
+        f"{round1_exporter.MODEL_SCHEMA}\n"
+        f"{round1_exporter.FEATURE_SCHEMA}\n"
+        f"{model_sha}\n"
+        f"{packed_sha}\n"
+        f"{scales['w1']:.9g} {scales['w2']:.9g} {scales['w3']:.9g}\n"
+        f"{base64.b64encode(payload).decode('ascii')}\n"
+    ).encode()
+
+
+def _historical_baseline_identity(
+    model_raw: bytes,
+    model: Mapping[str, Any],
+    seed: int,
+    runtime_path: pathlib.Path,
+    frozen: Mapping[str, Any],
+    selection_path: pathlib.Path | None,
+    deployment_path: pathlib.Path | None,
+    require_deployed_seed: bool,
+) -> dict[str, Any]:
+    model_sha = _sha256(model_raw)
+    provenance = model.get("provenance")
+    target = model.get("target")
+    if (
+        frozen.get("schema")
+        != "papersoccer.jacek-native-retained-baseline/v1"
+        or not isinstance(provenance, Mapping)
+        or provenance.get("trainer_sha256") != frozen["trainer_sha256"]
+        or provenance.get("corpus_validator_sha256")
+        != frozen["corpus_validator_sha256"]
+        or provenance.get("restart_corpus_validator_sha256")
+        != frozen["restart_corpus_validator_sha256"]
+        or target != {
+            "primary": "mover-relative-final-outcome",
+            "auxiliary": "stable-native-bfm-reanalysis",
+            "auxiliary_weight": 0.25,
+            "policy_target": None,
+        }
+        or (require_deployed_seed and seed != frozen["seed"])
+    ):
+        raise SelectionError(
+            "historical baseline is not the exact frozen deployment identity"
+        )
+    seed_metadata = _retained_seed_metadata(
+        model, seed, label="historical baseline", require_pending=False
+    )
+    retained = frozen.get("retained_checkpoints", {}).get(seed)
+    if (
+        not isinstance(retained, Mapping)
+        or seed_metadata["checkpoint_sha256"]
+        != retained.get("checkpoint_sha256")
+    ):
+        raise SelectionError("historical baseline checkpoint identity is stale")
+    expected = _render_historical_round2_runtime(model, model_sha, seed)
+    try:
+        runtime_raw = runtime_path.read_bytes()
+    except OSError as error:
+        raise SelectionError("cannot read historical baseline runtime") from error
+    runtime = _runtime_lines(runtime_raw, "historical baseline")
+    if (
+        runtime_raw != expected
+        or _sha256(runtime_raw) != retained["runtime_sha256"]
+        or runtime["packed_sha256"] != retained["packed_sha256"]
+    ):
+        raise SelectionError(
+            "historical baseline runtime is not the exact frozen export"
+        )
+    retained_evidence = _historical_baseline_evidence(
+        selection_path=selection_path,
+        deployment_path=deployment_path,
+        model_sha256=model_sha,
+        model_bytes=len(model_raw),
+        seed=frozen["seed"],
+        checkpoint_sha256=frozen["checkpoint_sha256"],
+        runtime_sha256=frozen["runtime_sha256"],
+        runtime_bytes=frozen["runtime_bytes"],
+        packed_sha256=frozen["packed_sha256"],
+        frozen=frozen,
+    )
+    return {
+        **seed_metadata,
+        "exporter": "round2",
+        "exporter_sha256": frozen["exporter_sha256"],
+        "model_sha256": model_sha,
+        "runtime_sha256": retained["runtime_sha256"],
+        "packed_sha256": retained["packed_sha256"],
+        "runtime_bytes": len(runtime_raw),
+        "retained_evidence": retained_evidence,
+    }
+
+
+def _historical_baseline_evidence(
+    *,
+    selection_path: pathlib.Path | None,
+    deployment_path: pathlib.Path | None,
+    model_sha256: str,
+    model_bytes: int,
+    seed: int,
+    checkpoint_sha256: str,
+    runtime_sha256: str,
+    runtime_bytes: int,
+    packed_sha256: str,
+    frozen: Mapping[str, Any],
+) -> dict[str, Any]:
+    if selection_path is None or deployment_path is None:
+        raise SelectionError(
+            "historical baseline requires its preserved selection and "
+            "deployment descriptors"
+        )
+    selection_raw, selection = _load_canonical(
+        selection_path, "historical baseline selection"
+    )
+    deployment_raw, deployment = _load_canonical(
+        deployment_path, "historical baseline deployment"
+    )
+    if (
+        _sha256(selection_raw) != frozen["selection_sha256"]
+        or _sha256(deployment_raw) != frozen["deployment_sha256"]
+    ):
+        raise SelectionError(
+            "historical baseline descriptor bytes are not the frozen deployment"
+        )
+    if not isinstance(selection, Mapping) or not isinstance(deployment, Mapping):
+        raise SelectionError("historical baseline descriptor root is invalid")
+    selected = selection.get("selected")
+    selection_model = selection.get("model")
+    decision = selection.get("decision")
+    if (
+        selection.get("schema") != SELECTION_SCHEMA
+        or not isinstance(selected, Mapping)
+        or not isinstance(selection_model, Mapping)
+        or decision != {
+            "kind": "promotion",
+            "promotion_eligible": True,
+            "threshold_shortfalls": [],
+        }
+        or selection_model.get("sha256") != model_sha256
+        or selection_model.get("bytes") != model_bytes
+        or selection_model.get("chosen_seed_in_model") is not None
+        or selected.get("seed") != seed
+        or selected.get("checkpoint_sha256") != checkpoint_sha256
+        or selected.get("model_sha256") != model_sha256
+        or selected.get("runtime_sha256") != runtime_sha256
+        or selected.get("tested_runtime_sha256") != runtime_sha256
+        or selected.get("deployment_runtime_sha256") != runtime_sha256
+        or selected.get("runtime_bytes") != runtime_bytes
+        or selected.get("packed_sha256") != packed_sha256
+        or selected.get("exact_tested_deployed_runtime") is not True
+        or selection.get("round2_exporter_sha256")
+        != frozen["exporter_sha256"]
+        or selection.get("selection_payload_sha256")
+        != _selection_payload_hash(selection)
+    ):
+        raise SelectionError(
+            "historical baseline selection contradicts the retained checkpoint"
+        )
+    deployment_model = deployment.get("model")
+    deployment_runtime = deployment.get("runtime")
+    deployment_selection = deployment.get("selection")
+    if (
+        deployment.get("schema")
+        != "papersoccer.jacek-native-round2-deployment/v1"
+        or deployment.get("decision") != decision
+        or deployment.get("selected_seed") != seed
+        or not isinstance(deployment_model, Mapping)
+        or deployment_model.get("sha256") != model_sha256
+        or deployment_model.get("bytes") != model_bytes
+        or not isinstance(deployment_runtime, Mapping)
+        or deployment_runtime.get("sha256") != runtime_sha256
+        or deployment_runtime.get("bytes") != runtime_bytes
+        or deployment_runtime.get("packed_sha256") != packed_sha256
+        or not isinstance(deployment_selection, Mapping)
+        or deployment_selection.get("sha256") != frozen["selection_sha256"]
+        or deployment_selection.get("bytes") != len(selection_raw)
+        or deployment_selection.get("payload_sha256")
+        != selection.get("selection_payload_sha256")
+        or deployment.get("selection_tool_sha256")
+        != selection.get("selection_tool_sha256")
+        or deployment.get("round2_exporter_sha256")
+        != frozen["exporter_sha256"]
+    ):
+        raise SelectionError(
+            "historical baseline deployment contradicts its selection"
+        )
+    return {
+        "schema": frozen["schema"],
+        "selection_sha256": frozen["selection_sha256"],
+        "selection_bytes": len(selection_raw),
+        "deployment_sha256": frozen["deployment_sha256"],
+        "deployment_bytes": len(deployment_raw),
+    }
+
+
+def _baseline_identity(
+    model_path: pathlib.Path,
+    seed: int,
+    runtime_path: pathlib.Path,
+    selection_path: pathlib.Path | None = None,
+    deployment_path: pathlib.Path | None = None,
+    require_deployed_seed: bool = True,
+) -> dict[str, Any]:
+    model_raw, model, exporter_kind, exporter = _baseline_model(model_path)
+    if exporter_kind == "round2-archive":
+        return _historical_baseline_identity(
+            model_raw,
+            model,
+            seed,
+            runtime_path,
+            exporter,
+            selection_path,
+            deployment_path,
+            require_deployed_seed,
+        )
+    if selection_path is not None or deployment_path is not None:
+        raise SelectionError(
+            "retained deployment descriptors were supplied for a non-historical "
+            "baseline"
+        )
+    model_sha = _sha256(model_raw)
+    seed_metadata = _retained_seed_metadata(
+        model, seed, label="baseline", require_pending=False
+    )
+    try:
+        expected = exporter.render_runtime(model, model_sha, seed).encode()
     except (KeyError, TypeError, ValueError) as error:
         raise SelectionError("baseline model failed frozen export validation") from error
     runtime_raw = runtime_path.read_bytes()
@@ -330,12 +704,35 @@ def _round1_identity(
         raise SelectionError("baseline runtime is not the exact seed model export")
     runtime = _runtime_lines(runtime_raw, "baseline")
     return {
-        "seed": seed,
+        **seed_metadata,
+        "exporter": exporter_kind,
+        "exporter_sha256": _sha256(pathlib.Path(exporter.__file__).read_bytes()),
         "model_sha256": model_sha,
         "runtime_sha256": _sha256(runtime_raw),
         "packed_sha256": runtime["packed_sha256"],
         "runtime_bytes": len(runtime_raw),
     }
+
+
+def _round1_identity(
+    model_path: pathlib.Path, seed: int, runtime_path: pathlib.Path
+) -> dict[str, Any]:
+    """Backward-compatible name for callers that used the bootstrap helper."""
+    return _baseline_identity(model_path, seed, runtime_path)
+
+
+def _reject_self_referential_baseline(
+    model_path: pathlib.Path, baseline_model: pathlib.Path
+) -> None:
+    try:
+        same_path = model_path.resolve() == baseline_model.resolve()
+        same_bytes = _sha256(model_path.read_bytes()) == _sha256(
+            baseline_model.read_bytes()
+        )
+    except OSError as error:
+        raise SelectionError("candidate or baseline model cannot be read") from error
+    if same_path or same_bytes:
+        raise SelectionError("candidate model cannot be its own baseline")
 
 
 def _source_identities() -> list[dict[str, str]]:
@@ -570,11 +967,18 @@ def record_gate(
     baseline_runtime: pathlib.Path,
     gate_binary: pathlib.Path,
     output_dir: pathlib.Path,
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
 ) -> pathlib.Path:
     profile = PROFILES[profile_name]
+    _reject_self_referential_baseline(model_path, baseline_model)
     candidate, _ = _round2_identity(model_path, seed, candidate_runtime)
-    baseline = _round1_identity(
-        baseline_model, baseline_seed, baseline_runtime
+    baseline = _baseline_identity(
+        baseline_model,
+        baseline_seed,
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
     )
     if candidate["packed_sha256"] == baseline["packed_sha256"]:
         raise SelectionError("candidate and baseline packed models are identical")
@@ -819,9 +1223,12 @@ def finalize_selection(
     report_paths: Sequence[pathlib.Path],
     output: pathlib.Path | None,
     exploratory: bool = False,
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     if output is not None and output.exists():
         raise SelectionError("refusing to overwrite immutable selection sidecar")
+    _reject_self_referential_baseline(model_path, baseline_model)
     model_raw, model = _load_round2_model(model_path)
     if not isinstance(model, Mapping):
         raise SelectionError("round-two model root is not an object")
@@ -856,8 +1263,12 @@ def finalize_selection(
             "packed_sha256": runtime["packed_sha256"],
             "runtime_bytes": len(runtime_raw),
         }
-    baseline = _round1_identity(
-        baseline_model, baseline_seed, baseline_runtime
+    baseline = _baseline_identity(
+        baseline_model,
+        baseline_seed,
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
     )
 
     reports: dict[tuple[int, str], tuple[dict[str, Any], str]] = {}
@@ -1024,6 +1435,8 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--baseline-model", type=pathlib.Path, required=True)
     record.add_argument("--baseline-seed", type=int, required=True)
     record.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    record.add_argument("--baseline-selection", type=pathlib.Path)
+    record.add_argument("--baseline-deployment", type=pathlib.Path)
     record.add_argument("--gate-binary", type=pathlib.Path, required=True)
     record.add_argument("--output-dir", type=pathlib.Path, required=True)
 
@@ -1034,6 +1447,8 @@ def _parser() -> argparse.ArgumentParser:
     finalize.add_argument("--baseline-model", type=pathlib.Path, required=True)
     finalize.add_argument("--baseline-seed", type=int, required=True)
     finalize.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    finalize.add_argument("--baseline-selection", type=pathlib.Path)
+    finalize.add_argument("--baseline-deployment", type=pathlib.Path)
     finalize.add_argument("--reports", nargs="+", type=pathlib.Path, required=True)
     finalize.add_argument("--output", type=pathlib.Path, required=True)
     exploratory = commands.add_parser(
@@ -1044,6 +1459,8 @@ def _parser() -> argparse.ArgumentParser:
     exploratory.add_argument("--baseline-model", type=pathlib.Path, required=True)
     exploratory.add_argument("--baseline-seed", type=int, required=True)
     exploratory.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    exploratory.add_argument("--baseline-selection", type=pathlib.Path)
+    exploratory.add_argument("--baseline-deployment", type=pathlib.Path)
     exploratory.add_argument(
         "--reports", nargs="+", type=pathlib.Path, required=True
     )
@@ -1063,6 +1480,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baseline_model=arguments.baseline_model,
                 baseline_seed=arguments.baseline_seed,
                 baseline_runtime=arguments.baseline_runtime,
+                baseline_selection=arguments.baseline_selection,
+                baseline_deployment=arguments.baseline_deployment,
                 gate_binary=arguments.gate_binary,
                 output_dir=arguments.output_dir,
             )
@@ -1081,6 +1500,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baseline_model=arguments.baseline_model,
                 baseline_seed=arguments.baseline_seed,
                 baseline_runtime=arguments.baseline_runtime,
+                baseline_selection=arguments.baseline_selection,
+                baseline_deployment=arguments.baseline_deployment,
                 report_paths=arguments.reports,
                 output=arguments.output,
             )

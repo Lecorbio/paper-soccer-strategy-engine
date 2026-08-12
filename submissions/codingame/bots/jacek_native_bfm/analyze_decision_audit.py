@@ -16,7 +16,8 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 
-AUDIT_SCHEMA_VERSION = "jacek-native-decision-audit-v1"
+AUDIT_SCHEMA_VERSION = "jacek-native-decision-audit-v2"
+LEGACY_AUDIT_SCHEMA_VERSION = "jacek-native-decision-audit-v1"
 ANALYSIS_SCHEMA_VERSION = "jacek-native-decision-analysis-v1"
 ARENA_BATCH_SCHEMA_VERSION = "papersoccer.codingame-arena-batch.v1"
 ARENA_GAME_SCHEMA_VERSION = "papersoccer.codingame-arena-game.v1"
@@ -147,6 +148,7 @@ OPTIONAL_INTEGER_FIELDS = {
     "chosen_final_visits",
     "chosen_final_selection_visits",
     "search_solved_winner",
+    "max_own_decisions_per_game",
 }
 FLOAT_FIELDS = {
     "exploration",
@@ -181,6 +183,7 @@ EXPECTED_FIELDS = (
     | BOOLEAN_FIELDS
     | {"input_provenance"}
 )
+LEGACY_EXPECTED_FIELDS = EXPECTED_FIELDS - {"max_own_decisions_per_game"}
 ORDINAL_FIELDS = {
     "actual_exact_retained_ordinal",
     "actual_boundary_retained_ordinal",
@@ -200,6 +203,7 @@ CONFIGURATION_FIELDS = (
     "first_play_urgency",
     "first_time_limit_ms",
     "later_time_limit_ms",
+    "max_own_decisions_per_game",
 )
 ARENA_PROVENANCE_FIELDS = (
     "agent_id",
@@ -409,13 +413,27 @@ def _expected_classification(row: dict[str, Any]) -> str:
 
 
 def _validate_row(row: dict[str, Any], line: int) -> None:
+    schema_version = row.get("schema_version")
+    if schema_version not in {
+        AUDIT_SCHEMA_VERSION, LEGACY_AUDIT_SCHEMA_VERSION,
+    }:
+        raise AuditAnalysisError(f"line {line}: unsupported audit schema")
+    expected_fields = (
+        LEGACY_EXPECTED_FIELDS
+        if schema_version == LEGACY_AUDIT_SCHEMA_VERSION
+        else EXPECTED_FIELDS
+    )
     actual = set(row)
-    if actual != EXPECTED_FIELDS:
+    if actual != expected_fields:
         raise AuditAnalysisError(
             f"line {line}: schema fields differ; "
-            f"missing={sorted(EXPECTED_FIELDS - actual)}, "
-            f"unexpected={sorted(actual - EXPECTED_FIELDS)}"
+            f"missing={sorted(expected_fields - actual)}, "
+            f"unexpected={sorted(actual - expected_fields)}"
         )
+    # Preserve historical v1 bytes as valid evidence while normalizing their
+    # implicit unlimited behavior for all downstream configuration checks.
+    if schema_version == LEGACY_AUDIT_SCHEMA_VERSION:
+        row["max_own_decisions_per_game"] = None
     for field in STRING_FIELDS:
         if not isinstance(row[field], str):
             raise AuditAnalysisError(f"line {line}: {field} must be a string")
@@ -435,8 +453,6 @@ def _validate_row(row: dict[str, Any], line: int) -> None:
             raise AuditAnalysisError(f"line {line}: {field} must be boolean")
     row["input_provenance"] = _validate_provenance(row["input_provenance"], line)
 
-    if row["schema_version"] != AUDIT_SCHEMA_VERSION:
-        raise AuditAnalysisError(f"line {line}: unsupported audit schema")
     if GAME_ID_PATTERN.fullmatch(row["game_id"]) is None:
         raise AuditAnalysisError(f"line {line}: invalid game_id")
     if STATE_ID_PATTERN.fullmatch(row["state_id"]) is None:
@@ -462,6 +478,11 @@ def _validate_row(row: dict[str, Any], line: int) -> None:
     _printable(row["classification_reason"], f"line {line}: classification_reason", 1024)
     if row["audit_mode"] not in {"fixed-work", "clock"}:
         raise AuditAnalysisError(f"line {line}: invalid audit mode")
+    decision_limit = row["max_own_decisions_per_game"]
+    if decision_limit is not None and not 1 <= decision_limit <= 1_024:
+        raise AuditAnalysisError(
+            f"line {line}: max_own_decisions_per_game is outside [1,1024]"
+        )
     _sha256(row["model_sha256"], f"line {line}: model_sha256")
     _sha256(row["packed_weights_sha256"], f"line {line}: packed_weights_sha256")
 
@@ -570,11 +591,16 @@ def load_audit(path: pathlib.Path) -> dict[str, Any]:
 
     provenance = rows[0]["input_provenance"]
     configuration = {field: rows[0][field] for field in CONFIGURATION_FIELDS}
+    audit_schema_version = rows[0]["schema_version"]
     seen_keys: set[tuple[str, str]] = set()
     closed_games: set[str] = set()
     current_game: str | None = None
     by_game: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for line_number, row in enumerate(rows, 1):
+        if row["schema_version"] != audit_schema_version:
+            raise AuditAnalysisError(
+                f"line {line_number}: audit schema differs within run"
+            )
         if row["input_provenance"] != provenance:
             raise AuditAnalysisError(f"line {line_number}: provenance differs within audit")
         candidate_configuration = {field: row[field] for field in CONFIGURATION_FIELDS}
@@ -605,6 +631,7 @@ def load_audit(path: pathlib.Path) -> dict[str, Any]:
         "rows": rows,
         "provenance": provenance,
         "configuration": configuration,
+        "audit_schema_version": audit_schema_version,
         "source_name": path.name,
         "source_sha256": hashlib.sha256(raw).hexdigest(),
     }
@@ -1000,9 +1027,13 @@ def join_arena_manifest(dataset: dict[str, Any], manifest: dict[str, Any]) -> di
         by_game[row["game_id"]].append(row)
     if set(by_game) != manifest["expected_audited_game_ids"]:
         raise AuditAnalysisError("audit game coverage does not exactly match arena manifest")
+    decision_limit = dataset["configuration"]["max_own_decisions_per_game"]
     for game_id, game_rows in by_game.items():
         game = manifest["clean_games"][game_id]
-        if len(game_rows) != game["expected_decisions"]:
+        expected_decisions = game["expected_decisions"]
+        if decision_limit is not None:
+            expected_decisions = min(decision_limit, expected_decisions)
+        if len(game_rows) != expected_decisions:
             raise AuditAnalysisError(f"arena game {game_id} decision coverage differs")
         for row in game_rows:
             turn = row["turn_index"]
@@ -1064,7 +1095,7 @@ def analyze_dataset(dataset: dict[str, Any], label: str) -> dict[str, Any]:
     game_counts = collections.Counter(games.values())
     report: dict[str, Any] = {
         "analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
-        "audit_schema_version": AUDIT_SCHEMA_VERSION,
+        "audit_schema_version": dataset["audit_schema_version"],
         "label": label,
         "source": {"name": dataset["source_name"], "sha256": dataset["source_sha256"]},
         "input_provenance": dataset["provenance"],

@@ -116,6 +116,87 @@ class JacekNativeRound2ActivationTest(unittest.TestCase):
         installed.write_bytes(self.fixture.candidate_runtimes[seed].read_bytes())
         return installed
 
+    def _untrained_seed_identity(self):
+        runtime = (
+            self.directory / "models/jacek_native_untrained_seed.runtime"
+        ).read_bytes()
+        lines = runtime.decode("utf-8").splitlines()
+        return {
+            "artifact_sha256": hashlib.sha256(runtime).hexdigest(),
+            "model_sha256": lines[3],
+            "packed_sha256": lines[4],
+        }
+
+    def _install_native_baseline(self):
+        active_seeds = self.fixture.seeds
+        try:
+            self.fixture.seeds = [201, 202]
+            parent = self.fixture._model()
+        finally:
+            self.fixture.seeds = active_seeds
+        seed_identity = self._untrained_seed_identity()
+        parent_generation = parent["provenance"]["generation"]
+        parent_generation["checkpoint_provenance"] = {
+            "mode": "untrained-seed-bootstrap/v1",
+            "artifacts": [seed_identity],
+        }
+        parent_generation["model_artifact_sha256"] = [
+            seed_identity["artifact_sha256"]
+        ]
+        parent_model = self.directory / "models/native-parent.json"
+        parent_model.write_bytes(
+            self.fixture.selection.canonical_json_bytes(parent)
+        )
+        parent_seed = 201
+        parent_runtime = self.directory / "models/native-parent.runtime"
+        parent_runtime.write_text(
+            self.fixture.selection.round2_exporter.render_runtime(
+                parent,
+                hashlib.sha256(parent_model.read_bytes()).hexdigest(),
+                parent_seed,
+            ),
+            encoding="utf-8",
+        )
+        lines = parent_runtime.read_text(encoding="utf-8").splitlines()
+        parent_identity = {
+            "artifact_sha256": hashlib.sha256(
+                parent_runtime.read_bytes()
+            ).hexdigest(),
+            "model_sha256": lines[3],
+            "packed_sha256": lines[4],
+        }
+        generation = self.fixture.model["provenance"]["generation"]
+        generation["checkpoint_provenance"] = {
+            "mode": "native-runtime-models/v1",
+            "artifacts": [parent_identity],
+        }
+        generation["model_artifact_sha256"] = [
+            parent_identity["artifact_sha256"]
+        ]
+        self.fixture._write_model()
+        self.fixture._write_runtimes()
+        self.fixture.baseline_model = parent_model
+        self.fixture.baseline_seed = parent_seed
+        self.fixture.baseline_runtime = parent_runtime
+        self.fixture.reports = (
+            self.directory
+            / "models/jacek_native_round2_gate_evidence/native-baseline"
+        )
+        self.paths = self.fixture._all_reports()
+        self.sidecar_path.unlink()
+        self.sidecar = self.fixture.selection.finalize_selection(
+            model_path=self.fixture.model_path,
+            baseline_model=parent_model,
+            baseline_seed=parent_seed,
+            baseline_runtime=parent_runtime,
+            report_paths=self.paths,
+            output=self.sidecar_path,
+        )
+        self.runtime_path = self._install_selected_runtime(
+            self.sidecar["selected"]["seed"]
+        )
+        return parent_model, parent_seed, parent_runtime
+
     def create(self, checkpoint_pairs=()):
         return activation.create_deployment(
             model_path=self.fixture.model_path,
@@ -319,6 +400,183 @@ class JacekNativeRound2ActivationTest(unittest.TestCase):
         )
         self.assertEqual(len(validated["checkpoint_paths"]), 1)
 
+    def test_retained_native_baseline_is_recursively_bound(self):
+        parent_model, parent_seed, parent_runtime = (
+            self._install_native_baseline()
+        )
+        with self.assertRaisesRegex(
+            activation.ActivationError, "file-backed declarations"
+        ):
+            self.create()
+        descriptor = self.create([(parent_model, parent_runtime)])
+        self.assertEqual(descriptor["baseline"]["seed"], parent_seed)
+        self.assertEqual(descriptor["baseline"]["exporter"]["kind"], "round2")
+        self.assertEqual(
+            descriptor["baseline"]["checkpoint_sha256"],
+            self.fixture.selection._baseline_identity(
+                parent_model, parent_seed, parent_runtime
+            )["checkpoint_sha256"],
+        )
+        loaded = activation.load_deployment(
+            self.deployment_path, self.directory
+        )
+        self.assertEqual(
+            loaded["baseline_model_path"], parent_model.resolve()
+        )
+
+        tampered = json.loads(self.deployment_path.read_text())
+        tampered["baseline"]["seed"] = parent_seed + 1
+        self.deployment_path.write_bytes(
+            activation._canonical_json_bytes(tampered)
+        )
+        with self.assertRaisesRegex(
+            activation.ActivationError, "exact retained native checkpoint"
+        ):
+            activation.load_deployment(self.deployment_path, self.directory)
+
+    def test_recursive_checkpoint_cycle_is_rejected(self):
+        identity_a = {
+            "artifact_sha256": "a" * 64,
+            "model_sha256": "b" * 64,
+            "packed_sha256": "c" * 64,
+        }
+        identity_b = {
+            "artifact_sha256": "d" * 64,
+            "model_sha256": "e" * 64,
+            "packed_sha256": "f" * 64,
+        }
+
+        def model_with_parent(parent):
+            return {"provenance": {"generation": {
+                "checkpoint_provenance": {
+                    "mode": "native-runtime-models/v1",
+                    "artifacts": [parent],
+                },
+                "model_artifact_sha256": [parent["artifact_sha256"]],
+            }}}
+
+        model_a = self.directory / "models/cycle-a.json"
+        runtime_a = self.directory / "models/cycle-a.runtime"
+        model_b = self.directory / "models/cycle-b.json"
+        runtime_b = self.directory / "models/cycle-b.runtime"
+        model_a.write_bytes(b"cycle-a\n")
+        model_b.write_bytes(b"cycle-b\n")
+        metadata = {
+            model_a.resolve(): {
+                "identity": identity_a,
+                "model": model_with_parent(identity_b),
+            },
+            model_b.resolve(): {
+                "identity": identity_b,
+                "model": model_with_parent(identity_a),
+            },
+        }
+
+        def checkpoint_identity(model_path, _runtime_path, *_retained_evidence):
+            return {
+                **metadata[model_path.resolve()],
+                "seed": 1,
+                "checkpoint_sha256": "1" * 64,
+                "exporter": "round2",
+                "exporter_sha256": "2" * 64,
+            }
+
+        active = model_with_parent(identity_a)
+        with (
+            mock.patch.object(
+                activation, "_untrained_seed_identity",
+                return_value={
+                    "artifact_sha256": "0" * 64,
+                    "model_sha256": "1" * 64,
+                    "packed_sha256": "2" * 64,
+                },
+            ),
+            mock.patch.object(
+                activation, "_checkpoint_model_identity",
+                side_effect=checkpoint_identity,
+            ),
+            self.assertRaisesRegex(
+                activation.ActivationError, "contains a cycle"
+            ),
+        ):
+            activation._validate_checkpoint_ancestry(
+                self.directory,
+                self.fixture.model_path,
+                active,
+                [(model_a, runtime_a), (model_b, runtime_b)],
+            )
+
+    def test_historical_deployed_checkpoint_identity_is_recognized_exactly(self):
+        model = self.directory / "models/historical-native.json"
+        runtime = self.directory / "models/historical-native.runtime"
+        selection = self.directory / "models/historical-selection.json"
+        deployment = self.directory / "models/historical-deployment.json"
+        model.write_bytes(
+            (ROOT / "models/jacek_native_round2_candidate.json").read_bytes()
+        )
+        runtime.write_bytes(
+            (ROOT / "models/jacek_native_round2_selected.runtime").read_bytes()
+        )
+        selection.write_bytes(
+            (ROOT / "models/jacek_native_round2_selection.json").read_bytes()
+        )
+        deployment.write_bytes(
+            (ROOT / "models/jacek_native_round2_deployment.json").read_bytes()
+        )
+        identity = activation._checkpoint_model_identity(
+            model, runtime, selection, deployment
+        )
+        self.assertEqual(identity["seed"], 20260822)
+        self.assertEqual(identity["exporter"], "round2")
+        self.assertEqual(
+            identity["identity"]["artifact_sha256"],
+            "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3",
+        )
+        runtime.write_bytes(runtime.read_bytes() + b"x")
+        with self.assertRaisesRegex(
+            activation.ActivationError, "exact unique retained model export"
+        ):
+            activation._checkpoint_model_identity(
+                model, runtime, selection, deployment
+            )
+
+        runtime.write_bytes(
+            (ROOT / "models/jacek_native_round2_selected.runtime").read_bytes()
+        )
+        with self.assertRaisesRegex(
+            activation.ActivationError, "exact unique retained model export"
+        ):
+            activation._checkpoint_model_identity(model, runtime)
+
+        _, historical_model = activation.selection_tool._load_round2_model(model)
+        sibling_runtime = self.directory / "models/historical-seed23.runtime"
+        sibling_runtime.write_bytes(
+            activation.selection_tool._render_historical_round2_runtime(
+                historical_model,
+                hashlib.sha256(model.read_bytes()).hexdigest(),
+                20260823,
+            )
+        )
+        sibling = activation._checkpoint_model_identity(
+            model, sibling_runtime, selection, deployment
+        )
+        self.assertEqual(sibling["seed"], 20260823)
+        self.assertEqual(
+            sibling["checkpoint_sha256"],
+            "2db8a2d469efb98d8746dc6c694ba8f31bfbd40f57c3944d9480971148d9602f",
+        )
+        with self.assertRaisesRegex(
+            activation.ActivationError, "exact retained native checkpoint"
+        ):
+            activation._prevalidate_deployment_baseline(
+                self.directory,
+                model,
+                20260823,
+                sibling_runtime,
+                selection,
+                deployment,
+            )
+
     def test_runtime_or_descriptor_identity_tamper_is_rejected(self):
         self.create()
         self.runtime_path.write_bytes(self.runtime_path.read_bytes() + b"x")
@@ -346,6 +604,97 @@ class JacekNativeRound2ActivationTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(activation.ActivationError, "escapes"):
             activation.load_deployment(self.deployment_path, self.directory)
+
+    def test_retained_baseline_descriptors_must_stay_under_models(self):
+        self.create()
+        outside_selection = self.directory / "outside-selection.json"
+        outside_deployment = self.directory / "outside-deployment.json"
+        outside_selection.write_bytes(self.sidecar_path.read_bytes())
+        outside_deployment.write_bytes(self.deployment_path.read_bytes())
+        descriptor = json.loads(self.deployment_path.read_text())
+        descriptor["baseline"]["retained_evidence"] = {
+            "selection": activation._file_identity(
+                self.directory, outside_selection, "outside selection"
+            ),
+            "deployment": activation._file_identity(
+                self.directory, outside_deployment, "outside deployment"
+            ),
+        }
+        self.deployment_path.write_bytes(
+            activation._canonical_json_bytes(descriptor)
+        )
+        with self.assertRaisesRegex(
+            activation.ActivationError, "must be installed under models"
+        ):
+            activation.load_deployment(self.deployment_path, self.directory)
+
+    def test_install_is_atomic_compare_and_swap_and_supports_rollback(self):
+        self.create()
+        candidate = self.directory / "models/iteration-deployment.json"
+        candidate.write_bytes(self.deployment_path.read_bytes())
+        canonical = (
+            self.directory / "models/jacek_native_round2_deployment.json"
+        )
+        original = b'{"old":"pointer"}\n'
+        canonical.write_bytes(original)
+        old_sha = hashlib.sha256(original).hexdigest()
+        with self.assertRaisesRegex(
+            activation.ActivationError, "changed before install"
+        ):
+            activation.install_deployment(
+                candidate, "0" * 64, canonical, self.directory
+            )
+        self.assertEqual(canonical.read_bytes(), original)
+
+        installed_sha = activation.install_deployment(
+            candidate, old_sha, canonical, self.directory
+        )
+        self.assertEqual(canonical.read_bytes(), candidate.read_bytes())
+        self.assertEqual(
+            installed_sha, hashlib.sha256(candidate.read_bytes()).hexdigest()
+        )
+
+        rollback = self.directory / "models/rollback-deployment.json"
+        rollback.write_bytes(candidate.read_bytes())
+        current_sha = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        activation.install_deployment(
+            rollback, current_sha, canonical, self.directory
+        )
+        self.assertEqual(canonical.read_bytes(), rollback.read_bytes())
+        self.assertEqual(
+            list(canonical.parent.glob(".jacek_native_round2_deployment.json.*.install")),
+            [],
+        )
+
+    def test_install_can_compare_and_swap_back_to_distinct_validated_bytes(self):
+        models = self.directory / "models"
+        canonical = models / "jacek_native_round2_deployment.json"
+        previous = models / "previous-deployment.json"
+        candidate = models / "candidate-deployment.json"
+        previous.write_bytes(b'{"generation":"previous"}\n')
+        candidate.write_bytes(b'{"generation":"candidate"}\n')
+        canonical.write_bytes(previous.read_bytes())
+
+        def validated(path, _root):
+            return {"deployment_bytes": pathlib.Path(path).read_bytes()}
+
+        with mock.patch.object(
+            activation, "load_deployment", side_effect=validated
+        ):
+            activation.install_deployment(
+                candidate,
+                hashlib.sha256(previous.read_bytes()).hexdigest(),
+                canonical,
+                self.directory,
+            )
+            self.assertEqual(canonical.read_bytes(), candidate.read_bytes())
+            activation.install_deployment(
+                previous,
+                hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                canonical,
+                self.directory,
+            )
+        self.assertEqual(canonical.read_bytes(), previous.read_bytes())
 
 
 if __name__ == "__main__":

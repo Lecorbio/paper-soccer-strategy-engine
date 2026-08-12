@@ -669,6 +669,22 @@ if(NOT EMSCRIPTEN)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(papersoccer_jacek_native_model_gate
     PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_search_ab_gate
+    tools/jacek_native_search_ab_gate.cpp)
+  target_include_directories(papersoccer_jacek_native_search_ab_gate
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_search_ab_gate
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_search_ab_gate_test
+    tools/jacek_native_search_ab_gate_test.cpp)
+  target_include_directories(papersoccer_jacek_native_search_ab_gate_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_search_ab_gate_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_search_ab_gate_test
+    COMMAND papersoccer_jacek_native_search_ab_gate_test)
   if(Python3_Interpreter_FOUND)
     set(PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT
       "${CMAKE_CURRENT_BINARY_DIR}/jacek-native-current.runtime")
@@ -687,9 +703,6 @@ if(NOT EMSCRIPTEN)
         ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_native_round2_deployment.json)
       set(PAPERSOCCER_JACEK_NATIVE_CURRENT_DEPENDS
         models/jacek_native_round2_deployment.json
-        models/jacek_native_round2_candidate.json
-        models/jacek_native_round2_selection.json
-        models/jacek_native_round2_selected.runtime
         submissions/codingame/tools/jacek_native_round2_activation.py
         submissions/codingame/tools/generate_jacek_native_model_round2.py
         submissions/codingame/tools/generate_jacek_native_model.py
@@ -769,6 +782,8 @@ if(NOT EMSCRIPTEN)
         ${PAPERSOCCER_JACEK_NATIVE_BASELINE_HEADER})
     add_dependencies(papersoccer_jacek_native_model_gate
       papersoccer_jacek_native_runtime_checkpoint)
+    add_dependencies(papersoccer_jacek_native_search_ab_gate
+      papersoccer_jacek_native_runtime_checkpoint)
     add_test(NAME papersoccer_jacek_native_model_gate_checkpoint_smoke
       COMMAND papersoccer_jacek_native_model_gate
         --candidate-checkpoint ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
@@ -793,6 +808,17 @@ if(NOT EMSCRIPTEN)
       set_tests_properties(
         papersoccer_jacek_native_model_gate_varied_shuffle_smoke
         PROPERTIES PASS_REGULAR_EXPRESSION "shuffle_seed_policy=varied")
+      add_test(NAME papersoccer_jacek_native_search_ab_gate_match_smoke
+        COMMAND papersoccer_jacek_native_search_ab_gate
+          --checkpoint
+            ${PAPERSOCCER_JACEK_NATIVE_RUNTIME_CHECKPOINT}
+          --pairs 1 --first-ms 50 --later-ms 10 --opening-turns 0
+          --seed 6510615555426900575
+          --candidate-tree-nodes 120000
+          --baseline-tree-nodes 80000)
+      set_tests_properties(papersoccer_jacek_native_search_ab_gate_match_smoke
+        PROPERTIES PASS_REGULAR_EXPRESSION
+          "runtime_policy=same.*shuffle_seed_policy=deployment-constant|shuffle_seed_policy=deployment-constant.*runtime_policy=same")
     endif()
   endif()
 endif()

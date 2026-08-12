@@ -12,9 +12,11 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import fcntl
 import hashlib
 import json
 import math
+import os
 import pathlib
 import sys
 from collections.abc import Mapping, Sequence
@@ -69,7 +71,7 @@ def _validate_module_origins() -> None:
 _validate_module_origins()
 
 
-DEPLOYMENT_SCHEMA = "papersoccer.jacek-native-round2-deployment/v1"
+DEPLOYMENT_SCHEMA = "papersoccer.jacek-native-round2-deployment/v2"
 DEFAULT_DEPLOYMENT = ROOT / "models/jacek_native_round2_deployment.json"
 DEFAULT_HEADER = (
     ROOT / "submissions/codingame/bots/jacek_native_bfm/"
@@ -164,6 +166,8 @@ def validate_selection(
     baseline_seed: int,
     baseline_runtime: pathlib.Path,
     report_paths: Sequence[pathlib.Path],
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     try:
         model_raw, model = selection_tool._load_round2_model(model_path)
@@ -182,6 +186,8 @@ def validate_selection(
             baseline_model=baseline_model,
             baseline_seed=baseline_seed,
             baseline_runtime=baseline_runtime,
+            baseline_selection=baseline_selection,
+            baseline_deployment=baseline_deployment,
             report_paths=report_paths,
             output=None,
             exploratory=(
@@ -248,26 +254,23 @@ def _validate_file_identity(
     return path
 
 
-def _validate_canonical_baseline(
+def _is_canonical_bootstrap_baseline(
     root: pathlib.Path,
     model_path: pathlib.Path,
     seed: int,
     runtime_path: pathlib.Path,
-) -> None:
+) -> bool:
     root = root.resolve()
-    if (
+    return (
         _relative(root, model_path, "baseline model")
-        != CANONICAL_BASELINE_MODEL.as_posix()
-        or _relative(root, runtime_path, "baseline runtime")
-        != CANONICAL_BASELINE_RUNTIME.as_posix()
-        or seed != CANONICAL_BASELINE_SEED
-        or _sha256(model_path.read_bytes()) != CANONICAL_BASELINE_MODEL_SHA256
-        or _sha256(runtime_path.read_bytes())
-        != CANONICAL_BASELINE_RUNTIME_SHA256
-    ):
-        raise ActivationError(
-            "deployment baseline is not the frozen canonical bootstrap"
-        )
+        == CANONICAL_BASELINE_MODEL.as_posix()
+        and _relative(root, runtime_path, "baseline runtime")
+        == CANONICAL_BASELINE_RUNTIME.as_posix()
+        and seed == CANONICAL_BASELINE_SEED
+        and _sha256(model_path.read_bytes()) == CANONICAL_BASELINE_MODEL_SHA256
+        and _sha256(runtime_path.read_bytes())
+        == CANONICAL_BASELINE_RUNTIME_SHA256
+    )
 
 
 def _require_evidence_path(
@@ -542,55 +545,54 @@ def _untrained_seed_identity(root: pathlib.Path) -> dict[str, str]:
 
 
 def _checkpoint_model_identity(
-    model_path: pathlib.Path, runtime_path: pathlib.Path
-) -> tuple[dict[str, str], Mapping[str, Any]]:
+    model_path: pathlib.Path,
+    runtime_path: pathlib.Path,
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
+) -> dict[str, Any]:
     try:
-        model_raw, model = _load_canonical(model_path, "checkpoint model")
-    except ActivationError:
-        try:
-            model_raw, model = selection_tool._load_round2_model(
-                model_path, "checkpoint model"
-            )
-        except selection_tool.SelectionError as error:
-            raise ActivationError(
-                f"cannot validate checkpoint model: {model_path}"
-            ) from error
+        _, model, _, _ = selection_tool._baseline_model(model_path)
+    except selection_tool.SelectionError as error:
+        raise ActivationError(
+            f"cannot validate checkpoint model: {model_path}"
+        ) from error
     if not isinstance(model, Mapping):
         raise ActivationError("checkpoint model root is not an object")
-    trainer_sha = model.get("provenance", {}).get("trainer_sha256")
-    round1 = selection_tool.round1_exporter
-    if trainer_sha == _sha256(round1.TRAINER.read_bytes()):
-        exporter = round1
-    elif trainer_sha == _sha256(round2_exporter.ROUND2_TRAINER.read_bytes()):
-        exporter = round2_exporter
-    else:
-        raise ActivationError("checkpoint model trainer lineage is unrecognized")
-    try:
-        exporter.validate_model(model)
-    except (KeyError, TypeError, ValueError) as error:
-        raise ActivationError("checkpoint model export contract is invalid") from error
     runtime_raw = runtime_path.read_bytes()
-    model_sha = _sha256(model_raw)
     checkpoints = model.get("checkpoints")
-    seeds = [
-        checkpoint.get("seed") for checkpoint in checkpoints or []
+    retained = [
+        checkpoint for checkpoint in checkpoints or []
         if isinstance(checkpoint, Mapping)
     ]
-    matches = []
-    for seed in seeds:
+    matches: list[dict[str, Any]] = []
+    for checkpoint in retained:
+        seed = checkpoint.get("seed")
         try:
-            rendered = exporter.render_runtime(model, model_sha, seed).encode()
-        except (KeyError, TypeError, ValueError) as error:
-            raise ActivationError(
-                "checkpoint model retained runtime cannot be exported"
-            ) from error
-        if rendered == runtime_raw:
-            matches.append(seed)
+            identity = selection_tool._baseline_identity(
+                model_path,
+                seed,
+                runtime_path,
+                baseline_selection,
+                baseline_deployment,
+                require_deployed_seed=False,
+            )
+        except (OSError, selection_tool.SelectionError):
+            continue
+        if identity["runtime_sha256"] == _sha256(runtime_raw):
+            matches.append(identity)
     if len(matches) != 1:
         raise ActivationError(
             "checkpoint runtime is not one exact unique retained model export"
         )
-    return _runtime_identity(runtime_raw, "checkpoint"), model
+    selected = matches[0]
+    return {
+        "identity": _runtime_identity(runtime_raw, "checkpoint"),
+        "model": model,
+        "seed": selected["seed"],
+        "checkpoint_sha256": selected["checkpoint_sha256"],
+        "exporter": selected["exporter"],
+        "exporter_sha256": selected["exporter_sha256"],
+    }
 
 
 def _validate_checkpoint_ancestry(
@@ -598,21 +600,39 @@ def _validate_checkpoint_ancestry(
     active_model_path: pathlib.Path,
     active_model: Mapping[str, Any],
     checkpoint_pairs: Sequence[tuple[pathlib.Path, pathlib.Path]],
-) -> None:
+    baseline_model: pathlib.Path | None = None,
+    baseline_runtime: pathlib.Path | None = None,
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
+) -> dict[tuple[pathlib.Path, pathlib.Path], dict[str, Any]]:
     root = root.resolve()
     seed_identity = _untrained_seed_identity(root)
     active_mode, active_artifacts = _checkpoint_provenance(
         active_model, "active round-two model"
     )
-    declarations: dict[
-        str, tuple[dict[str, str], Mapping[str, Any], pathlib.Path]
+    declarations: dict[str, dict[str, Any]] = {}
+    pair_declarations: dict[
+        tuple[pathlib.Path, pathlib.Path], dict[str, Any]
     ] = {}
     seen_pairs: set[tuple[pathlib.Path, pathlib.Path]] = set()
     seen_runtimes: set[pathlib.Path] = set()
+    try:
+        active_model_sha256 = _sha256(active_model_path.read_bytes())
+    except OSError as error:
+        raise ActivationError("active round-two model cannot be read") from error
     for index, (model_path, runtime_path) in enumerate(checkpoint_pairs):
         model_path = _contained(root, model_path, f"checkpoint {index} model")
         runtime_path = _contained(root, runtime_path, f"checkpoint {index} runtime")
-        if model_path == active_model_path.resolve():
+        try:
+            same_active_model = (
+                model_path == active_model_path.resolve()
+                or _sha256(model_path.read_bytes()) == active_model_sha256
+            )
+        except OSError as error:
+            raise ActivationError(
+                "checkpoint ancestry model cannot be read"
+            ) from error
+        if same_active_model:
             raise ActivationError(
                 "checkpoint ancestry must not self-reference the active model"
             )
@@ -621,18 +641,33 @@ def _validate_checkpoint_ancestry(
             raise ActivationError("checkpoint file declarations are duplicated")
         seen_pairs.add(pair)
         seen_runtimes.add(runtime_path)
-        identity, model = _checkpoint_model_identity(model_path, runtime_path)
+        historical_evidence = (
+            (baseline_selection, baseline_deployment)
+            if baseline_model is not None
+            and model_path == baseline_model.resolve()
+            else (None, None)
+        )
+        metadata = _checkpoint_model_identity(
+            model_path, runtime_path, *historical_evidence
+        )
+        identity = metadata["identity"]
         artifact_sha = identity["artifact_sha256"]
         if artifact_sha in declarations:
             raise ActivationError("checkpoint runtime artifacts are duplicated")
-        declarations[artifact_sha] = (identity, model, model_path)
+        declaration = {
+            **metadata,
+            "model_path": model_path,
+            "runtime_path": runtime_path,
+        }
+        declarations[artifact_sha] = declaration
+        pair_declarations[pair] = declaration
 
     if active_mode == "untrained-seed-bootstrap/v1":
         if active_artifacts != [seed_identity] or declarations:
             raise ActivationError(
                 "bootstrap ancestry must contain only the exact untrained seed"
             )
-        return
+        return pair_declarations
     cumulative = active_mode == "cumulative-native-runtime-models/v2"
     if active_mode != "native-runtime-models/v1" and not cumulative:
         raise ActivationError("unsupported active checkpoint provenance mode")
@@ -657,7 +692,7 @@ def _validate_checkpoint_ancestry(
             return
         artifact_sha = identity["artifact_sha256"]
         declaration = declarations.get(artifact_sha)
-        if declaration is None or declaration[0] != identity:
+        if declaration is None or declaration["identity"] != identity:
             raise ActivationError(
                 "checkpoint artifacts do not match file-backed ancestry"
             )
@@ -666,7 +701,8 @@ def _validate_checkpoint_ancestry(
         if artifact_sha in reachable:
             return
         visiting.add(artifact_sha)
-        _, parent_model, parent_path = declaration
+        parent_model = declaration["model"]
+        parent_path = declaration["model_path"]
         parent_mode, parents = _checkpoint_provenance(
             parent_model,
             f"checkpoint model {_relative(root, parent_path, 'checkpoint model')}",
@@ -690,6 +726,10 @@ def _validate_checkpoint_ancestry(
                 raise ActivationError(
                     "cumulative checkpoint ancestry omits its seed root"
                 )
+            if parent_cumulative and len(parents) < 2:
+                raise ActivationError(
+                    "cumulative checkpoint ancestry has no native checkpoint"
+                )
             for parent in parents:
                 validate_lineage(parent)
         else:
@@ -703,6 +743,116 @@ def _validate_checkpoint_ancestry(
         raise ActivationError(
             "checkpoint ancestry contains unused file declarations"
         )
+    return pair_declarations
+
+
+def _validate_deployment_baseline(
+    root: pathlib.Path,
+    active_model_path: pathlib.Path,
+    active_model: Mapping[str, Any],
+    baseline_model: pathlib.Path,
+    baseline_seed: int,
+    baseline_runtime: pathlib.Path,
+    baseline_selection: pathlib.Path | None,
+    baseline_deployment: pathlib.Path | None,
+    declarations: Mapping[
+        tuple[pathlib.Path, pathlib.Path], Mapping[str, Any]
+    ],
+) -> dict[str, Any]:
+    root = root.resolve()
+    active_model_path = active_model_path.resolve()
+    baseline_model = baseline_model.resolve()
+    baseline_runtime = baseline_runtime.resolve()
+    if baseline_model == active_model_path or _sha256(
+        baseline_model.read_bytes()
+    ) == _sha256(active_model_path.read_bytes()):
+        raise ActivationError("active model cannot be its own deployment baseline")
+    try:
+        selected_identity = selection_tool._baseline_identity(
+            baseline_model,
+            baseline_seed,
+            baseline_runtime,
+            baseline_selection,
+            baseline_deployment,
+        )
+    except (OSError, selection_tool.SelectionError) as error:
+        raise ActivationError(
+            "deployment baseline is not an exact retained checkpoint"
+        ) from error
+
+    if _is_canonical_bootstrap_baseline(
+        root, baseline_model, baseline_seed, baseline_runtime
+    ):
+        if selected_identity.get("exporter") != "round1":
+            raise ActivationError(
+                "frozen canonical bootstrap uses the wrong exporter"
+            )
+        return selected_identity
+
+    if selected_identity.get("exporter") != "round2":
+        raise ActivationError(
+            "deployment baseline is not the frozen canonical bootstrap or "
+            "a retained native checkpoint"
+        )
+    declaration = declarations.get((baseline_model, baseline_runtime))
+    if declaration is None:
+        raise ActivationError(
+            "native deployment baseline is missing from recursive checkpoint "
+            "ancestry"
+        )
+    identity = declaration["identity"]
+    if (
+        declaration["model_path"] == active_model_path
+        or declaration["seed"] != baseline_seed
+        or declaration["checkpoint_sha256"]
+        != selected_identity["checkpoint_sha256"]
+        or declaration["exporter"] != selected_identity["exporter"]
+        or declaration["exporter_sha256"]
+        != selected_identity["exporter_sha256"]
+        or identity["model_sha256"] != selected_identity["model_sha256"]
+        or identity["artifact_sha256"] != selected_identity["runtime_sha256"]
+        or identity["packed_sha256"] != selected_identity["packed_sha256"]
+    ):
+        raise ActivationError(
+            "native deployment baseline disagrees with recursive checkpoint "
+            "ancestry"
+        )
+    active_mode, active_artifacts = _checkpoint_provenance(
+        active_model, "active round-two model"
+    )
+    if active_mode not in {
+        "native-runtime-models/v1", "cumulative-native-runtime-models/v2"
+    } or identity not in active_artifacts:
+        raise ActivationError(
+            "native deployment baseline is absent from active checkpoint ancestry"
+        )
+    return selected_identity
+
+
+def _prevalidate_deployment_baseline(
+    root: pathlib.Path,
+    model_path: pathlib.Path,
+    seed: int,
+    runtime_path: pathlib.Path,
+    selection_path: pathlib.Path | None = None,
+    deployment_path: pathlib.Path | None = None,
+) -> dict[str, Any]:
+    try:
+        identity = selection_tool._baseline_identity(
+            model_path, seed, runtime_path, selection_path, deployment_path
+        )
+    except (OSError, selection_tool.SelectionError) as error:
+        raise ActivationError(
+            "deployment baseline is not the frozen canonical bootstrap or an "
+            "exact retained native checkpoint"
+        ) from error
+    if identity["exporter"] == "round1" and not _is_canonical_bootstrap_baseline(
+        root, model_path, seed, runtime_path
+    ):
+        raise ActivationError(
+            "deployment baseline is not the frozen canonical bootstrap"
+        )
+    return identity
 
 
 def create_deployment(
@@ -717,6 +867,8 @@ def create_deployment(
     checkpoint_pairs: Sequence[tuple[pathlib.Path, pathlib.Path]],
     output: pathlib.Path,
     repository_root: pathlib.Path = ROOT,
+    baseline_selection: pathlib.Path | None = None,
+    baseline_deployment: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     repository_root = repository_root.resolve()
     output = _contained(repository_root, output, "deployment output")
@@ -737,17 +889,30 @@ def create_deployment(
     baseline_runtime = _require_model_artifact_path(
         repository_root, baseline_runtime, "baseline runtime", ".runtime"
     )
+    if (baseline_selection is None) != (baseline_deployment is None):
+        raise ActivationError(
+            "baseline selection and deployment descriptors must be supplied together"
+        )
+    if baseline_selection is not None and baseline_deployment is not None:
+        baseline_selection = _require_model_artifact_path(
+            repository_root, baseline_selection, "baseline selection", ".json"
+        )
+        baseline_deployment = _require_model_artifact_path(
+            repository_root, baseline_deployment, "baseline deployment", ".json"
+        )
     if (
         isinstance(baseline_seed, bool)
         or not isinstance(baseline_seed, int)
         or baseline_seed < 0
     ):
         raise ActivationError("baseline seed is invalid")
-    _validate_canonical_baseline(
+    _prevalidate_deployment_baseline(
         repository_root,
         baseline_model,
         baseline_seed,
         baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
     )
     evidence, canonical_reports = _gate_evidence_identities(
         repository_root, report_paths
@@ -758,6 +923,8 @@ def create_deployment(
         baseline_model=baseline_model,
         baseline_seed=baseline_seed,
         baseline_runtime=baseline_runtime,
+        baseline_selection=baseline_selection,
+        baseline_deployment=baseline_deployment,
         report_paths=canonical_reports,
     )
     runtime_raw = _contained(
@@ -776,8 +943,26 @@ def create_deployment(
         )
         for model, runtime in checkpoint_pairs
     ]
-    _validate_checkpoint_ancestry(
-        repository_root, model_path, validated["model"], normalized_pairs
+    declarations = _validate_checkpoint_ancestry(
+        repository_root,
+        model_path,
+        validated["model"],
+        normalized_pairs,
+        baseline_model,
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
+    )
+    baseline_identity = _validate_deployment_baseline(
+        repository_root,
+        model_path,
+        validated["model"],
+        baseline_model,
+        baseline_seed,
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
+        declarations,
     )
     checkpoints = []
     for model, runtime in normalized_pairs:
@@ -817,11 +1002,33 @@ def create_deployment(
         },
         "baseline": {
             "seed": baseline_seed,
+            "checkpoint_sha256": baseline_identity["checkpoint_sha256"],
+            "exporter": {
+                "kind": baseline_identity["exporter"],
+                "sha256": baseline_identity["exporter_sha256"],
+            },
             "model": _file_identity(
                 repository_root, baseline_model, "baseline model"
             ),
             "runtime": _file_identity(
                 repository_root, baseline_runtime, "baseline runtime"
+            ),
+            "retained_evidence": (
+                {
+                    "selection": _file_identity(
+                        repository_root,
+                        baseline_selection,
+                        "baseline selection",
+                    ),
+                    "deployment": _file_identity(
+                        repository_root,
+                        baseline_deployment,
+                        "baseline deployment",
+                    ),
+                }
+                if baseline_selection is not None
+                and baseline_deployment is not None
+                else None
             ),
         },
         "gate_evidence": evidence,
@@ -909,29 +1116,76 @@ def load_deployment(
     baseline = descriptor.get("baseline")
     if (
         not isinstance(baseline, Mapping)
-        or set(baseline) != {"seed", "model", "runtime"}
+        or set(baseline) != {
+            "seed", "checkpoint_sha256", "exporter", "model", "runtime",
+            "retained_evidence",
+        }
         or isinstance(baseline.get("seed"), bool)
         or not isinstance(baseline.get("seed"), int)
         or baseline["seed"] < 0
+        or not _valid_sha256(baseline.get("checkpoint_sha256"))
     ):
         raise ActivationError("deployment baseline identity is malformed")
+    baseline_exporter = baseline.get("exporter")
+    if (
+        not isinstance(baseline_exporter, Mapping)
+        or set(baseline_exporter) != {"kind", "sha256"}
+        or baseline_exporter.get("kind") not in {"round1", "round2"}
+        or not _valid_sha256(baseline_exporter.get("sha256"))
+    ):
+        raise ActivationError("deployment baseline exporter is malformed")
     baseline_model = _validate_file_identity(
         repository_root, baseline.get("model"), "baseline model"
     )
     baseline_runtime = _validate_file_identity(
         repository_root, baseline.get("runtime"), "baseline runtime"
     )
+    retained_evidence = baseline.get("retained_evidence")
+    baseline_selection: pathlib.Path | None = None
+    baseline_deployment: pathlib.Path | None = None
+    if retained_evidence is not None:
+        if (
+            not isinstance(retained_evidence, Mapping)
+            or set(retained_evidence) != {"selection", "deployment"}
+        ):
+            raise ActivationError(
+                "deployment baseline retained evidence is malformed"
+            )
+        baseline_selection = _validate_file_identity(
+            repository_root,
+            retained_evidence.get("selection"),
+            "baseline selection",
+        )
+        baseline_deployment = _validate_file_identity(
+            repository_root,
+            retained_evidence.get("deployment"),
+            "baseline deployment",
+        )
+        baseline_selection = _require_model_artifact_path(
+            repository_root,
+            baseline_selection,
+            "baseline selection",
+            ".json",
+        )
+        baseline_deployment = _require_model_artifact_path(
+            repository_root,
+            baseline_deployment,
+            "baseline deployment",
+            ".json",
+        )
     _require_model_artifact_path(
         repository_root, baseline_model, "baseline model", ".json"
     )
     _require_model_artifact_path(
         repository_root, baseline_runtime, "baseline runtime", ".runtime"
     )
-    _validate_canonical_baseline(
+    _prevalidate_deployment_baseline(
         repository_root,
         baseline_model,
         baseline["seed"],
         baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
     )
     report_paths, evidence_paths = _load_gate_evidence(
         repository_root, descriptor.get("gate_evidence")
@@ -942,6 +1196,8 @@ def load_deployment(
         baseline_model=baseline_model,
         baseline_seed=baseline["seed"],
         baseline_runtime=baseline_runtime,
+        baseline_selection=baseline_selection,
+        baseline_deployment=baseline_deployment,
         report_paths=report_paths,
     )
     if (
@@ -998,18 +1254,45 @@ def load_deployment(
     checkpoint_pairs = [
         (item[1]["model"], item[1]["runtime"]) for item in normalized
     ]
-    _validate_checkpoint_ancestry(
+    declarations = _validate_checkpoint_ancestry(
         repository_root,
         resolved["model"],
         validated["model"],
         checkpoint_pairs,
+        baseline_model,
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
     )
+    baseline_identity = _validate_deployment_baseline(
+        repository_root,
+        resolved["model"],
+        validated["model"],
+        baseline_model,
+        baseline["seed"],
+        baseline_runtime,
+        baseline_selection,
+        baseline_deployment,
+        declarations,
+    )
+    if (
+        baseline["checkpoint_sha256"]
+        != baseline_identity["checkpoint_sha256"]
+        or baseline_exporter["kind"] != baseline_identity["exporter"]
+        or baseline_exporter["sha256"]
+        != baseline_identity["exporter_sha256"]
+    ):
+        raise ActivationError(
+            "deployment baseline checkpoint/exporter binding is stale"
+        )
 
     return {
         **validated,
         "checkpoint_paths": [item[1] for item in normalized],
         "baseline_model_path": baseline_model,
         "baseline_runtime_path": baseline_runtime,
+        "baseline_selection_path": baseline_selection,
+        "baseline_deployment_path": baseline_deployment,
         "evidence_paths": evidence_paths,
         "deployment": descriptor,
         "deployment_bytes": descriptor_raw,
@@ -1049,6 +1332,54 @@ def _write_or_check(path: pathlib.Path, raw: bytes, check: bool, label: str) -> 
     path.write_bytes(raw)
 
 
+def install_deployment(
+    candidate: pathlib.Path,
+    expected_current_sha256: str,
+    destination: pathlib.Path = DEFAULT_DEPLOYMENT,
+    repository_root: pathlib.Path = ROOT,
+) -> str:
+    """Atomically CAS the one mutable activation pointer after validation."""
+    repository_root = repository_root.resolve()
+    destination = _contained(repository_root, destination, "deployment pointer")
+    canonical = repository_root / "models/jacek_native_round2_deployment.json"
+    if destination != canonical:
+        raise ActivationError("deployment install destination is not canonical")
+    if not _valid_sha256(expected_current_sha256):
+        raise ActivationError("expected current deployment SHA-256 is invalid")
+    candidate = _require_model_artifact_path(
+        repository_root, candidate, "candidate deployment", ".json"
+    )
+    candidate_raw = load_deployment(candidate, repository_root)["deployment_bytes"]
+    lock_path = repository_root / "build/.jacek-native-deployment-install.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    temporary = destination.with_name(
+        f".{destination.name}.{_sha256(candidate_raw)}.install"
+    )
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            current_raw = destination.read_bytes()
+        except OSError as error:
+            raise ActivationError(
+                "current canonical deployment cannot be read"
+            ) from error
+        if _sha256(current_raw) != expected_current_sha256:
+            raise ActivationError(
+                "current canonical deployment changed before install"
+            )
+        with temporary.open("xb") as stream:
+            stream.write(candidate_raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        os.close(lock)
+    return _sha256(candidate_raw)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1059,6 +1390,8 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--baseline-model", type=pathlib.Path, required=True)
     create.add_argument("--baseline-seed", type=int, required=True)
     create.add_argument("--baseline-runtime", type=pathlib.Path, required=True)
+    create.add_argument("--baseline-selection", type=pathlib.Path)
+    create.add_argument("--baseline-deployment", type=pathlib.Path)
     create.add_argument(
         "--reports", nargs="+", type=pathlib.Path, required=True
     )
@@ -1083,6 +1416,11 @@ def _parser() -> argparse.ArgumentParser:
     generate.add_argument("--runtime-output", type=pathlib.Path)
     generate.add_argument("--check", action="store_true")
     generate.add_argument("--metadata", action="store_true")
+    install = commands.add_parser(
+        "install", help="atomically switch the canonical deployment pointer"
+    )
+    install.add_argument("--deployment", type=pathlib.Path, required=True)
+    install.add_argument("--expected-current-sha256", required=True)
     return parser
 
 
@@ -1097,6 +1435,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baseline_model=arguments.baseline_model,
                 baseline_seed=arguments.baseline_seed,
                 baseline_runtime=arguments.baseline_runtime,
+                baseline_selection=arguments.baseline_selection,
+                baseline_deployment=arguments.baseline_deployment,
                 report_paths=arguments.reports,
                 checkpoint_pairs=[tuple(pair) for pair in arguments.checkpoint],
                 output=arguments.output,
@@ -1105,6 +1445,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "output": str(arguments.output),
                 "selected_seed": descriptor["selected_seed"],
                 "selection_kind": descriptor["decision"]["kind"],
+            }, indent=2, sort_keys=True))
+            return 0
+
+        if arguments.command == "install":
+            installed_sha = install_deployment(
+                arguments.deployment, arguments.expected_current_sha256
+            )
+            print(json.dumps({
+                "deployment": str(DEFAULT_DEPLOYMENT),
+                "deployment_sha256": installed_sha,
             }, indent=2, sort_keys=True))
             return 0
 

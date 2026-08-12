@@ -342,20 +342,20 @@ void model_artifact_identity_is_frozen() {
   static_assert(model::kOutputs == 1);
   static_assert(model::kWeightCount == 38'048);
   static_assert(model::kQuantizationBits == 3);
-  static_assert(model::kTrainingSeed == 20260822ULL);
+  static_assert(model::kTrainingSeed == 20260832ULL);
   require(model::kModelSchema == "jacek_native_model/v1",
           "The model artifact schema changed.");
   require(model::kFeatureSchema ==
               "canonical-edges316-onehot-true-turn-distance105x8-v1",
           "The model feature schema changed.");
   require(model::kModelSha256 ==
-              "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14",
+              "a13b86accd168ae51cecf5df85092642ba8edb21d9ef944ac7c002bfa6a5d19a",
           "The retained native JSON model changed without review.");
   require(model::kSchemaSha256 ==
               "dd36c1b2800620fab1d5dc88afe95fcbb13864d581a18f01d26b3e1c3a4a6dfd",
           "The frozen model schema changed without review.");
   require(model::kPackedSha256 ==
-              "e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb",
+              "d8e1110caddf4bbd65a8c7e7d387c979c1a15807f29e5ab908d471e3159bab94",
           "The deployed packed weights changed without review.");
   require(model::kPackedByteCount * 8U >= model::kWeightCount * 3U,
           "The packed model is too short for its declared weights.");
@@ -419,7 +419,7 @@ void partial_quantized_and_float_evaluation_agree() {
       features, candidate::FloatModelView{first, second, output});
   require(std::abs(unpacked - quantized.evaluate(features)) <= 1e-6F,
           "Packed quantized inference must equal unpacked float inference.");
-  constexpr float kIndependentPythonInitialValue = -0.0161130223423243F;
+  constexpr float kIndependentPythonInitialValue = 0.006770603824406862F;
   require(std::abs(quantized.evaluate(features) -
                    kIndependentPythonInitialValue) <= 2e-6F,
           "C++ inference must match the retained JSON's independent Python "
@@ -757,19 +757,19 @@ void fixed_work_search_is_deterministic_legal_and_capped() {
       candidate::choose_complete_turn(state, config);
   require(!first.encoded.empty() && first.encoded == second.encoded,
           "Fixed-work search must choose deterministically.");
-  require(first.encoded == "7" && first.stats.expansions == 8 &&
-              first.stats.generated_children == 80 &&
-              first.stats.child_evaluations == 80 &&
-              first.stats.completed_actions == 90 &&
-              first.stats.duplicate_boundaries == 8 &&
-              first.stats.tactical_actions == 0 &&
-              first.stats.generator_partial_paths == 14 &&
-              first.stats.tree_nodes == 81,
+  require(first.encoded == "3" && first.stats.expansions == 8 &&
+              first.stats.generated_children == 57 &&
+              first.stats.child_evaluations == 55 &&
+              first.stats.completed_actions == 66 &&
+              first.stats.duplicate_boundaries == 9 &&
+              first.stats.tactical_actions == 3 &&
+              first.stats.generator_partial_paths == 8 &&
+              first.stats.tree_nodes == 58,
           "Duplicate filtering must preserve the frozen fixed-work action and "
           "all pre-optimization work counters.");
   require(first.stats.root_generator_truncations == 0 &&
-              first.stats.nonroot_generator_truncations == 1 &&
-              first.stats.generator_truncations == 1 &&
+              first.stats.nonroot_generator_truncations == 0 &&
+              first.stats.generator_truncations == 0 &&
               first.stats.max_complete_turn_depth == 5 &&
               !first.stats.tree_cap_reached &&
               first.stats.expansion_cap_reached,

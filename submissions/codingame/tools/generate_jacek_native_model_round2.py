@@ -53,6 +53,12 @@ DEFAULT_HEADER = (
 MODEL_SCHEMA = round1_exporter.MODEL_SCHEMA
 FEATURE_SCHEMA = round1_exporter.FEATURE_SCHEMA
 RULES = round1_exporter.RULES
+PHASE_WEIGHTS = {
+    "turns_0_11": 3.0,
+    "turns_12_23": 1.5,
+    "turns_24_plus": 1.0,
+}
+PHASE_WEIGHT_APPLICATION = "after-exact-override-combined-target-loss/v1"
 
 
 def _valid_sha256(value: object) -> bool:
@@ -71,14 +77,28 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 def _validate_lineage(provenance: Mapping[str, object]) -> None:
     lineage = provenance.get("lineage")
-    if not isinstance(lineage, dict) or set(lineage) != {
-        "strict_current", "archived_round1", "live_restart_round2"
-    }:
+    legacy_lineage_fields = {
+        "strict_current", "archived_round1", "live_restart_round2",
+    }
+    extended_lineage_fields = {
+        "strict_current", "archived_round1", "archived_round2",
+        "live_restart_round2", "archived_restart_round2",
+    }
+    if (
+        not isinstance(lineage, dict)
+        or set(lineage) not in {
+            frozenset(legacy_lineage_fields),
+            frozenset(extended_lineage_fields),
+        }
+    ):
         raise ValueError("round-two cumulative corpus lineage is malformed")
     if not isinstance(lineage["strict_current"], list) or not lineage[
             "strict_current"]:
         raise ValueError("round-two lineage has no strict-current run")
-    for category in ("strict_current", "archived_round1"):
+    normal_categories = ["strict_current", "archived_round1"]
+    if "archived_round2" in lineage:
+        normal_categories.append("archived_round2")
+    for category in normal_categories:
         entries = lineage[category]
         if not isinstance(entries, list):
             raise ValueError("round-two lineage category is not a list")
@@ -108,32 +128,77 @@ def _validate_lineage(provenance: Mapping[str, object]) -> None:
                 or not isinstance(seed, int) or not 0 <= seed < 1 << 64
             ):
                 raise ValueError("round-two lineage counts are invalid")
-    restarts = lineage["live_restart_round2"]
-    if not isinstance(restarts, list):
-        raise ValueError("round-two restart lineage is not a list")
-    for entry in restarts:
-        if not isinstance(entry, dict) or set(entry) != {
-            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
-            "collector_tsv_sha256", "arena_manifest_sha256",
-            "asserted_source_sha256", "exclusion_registry_sha256",
-            "source_binding_status", "games", "selected_prefixes",
-        }:
-            raise ValueError("round-two restart lineage entry is not frozen")
-        if not all(_valid_sha256(entry.get(field)) for field in (
-            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
-            "collector_tsv_sha256", "arena_manifest_sha256",
-            "asserted_source_sha256", "exclusion_registry_sha256",
+        expected_order = sorted(
+            entries, key=lambda entry: (
+                entry["seed"], entry["manifest_sha256"]
+            )
+        )
+        if entries != expected_order:
+            raise ValueError("round-two lineage entries are not canonical")
+    restart_categories = ["live_restart_round2"]
+    if "archived_restart_round2" in lineage:
+        restart_categories.append("archived_restart_round2")
+    for category in restart_categories:
+        restarts = lineage[category]
+        if not isinstance(restarts, list):
+            raise ValueError("round-two restart lineage is not a list")
+        for entry in restarts:
+            if not isinstance(entry, dict) or set(entry) != {
+                "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+                "collector_tsv_sha256", "arena_manifest_sha256",
+                "asserted_source_sha256", "exclusion_registry_sha256",
+                "source_binding_status", "games", "selected_prefixes",
+            }:
+                raise ValueError("round-two restart lineage entry is not frozen")
+            if not all(_valid_sha256(entry.get(field)) for field in (
+                "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+                "collector_tsv_sha256", "arena_manifest_sha256",
+                "asserted_source_sha256", "exclusion_registry_sha256",
+            )):
+                raise ValueError("round-two restart lineage identity is invalid")
+            if entry.get("source_binding_status") not in {
+                "asserted-not-api-verified", "api-verified"
+            } or any(
+                isinstance(entry.get(field), bool)
+                or not isinstance(entry.get(field), int)
+                or entry[field] <= 0
+                for field in ("games", "selected_prefixes")
+            ):
+                raise ValueError("round-two restart lineage values are invalid")
+        if restarts != sorted(restarts, key=lambda entry: (
+            entry["collector_tsv_sha256"], entry["manifest_sha256"]
         )):
-            raise ValueError("round-two restart lineage identity is invalid")
-        if entry.get("source_binding_status") not in {
-            "asserted-not-api-verified", "api-verified"
-        } or any(
-            isinstance(entry.get(field), bool)
-            or not isinstance(entry.get(field), int)
-            or entry[field] <= 0
-            for field in ("games", "selected_prefixes")
-        ):
-            raise ValueError("round-two restart lineage values are invalid")
+            raise ValueError("round-two restart lineage is not canonical")
+    lineage_entries = [
+        entry for category in normal_categories + restart_categories
+        for entry in lineage[category]
+    ]
+    generation = provenance.get("generation")
+    if not isinstance(generation, dict):
+        raise ValueError("round-two generation provenance is missing")
+    lineage_builds = sorted({
+        entry["build_provenance_sha256"] for entry in lineage_entries
+    })
+    if generation.get("build_provenance_sha256") != lineage_builds:
+        raise ValueError("round-two lineage/build provenance disagrees")
+    contracts = generation.get("build_contracts")
+    if not isinstance(contracts, list):
+        raise ValueError("round-two lineage build contracts are missing")
+    try:
+        binary_by_build = {
+            item["sha256"]: item["contract"]["binary"]["sha256"]
+            for item in contracts
+        }
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "round-two lineage build contracts are malformed"
+        ) from error
+    if any(
+        binary_by_build.get(entry["build_provenance_sha256"])
+        != entry["binary_sha256"]
+        for entry in lineage_entries
+    ):
+        raise ValueError("round-two lineage/build binary identity disagrees")
 
 
 def _validate_checkpoint_provenance(provenance: Mapping[str, object]) -> None:
@@ -171,6 +236,35 @@ def _validate_checkpoint_provenance(provenance: Mapping[str, object]) -> None:
     expected_artifacts = sorted(value["artifact_sha256"] for value in normalized)
     if model_artifacts != expected_artifacts:
         raise ValueError("round-two model-artifact summary is incomplete")
+
+
+def _validate_phase_weight_contract(model: Mapping[str, object]) -> None:
+    target = model.get("target")
+    expected_fields = {
+        "primary", "auxiliary", "auxiliary_weight", "phase_weights",
+        "phase_weight_application", "policy_target",
+    }
+    if not isinstance(target, dict) or set(target) != expected_fields:
+        raise ValueError("round-two phase-weighted target contract is missing")
+    phase_weights = target.get("phase_weights")
+    if (
+        target.get("primary") != "mover-relative-final-outcome"
+        or target.get("auxiliary") != "stable-native-bfm-reanalysis"
+        or isinstance(target.get("auxiliary_weight"), bool)
+        or target.get("auxiliary_weight") != 0.25
+        or target.get("policy_target") is not None
+        or target.get("phase_weight_application")
+        != PHASE_WEIGHT_APPLICATION
+        or not isinstance(phase_weights, dict)
+        or set(phase_weights) != set(PHASE_WEIGHTS)
+        or any(
+            isinstance(phase_weights.get(name), bool)
+            or not isinstance(phase_weights.get(name), (int, float))
+            or phase_weights[name] != expected
+            for name, expected in PHASE_WEIGHTS.items()
+        )
+    ):
+        raise ValueError("round-two phase-weighted target contract is stale")
 
 
 def _validate_retained_checkpoints(model: Mapping[str, object]) -> None:
@@ -263,6 +357,7 @@ def validate_model(model: Mapping[str, object]) -> tuple[list[int], dict[str, fl
     ).encode()).hexdigest()
     if provenance.get("corpus_sha256") != expected_corpus_sha:
         raise ValueError("round-two cumulative corpus SHA-256 is stale")
+    _validate_phase_weight_contract(model)
     _validate_lineage(provenance)
     _validate_checkpoint_provenance(provenance)
     _validate_retained_checkpoints(model)

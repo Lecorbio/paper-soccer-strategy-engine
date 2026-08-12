@@ -63,6 +63,27 @@ RUNTIME_SCHEMA = "papersoccer.jacek-native-runtime-model/v1"
 MODEL_SCHEMA = "jacek_native_model/v1"
 FEATURE_SCHEMA = "canonical-edges316-onehot-true-turn-distance105x8-v1"
 MODEL_SHAPES = {"w1": (1156, 32), "w2": (32, 32), "w3": (32,)}
+HISTORICAL_ROUND2_BASELINES = {
+    "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14": {
+        "trainer_sha256": (
+            "a84b038e675765ed7e849fea89583dc6188fdd0635b58ef79afb655796a5d711"
+        ),
+        "corpus_validator_sha256": (
+            "bd908ec96f3e64b010cfe07404e005ad3587d8b354b1f327659e7f9575827f74"
+        ),
+        "restart_corpus_validator_sha256": (
+            "990a0f99745fe0420ea446d9553eea25de725e8366946fd6b7f311e2b0b5981f"
+        ),
+        "runtime_sha256": (
+            "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3"
+        ),
+        "retained_runtime_sha256": {
+            "1f8d5696742c94aec74df1cf107cf478cdf885d1a9866b46a93e4ec32359b9c8",
+            "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3",
+            "d0d5478385f52dd80b8073ce24ae587afe7f8b55d3123f0939d55716b5451ed0",
+        },
+    },
+}
 BUILD_PROVENANCE_SCHEMA = "papersoccer.jacek-native-build-provenance/v1"
 ROUND2_BUILD_PROVENANCE_SCHEMA = (
     "papersoccer.jacek-native-build-provenance/v2"
@@ -449,6 +470,37 @@ def _validate_native_model_provenance(
 def _validate_round2_model_metadata(
     model: dict, repository_root: pathlib.Path
 ) -> None:
+    target = model.get("target")
+    phase_weights = target.get("phase_weights") if isinstance(target, dict) else None
+    if (
+        not isinstance(target, dict)
+        or set(target) != {
+            "primary", "auxiliary", "auxiliary_weight", "phase_weights",
+            "phase_weight_application", "policy_target",
+        }
+        or target.get("primary") != "mover-relative-final-outcome"
+        or target.get("auxiliary") != "stable-native-bfm-reanalysis"
+        or isinstance(target.get("auxiliary_weight"), bool)
+        or target.get("auxiliary_weight") != 0.25
+        or target.get("policy_target") is not None
+        or target.get("phase_weight_application")
+        != "after-exact-override-combined-target-loss/v1"
+        or not isinstance(phase_weights, dict)
+        or set(phase_weights) != {
+            "turns_0_11", "turns_12_23", "turns_24_plus"
+        }
+        or any(
+            isinstance(phase_weights.get(name), bool)
+            or not isinstance(phase_weights.get(name), (int, float))
+            or phase_weights[name] != expected
+            for name, expected in {
+                "turns_0_11": 3.0,
+                "turns_12_23": 1.5,
+                "turns_24_plus": 1.0,
+            }.items()
+        )
+    ):
+        raise ValueError("round-two phase-weighted target contract is stale")
     provenance = model["provenance"]
     generation = provenance["generation"]
     restart_corpus = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[1]
@@ -464,12 +516,27 @@ def _validate_round2_model_metadata(
     if provenance.get("corpus_sha256") != expected_corpus:
         raise ValueError("round-two cumulative corpus SHA-256 is stale")
     lineage = provenance.get("lineage")
-    if not isinstance(lineage, dict) or set(lineage) != {
-        "strict_current", "archived_round1", "live_restart_round2"
-    } or not isinstance(lineage["strict_current"], list) or not lineage[
-            "strict_current"]:
+    legacy_lineage_fields = {
+        "strict_current", "archived_round1", "live_restart_round2",
+    }
+    extended_lineage_fields = {
+        "strict_current", "archived_round1", "archived_round2",
+        "live_restart_round2", "archived_restart_round2",
+    }
+    if (
+        not isinstance(lineage, dict)
+        or set(lineage) not in {
+            frozenset(legacy_lineage_fields),
+            frozenset(extended_lineage_fields),
+        }
+        or not isinstance(lineage["strict_current"], list)
+        or not lineage["strict_current"]
+    ):
         raise ValueError("round-two cumulative corpus lineage is incomplete")
-    for category in ("strict_current", "archived_round1"):
+    normal_categories = ["strict_current", "archived_round1"]
+    if "archived_round2" in lineage:
+        normal_categories.append("archived_round2")
+    for category in normal_categories:
         entries = lineage[category]
         if not isinstance(entries, list):
             raise ValueError("round-two corpus lineage category is invalid")
@@ -495,34 +562,45 @@ def _validate_round2_model_metadata(
                 or not isinstance(seed, int) or not 0 <= seed < 1 << 64
             ):
                 raise ValueError("round-two corpus lineage values are invalid")
-    restarts = lineage["live_restart_round2"]
-    if not isinstance(restarts, list):
-        raise ValueError("round-two restart lineage is invalid")
-    for entry in restarts:
-        if not isinstance(entry, dict) or set(entry) != {
-            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
-            "collector_tsv_sha256", "arena_manifest_sha256",
-            "asserted_source_sha256", "exclusion_registry_sha256",
-            "source_binding_status", "games", "selected_prefixes",
-        }:
-            raise ValueError("round-two restart lineage entry is not frozen")
-        if not all(_valid_sha256(entry.get(field)) for field in (
-            "manifest_sha256", "build_provenance_sha256", "binary_sha256",
-            "collector_tsv_sha256", "arena_manifest_sha256",
-            "asserted_source_sha256", "exclusion_registry_sha256",
-        )) or entry.get("source_binding_status") not in {
-            "asserted-not-api-verified", "api-verified"
-        } or any(
-            isinstance(entry.get(field), bool)
-            or not isinstance(entry.get(field), int)
-            or entry[field] <= 0
-            for field in ("games", "selected_prefixes")
-        ):
-            raise ValueError("round-two restart lineage values are invalid")
+        if entries != sorted(entries, key=lambda entry: (
+            entry["seed"], entry["manifest_sha256"]
+        )):
+            raise ValueError("round-two corpus lineage entries are not canonical")
+    restart_categories = ["live_restart_round2"]
+    if "archived_restart_round2" in lineage:
+        restart_categories.append("archived_restart_round2")
+    for category in restart_categories:
+        restarts = lineage[category]
+        if not isinstance(restarts, list):
+            raise ValueError("round-two restart lineage is invalid")
+        for entry in restarts:
+            if not isinstance(entry, dict) or set(entry) != {
+                "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+                "collector_tsv_sha256", "arena_manifest_sha256",
+                "asserted_source_sha256", "exclusion_registry_sha256",
+                "source_binding_status", "games", "selected_prefixes",
+            }:
+                raise ValueError("round-two restart lineage entry is not frozen")
+            if not all(_valid_sha256(entry.get(field)) for field in (
+                "manifest_sha256", "build_provenance_sha256", "binary_sha256",
+                "collector_tsv_sha256", "arena_manifest_sha256",
+                "asserted_source_sha256", "exclusion_registry_sha256",
+            )) or entry.get("source_binding_status") not in {
+                "asserted-not-api-verified", "api-verified"
+            } or any(
+                isinstance(entry.get(field), bool)
+                or not isinstance(entry.get(field), int)
+                or entry[field] <= 0
+                for field in ("games", "selected_prefixes")
+            ):
+                raise ValueError("round-two restart lineage values are invalid")
+        if restarts != sorted(restarts, key=lambda entry: (
+            entry["collector_tsv_sha256"], entry["manifest_sha256"]
+        )):
+            raise ValueError("round-two restart lineage is not canonical")
     lineage_entries = [
-        entry for category in (
-            "strict_current", "archived_round1", "live_restart_round2"
-        ) for entry in lineage[category]
+        entry for category in normal_categories + restart_categories
+        for entry in lineage[category]
     ]
     declared_builds = generation.get("build_provenance_sha256")
     lineage_builds = sorted({
@@ -750,11 +828,42 @@ def _validate_native_checkpoint_files(
         runtime_path = _contained(
             repository_root, entry["runtime"], f"native checkpoint {index} runtime"
         )
-        raw_candidate = json.loads(model_path.read_text(encoding="utf-8"))
+        raw_model = model_path.read_bytes()
+        raw_candidate = json.loads(raw_model)
+        model_sha256 = hashlib.sha256(raw_model).hexdigest()
+        historical = HISTORICAL_ROUND2_BASELINES.get(model_sha256)
         trainer_sha = raw_candidate.get("provenance", {}).get("trainer_sha256")
         round1_trainer = repository_root / "tools/train_jacek_native.py"
         round2_trainer = repository_root / "tools/train_jacek_native_round2.py"
-        if trainer_sha == hashlib.sha256(round1_trainer.read_bytes()).hexdigest():
+        if historical is not None:
+            provenance = raw_candidate.get("provenance")
+            if (
+                not isinstance(provenance, dict)
+                or raw_candidate.get("schema") != MODEL_SCHEMA
+                or raw_candidate.get("feature_schema") != FEATURE_SCHEMA
+                or provenance.get("trainer_sha256")
+                != historical["trainer_sha256"]
+                or provenance.get("corpus_validator_sha256")
+                != historical["corpus_validator_sha256"]
+                or provenance.get("restart_corpus_validator_sha256")
+                != historical["restart_corpus_validator_sha256"]
+                or provenance.get("incumbent_labels") is not False
+                or provenance.get("protected_data") is not False
+                or raw_candidate.get("target") != {
+                    "primary": "mover-relative-final-outcome",
+                    "auxiliary": "stable-native-bfm-reanalysis",
+                    "auxiliary_weight": 0.25,
+                    "policy_target": None,
+                }
+            ):
+                raise ValueError(
+                    "historical native checkpoint identity is not frozen"
+                )
+            _validate_build_provenance(
+                raw_candidate, "historical native checkpoint", "round2"
+            )
+            model = raw_candidate
+        elif trainer_sha == hashlib.sha256(round1_trainer.read_bytes()).hexdigest():
             model_track = "round1"
             trainer_path = round1_trainer
             corpus_path = repository_root / ROUND1_SEMANTIC_DEPENDENCIES[0]
@@ -767,11 +876,10 @@ def _validate_native_checkpoint_files(
             corpus_path = repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0]
         else:
             raise ValueError("native checkpoint trainer lineage is unrecognized")
-        model = _validate_native_model_provenance(
-            model_path, trainer_path, corpus_path, model_track
-        )
-        raw_model = model_path.read_bytes()
-        model_sha256 = hashlib.sha256(raw_model).hexdigest()
+        if historical is None:
+            model = _validate_native_model_provenance(
+                model_path, trainer_path, corpus_path, model_track
+            )
         checkpoints = model.get("checkpoints")
         if not isinstance(checkpoints, list) or not checkpoints:
             raise ValueError("native checkpoint model retains no seed checkpoints")
@@ -782,6 +890,12 @@ def _validate_native_checkpoint_files(
             )
             expected[runtime] = identity
         runtime = runtime_path.read_bytes()
+        if historical is not None and hashlib.sha256(runtime).hexdigest() not in (
+            historical["retained_runtime_sha256"]
+        ):
+            raise ValueError(
+                "historical native checkpoint runtime is not an exact retained export"
+            )
         if runtime not in expected:
             raise ValueError(
                 f"native checkpoint runtime {runtime_path} is not generated by "
@@ -1189,21 +1303,6 @@ def purity_violations(
         activated = activation.load_deployment(
             deployment_path, repository_root
         )
-        expected_model_path = (
-            repository_root / ROUND2_PURITY_DEPENDENCIES[0]
-        ).resolve()
-        if activated["model_path"] != expected_model_path:
-            raise ValueError(
-                "round-two deployment does not use the frozen candidate model path"
-            )
-        if activated["selection_path"] != (
-            repository_root / ROUND2_SELECTION_PATH
-        ).resolve() or activated["runtime_path"] != (
-            repository_root / ROUND2_RUNTIME_PATH
-        ).resolve():
-            raise ValueError(
-                "round-two deployment does not use the frozen selection/runtime paths"
-            )
         track = "round2"
         model = _validate_native_model_provenance(
             activated["model_path"],
@@ -1215,7 +1314,10 @@ def purity_violations(
         header_path = bot_directory / "jacek_native_model.hpp"
         if header_path.read_text(encoding="utf-8") != expected_header:
             raise ValueError("active round-two model header is stale")
-        for relative in ROUND2_PURITY_DEPENDENCIES:
+        # The descriptor is the sole mutable activation pointer.  The selected
+        # model/selection/runtime remain immutable generation-specific files
+        # under models/ and were already containment-checked by activation.
+        for relative in ROUND2_PURITY_DEPENDENCIES[1:]:
             path = repository_root / relative
             if not path.is_file():
                 raise ValueError(f"missing round-two purity dependency: {relative}")
@@ -1223,12 +1325,17 @@ def purity_violations(
                 files.append(path)
         for path in (
             deployment_path,
+            activated["model_path"],
             activated["selection_path"],
             activated["runtime_path"],
             activated["baseline_model_path"],
             activated["baseline_runtime_path"],
+            activated.get("baseline_selection_path"),
+            activated.get("baseline_deployment_path"),
             *activated["evidence_paths"],
         ):
+            if path is None:
+                continue
             if path not in files:
                 files.append(path)
         config = dict(config)

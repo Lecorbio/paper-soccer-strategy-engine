@@ -82,6 +82,8 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
                 "validation": {
                     "outcome_mse": loss,
                     "combined_target_mse": loss,
+                    "weighted_combined_target_mse": loss,
+                    "unweighted_combined_target_mse": loss,
                 },
             },
         } for seed, loss in zip(self.seeds, (0.2, 0.3))]
@@ -92,6 +94,10 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             "model_sha256": "c" * 64,
             "packed_sha256": "d" * 64,
         }
+        build_contract = {"binary": {"sha256": "3" * 64}}
+        build_sha = hashlib.sha256(
+            self.selection.canonical_json_bytes(build_contract)
+        ).hexdigest()
         corpus_report = {
             "source_sha256": sources,
             "corpus_sha256": hashlib.sha256(json.dumps(
@@ -115,16 +121,23 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             "lineage": {
                 "strict_current": [{
                     "manifest_sha256": "1" * 64,
-                    "build_provenance_sha256": "2" * 64,
+                    "build_provenance_sha256": build_sha,
                     "binary_sha256": "3" * 64,
                     "shard_sha256": ["4" * 64],
                     "games": 8,
                     "seed": 17,
                 }],
                 "archived_round1": [],
+                "archived_round2": [],
                 "live_restart_round2": [],
+                "archived_restart_round2": [],
             },
             "generation": {
+                "build_provenance_sha256": [build_sha],
+                "build_contracts": [{
+                    "sha256": build_sha,
+                    "contract": build_contract,
+                }],
                 "checkpoint_provenance": {
                     "mode": "native-runtime-models/v1",
                     "artifacts": [artifact],
@@ -334,10 +347,194 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         ):
             self.selection._load_round2_model(self.model_path)
 
+    def test_baseline_identity_accepts_exact_retained_native_checkpoint(self):
+        identity = self.selection._baseline_identity(
+            self.model_path, self.seeds[0], self.candidate_runtimes[self.seeds[0]]
+        )
+        self.assertEqual(identity["exporter"], "round2")
+        self.assertEqual(
+            identity["exporter_sha256"],
+            hashlib.sha256(
+                pathlib.Path(
+                    self.selection.round2_exporter.__file__
+                ).read_bytes()
+            ).hexdigest(),
+        )
+        self.assertEqual(
+            identity["checkpoint_sha256"],
+            self.model["checkpoints"][0]["checkpoint_sha256"],
+        )
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "not retained"
+        ):
+            self.selection._baseline_identity(
+                self.model_path, 999, self.candidate_runtimes[self.seeds[0]]
+            )
+        tampered = self.directory / "tampered-native.runtime"
+        tampered.write_bytes(
+            self.candidate_runtimes[self.seeds[0]].read_bytes() + b"x"
+        )
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "exact seed model export"
+        ):
+            self.selection._baseline_identity(
+                self.model_path, self.seeds[0], tampered
+            )
+
+    def test_historical_deployed_baseline_is_exactly_allowlisted(self):
+        historical_model = ROOT / "models/jacek_native_round2_candidate.json"
+        historical_runtime = ROOT / "models/jacek_native_round2_selected.runtime"
+        historical_selection = ROOT / "models/jacek_native_round2_selection.json"
+        historical_deployment = ROOT / "models/jacek_native_round2_deployment.json"
+        identity = self.selection._baseline_identity(
+            historical_model,
+            20260822,
+            historical_runtime,
+            historical_selection,
+            historical_deployment,
+        )
+        frozen = self.selection.HISTORICAL_ROUND2_BASELINES[
+            identity["model_sha256"]
+        ]
+        self.assertEqual(identity["runtime_sha256"], frozen["runtime_sha256"])
+        self.assertEqual(identity["exporter_sha256"], frozen["exporter_sha256"])
+        self.assertEqual(identity["checkpoint_sha256"], frozen["checkpoint_sha256"])
+        self.assertEqual(
+            identity["retained_evidence"]["selection_sha256"],
+            frozen["selection_sha256"],
+        )
+        self.assertEqual(
+            identity["retained_evidence"]["deployment_sha256"],
+            frozen["deployment_sha256"],
+        )
+
+        copied_model = self.directory / "historical-copy.json"
+        copied_runtime = self.directory / "historical-copy.runtime"
+        copied_selection = self.directory / "historical-copy-selection.json"
+        copied_deployment = self.directory / "historical-copy-deployment.json"
+        copied_model.write_bytes(historical_model.read_bytes())
+        copied_runtime.write_bytes(historical_runtime.read_bytes())
+        copied_selection.write_bytes(historical_selection.read_bytes())
+        copied_deployment.write_bytes(historical_deployment.read_bytes())
+        self.assertEqual(
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime,
+                copied_selection, copied_deployment,
+            ),
+            identity,
+        )
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "exact frozen deployment identity"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260821, copied_runtime,
+                copied_selection, copied_deployment,
+            )
+        copied_model.write_bytes(copied_model.read_bytes() + b" ")
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "trainer lineage is unrecognized"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime,
+                copied_selection, copied_deployment,
+            )
+
+        copied_model.write_bytes(historical_model.read_bytes())
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "requires its preserved"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime
+            )
+        copied_selection.write_bytes(copied_selection.read_bytes() + b" ")
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "historical baseline selection"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime,
+                copied_selection, copied_deployment,
+            )
+
+        copied_selection.write_bytes(historical_selection.read_bytes())
+        copied_deployment.write_bytes(copied_deployment.read_bytes() + b" ")
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "historical baseline deployment"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime,
+                copied_selection, copied_deployment,
+            )
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "descriptor bytes"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260822, copied_runtime,
+                historical_deployment, historical_deployment,
+            )
+
+        _, historical_payload = self.selection._load_round2_model(
+            historical_model
+        )
+        sibling_runtime = self.directory / "historical-seed21.runtime"
+        sibling_runtime.write_bytes(
+            self.selection._render_historical_round2_runtime(
+                historical_payload,
+                hashlib.sha256(historical_model.read_bytes()).hexdigest(),
+                20260821,
+            )
+        )
+        sibling = self.selection._baseline_identity(
+            copied_model, 20260821, sibling_runtime,
+            historical_selection, historical_deployment,
+            require_deployed_seed=False,
+        )
+        self.assertEqual(
+            sibling["checkpoint_sha256"],
+            "089b4b3728f277801edff9c259157428414cff83a58367599531f0c657c06f00",
+        )
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "exact frozen deployment identity"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260821, sibling_runtime,
+                historical_selection, historical_deployment,
+            )
+        sibling_runtime.write_bytes(sibling_runtime.read_bytes() + b"x")
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "runtime (metadata|is not the exact)"
+        ):
+            self.selection._baseline_identity(
+                copied_model, 20260821, sibling_runtime,
+                historical_selection, historical_deployment,
+                require_deployed_seed=False,
+            )
+
+    def test_candidate_model_cannot_be_its_own_baseline(self):
+        copied_model = self.directory / "copied-candidate.json"
+        copied_model.write_bytes(self.model_path.read_bytes())
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "own baseline"
+        ):
+            self.selection.record_gate(
+                profile_name="screen",
+                model_path=self.model_path,
+                seed=self.seeds[0],
+                candidate_runtime=self.candidate_runtimes[self.seeds[0]],
+                baseline_model=copied_model,
+                baseline_seed=self.seeds[0],
+                baseline_runtime=self.candidate_runtimes[self.seeds[0]],
+                gate_binary=self.gate_binary,
+                output_dir=self.reports,
+            )
+
     def test_finalize_selects_deterministically_and_binds_exact_runtime(self):
         paths = self._all_reports()
         sidecar = self._finalize(list(reversed(paths)))
         self.assertEqual(sidecar["selected"]["seed"], 102)
+        self.assertEqual(sidecar["baseline"]["exporter"], "round1")
+        self.assertRegex(
+            sidecar["baseline"]["checkpoint_sha256"], r"^[0-9a-f]{64}$"
+        )
         self.assertTrue(sidecar["selected"]["exact_tested_deployed_runtime"])
         self.assertEqual(
             sidecar["selected"]["tested_runtime_sha256"],

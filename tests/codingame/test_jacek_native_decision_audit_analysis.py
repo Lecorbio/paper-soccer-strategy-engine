@@ -377,6 +377,44 @@ class JacekNativeDecisionAuditAnalysisTest(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.AuditAnalysisError, "duplicate JSON key"):
                 MODULE.load_audit(path)
 
+    def test_v1_bytes_remain_valid_and_v2_limit_is_strict(self):
+        current = make_row()
+        legacy = copy.deepcopy(current)
+        legacy["schema_version"] = MODULE.LEGACY_AUDIT_SCHEMA_VERSION
+        legacy.pop("max_own_decisions_per_game")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "legacy.jsonl"
+            write_jsonl(path, [legacy])
+            original = path.read_bytes()
+            original_sha = hashlib.sha256(original).hexdigest()
+            dataset = MODULE.load_audit(path)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(dataset["source_sha256"], original_sha)
+            self.assertEqual(
+                dataset["audit_schema_version"],
+                MODULE.LEGACY_AUDIT_SCHEMA_VERSION,
+            )
+            self.assertIsNone(
+                dataset["configuration"]["max_own_decisions_per_game"]
+            )
+
+            missing = copy.deepcopy(current)
+            missing.pop("max_own_decisions_per_game")
+            write_jsonl(path, [missing])
+            with self.assertRaisesRegex(
+                MODULE.AuditAnalysisError, "schema fields differ"
+            ):
+                MODULE.load_audit(path)
+
+            for invalid in (0, 1_025):
+                bounded = copy.deepcopy(current)
+                bounded["max_own_decisions_per_game"] = invalid
+                write_jsonl(path, [bounded])
+                with self.assertRaisesRegex(
+                    MODULE.AuditAnalysisError, "outside.*1,1024"
+                ):
+                    MODULE.load_audit(path)
+
     def test_exhaustive_root_allows_independent_tactical_proof_cap(self):
         row = make_row()
         row["diagnostic_root_tactical_proof_paths"] = 64
@@ -453,6 +491,23 @@ class JacekNativeDecisionAuditAnalysisTest(unittest.TestCase):
             named = report["arena_game_results"]["named_opponents"][0]
             self.assertEqual((top5["games"], top5["wins"], top5["losses"]), (2, 1, 1))
             self.assertEqual((named["games"], named["wins"], named["losses"]), (2, 1, 1))
+
+            first_only = [copy.deepcopy(loss_rows[0]), copy.deepcopy(win_rows[0])]
+            for row in first_only:
+                row["max_own_decisions_per_game"] = 1
+            first_only_path = pathlib.Path(temporary) / "first-only.jsonl"
+            write_jsonl(first_only_path, first_only)
+            first_only_dataset = MODULE.join_arena_manifest(
+                MODULE.load_audit(first_only_path),
+                MODULE.load_arena_manifest(manifest_path),
+            )
+            self.assertEqual(len(first_only_dataset["rows"]), 2)
+            self.assertEqual(
+                first_only_dataset["configuration"][
+                    "max_own_decisions_per_game"
+                ],
+                1,
+            )
 
             partial_path = pathlib.Path(temporary) / "partial.jsonl"
             write_jsonl(partial_path, loss_rows)

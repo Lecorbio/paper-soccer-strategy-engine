@@ -1,4 +1,5 @@
 import base64
+import copy
 import hashlib
 import importlib.util
 import json
@@ -270,6 +271,13 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                 "primary": "mover-relative-final-outcome",
                 "auxiliary": "stable-native-bfm-reanalysis",
                 "auxiliary_weight": 0.25,
+                "phase_weights": {
+                    "turns_0_11": 3.0,
+                    "turns_12_23": 1.5,
+                    "turns_24_plus": 1.0,
+                },
+                "phase_weight_application":
+                    "after-exact-override-combined-target-loss/v1",
                 "policy_target": None,
             },
             "provenance": {
@@ -450,6 +458,13 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                 "primary": "mover-relative-final-outcome",
                 "auxiliary": "stable-native-bfm-reanalysis",
                 "auxiliary_weight": 0.25,
+                "phase_weights": {
+                    "turns_0_11": 3.0,
+                    "turns_12_23": 1.5,
+                    "turns_24_plus": 1.0,
+                },
+                "phase_weight_application":
+                    "after-exact-override-combined-target-loss/v1",
                 "policy_target": None,
             },
             "checkpoints": [checkpoint],
@@ -483,7 +498,9 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                     "seed": 17,
                 }],
                 "archived_round1": [],
+                "archived_round2": [],
                 "live_restart_round2": [],
+                "archived_restart_round2": [],
             },
         })
         generation.update({
@@ -555,13 +572,94 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "restart corpus-validator"):
                 purity.purity_violations(bot, root)
 
+    def test_round2_purity_accepts_legacy_lineage_but_rejects_partial_extension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _, model_path = self.round2_fixture(temporary)
+            model = json.loads(model_path.read_text(encoding="utf-8"))
+            model["provenance"]["lineage"].pop("archived_round2")
+            model["provenance"]["lineage"].pop("archived_restart_round2")
+            purity._validate_round2_model_metadata(model, root)
+
+            model["provenance"]["lineage"]["archived_round2"] = []
+            with self.assertRaisesRegex(ValueError, "lineage is incomplete"):
+                purity._validate_round2_model_metadata(model, root)
+
+    def test_round2_purity_reconciles_archived_lineage_build_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _, model_path = self.round2_fixture(temporary)
+            model = json.loads(model_path.read_text(encoding="utf-8"))
+            entry = copy.deepcopy(
+                model["provenance"]["lineage"]["strict_current"][0]
+            )
+            entry["manifest_sha256"] = "9" * 64
+            entry["build_provenance_sha256"] = "8" * 64
+            model["provenance"]["lineage"]["archived_round2"] = [entry]
+            with self.assertRaisesRegex(ValueError, "lineage/build provenance"):
+                purity._validate_round2_model_metadata(model, root)
+
+    def test_round2_purity_rejects_missing_or_tampered_phase_weights(self):
+        for mutation in ("missing", "tampered", "application"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root, _, model_path = self.round2_fixture(temporary)
+                model = json.loads(model_path.read_text(encoding="utf-8"))
+                if mutation == "missing":
+                    model["target"].pop("phase_weights")
+                elif mutation == "tampered":
+                    model["target"]["phase_weights"]["turns_0_11"] = 1.0
+                else:
+                    model["target"]["phase_weight_application"] = "before/v0"
+                with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+                    purity._validate_round2_model_metadata(model, root)
+
+    def test_historical_deployed_checkpoint_is_exactly_allowlisted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            model = root / "models/historical-native.json"
+            runtime = root / "models/historical-native.runtime"
+            model.parent.mkdir(parents=True)
+            model.write_bytes(
+                (ROOT / "models/jacek_native_round2_candidate.json").read_bytes()
+            )
+            runtime.write_bytes(
+                (ROOT / "models/jacek_native_round2_selected.runtime").read_bytes()
+            )
+            config = {"native_checkpoint_provenance": [{
+                "model": "models/historical-native.json",
+                "runtime": "models/historical-native.runtime",
+            }]}
+            declarations = purity._validate_native_checkpoint_files(root, config)
+            self.assertEqual(
+                set(declarations),
+                {"17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3"},
+            )
+            historical = json.loads(model.read_text(encoding="utf-8"))
+            sibling_checkpoint = next(
+                checkpoint for checkpoint in historical["checkpoints"]
+                if checkpoint["seed"] == 20260821
+            )
+            sibling_runtime, sibling_identity = purity._checkpoint_runtime_bytes(
+                historical,
+                hashlib.sha256(model.read_bytes()).hexdigest(),
+                sibling_checkpoint,
+            )
+            runtime.write_bytes(sibling_runtime)
+            declarations = purity._validate_native_checkpoint_files(root, config)
+            self.assertEqual(set(declarations), {
+                sibling_identity["artifact_sha256"]
+            })
+            runtime.write_bytes(runtime.read_bytes() + b"x")
+            with self.assertRaisesRegex(ValueError, "retained export"):
+                purity._validate_native_checkpoint_files(root, config)
+
     def test_deployment_routes_pending_model_through_activation_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, bot, model_path = self.round2_fixture(temporary)
             deployment_path = root / purity.ROUND2_DEPLOYMENT_PATH
             deployment_path.write_text("{}\n", encoding="utf-8")
-            selection_path = root / purity.ROUND2_SELECTION_PATH
-            runtime_path = root / purity.ROUND2_RUNTIME_PATH
+            iteration_model = root / "models/round3-iteration.json"
+            iteration_model.write_bytes(model_path.read_bytes())
+            selection_path = root / "models/round3-iteration-selection.json"
+            runtime_path = root / "models/round3-iteration-selected.runtime"
             selection_path.write_text("{}\n", encoding="utf-8")
             runtime_path.write_text("selected runtime\n", encoding="utf-8")
             header = "#pragma once\n// selected pending model\n"
@@ -570,7 +668,7 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             )
             activation = mock.Mock()
             activation.load_deployment.return_value = {
-                "model_path": model_path.resolve(),
+                "model_path": iteration_model.resolve(),
                 "selection_path": selection_path.resolve(),
                 "runtime_path": runtime_path.resolve(),
                 "checkpoint_paths": [],
@@ -580,6 +678,8 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                 "baseline_runtime_path": (
                     root / "models/jacek_native_untrained_seed.runtime"
                 ).resolve(),
+                "baseline_selection_path": None,
+                "baseline_deployment_path": None,
                 "evidence_paths": [],
             }
             activation.render_deployment.return_value = (header, {})

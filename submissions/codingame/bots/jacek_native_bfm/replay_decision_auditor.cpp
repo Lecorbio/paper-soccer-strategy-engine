@@ -27,7 +27,7 @@ namespace papersoccer::jacek_native_replay_audit {
 namespace native = papersoccer::jacek_native_bfm;
 
 inline constexpr std::string_view kSchemaVersion =
-    "jacek-native-decision-audit-v1";
+    "jacek-native-decision-audit-v2";
 inline constexpr std::string_view kInputHeader =
     "game_id\tcandidate_player\twinner\tturns";
 inline constexpr std::size_t kMaximumGames = 4'096;
@@ -56,6 +56,7 @@ struct AuditConfig {
   std::uint32_t later_time_ms{};
   OutputFormat output_format{OutputFormat::JsonLines};
   std::optional<std::string> input_path{};
+  std::optional<std::size_t> max_own_decisions_per_game{};
 };
 
 struct GameRecord {
@@ -735,12 +736,21 @@ std::vector<DecisionAudit> audit_records(
     std::size_t own_decision = 0;
     for (std::size_t turn = 0; turn < record.actions.size(); ++turn) {
       if (player_id(state.to_move) == record.candidate_player) {
+        const std::size_t decision_index = own_decision++;
+        const bool audit_decision =
+            !config.max_own_decisions_per_game.has_value() ||
+            decision_index < *config.max_own_decisions_per_game;
+        if (!audit_decision) {
+          native::apply_encoded_turn(state, record.actions[turn]);
+          append_turn(prefix, record.actions[turn]);
+          continue;
+        }
         DecisionAudit audit;
         audit.game_id = record.game_id;
         audit.state_id = state_identity(state);
         audit.transcript_prefix = prefix;
         audit.turn_index = turn;
-        audit.own_decision_index = own_decision++;
+        audit.own_decision_index = decision_index;
         audit.candidate_player = record.candidate_player;
         audit.winner = record.winner;
         audit.provenance = record.provenance;
@@ -893,6 +903,9 @@ void write_json_line(std::ostream &output, const DecisionAudit &audit,
          << config.first_play_urgency << ','
          << "\"first_time_limit_ms\":" << config.first_time_ms << ','
          << "\"later_time_limit_ms\":" << config.later_time_ms << ','
+         << "\"max_own_decisions_per_game\":";
+  write_json_optional(output, config.max_own_decisions_per_game);
+  output << ','
          << "\"time_limit_ms\":" << audit.time_limit_ms << ',';
   write_json_action(output, "actual", audit.actual);
   output << ',';
@@ -974,7 +987,8 @@ inline constexpr std::string_view kTsvHeader =
     "audit_mode\tmodel_sha256\tpacked_weights_sha256\tfixed_work_limit\t"
     "max_actions\tmax_partial_paths\tmax_expansions\texploration\t"
     "first_play_urgency\tfirst_time_limit_ms\tlater_time_limit_ms\t"
-    "time_limit_ms\tactual_action\tactual_exact_retained_ordinal\t"
+    "max_own_decisions_per_game\ttime_limit_ms\tactual_action\t"
+    "actual_exact_retained_ordinal\t"
     "actual_boundary_retained_ordinal\tactual_retained_action\t"
     "actual_tactical_class\tactual_initial_neural_value\t"
     "actual_initial_action_value\tactual_initial_rank\t"
@@ -1040,7 +1054,9 @@ void write_tsv_line(std::ostream &output, const DecisionAudit &audit,
          << config.max_partial_paths << '\t' << config.max_expansions << '\t'
          << std::setprecision(9) << config.exploration << '\t'
          << config.first_play_urgency << '\t' << config.first_time_ms << '\t'
-         << config.later_time_ms << '\t' << audit.time_limit_ms << '\t';
+         << config.later_time_ms << '\t';
+  write_tsv_optional(output, config.max_own_decisions_per_game);
+  output << '\t' << audit.time_limit_ms << '\t';
   write_tsv_action(output, audit.actual);
   output << '\t';
   write_tsv_action(output, audit.chosen);
@@ -1098,6 +1114,12 @@ void validate_config(const AuditConfig &config) {
       !std::isfinite(config.first_play_urgency)) {
     throw std::invalid_argument("invalid native replay-audit configuration");
   }
+  if (config.max_own_decisions_per_game.has_value() &&
+      (*config.max_own_decisions_per_game == 0 ||
+       *config.max_own_decisions_per_game > kMaximumTurns)) {
+    throw std::invalid_argument(
+        "maximum own decisions per game must be in [1,1024]");
+  }
   if (config.mode == AuditMode::FixedWork &&
       (config.first_time_ms != 0 || config.later_time_ms != 0)) {
     throw std::invalid_argument("fixed-work mode cannot have a clock");
@@ -1120,6 +1142,8 @@ AuditConfig parse_arguments(int argc, char **argv) {
   AuditConfig config;
   bool custom_clock = false;
   bool codingame_clocks = false;
+  bool fixed_work_option = false;
+  bool tree_nodes_option = false;
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
     if (option == "--input") {
@@ -1129,9 +1153,18 @@ AuditConfig parse_arguments(int argc, char **argv) {
       if (format == "jsonl") config.output_format = OutputFormat::JsonLines;
       else if (format == "tsv") config.output_format = OutputFormat::Tsv;
       else throw std::invalid_argument("--format must be jsonl or tsv");
-    } else if (option == "--fixed-work" || option == "--tree-nodes") {
+    } else if (option == "--fixed-work") {
       config.fixed_work = parse_integer<std::size_t>(
           require_value(index, argc, argv, option), "fixed work");
+      fixed_work_option = true;
+    } else if (option == "--tree-nodes") {
+      config.fixed_work = parse_integer<std::size_t>(
+          require_value(index, argc, argv, option), "tree nodes");
+      tree_nodes_option = true;
+    } else if (option == "--max-own-decisions-per-game") {
+      config.max_own_decisions_per_game = parse_integer<std::size_t>(
+          require_value(index, argc, argv, option),
+          "maximum own decisions per game");
     } else if (option == "--max-actions") {
       config.max_actions = parse_integer<std::size_t>(
           require_value(index, argc, argv, option), "maximum actions");
@@ -1167,9 +1200,15 @@ AuditConfig parse_arguments(int argc, char **argv) {
     throw std::invalid_argument(
         "--codingame-clocks cannot be combined with custom clocks");
   }
+  if (fixed_work_option && (codingame_clocks || custom_clock)) {
+    throw std::invalid_argument(
+        "--fixed-work cannot be combined with clock mode; use --tree-nodes");
+  }
   if (codingame_clocks) {
     config.mode = AuditMode::Clock;
-    config.fixed_work = native::kProductionTreeNodes;
+    if (!tree_nodes_option) {
+      config.fixed_work = native::kProductionTreeNodes;
+    }
     config.max_actions = native::kMaximumActions;
     config.max_partial_paths = native::kProductionPartialPaths;
     config.max_expansions = native::kMaximumExpansions;
@@ -1189,6 +1228,10 @@ void write_usage(std::ostream &output, std::string_view executable) {
          << "  --input PATH\n"
          << "  --format jsonl|tsv\n"
          << "  --fixed-work N        deterministic tree-node work (default 30000)\n"
+         << "  --tree-nodes N        tree cap, including with clock mode\n"
+         << "  --max-own-decisions-per-game N\n"
+         << "                         audit only the first N candidate decisions;\n"
+         << "                         full transcript validation remains mandatory\n"
          << "  --max-actions N\n"
          << "  --max-partial-paths N\n"
          << "  --max-expansions N\n"

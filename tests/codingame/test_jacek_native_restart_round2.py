@@ -42,6 +42,25 @@ def collector_bytes(
 
 
 class RestartContractTests(unittest.TestCase):
+    def test_archived_cli_explicitly_disables_only_local_build_verification(self):
+        report = {
+            "schema": "papersoccer.jacek-native-restart-corpus-report/v1"
+        }
+        with (
+            mock.patch.object(
+                sys, "argv", [
+                    "jacek_native_restart_corpus_round2.py", "--archived",
+                    "history/shard.jsonl",
+                ],
+            ),
+            mock.patch.object(corpus, "summarize", return_value=report) as summarize,
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(corpus.main(), 0)
+        summarize.assert_called_once_with(
+            [pathlib.Path("history/shard.jsonl")], verify_local_build=False
+        )
+
     def test_parallel_workers_are_bounded_and_validated(self):
         with mock.patch.object(workflow.os, "cpu_count", return_value=2):
             self.assertEqual(workflow.resolve_parallel_workers(
@@ -169,6 +188,15 @@ class RestartContractTests(unittest.TestCase):
             self.assertEqual(len(games), 2)
             self.assertEqual(lineage["collector_tsv_sha256"],
                              corpus.sha256_bytes(collector_bytes()))
+            with mock.patch.object(
+                corpus, "ROOT", directory / "different-current-checkout"
+            ):
+                archived_games, _, _ = corpus.load_games(
+                    shards, verify_local_build=False
+                )
+                self.assertEqual(len(archived_games), 2)
+                with self.assertRaisesRegex(ValueError, "source is stale"):
+                    corpus.load_games(shards, verify_local_build=True)
             records = [
                 json.loads(line)
                 for shard in shards
@@ -210,6 +238,31 @@ class RestartContractTests(unittest.TestCase):
                 [shard.read_bytes() for shard in shards],
                 [shard.read_bytes() for shard in repeated_shards],
             )
+
+            binary = output / corpus.ARCHIVED_BINARY_NAME
+            original_binary = binary.read_bytes()
+            binary.write_bytes(original_binary + b"tampered")
+            with self.assertRaisesRegex(ValueError, "archived binary is stale"):
+                corpus.load_games(shards, verify_local_build=False)
+            binary.write_bytes(original_binary)
+
+            checkpoint = output / "player_one.runtime"
+            original_checkpoint = checkpoint.read_bytes()
+            checkpoint.write_bytes(original_checkpoint + b"tampered")
+            with self.assertRaisesRegex(
+                ValueError, "checkpoint (runtime contract is malformed|archive is stale)"
+            ):
+                corpus.load_games(shards, verify_local_build=False)
+            checkpoint.write_bytes(original_checkpoint)
+
+            manifest_path = output / corpus.MANIFEST_NAME
+            original_manifest = manifest_path.read_bytes()
+            manifest_path.write_text(json.dumps(
+                json.loads(original_manifest), indent=2, sort_keys=True
+            ) + "\n")
+            with self.assertRaisesRegex(ValueError, "not canonical JSON"):
+                corpus.load_games(shards, verify_local_build=False)
+            manifest_path.write_bytes(original_manifest)
 
             archived = output / corpus.ARCHIVED_INPUT_NAME
             archived.write_bytes(archived.read_bytes() + b"\n")

@@ -73,16 +73,30 @@ later own decisions, with the production 250-action, 4,000-root-path,
 actions and elapsed times can vary with host load; playing-strength decisions
 must use the established paired actual-clock gates, not this offline replay.
 
+Clock mode normally retains that 80,000-node ceiling. Pass `--tree-nodes N`
+to audit another supported ceiling, such as 120,000, without changing the
+clocks or the production bot. `--fixed-work` remains the deterministic
+no-clock mode and is rejected when a clock mode is selected.
+
+For a first-response panel, pass `--max-own-decisions-per-game 1`. The auditor
+still parses, replays, and validates every complete terminal transcript before
+emitting any output; it runs native search and diagnostics only for candidate
+decision index zero in each game. Omitting the option preserves the legacy
+all-decisions behavior. The active limit is bound into every JSONL or TSV row.
+
 `--first-ms` and `--later-ms` are available for explicit clock experiments and
 must be supplied together. `--max-actions`, `--max-partial-paths`,
-`--max-expansions`, `--exploration`, and `--fpu` are bounded diagnostic knobs.
+`--tree-nodes`, `--max-expansions`, `--exploration`, and `--fpu` are bounded
+diagnostic knobs.
 Every row records the complete configuration, model artifact SHA-256, and
 packed-weight SHA-256.
 
 ## Per-decision evidence
 
 For both the observed (`actual_*`) and counterfactual native (`chosen_*`)
-action, schema `jacek-native-decision-audit-v1` records:
+action, schema `jacek-native-decision-audit-v2` records. The strict analyzer
+continues to accept byte-unchanged v1 evidence and normalizes its implicit
+all-decisions configuration to an unlimited decision count:
 
 - zero-based exact-encoding and full-boundary retained ordinals (`-1` means
   absent);

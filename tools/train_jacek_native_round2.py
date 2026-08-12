@@ -15,8 +15,10 @@ import dataclasses
 import hashlib
 import json
 import math
+import os
 import pathlib
 import sys
+import tempfile
 import time
 from collections import Counter
 from typing import Mapping, Sequence
@@ -45,10 +47,20 @@ initialize = round1_trainer.initialize
 quantize = round1_trainer.quantize
 forward = round1_trainer.forward
 AdamW = round1_trainer.AdamW
-round1_train_batch = round1_trainer.train_batch
 parse_seeds = round1_trainer.parse_seeds
 tensor = round1_trainer.tensor
 integer_tensor = round1_trainer.integer_tensor
+
+PHASE_WEIGHTS = (
+    ("turns_0_11", 0, 12, np.float32(3.0)),
+    ("turns_12_23", 12, 24, np.float32(1.5)),
+    ("turns_24_plus", 24, None, np.float32(1.0)),
+)
+PHASE_WEIGHT_APPLICATION = "after-exact-override-combined-target-loss/v1"
+AUXILIARY_WEIGHT = 0.25
+VALIDATION_SELECTION_METRIC = (
+    "validation-phase-weighted-combined-target-mse"
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -134,20 +146,34 @@ def load_datasets(
     current_paths: Sequence[pathlib.Path],
     archived_round1_paths: Sequence[pathlib.Path] = (),
     restart_round2_paths: Sequence[pathlib.Path] = (),
+    archived_round2_paths: Sequence[pathlib.Path] = (),
+    archived_restart_round2_paths: Sequence[pathlib.Path] = (),
 ):
     games, source_hashes, lineage = corpus_contract.load_games(
-        current_paths, archived_round1_paths
+        current_paths, archived_round1_paths, archived_round2_paths
     )
-    lineage = {**lineage, "live_restart_round2": []}
-    if restart_round2_paths:
+    lineage = {
+        **lineage,
+        "live_restart_round2": [],
+        "archived_restart_round2": [],
+    }
+    game_keys = {game.key for game in games}
+
+    def merge_restart_runs(
+        paths_to_merge: Sequence[pathlib.Path], *, lineage_key: str,
+        verify_local_build: bool,
+    ) -> None:
+        if not paths_to_merge:
+            return
         grouped: dict[pathlib.Path, list[pathlib.Path]] = {}
-        for path in restart_round2_paths:
+        for path in paths_to_merge:
             resolved = path.resolve()
             grouped.setdefault(resolved.parent, []).append(resolved)
-        game_keys = {game.key for game in games}
         for directory, paths in sorted(grouped.items()):
             restart_games, restart_sources, restart_lineage = (
-                restart_contract.load_games(paths, verify_local_build=True)
+                restart_contract.load_games(
+                    paths, verify_local_build=verify_local_build
+                )
             )
             duplicate_games = game_keys & {game.key for game in restart_games}
             if duplicate_games:
@@ -164,12 +190,23 @@ def load_datasets(
             game_keys.update(game.key for game in restart_games)
             games.extend(restart_games)
             source_hashes.update(restart_sources)
-            lineage["live_restart_round2"].append(restart_lineage)
-        lineage["live_restart_round2"].sort(key=lambda item: (
+            lineage[lineage_key].append(restart_lineage)
+        lineage[lineage_key].sort(key=lambda item: (
             item["collector_tsv_sha256"], item["manifest_sha256"]
         ))
-        games.sort(key=corpus_contract.game_sort_key)
-        source_hashes = dict(sorted(source_hashes.items()))
+
+    merge_restart_runs(
+        restart_round2_paths,
+        lineage_key="live_restart_round2",
+        verify_local_build=True,
+    )
+    merge_restart_runs(
+        archived_restart_round2_paths,
+        lineage_key="archived_restart_round2",
+        verify_local_build=False,
+    )
+    games.sort(key=corpus_contract.game_sort_key)
+    source_hashes = dict(sorted(source_hashes.items()))
     split_samples, overlaps_removed, assignments = corpus_contract.prepare_splits(games)
     split_sample_counts = {
         split: len(samples) for split, samples in split_samples.items()
@@ -309,6 +346,89 @@ def _turn_calibration(
     return result
 
 
+def _phase_weights(turns: np.ndarray) -> np.ndarray:
+    weights = np.full(turns.shape, np.float32(1.0), dtype=np.float32)
+    for _, lower, upper, weight in PHASE_WEIGHTS:
+        mask = turns >= lower
+        if upper is not None:
+            mask &= turns < upper
+        weights[mask] = weight
+    return weights
+
+
+def _combined_target_loss(
+    predictions: np.ndarray,
+    outcome: np.ndarray,
+    auxiliary: np.ndarray,
+    auxiliary_mask: np.ndarray,
+    exact_mask: np.ndarray,
+    turns: np.ndarray,
+    auxiliary_weight: float = AUXILIARY_WEIGHT,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the exact-overridden mixture before and after phase weighting."""
+    outcome_weights = np.where(
+        exact_mask,
+        0.0,
+        np.where(auxiliary_mask, 1.0 - auxiliary_weight, 1.0),
+    ).astype(np.float32)
+    auxiliary_weights = np.where(
+        exact_mask,
+        1.0,
+        np.where(auxiliary_mask, auxiliary_weight, 0.0),
+    ).astype(np.float32)
+    outcome_difference = predictions - outcome
+    auxiliary_difference = predictions - auxiliary
+    unweighted = (
+        outcome_weights * outcome_difference * outcome_difference
+        + auxiliary_weights * auxiliary_difference * auxiliary_difference
+    )
+    phase_weights = _phase_weights(turns)
+    weighted = phase_weights * unweighted
+    return (
+        unweighted,
+        weighted,
+        outcome_weights,
+        auxiliary_weights,
+        phase_weights,
+    )
+
+
+def _phase_metrics(
+    combined: np.ndarray, weighted: np.ndarray, dataset: Dataset
+) -> dict[str, dict]:
+    result = {}
+    for name, lower, upper, weight in PHASE_WEIGHTS:
+        mask = dataset.turn >= lower
+        if upper is not None:
+            mask &= dataset.turn < upper
+        count = int(np.count_nonzero(mask))
+        result[name] = {
+            "samples": count,
+            "weight": float(weight),
+            "unweighted_combined_target_mse": (
+                float(np.mean(combined[mask])) if count else None
+            ),
+            "weighted_combined_target_mse": (
+                float(np.mean(weighted[mask])) if count else None
+            ),
+        }
+    return result
+
+
+def _weighted_validation_loss(validation: Mapping[str, object]) -> float:
+    """Return the sole checkpoint-improvement objective explicitly."""
+    return float(validation["weighted_combined_target_mse"])
+
+
+def _validation_order_key(validation: Mapping[str, object]) -> tuple[float, ...]:
+    """Order independent candidates after the approved weighted objective."""
+    return (
+        _weighted_validation_loss(validation),
+        float(validation["unweighted_combined_target_mse"]),
+        float(validation["outcome_mse"]),
+    )
+
+
 def metrics(
     parameters: Mapping[str, np.ndarray],
     dataset: Dataset,
@@ -327,16 +447,15 @@ def metrics(
                        - dataset.auxiliary[auxiliary_mask]) ** 2))
         if np.any(auxiliary_mask) else None
     )
-    outcome_weight = np.where(
-        dataset.exact_mask, 0.0, np.where(auxiliary_mask, 0.75, 1.0)
+    combined, weighted, _, _, _ = _combined_target_loss(
+        predictions,
+        dataset.outcome,
+        dataset.auxiliary,
+        auxiliary_mask,
+        dataset.exact_mask,
+        dataset.turn,
     )
-    auxiliary_weight = np.where(
-        dataset.exact_mask, 1.0, np.where(auxiliary_mask, 0.25, 0.0)
-    )
-    combined = (
-        outcome_weight * primary
-        + auxiliary_weight * (predictions - dataset.auxiliary) ** 2
-    )
+    weighted_mse = float(np.mean(weighted))
     return {
         "samples": len(dataset),
         "outcome_mse": float(np.mean(primary)),
@@ -346,11 +465,16 @@ def metrics(
         "outcome_sign_accuracy": float(np.mean(
             (predictions >= 0.0) == (dataset.outcome >= 0.0)
         )),
-        "combined_target_mse": float(np.mean(combined)),
+        # Preserve the established selection key while making its new
+        # phase-weighted meaning explicit in the adjacent metrics.
+        "combined_target_mse": weighted_mse,
+        "weighted_combined_target_mse": weighted_mse,
+        "unweighted_combined_target_mse": float(np.mean(combined)),
         "stable_reanalysis_samples": int(np.count_nonzero(auxiliary_mask)),
         "exact_reanalysis_samples": int(np.count_nonzero(dataset.exact_mask)),
         "stable_reanalysis_mse": auxiliary_mse,
         "prediction_mean": float(np.mean(predictions)),
+        "phase_metrics": _phase_metrics(combined, weighted, dataset),
         "turn_calibration": _turn_calibration(predictions, dataset),
     }
 
@@ -493,18 +617,28 @@ def select_fixed_scales(
                 )
                 validation_metrics = metrics(effective, validation)
                 coverage = quantized_w1_coverage(effective)
-                loss = validation_metrics["combined_target_mse"]
+                loss = _weighted_validation_loss(validation_metrics)
                 trial = {
                     "pass": search_pass + 1,
                     "layer": name,
                     "requested_scale": float(candidate),
                     "canonical_scales": _scale_payload(trial_scales),
                     "validation_combined_target_mse": loss,
+                    "validation_weighted_combined_target_mse": (
+                        validation_metrics["weighted_combined_target_mse"]
+                    ),
+                    "validation_unweighted_combined_target_mse": (
+                        validation_metrics["unweighted_combined_target_mse"]
+                    ),
+                    "validation_phase_metrics": validation_metrics[
+                        "phase_metrics"
+                    ],
                     "validation_outcome_mse": validation_metrics["outcome_mse"],
                     "w1_coverage": coverage,
                 }
                 trials.append(trial)
-                key = (loss, float(candidate))
+                key = (*_validation_order_key(validation_metrics),
+                       float(candidate))
                 if best is None or key < best[0]:
                     best = (key, candidate)
             requested[name] = best[1]
@@ -517,7 +651,10 @@ def select_fixed_scales(
             "fixed-symmetric-3bit-validation-coordinate-search-"
             "lower-rank-robust-quantiles/v1"
         ),
-        "selection_metric": "validation-combined-target-mse",
+        "selection_metric": VALIDATION_SELECTION_METRIC,
+        "selection_tie_break": (
+            "unweighted-combined-target-mse-then-outcome-mse-then-scale"
+        ),
         "passes": SCALE_SEARCH_PASSES,
         "maximum_candidate_quantile": "p995-lower-rank",
         "max_abs_is_not_a_scale_candidate": True,
@@ -530,6 +667,15 @@ def select_fixed_scales(
         "selected_canonical_scales": _scale_payload(selected_scales),
         "selected_validation_combined_target_mse": selected_metrics[
             "combined_target_mse"
+        ],
+        "selected_validation_weighted_combined_target_mse": selected_metrics[
+            "weighted_combined_target_mse"
+        ],
+        "selected_validation_unweighted_combined_target_mse": (
+            selected_metrics["unweighted_combined_target_mse"]
+        ),
+        "selected_validation_phase_metrics": selected_metrics[
+            "phase_metrics"
         ],
         "selected_validation_turn_calibration": selected_metrics[
             "turn_calibration"
@@ -549,39 +695,40 @@ def train_batch(
     quantization_aware: bool,
     fixed_scales: Mapping[str, object] | None = None,
 ) -> float:
-    if not quantization_aware or fixed_scales is None:
-        return round1_train_batch(
-            master, optimizer, dataset, indices,
-            auxiliary_weight, quantization_aware,
-        )
-
     active = tuple(dataset.active[int(index)] for index in indices)
-    _, _, effective = _fixed_quantize(master, fixed_scales)
+    if not quantization_aware:
+        effective = master
+    elif fixed_scales is None:
+        _, _, effective = quantize(master)
+    else:
+        _, _, effective = _fixed_quantize(master, fixed_scales)
     prediction, cache = forward(effective, active)
     first_pre, first, second_pre, second, output_pre = cache
     outcome = dataset.outcome[indices]
     difference = prediction - outcome
     exact_mask = dataset.exact_mask[indices]
     auxiliary_mask = dataset.auxiliary_mask[indices]
-    outcome_weights = np.where(
-        exact_mask, 0.0,
-        np.where(auxiliary_mask, 1.0 - auxiliary_weight, 1.0),
-    ).astype(np.float32)
-    auxiliary_weights = np.where(
-        exact_mask, 1.0,
-        np.where(auxiliary_mask, auxiliary_weight, 0.0),
-    ).astype(np.float32)
-    loss = float(np.mean(outcome_weights * difference * difference))
-    output_gradient = (
-        2.0 * outcome_weights * difference / max(len(indices), 1)
+    _, weighted_loss, outcome_weights, auxiliary_weights, phase_weights = (
+        _combined_target_loss(
+            prediction,
+            outcome,
+            dataset.auxiliary[indices],
+            auxiliary_mask,
+            exact_mask,
+            dataset.turn[indices],
+            auxiliary_weight,
+        )
     )
-    if np.any(auxiliary_mask):
+    weighted_outcome = phase_weights * outcome_weights
+    weighted_auxiliary = phase_weights * auxiliary_weights
+    loss = float(np.mean(weighted_loss))
+    output_gradient = (
+        2.0 * weighted_outcome * difference / max(len(indices), 1)
+    )
+    if np.any(auxiliary_weights):
         auxiliary_difference = prediction - dataset.auxiliary[indices]
-        loss += float(np.mean(
-            auxiliary_weights * auxiliary_difference * auxiliary_difference
-        ))
         output_gradient += (
-            2.0 * auxiliary_weights * auxiliary_difference
+            2.0 * weighted_auxiliary * auxiliary_difference
             / max(len(indices), 1)
         )
 
@@ -654,11 +801,27 @@ def train_seed(
             "validation_combined_target_mse": validation[
                 "combined_target_mse"
             ],
+            "validation_weighted_combined_target_mse": validation[
+                "weighted_combined_target_mse"
+            ],
+            "validation_unweighted_combined_target_mse": validation[
+                "unweighted_combined_target_mse"
+            ],
+            "validation_phase_metrics": validation["phase_metrics"],
             "validation_turn_calibration": validation["turn_calibration"],
             "dynamic_max_quantization": {
                 "scales": _scale_payload(dynamic_scales),
                 "validation_combined_target_mse": dynamic_validation[
                     "combined_target_mse"
+                ],
+                "validation_weighted_combined_target_mse": (
+                    dynamic_validation["weighted_combined_target_mse"]
+                ),
+                "validation_unweighted_combined_target_mse": (
+                    dynamic_validation["unweighted_combined_target_mse"]
+                ),
+                "validation_phase_metrics": dynamic_validation[
+                    "phase_metrics"
                 ],
                 "validation_turn_calibration": dynamic_validation[
                     "turn_calibration"
@@ -670,8 +833,9 @@ def train_seed(
             f"round2 seed {seed} epoch {epoch}: validation combined MSE "
             f"{validation['combined_target_mse']:.6f}", flush=True,
         )
-        if validation["combined_target_mse"] < best_float_loss - 1e-8:
-            best_float_loss = validation["combined_target_mse"]
+        validation_loss = _weighted_validation_loss(validation)
+        if validation_loss < best_float_loss - 1e-8:
+            best_float_loss = validation_loss
             best_epoch = epoch
             best_float = {name: value.copy() for name, value in master.items()}
         elif epoch - best_epoch >= patience:
@@ -702,9 +866,9 @@ def train_seed(
         split: metrics(pre_qat_effective, dataset)
         for split, dataset in datasets.items()
     }
-    selected_loss = pre_qat_quantized_metrics["validation"][
-        "combined_target_mse"
-    ]
+    selected_loss = _weighted_validation_loss(
+        pre_qat_quantized_metrics["validation"]
+    )
     selected_qat_epoch = 0
 
     master = {name: value.copy() for name, value in best_float.items()}
@@ -721,13 +885,20 @@ def train_seed(
             master, fixed_scales
         )
         validation = metrics(effective, datasets["validation"])
-        validation_loss = validation["combined_target_mse"]
+        validation_loss = _weighted_validation_loss(validation)
         history.append({
             "qat_epoch": qat_epoch,
             "fixed_scales": _scale_payload(fixed_scales),
             "canonical_scales": _scale_payload(canonical_scales),
             "validation_quantized_outcome_mse": validation["outcome_mse"],
             "validation_quantized_combined_target_mse": validation_loss,
+            "validation_quantized_weighted_combined_target_mse": validation[
+                "weighted_combined_target_mse"
+            ],
+            "validation_quantized_unweighted_combined_target_mse": (
+                validation["unweighted_combined_target_mse"]
+            ),
+            "validation_phase_metrics": validation["phase_metrics"],
             "validation_turn_calibration": validation["turn_calibration"],
             "quantized_w1_coverage": quantized_w1_coverage(effective),
         })
@@ -754,7 +925,7 @@ def train_seed(
             "selected_qat_epoch": selected_qat_epoch,
             "pre_qat_retained": selected_qat_epoch == 0,
             "tie_break": "prefer-pre-qat-best",
-            "selection_metric": "validation-combined-target-mse",
+            "selection_metric": VALIDATION_SELECTION_METRIC,
             "fixed_scale_qat": True,
             "fixed_scales": _scale_payload(fixed_scales),
             "selected_export_scales": _scale_payload(selected_scales),
@@ -807,9 +978,9 @@ def build_report(
     ordering = sorted(
         range(len(seed_reports)),
         key=lambda index: (
-            seed_reports[index]["quantized_metrics"]["validation"][
-                "combined_target_mse"
-            ],
+            *_validation_order_key(
+                seed_reports[index]["quantized_metrics"]["validation"]
+            ),
             seed_reports[index]["seed"],
         ),
     )
@@ -839,6 +1010,10 @@ def build_report(
             "primary": "mover-relative-final-outcome",
             "auxiliary": "stable-native-bfm-reanalysis",
             "auxiliary_weight": arguments.auxiliary_weight,
+            "phase_weights": {
+                name: float(weight) for name, _, _, weight in PHASE_WEIGHTS
+            },
+            "phase_weight_application": PHASE_WEIGHT_APPLICATION,
             "policy_target": None,
         },
         "provenance": {
@@ -863,8 +1038,9 @@ def build_report(
             "chosen_seed": None,
             "provisional_seed": provisional_report["seed"],
             "selection": (
-                "provisional-minimum-quantized-validation-combined-target-"
-                "mse-then-seed;"
+                "provisional-minimum-quantized-validation-phase-weighted-"
+                "combined-target-mse-then-unweighted-combined-target-mse-"
+                "then-outcome-mse-then-seed;"
                 "final-native-actual-clock-strength-external"
             ),
             "external_actual_clock_selection": {
@@ -884,6 +1060,29 @@ def build_report(
     }
 
 
+def write_output_exclusive(path: pathlib.Path, raw: bytes) -> None:
+    """Atomically install a fresh training artifact without replacing history."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: pathlib.Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as stream:
+            temporary_path = pathlib.Path(stream.name)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary_path, path)
+        except FileExistsError as error:
+            raise FileExistsError(
+                f"refusing to overwrite immutable training artifact: {path}"
+            ) from error
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Train cumulative ground-up Jacek-native round-two values."
@@ -893,13 +1092,32 @@ def main() -> int:
     parser.add_argument("--archived-round1", nargs="*", type=pathlib.Path,
                         default=[])
     parser.add_argument(
+        "--archived-round2", nargs="*", type=pathlib.Path, default=[],
+        help=(
+            "explicit canonical round-two archives; validate their archived "
+            "identities without requiring current source/compiler hashes"
+        ),
+    )
+    parser.add_argument(
         "--restart-round2", nargs="*", type=pathlib.Path, default=[],
         help=(
             "explicit provenance-safe live-restart shards; observed moves "
             "construct states only and never become labels"
         ),
     )
-    parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--archived-restart-round2", nargs="*", type=pathlib.Path,
+        default=[],
+        help=(
+            "explicit canonical historical live-restart archives; validate "
+            "archived binary/checkpoint/collector identities without requiring "
+            "current source/compiler hashes"
+        ),
+    )
+    parser.add_argument(
+        "--output", type=pathlib.Path, required=True,
+        help="fresh immutable output path (existing files are rejected)",
+    )
     parser.add_argument(
         "--seeds", type=parse_seeds,
         default=parse_seeds("20260821,20260822,20260823"),
@@ -929,7 +1147,11 @@ def main() -> int:
         parser.error("the native stable-reanalysis mixture is fixed at 0.25")
 
     datasets, corpus_report = load_datasets(
-        arguments.corpus, arguments.archived_round1, arguments.restart_round2
+        arguments.corpus,
+        archived_round1_paths=arguments.archived_round1,
+        restart_round2_paths=arguments.restart_round2,
+        archived_round2_paths=arguments.archived_round2,
+        archived_restart_round2_paths=arguments.archived_restart_round2,
     )
     candidates = []
     reports = []
@@ -950,10 +1172,10 @@ def main() -> int:
     )
     model = build_report(candidates, reports, corpus_report, arguments)
     model["training"]["examples_processed"] = examples
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(
+    model_raw = (json.dumps(
         model, sort_keys=True, allow_nan=False, separators=(",", ":")
-    ) + "\n")
+    ) + "\n").encode()
+    write_output_exclusive(arguments.output, model_raw)
     print(json.dumps({
         "output": str(arguments.output),
         "provisional_seed": model["training"]["provisional_seed"],
