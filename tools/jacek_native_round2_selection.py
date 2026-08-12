@@ -190,6 +190,55 @@ def _load_canonical(path: pathlib.Path, label: str) -> tuple[bytes, Any]:
     return raw, _strict_json(raw, label)
 
 
+def _load_round2_model(
+    path: pathlib.Path, label: str = "round-two model"
+) -> tuple[bytes, Any]:
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise SelectionError(f"cannot read {label}: {path}") from error
+    value = _strict_json(raw, label, canonical=False)
+    canonical_value = value
+    if isinstance(value, Mapping):
+        provenance = value.get("provenance")
+        generation = (
+            provenance.get("generation")
+            if isinstance(provenance, Mapping) else None
+        )
+        depths = (
+            generation.get("opening_depths")
+            if isinstance(generation, Mapping) else None
+        )
+        if isinstance(depths, Mapping):
+            normalized_depths: dict[int, Any] = {}
+            for key, count in depths.items():
+                try:
+                    numeric_key = int(key)
+                except (TypeError, ValueError) as error:
+                    raise SelectionError(
+                        "round-two opening-depth key is not canonical"
+                    ) from error
+                if (
+                    not isinstance(key, str)
+                    or key != str(numeric_key)
+                    or numeric_key < 0
+                    or numeric_key in normalized_depths
+                ):
+                    raise SelectionError(
+                        "round-two opening-depth key is not canonical"
+                    )
+                normalized_depths[numeric_key] = count
+            canonical_generation = dict(generation)
+            canonical_generation["opening_depths"] = normalized_depths
+            canonical_provenance = dict(provenance)
+            canonical_provenance["generation"] = canonical_generation
+            canonical_value = dict(value)
+            canonical_value["provenance"] = canonical_provenance
+    if canonical_json_bytes(canonical_value) != raw:
+        raise SelectionError(f"{label} is not canonical trainer JSON")
+    return raw, value
+
+
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -241,7 +290,7 @@ def _runtime_lines(raw: bytes, label: str) -> dict[str, str]:
 def _round2_identity(
     model_path: pathlib.Path, seed: int, runtime_path: pathlib.Path
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
-    model_raw, model = _load_canonical(model_path, "round-two model")
+    model_raw, model = _load_round2_model(model_path)
     if not isinstance(model, Mapping):
         raise SelectionError("round-two model root is not an object")
     model_sha = _sha256(model_raw)
@@ -773,7 +822,7 @@ def finalize_selection(
 ) -> dict[str, Any]:
     if output is not None and output.exists():
         raise SelectionError("refusing to overwrite immutable selection sidecar")
-    model_raw, model = _load_canonical(model_path, "round-two model")
+    model_raw, model = _load_round2_model(model_path)
     if not isinstance(model, Mapping):
         raise SelectionError("round-two model root is not an object")
     training = model.get("training")

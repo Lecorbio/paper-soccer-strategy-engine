@@ -165,7 +165,12 @@ def validate_selection(
     baseline_runtime: pathlib.Path,
     report_paths: Sequence[pathlib.Path],
 ) -> dict[str, Any]:
-    model_raw, model = _load_canonical(model_path, "round-two model")
+    try:
+        model_raw, model = selection_tool._load_round2_model(model_path)
+    except selection_tool.SelectionError as error:
+        raise ActivationError(
+            f"cannot validate round-two model: {model_path}"
+        ) from error
     sidecar_raw, sidecar = _load_canonical(selection_path, "selection sidecar")
     if not isinstance(model, Mapping) or not isinstance(sidecar, Mapping):
         raise ActivationError("model and selection roots must be objects")
@@ -539,7 +544,17 @@ def _untrained_seed_identity(root: pathlib.Path) -> dict[str, str]:
 def _checkpoint_model_identity(
     model_path: pathlib.Path, runtime_path: pathlib.Path
 ) -> tuple[dict[str, str], Mapping[str, Any]]:
-    model_raw, model = _load_canonical(model_path, "checkpoint model")
+    try:
+        model_raw, model = _load_canonical(model_path, "checkpoint model")
+    except ActivationError:
+        try:
+            model_raw, model = selection_tool._load_round2_model(
+                model_path, "checkpoint model"
+            )
+        except selection_tool.SelectionError as error:
+            raise ActivationError(
+                f"cannot validate checkpoint model: {model_path}"
+            ) from error
     if not isinstance(model, Mapping):
         raise ActivationError("checkpoint model root is not an object")
     trainer_sha = model.get("provenance", {}).get("trainer_sha256")

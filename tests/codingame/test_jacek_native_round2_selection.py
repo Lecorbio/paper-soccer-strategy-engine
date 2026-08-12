@@ -316,6 +316,24 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
         )
         self.assertEqual(self.selection.PROFILES["decisive"].later_ms, 155)
 
+    def test_round2_model_loader_preserves_trainer_numeric_depth_order(self):
+        generation = self.model["provenance"]["generation"]
+        generation["opening_depths"] = {0: 13, 2: 5, 10: 3}
+        self._write_model()
+        raw, loaded = self.selection._load_round2_model(self.model_path)
+        self.assertEqual(raw, self.model_path.read_bytes())
+        self.assertEqual(
+            loaded["provenance"]["generation"]["opening_depths"],
+            {"0": 13, "2": 5, "10": 3},
+        )
+        lexical = self.selection.canonical_json_bytes(json.loads(raw))
+        self.assertNotEqual(raw, lexical)
+        self.model_path.write_bytes(lexical)
+        with self.assertRaisesRegex(
+            self.selection.SelectionError, "canonical trainer JSON"
+        ):
+            self.selection._load_round2_model(self.model_path)
+
     def test_finalize_selects_deterministically_and_binds_exact_runtime(self):
         paths = self._all_reports()
         sidecar = self._finalize(list(reversed(paths)))
