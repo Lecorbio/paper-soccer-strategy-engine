@@ -182,7 +182,7 @@ void constants_freeze_the_direct_contract() {
   static_assert(candidate::kDistanceBuckets == 8);
   static_assert(candidate::SearchConfig{}.shuffle_seed ==
                 0x6a09e667f3bcc909ULL);
-  require(candidate::kExplorationConstant == 0.95,
+  require(candidate::kExplorationConstant == 0.80,
           "The deployed UCT constant must remain explicit.");
   require(candidate::kFirstPlayUrgency == 0.5,
           "The deployed first-play urgency must remain explicit.");
@@ -193,10 +193,10 @@ void uct_fpu_and_final_visit_formulas_are_literal() {
   require(std::abs(unvisited - 0.75) <= 1e-12,
           "Unvisited actions must add literal FPU 0.5.");
   const double expected_visited =
-      0.25 + 0.95 * std::sqrt(std::log(100.0) / 4.0);
+      0.25 + 0.80 * std::sqrt(std::log(100.0) / 4.0);
   require(std::abs(candidate::uct_action_score(0.25F, 100, 4) -
                    expected_visited) <= 1e-12,
-          "Visited actions must use literal C=0.95 UCT.");
+          "Visited actions must use literal C=0.80 UCT.");
   require(std::abs(candidate::final_action_score(0.25F, 7) -
                    (0.25 + std::log(7.0))) <= 1e-12,
           "Final ordering must be value plus log(visits).");
@@ -735,7 +735,7 @@ void search_uses_fpu_uct_visits_and_lexical_ties() {
   const candidate::RootActionStat &two = root_action(allocated, "2");
   require(zero.selection_visits == 2 && one.selection_visits == 1 &&
               two.selection_visits == 0,
-          "FPU must visit 0 then 1 before C=0.95 revisits lexical action 0.");
+          "FPU must visit 0 then 1 before C=0.80 revisits lexical action 0.");
   require(zero.visits == 3 && one.visits == 2 && two.visits == 1 &&
               allocated.encoded == "0",
           "Unequal visits must feed final value+log(visits) selection.");
