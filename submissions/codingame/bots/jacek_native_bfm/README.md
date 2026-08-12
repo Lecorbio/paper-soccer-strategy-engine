@@ -10,17 +10,20 @@ The checkpoint, training, clock, verification, and live-gate ledger is retained
 in this README and the adjacent [experiment log](EXPERIMENTS.md).
 The strongest completed live result remains the round-two seed-`20260822`
 history-62 checkpoint: 63-27 raw, 44-27 after removing opponent forfeits, rank
-5, and zero candidate operational failures. A cumulative round-three candidate
-was subsequently selected and uploaded as history 63. It completed 90 games at
-59-31 raw and 55-31 clean, but fell to rank 6 and regressed from 11-14 to 7-16
-against the clean top-five cohort. It was therefore rejected. The exact
-history-62 model and production search profile were then re-uploaded byte for
-byte as history 64. That rollback completed 90 games at 64-26 raw and 53-26
-clean, rank 6, with zero candidate operational failures. History 64 is the
-current remote source; history 62 remains the strongest completed result under
-the campaign ordering because it reached rank 5. None of these live batches is
-a strength, superiority, or Rank 4 parity claim. The prior history-61
-round-one upload remains frozen below as an explicit historical baseline.
+5, and zero candidate operational failures. Round-three history 63 regressed to
+rank 6 and was rejected; exact history-62 rollback history 64 also completed at
+rank 6. A final isolated `C=0.80` search candidate passed its 800/155 ms local
+gate and was uploaded as history 65, but its complete batch fell to rank 9 at
+55-35 raw and 46-35 clean. Paired fixed-work replay analysis showed that the
+constant changed 615/1,986 choices without improving the live result, so it was
+rejected. Commit `07317cebf680eb4394ca424801ebb0cfb644002a` restored the exact
+history-62 source, which was copied back byte-for-byte and uploaded as history
+66. That final rollback completed 90 games at 60-30 raw and 52-30 clean, rank
+6, with zero candidate operational failures. History 66 is the current remote
+source; history 62 remains the strongest completed result under the campaign
+ordering because it reached rank 5. None of these live batches is a strength,
+superiority, or Rank 4 parity claim. The prior history-61 round-one upload
+remains frozen below as an explicit historical baseline.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -264,6 +267,8 @@ operational timeouts:
 | `value + log(selectionVisits + 3)` | 63-65; 38/25 | 50/10 | reject: total and color | `45dcef903263a8b07de38403b201c5d583f88e80250cb32ab679cbe052dec52a`; `bcc4157eb1820cca753d9983c14a2c0d7225d919c35359595765051d85d530b0` |
 | `C=0.65` | 73-55; 30/43 | 50/10 | reject: first-color floor 31 | `0fa284cefc82048c5135e1ce60ca9c541aa185b19fb4be40875c58b9b4d24bf7`; `1afb59cadda61ccaed4c77100ce4b920d89eebb0a5b6e5b6adb859fba8b3082c` |
 | `C=0.65` decisive | 55-51; 34/21 | 800/155 | reject: total floor 58 and color floor 25 | `6c9db5729bd4f284f6b736c19077519eec25db9bb9176b96c6115f6a27d4631d`; `e0f754254ec7e1b6fec7ef7aef5b3a42b74998ce61287a8259641fb366897d86` |
+| `C=0.80` screen | 65-63; 34/31 | 50/10 | below 70 screen total; retained as final replay-grounded extension | `c714f44f01bc09b3fe2995cdf3154166e516e7038f4cb1c3c88baba2b65a80ba`; `0ae1aadcb83778f8ecaca41177fda4faddf1d27c2f6022f52d24e184f7da2182` |
+| `C=0.80` decisive | 62-44; 37/25 | 800/155 | pass: total 58 and color 25 floors | `4ae2508f5ab80af715588b0d21543bd2df5c4ea2af48be03d06d6c7cddf87515`; `26889d86fa47ec164e265c75ca83b124901c875c6f382749b658de1f3f35d116` |
 | `C=1.25` | 43-85; 24/19 | 50/10 | reject | `0e241235e32b09f3cb6617ed77b4a22eabfb0c0cb026c1ee5e2da31fde110d29`; `10a77b8ec0b426140d9095fd4eb28a014ba0f65eb04334f4af06511afed09411` |
 | `FPU=0.25` | 57-71; 40/17 | 50/10 | reject | `9c8ee163c1902db53a6b8d088049bd32bc6d9c8194bdcbf7fd79753340116732`; `8e925f4bca5680cbf4402737a3dd5c3f4190a7d30f89b77ca469830b6c9eed47` |
 | `FPU=0.75` screen | 87-41; 41/46 | 50/10 | advance | `80047c77d5b5f146ab45b247027e554723fe7667441741beb9d3fed4b8f7846b`; `aa5d798a891db547129de45f9fef092077e35ae3b78ce2e12edc867a3e850564` |
@@ -278,10 +283,12 @@ regenerates header SHA-256
 `3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458`
 and source SHA-256
 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
-exactly. Commit `0f3a95f50b42c8135fc929a0a8fe8ccf6756d4f2` restored this
-identity, its CI and Pages run completed successfully, and the exact source is
-now deployed remotely as history 64. The history-64 batch below is diagnostic
-development evidence, not a new model identity or independent promotion gate.
+exactly. Commit `0f3a95f50b42c8135fc929a0a8fe8ccf6756d4f2` first restored this
+identity, and its CI and Pages run completed successfully. After the rejected
+history-65 experiment, commit `07317cebf680eb4394ca424801ebb0cfb644002a`
+restored the same bytes again and the editor accepted them as history 66. The
+history-64 and history-66 rollbacks are not new model identities or independent
+promotion gates.
 
 ## Verification boundary
 
@@ -720,11 +727,11 @@ Actual-boundary retention was 99.55%, and search reached its 30,000-node cap on
 action's initial rank had mean 2.684, median 3, and was top-five in 78/79
 games. Every first-decision audit reached the tree cap. This reproduces the
 history-62 evaluator profile and confirms that history 63's opening regression
-was model-specific. History 64 is the currently deployed exact history-62
-source, but its batch is development evidence rather than an independent
-promotion result.
+was model-specific. History 64 was the then-deployed exact history-62 source,
+but its batch is development evidence rather than an independent promotion
+result.
 
-The replay-grounded final extension retested `C=0.65` against the exact
+The replay-grounded extension first retested `C=0.65` against the exact
 history-62 runtime for 106 serial actual-clock games at 800/155 ms, opening
 seed `2026081203`. It scored 55-51 with colors 34/21, below both the required
 58 total wins and 25 wins per color. Candidate maxima were 468.290/162.010 ms
@@ -733,10 +740,97 @@ games, headroom failures, and operational timeouts. The report and stdout
 SHA-256 identities are respectively
 `6c9db5729bd4f284f6b736c19077519eec25db9bb9176b96c6115f6a27d4631d`
 and `e0f754254ec7e1b6fec7ef7aef5b3a42b74998ce61287a8259641fb366897d86`.
-The candidate is rejected and was not uploaded.
+The candidate was rejected and not uploaded.
 
-The campaign therefore terminates with the exact history-62 source deployed as
-history 64 at frozen rank 6. The best new campaign candidate, history 63, also
-reached rank 6; the historical history-62 batch remains the best recorded rank
-at 5. The rank-1 target was not met, and no unqualified search or model change
-replaces the operationally safe deployed source.
+### Rejected `C=0.80` history-65 diagnostic and history-66 rollback
+
+The terminal isolated search experiment changed only exploration from
+`C=0.95` to `C=0.80`. Its 128-game 50/10 ms screen scored 65-63 with colors
+34/31: balanced, but below the original 70-win screen threshold. Retained as a
+final replay-grounded extension, it then passed the 106-game 800/155 ms gate
+62-44 with colors 37/25, exactly meeting the weaker-color floor. Candidate
+maximum first/later search-through-apply times were 452.398/164.421 ms versus
+464.665/162.460 ms for the baseline, with zero unfinished games, headroom
+failures, or operational timeouts for either side.
+
+Commit `38367fe5eca723d8db7a15a03ace46a57d0594ba` generated the exact
+94,771-character candidate source SHA-256
+`1aba496a561b86453c95208ee6ea45596d385c2847647398df608e3192f90043`.
+Editor copy-back matched that identity. Purity, exact-source-current, and
+protocol checks passed; GCC and Clang each passed all five focused tests, and
+the focused ASan/UBSan build passed all three tests. Fresh-process timing was
+429.425/158.818 ms for Player 0 and 426.090/158.454 ms for Player 1, below the
+900/180 ms pre-upload ceilings.
+
+The source was uploaded as agent `6611839`, submission `41127785`, history
+version `65`. All 90 games completed at 55-35 raw, colors 26-19 and 29-16,
+frozen rank 9 and score 40.53, with zero candidate operational failures. Nine
+wins were opponent forfeits. Removing them leaves 81 clean rule-terminal games
+at 46-35, colors 24-19 and 22-16. Clean cohort results were 6-14 against the
+top 5, 14-29 against the top 10, and 30-33 against the top 20. Named clean
+results were jacek 0-6, Marchete 0-4, Deltaspace 1-0, Laars 4-2, and Snekkers
+1-2.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6611839/41127785/1aba496a561b86453c95208ee6ea45596d385c2847647398df608e3192f90043/54371f7a59f6bd86f845db839d433124f3dd2f141adcb490f0c2cc7dc1b00595.json` | `54371f7a59f6bd86f845db839d433124f3dd2f141adcb490f0c2cc7dc1b00595` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-history65-41127785-20260812/clean-auditor.tsv` | `86b96c96952609251c794ebb83228e9e0ef054ead06bc67bdb4118ff10fdb2ae` |
+| `C=0.80` fixed-30k audit | `results/codingame_arena_diagnostics/runs/jacek-native-history65-41127785-20260812/native-decisions-c080-fixed30k.jsonl` | `bdc98b538464670b7dfdde8bd0dc6798366836e0cf00f310f5b5bcfff7d30b16` |
+| `C=0.95` fixed-30k counterfactual | `results/codingame_arena_diagnostics/runs/jacek-native-history65-41127785-20260812/native-decisions-c095-fixed30k.jsonl` | `da76f15c3263cec97ea4085f674f69b5eefeb7366258f9795a95e7cd25bfa3a5` |
+| Paired audit summary | `results/codingame_arena_diagnostics/runs/jacek-native-history65-41127785-20260812/native-decisions-c080-vs-c095-fixed30k-summary.json` | `2ebe87f8ac054be1666489dd163eda36d8113e3a93697d16a748adefcbaae57d` |
+
+The paired audit aligned 1,986 decisions and changed the fixed-30k choice on
+615. On the 81 first decisions, `C=0.80` classified 8 `bfm-override`, 43
+`initial-evaluator-ordering`, and 30 `match`, whereas counterfactual `C=0.95`
+classified 23, 0, and 58 respectively. Overall, `C=0.80` classified 1,032
+`bfm-override`, 178 `initial-evaluator-ordering`, 771 `match`, four
+`generator-omission`, and one diagnostic `operational-failure`; `C=0.95`
+classified 973, 133, 876, four, and zero. Both retained the observed boundary
+on 99.748% of decisions, had no search or diagnostic-root deadlines, and
+reached the tree cap on 91.843% and 91.994% respectively. These labels are
+counterfactual diagnostics, not correct-move or causal winning labels. Together
+with the rank, cohort, and named-opponent regressions, they reject `C=0.80`.
+
+Commit `07317cebf680eb4394ca424801ebb0cfb644002a` reverts the experiment
+and restores the exact 94,771-character history-62 source SHA-256
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`.
+Editor copy-back matched, the platform Play check won a legal game in seven
+turns, and the safe source was uploaded as history 66.
+
+#### Exact history-62 history-66 full-window result
+
+History 66 is agent `6611921`, submission `41127895`; its source binding
+remains `asserted-not-api-verified`. All 90 matching-submission games completed
+and the full window was accounted for. The raw result was 60-30, colors 34-15
+and 26-15, at frozen rank 6 and score 41.46. The candidate recorded zero
+operational failures. Eight wins were opponent forfeits: six timeouts and two
+illegal actions. Removing them leaves 82 clean rule-terminal games at 52-30,
+colors 29-15 and 23-15. Clean cohort results were 8-11 against the top 5,
+16-22 against the top 10, and 36-29 against the top 20. Named clean results
+were jacek 0-6, Marchete 2-1, Deltaspace 1-1, Laars 4-0, and Snekkers 1-3.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6611921/41127895/653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90/eca45a7047c03c267194fc52048c67bccde29ec501452e42f77bd49bd95a8abc.json` | `eca45a7047c03c267194fc52048c67bccde29ec501452e42f77bd49bd95a8abc` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-history66-41127895-20260812/clean-auditor.tsv` | `95f03256b2cd760416816de3171c16918f4105af6e9d212eaf9a865d9c58f74e` |
+| Fixed-30k decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-history66-41127895-20260812/native-decisions-fixed30k.jsonl` | `261f88ed661a43521dd5ef8dea8496804e7623daa37ae6be40a7059dc4f576eb` |
+| Fixed-30k summary | `results/codingame_arena_diagnostics/runs/jacek-native-history66-41127895-20260812/native-decisions-fixed30k-summary.json` | `4a18611592c46b21a151f46af27defd7df2081f6e7497c80c3302e5db063890c` |
+
+The retained fixed-30k evidence is an auditor rebuild and rerun explicitly
+bound to history-62 model SHA-256
+`b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14`.
+An initial invocation exposed a stale build and was discarded before evidence
+was recorded; no hash for that invalid output is documented. The valid rerun
+joined 2,058 decisions and classified 1,132 `bfm-override`, 818 `match`, 87
+`initial-evaluator-ordering`, 16 `generator-omission`, and five diagnostic
+`operational-failure`; `tactical-miss` was zero. Actual-boundary retention was
+99.0768%, the tree-cap rate was 91.3994%, and neither search nor the diagnostic
+root recorded a deadline. On 82 first own decisions, 56 were `bfm-override`,
+25 `match`, and one `initial-evaluator-ordering`; initial rank had mean 2.744,
+median 3, and was top-five in 81/82, with every first decision tree-capped. The
+five diagnostic operational rows do not contradict the manifest's zero live
+candidate failures.
+
+The campaign therefore terminates with `C=0.80` rejected and the exact
+history-62 source deployed as history 66 at rank 6. The historical history-62
+batch remains the best recorded rank at 5; rank 1 was not reached.
