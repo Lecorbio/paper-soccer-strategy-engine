@@ -25,8 +25,12 @@ class SearchAbRecordTest(unittest.TestCase):
             "--later-ms", "2",
             "--opening-turns", "0,4",
             "--seed", "7",
-            "--candidate-tree-nodes", "120000",
-            "--baseline-tree-nodes", "80000",
+            "--candidate-opening-tree-nodes", "20000",
+            "--candidate-later-tree-nodes", "120000",
+            "--candidate-opening-own-decisions", "4",
+            "--baseline-opening-tree-nodes", "80000",
+            "--baseline-later-tree-nodes", "80000",
+            "--baseline-opening-own-decisions", "4",
             "--minimum-candidate-wins", "2",
             "--minimum-wins-per-color", "1",
         ])
@@ -61,6 +65,19 @@ class SearchAbRecordTest(unittest.TestCase):
             "candidate_player_two": 1,
             "games": 4,
             **counts,
+            **{
+                f"{side}_{phase}_{field}": value
+                for side in ("candidate", "baseline")
+                for phase in ("opening", "later")
+                for field, value in {
+                    "decisions": 2,
+                    "deadline_searches": 0,
+                    "tree_cap_searches": 0,
+                    "ms": 2.0,
+                    "max_ms": 1.0,
+                    "max_tree": 64,
+                }.items()
+            },
             "profile": "10/2",
             "pairs": 2,
             "maximum_turns": 384,
@@ -70,11 +87,15 @@ class SearchAbRecordTest(unittest.TestCase):
             "runtime_policy": "same",
             "game_order_policy": "pair-parity-color-swap",
             "timing_scope": "search-through-apply",
-            "candidate_tree_nodes": 120000,
+            "candidate_opening_tree_nodes": 20000,
+            "candidate_later_tree_nodes": 120000,
+            "candidate_opening_own_decisions": 4,
             "candidate_c": 0.95,
             "candidate_fpu": 0.5,
             "candidate_final": "value-log-visits",
-            "baseline_tree_nodes": 80000,
+            "baseline_opening_tree_nodes": 80000,
+            "baseline_later_tree_nodes": 80000,
+            "baseline_opening_own_decisions": 4,
             "baseline_c": 0.95,
             "baseline_fpu": 0.5,
             "baseline_final": "value-log-visits",
@@ -99,9 +120,13 @@ class SearchAbRecordTest(unittest.TestCase):
         lines = [
             f"runtime_sha256={digest} model_sha256={'2' * 64} "
             f"packed_sha256={'3' * 64}",
-            "candidate_tree_nodes=120000 candidate_c=0.95 "
+            "candidate_opening_tree_nodes=20000 "
+            "candidate_later_tree_nodes=120000 "
+            "candidate_opening_own_decisions=4 candidate_c=0.95 "
             "candidate_fpu=0.5 candidate_final=value-log-visits",
-            "baseline_tree_nodes=80000 baseline_c=0.95 "
+            "baseline_opening_tree_nodes=80000 "
+            "baseline_later_tree_nodes=80000 "
+            "baseline_opening_own_decisions=4 baseline_c=0.95 "
             "baseline_fpu=0.5 baseline_final=value-log-visits",
             *pair_lines,
             f"summary {summary}",
@@ -110,11 +135,17 @@ class SearchAbRecordTest(unittest.TestCase):
 
     def test_parses_complete_isolated_transcript(self):
         parsed = record.parse_gate_stdout(self.transcript(), self.arguments())
-        self.assertEqual(parsed["candidate_profile"]["tree_nodes"], 120000)
-        self.assertEqual(parsed["baseline_profile"]["tree_nodes"], 80000)
+        self.assertEqual(parsed["candidate_profile"]["opening_tree_nodes"], 20000)
+        self.assertEqual(parsed["candidate_profile"]["later_tree_nodes"], 120000)
+        self.assertEqual(parsed["baseline_profile"]["later_tree_nodes"], 80000)
         self.assertTrue(parsed["summary"]["passed"])
         self.assertEqual(parsed["summary"]["candidate"], 2)
         self.assertEqual([pair["pair"] for pair in parsed["pairs"]], [0, 1])
+
+    def test_singleton_opening_schedule_remains_text(self):
+        arguments = self.arguments()
+        arguments.opening_turns = "0"
+        self.assertEqual(record._opening_depths(arguments.opening_turns), [0])
 
     def test_rejects_missing_isolation_contract(self):
         with self.assertRaisesRegex(record.RecordError, "isolation contract"):
@@ -173,11 +204,56 @@ class SearchAbRecordTest(unittest.TestCase):
                 self.arguments(),
             )
 
+    def test_rejects_phase_diagnostic_tamper(self):
+        with self.assertRaisesRegex(record.RecordError, "phase diagnostics"):
+            record.parse_gate_stdout(
+                self.transcript(
+                    summary_updates={"candidate_opening_max_tree": 20001}
+                ),
+                self.arguments(),
+            )
+        with self.assertRaisesRegex(record.RecordError, "phase diagnostics"):
+            record.parse_gate_stdout(
+                self.transcript(
+                    summary_updates={"candidate_opening_decisions": 3}
+                ),
+                self.arguments(),
+            )
+
     def test_command_uses_one_checkpoint_and_shared_clocks(self):
         command = record.command(self.arguments())
         self.assertEqual(command.count("--checkpoint"), 1)
         self.assertEqual(command[command.index("--first-ms") + 1], "10")
         self.assertEqual(command[command.index("--later-ms") + 1], "2")
+
+    def test_command_preserves_legacy_and_mixed_profile_interfaces(self):
+        legacy = record.parser().parse_args([
+            "--gate-binary", "build/gate", "--checkpoint", "model.runtime",
+            "--output-dir", "results/ab", "--candidate-tree-nodes", "20000",
+            "--baseline-tree-nodes", "80000",
+        ])
+        command = record.command(legacy)
+        self.assertIn("--candidate-tree-nodes", command)
+        self.assertIn("--baseline-tree-nodes", command)
+        self.assertNotIn("--candidate-opening-tree-nodes", command)
+        mixed = self.arguments()
+        mixed.baseline_opening_tree_nodes = None
+        mixed.baseline_later_tree_nodes = None
+        mixed.baseline_opening_own_decisions = None
+        mixed.baseline_tree_nodes = 80000
+        command = record.command(mixed)
+        self.assertIn("--candidate-opening-tree-nodes", command)
+        self.assertIn("--baseline-tree-nodes", command)
+
+    def test_profile_resolution_rejects_mixed_or_partial_split(self):
+        mixed = self.arguments()
+        mixed.candidate_tree_nodes = 20000
+        with self.assertRaisesRegex(record.RecordError, "mixes"):
+            record.command(mixed)
+        partial = self.arguments()
+        partial.candidate_later_tree_nodes = None
+        with self.assertRaisesRegex(record.RecordError, "incomplete"):
+            record.command(partial)
 
     def test_runtime_identity_is_derived_from_exact_checkpoint_bytes(self):
         payload = bytes((record.RUNTIME_WEIGHT_COUNT * 3 + 7) // 8)

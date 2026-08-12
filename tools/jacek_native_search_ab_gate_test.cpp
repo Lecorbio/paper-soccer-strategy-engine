@@ -59,6 +59,41 @@ void profiles_are_independent_but_clocks_are_shared() {
           "candidate and baseline search profiles must remain independent");
 }
 
+void phase_caps_are_complete_and_use_the_own_decision_ordinal() {
+  const gate::Arguments arguments = parse({
+      "--checkpoint", "one.runtime", "--candidate-opening-tree-nodes",
+      "20000", "--candidate-later-tree-nodes", "80000",
+      "--candidate-opening-own-decisions", "4",
+      "--baseline-opening-tree-nodes", "80000",
+      "--baseline-later-tree-nodes", "80000",
+      "--baseline-opening-own-decisions", "4"});
+  require(arguments.candidate.opening_tree_nodes == 20000 &&
+              arguments.candidate.tree_nodes == 80000 &&
+              arguments.candidate.opening_own_decisions == 4,
+          "phase profile must preserve all three declared fields");
+  require(gate::tree_nodes_for_own_decision(arguments.candidate, 3) == 20000 &&
+              gate::tree_nodes_for_own_decision(arguments.candidate, 4) ==
+                  80000,
+          "ordinal N-1 must use the opening cap and N the later cap");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime",
+                        "--candidate-tree-nodes", "20000",
+                        "--candidate-opening-tree-nodes", "20000",
+                        "--candidate-later-tree-nodes", "80000",
+                        "--candidate-opening-own-decisions", "4"}); },
+      "legacy and phase caps must not mix");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime",
+                        "--candidate-opening-tree-nodes", "20000"}); },
+      "partial phase profiles must fail closed");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime",
+                        "--candidate-opening-tree-nodes", "20000",
+                        "--candidate-later-tree-nodes", "80000",
+                        "--candidate-opening-own-decisions", "0"}); },
+      "a phase profile with no opening decisions must fail closed");
+}
+
 void final_formulas_use_the_declared_counters() {
   native::RootActionStat action{"1", 0.25F, 0.0F, 4, 1,
                                 native::TacticalClass::SafeHandoff};
@@ -124,6 +159,19 @@ void procedural_openings_are_reproducible() {
           "paired opening construction must be deterministic");
   require(gate::opening_turns_text({0, 4, 8, 12}) == "0,4,8,12",
           "the transcript must render the exact opening-depth schedule");
+  gate::SearchProfile profile;
+  profile.opening_tree_nodes = 20'000;
+  profile.tree_nodes = 80'000;
+  profile.opening_own_decisions = 4;
+  const gate::Opening early = gate::make_opening(7654321, 4);
+  const gate::Opening late = gate::make_opening(7654321, 8);
+  require(early.player_turns == std::array<std::uint32_t, 2>{2, 2} &&
+              late.player_turns == std::array<std::uint32_t, 2>{4, 4} &&
+              gate::tree_nodes_for_own_decision(
+                  profile, early.player_turns[0]) == 20'000 &&
+              gate::tree_nodes_for_own_decision(
+                  profile, late.player_turns[0]) == 80'000,
+          "procedural prefix turns must offset each player's phase ordinal");
 }
 
 void execution_order_balances_profile_warmup() {
@@ -140,6 +188,7 @@ void execution_order_balances_profile_warmup() {
 int main() {
   try {
     profiles_are_independent_but_clocks_are_shared();
+    phase_caps_are_complete_and_use_the_own_decision_ordinal();
     final_formulas_use_the_declared_counters();
     invalid_or_asymmetric_interfaces_fail_closed();
     procedural_openings_are_reproducible();

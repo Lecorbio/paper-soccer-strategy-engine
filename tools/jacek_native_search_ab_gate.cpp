@@ -41,10 +41,19 @@ enum class FinalFormula {
 
 struct SearchProfile {
   std::size_t tree_nodes{native::kProductionTreeNodes};
+  std::size_t opening_tree_nodes{native::kProductionTreeNodes};
+  std::size_t opening_own_decisions{};
   double exploration{native::kExplorationConstant};
   double fpu{native::kFirstPlayUrgency};
   FinalFormula final_formula{FinalFormula::Production};
 };
+
+std::size_t tree_nodes_for_own_decision(const SearchProfile &profile,
+                                        std::uint32_t prior_turns) noexcept {
+  return prior_turns < profile.opening_own_decisions
+             ? profile.opening_tree_nodes
+             : profile.tree_nodes;
+}
 
 struct Arguments {
   std::string checkpoint;
@@ -61,6 +70,13 @@ struct Arguments {
   bool verify_only{};
 };
 
+struct ProfileOptions {
+  bool legacy_tree_nodes{};
+  bool opening_tree_nodes{};
+  bool later_tree_nodes{};
+  bool opening_own_decisions{};
+};
+
 struct LoadedModel {
   std::unique_ptr<native::QuantizedModel> model;
   std::string runtime_sha256;
@@ -73,6 +89,25 @@ struct Opening {
   std::array<std::uint32_t, 2> player_turns{};
   std::uint64_t seed{};
   std::size_t complete_turns{};
+};
+
+struct PhaseTotals {
+  std::uint64_t decisions{};
+  std::uint64_t deadline_searches{};
+  std::uint64_t tree_cap_searches{};
+  double milliseconds{};
+  double maximum_milliseconds{};
+  std::size_t maximum_tree_nodes{};
+
+  void observe(const native::SearchResult &search, double elapsed) noexcept {
+    ++decisions;
+    deadline_searches += search.stats.deadline_reached ? 1U : 0U;
+    tree_cap_searches += search.stats.tree_cap_reached ? 1U : 0U;
+    milliseconds += elapsed;
+    maximum_milliseconds = std::max(maximum_milliseconds, elapsed);
+    maximum_tree_nodes =
+        std::max(maximum_tree_nodes, search.stats.tree_nodes);
+  }
 };
 
 struct SearchTotals {
@@ -90,9 +125,12 @@ struct SearchTotals {
   double milliseconds{};
   double maximum_first_milliseconds{};
   double maximum_later_milliseconds{};
+  PhaseTotals opening;
+  PhaseTotals later;
 
   void observe(const native::SearchResult &search, std::string_view selected,
-               double elapsed, std::uint32_t prior_turns) noexcept {
+               double elapsed, std::uint32_t prior_turns,
+               std::size_t opening_own_decisions) noexcept {
     const native::SearchStats &stats = search.stats;
     ++decisions;
     expansions += stats.expansions;
@@ -118,6 +156,8 @@ struct SearchTotals {
         first ? kFirstOperationalLimitMs : kLaterOperationalLimitMs;
     headroom_failures += elapsed >= headroom_limit ? 1U : 0U;
     operational_timeouts += elapsed >= operational_limit ? 1U : 0U;
+    (prior_turns < opening_own_decisions ? opening : later)
+        .observe(search, elapsed);
   }
 };
 
@@ -343,7 +383,7 @@ std::string choose_turn(GameState &state, const native::QuantizedModel &model,
   native::SearchConfig config;
   config.max_actions = native::kMaximumActions;
   config.max_partial_paths = native::kProductionPartialPaths;
-  config.max_tree_nodes = profile.tree_nodes;
+  config.max_tree_nodes = tree_nodes_for_own_decision(profile, prior_turns);
   config.max_expansions = native::kMaximumExpansions;
   config.shuffle_seed = native::SearchConfig{}.shuffle_seed;
   config.exploration_constant = profile.exploration;
@@ -361,7 +401,8 @@ std::string choose_turn(GameState &state, const native::QuantizedModel &model,
   const auto finished = native::SearchClock::now();
   const double elapsed =
       std::chrono::duration<double, std::milli>(finished - started).count();
-  totals.observe(search, selected, elapsed, prior_turns);
+  totals.observe(search, selected, elapsed, prior_turns,
+                 profile.opening_own_decisions);
   state = std::move(next);
   return selected;
 }
@@ -442,8 +483,9 @@ std::string opening_turns_text(
 }
 
 void validate_profile(const SearchProfile &profile, std::string_view name) {
-  if (profile.tree_nodes < 2 ||
+  if (profile.tree_nodes < 2 || profile.opening_tree_nodes < 2 ||
       profile.tree_nodes > native::kMaximumTreeNodes ||
+      profile.opening_tree_nodes > native::kMaximumTreeNodes ||
       !std::isfinite(profile.exploration) || profile.exploration < 0.0 ||
       !std::isfinite(profile.fpu)) {
     throw std::invalid_argument(std::string(name) +
@@ -461,6 +503,9 @@ void print_help() {
       << "  --opening-turns A,B,...       procedural depths, cycled by pair\n"
       << "  --seed N                      deterministic opening seed\n"
       << "  --candidate-tree-nodes N --baseline-tree-nodes N\n"
+      << "  or, per side, all of:\n"
+      << "     --SIDE-opening-tree-nodes N --SIDE-later-tree-nodes N\n"
+      << "     --SIDE-opening-own-decisions N\n"
       << "  --candidate-c X --baseline-c X\n"
       << "  --candidate-fpu X --baseline-fpu X\n"
       << "  --candidate-final NAME --baseline-final NAME\n"
@@ -474,6 +519,8 @@ void print_help() {
 
 Arguments parse_arguments(int argc, char **argv) {
   Arguments result;
+  ProfileOptions candidate_options;
+  ProfileOptions baseline_options;
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
     if (option == "--help") {
@@ -512,9 +559,35 @@ Arguments parse_arguments(int argc, char **argv) {
     } else if (option == "--candidate-tree-nodes") {
       result.candidate.tree_nodes =
           parse_integer<std::size_t>(value, "candidate tree nodes");
+      candidate_options.legacy_tree_nodes = true;
     } else if (option == "--baseline-tree-nodes") {
       result.baseline.tree_nodes =
           parse_integer<std::size_t>(value, "baseline tree nodes");
+      baseline_options.legacy_tree_nodes = true;
+    } else if (option == "--candidate-opening-tree-nodes") {
+      result.candidate.opening_tree_nodes = parse_integer<std::size_t>(
+          value, "candidate opening tree nodes");
+      candidate_options.opening_tree_nodes = true;
+    } else if (option == "--candidate-later-tree-nodes") {
+      result.candidate.tree_nodes =
+          parse_integer<std::size_t>(value, "candidate later tree nodes");
+      candidate_options.later_tree_nodes = true;
+    } else if (option == "--candidate-opening-own-decisions") {
+      result.candidate.opening_own_decisions = parse_integer<std::size_t>(
+          value, "candidate opening own decisions");
+      candidate_options.opening_own_decisions = true;
+    } else if (option == "--baseline-opening-tree-nodes") {
+      result.baseline.opening_tree_nodes = parse_integer<std::size_t>(
+          value, "baseline opening tree nodes");
+      baseline_options.opening_tree_nodes = true;
+    } else if (option == "--baseline-later-tree-nodes") {
+      result.baseline.tree_nodes =
+          parse_integer<std::size_t>(value, "baseline later tree nodes");
+      baseline_options.later_tree_nodes = true;
+    } else if (option == "--baseline-opening-own-decisions") {
+      result.baseline.opening_own_decisions = parse_integer<std::size_t>(
+          value, "baseline opening own decisions");
+      baseline_options.opening_own_decisions = true;
     } else if (option == "--candidate-c") {
       result.candidate.exploration = parse_double(value, "candidate C");
     } else if (option == "--baseline-c") {
@@ -534,10 +607,40 @@ Arguments parse_arguments(int argc, char **argv) {
   if (result.checkpoint.empty()) {
     throw std::invalid_argument("one shared runtime checkpoint is required");
   }
+  const auto finalize_profile = [](SearchProfile &profile,
+                                   const ProfileOptions &options,
+                                   std::string_view name) {
+    const bool any_split = options.opening_tree_nodes ||
+                           options.later_tree_nodes ||
+                           options.opening_own_decisions;
+    const bool all_split = options.opening_tree_nodes &&
+                           options.later_tree_nodes &&
+                           options.opening_own_decisions;
+    if (options.legacy_tree_nodes && any_split) {
+      throw std::invalid_argument(std::string(name) +
+                                  " profile mixes legacy and phase caps");
+    }
+    if (any_split != all_split) {
+      throw std::invalid_argument(std::string(name) +
+                                  " phase profile must specify all fields");
+    }
+    if (all_split && profile.opening_own_decisions == 0) {
+      throw std::invalid_argument(std::string(name) +
+                                  " phase cutoff must be positive");
+    }
+    if (options.legacy_tree_nodes) {
+      profile.opening_tree_nodes = profile.tree_nodes;
+      profile.opening_own_decisions = 0;
+    }
+  };
+  finalize_profile(result.candidate, candidate_options, "candidate");
+  finalize_profile(result.baseline, baseline_options, "baseline");
   if (result.pairs == 0 || result.first_ms == 0 || result.later_ms == 0 ||
       result.first_ms > native::kFirstSearchTimeMs ||
       result.later_ms > native::kLaterSearchTimeMs ||
       result.maximum_turns == 0 || result.opening_turns.empty() ||
+      result.candidate.opening_own_decisions > result.maximum_turns ||
+      result.baseline.opening_own_decisions > result.maximum_turns ||
       result.minimum_candidate_wins > result.pairs * 2U ||
       result.minimum_wins_per_color > result.pairs) {
     throw std::invalid_argument("search A/B limits are outside supported ranges");
@@ -554,7 +657,11 @@ void print_identity(const LoadedModel &model) {
 }
 
 void print_profile(std::string_view name, const SearchProfile &profile) {
-  std::cout << name << "_tree_nodes=" << profile.tree_nodes << ' '
+  std::cout << name << "_opening_tree_nodes="
+            << profile.opening_tree_nodes << ' '
+            << name << "_later_tree_nodes=" << profile.tree_nodes << ' '
+            << name << "_opening_own_decisions="
+            << profile.opening_own_decisions << ' '
             << name << "_c=" << profile.exploration << ' '
             << name << "_fpu=" << profile.fpu << ' '
             << name << "_final=" << final_formula_name(profile.final_formula)
@@ -644,6 +751,27 @@ int main_impl(int argc, char **argv) {
       << summary.candidate.headroom_failures
       << " candidate_operational_timeouts="
       << summary.candidate.operational_timeouts
+      << " candidate_opening_decisions="
+      << summary.candidate.opening.decisions
+      << " candidate_opening_deadline_searches="
+      << summary.candidate.opening.deadline_searches
+      << " candidate_opening_tree_cap_searches="
+      << summary.candidate.opening.tree_cap_searches
+      << " candidate_opening_ms=" << summary.candidate.opening.milliseconds
+      << " candidate_opening_max_ms="
+      << summary.candidate.opening.maximum_milliseconds
+      << " candidate_opening_max_tree="
+      << summary.candidate.opening.maximum_tree_nodes
+      << " candidate_later_decisions=" << summary.candidate.later.decisions
+      << " candidate_later_deadline_searches="
+      << summary.candidate.later.deadline_searches
+      << " candidate_later_tree_cap_searches="
+      << summary.candidate.later.tree_cap_searches
+      << " candidate_later_ms=" << summary.candidate.later.milliseconds
+      << " candidate_later_max_ms="
+      << summary.candidate.later.maximum_milliseconds
+      << " candidate_later_max_tree="
+      << summary.candidate.later.maximum_tree_nodes
       << " baseline_decisions=" << summary.baseline.decisions
       << " baseline_expansions=" << summary.baseline.expansions
       << " baseline_child_evaluations="
@@ -664,6 +792,27 @@ int main_impl(int argc, char **argv) {
       << summary.baseline.headroom_failures
       << " baseline_operational_timeouts="
       << summary.baseline.operational_timeouts
+      << " baseline_opening_decisions="
+      << summary.baseline.opening.decisions
+      << " baseline_opening_deadline_searches="
+      << summary.baseline.opening.deadline_searches
+      << " baseline_opening_tree_cap_searches="
+      << summary.baseline.opening.tree_cap_searches
+      << " baseline_opening_ms=" << summary.baseline.opening.milliseconds
+      << " baseline_opening_max_ms="
+      << summary.baseline.opening.maximum_milliseconds
+      << " baseline_opening_max_tree="
+      << summary.baseline.opening.maximum_tree_nodes
+      << " baseline_later_decisions=" << summary.baseline.later.decisions
+      << " baseline_later_deadline_searches="
+      << summary.baseline.later.deadline_searches
+      << " baseline_later_tree_cap_searches="
+      << summary.baseline.later.tree_cap_searches
+      << " baseline_later_ms=" << summary.baseline.later.milliseconds
+      << " baseline_later_max_ms="
+      << summary.baseline.later.maximum_milliseconds
+      << " baseline_later_max_tree="
+      << summary.baseline.later.maximum_tree_nodes
       << " profile=" << arguments.first_ms << '/' << arguments.later_ms
       << " pairs=" << arguments.pairs
       << " maximum_turns=" << arguments.maximum_turns
@@ -673,12 +822,20 @@ int main_impl(int argc, char **argv) {
       << " runtime_policy=same"
       << " game_order_policy=pair-parity-color-swap"
       << " timing_scope=" << kTimingScope
-      << " candidate_tree_nodes=" << arguments.candidate.tree_nodes
+      << " candidate_opening_tree_nodes="
+      << arguments.candidate.opening_tree_nodes
+      << " candidate_later_tree_nodes=" << arguments.candidate.tree_nodes
+      << " candidate_opening_own_decisions="
+      << arguments.candidate.opening_own_decisions
       << " candidate_c=" << arguments.candidate.exploration
       << " candidate_fpu=" << arguments.candidate.fpu
       << " candidate_final="
       << final_formula_name(arguments.candidate.final_formula)
-      << " baseline_tree_nodes=" << arguments.baseline.tree_nodes
+      << " baseline_opening_tree_nodes="
+      << arguments.baseline.opening_tree_nodes
+      << " baseline_later_tree_nodes=" << arguments.baseline.tree_nodes
+      << " baseline_opening_own_decisions="
+      << arguments.baseline.opening_own_decisions
       << " baseline_c=" << arguments.baseline.exploration
       << " baseline_fpu=" << arguments.baseline.fpu
       << " baseline_final="

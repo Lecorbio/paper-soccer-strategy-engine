@@ -19,7 +19,7 @@ from typing import Any, Iterator, Sequence
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v2"
+REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v3"
 SOURCE_PATHS = (
     "tools/jacek_native_search_ab_gate.cpp",
     "submissions/codingame/bots/jacek_native_bfm/bot.cpp",
@@ -59,6 +59,13 @@ SUMMARY_FIELDS = {
     "candidate_final_overrides", "candidate_ms", "candidate_max_first_ms",
     "candidate_max_later_ms", "candidate_deadline_searches",
     "candidate_headroom_failures", "candidate_operational_timeouts",
+    "candidate_opening_decisions", "candidate_opening_deadline_searches",
+    "candidate_opening_tree_cap_searches", "candidate_opening_ms",
+    "candidate_opening_max_ms", "candidate_opening_max_tree",
+    "candidate_later_decisions",
+    "candidate_later_deadline_searches",
+    "candidate_later_tree_cap_searches", "candidate_later_ms",
+    "candidate_later_max_ms", "candidate_later_max_tree",
     "baseline_decisions", "baseline_expansions",
     "baseline_child_evaluations", "baseline_completed_actions",
     "baseline_partial_paths", "baseline_max_tree",
@@ -66,10 +73,20 @@ SUMMARY_FIELDS = {
     "baseline_max_first_ms", "baseline_max_later_ms",
     "baseline_deadline_searches", "baseline_headroom_failures",
     "baseline_operational_timeouts", "profile", "pairs", "maximum_turns",
+    "baseline_opening_decisions", "baseline_opening_deadline_searches",
+    "baseline_opening_tree_cap_searches", "baseline_opening_ms",
+    "baseline_opening_max_ms", "baseline_opening_max_tree",
+    "baseline_later_decisions",
+    "baseline_later_deadline_searches",
+    "baseline_later_tree_cap_searches", "baseline_later_ms",
+    "baseline_later_max_ms", "baseline_later_max_tree",
     "opening_turns", "opening_seed", "shuffle_seed_policy",
     "runtime_policy", "game_order_policy", "timing_scope",
-    "candidate_tree_nodes", "candidate_c", "candidate_fpu",
-    "candidate_final", "baseline_tree_nodes", "baseline_c", "baseline_fpu",
+    "candidate_opening_tree_nodes", "candidate_later_tree_nodes",
+    "candidate_opening_own_decisions", "candidate_c", "candidate_fpu",
+    "candidate_final", "baseline_opening_tree_nodes",
+    "baseline_later_tree_nodes", "baseline_opening_own_decisions",
+    "baseline_c", "baseline_fpu",
     "baseline_final", "required_total", "required_per_color", "passed",
 }
 COUNT_SUFFIXES = (
@@ -129,8 +146,24 @@ def _opening_depths(value: str) -> list[int]:
 
 
 def _profile(arguments: argparse.Namespace, side: str) -> dict[str, Any]:
+    legacy = getattr(arguments, f"{side}_tree_nodes")
+    opening = getattr(arguments, f"{side}_opening_tree_nodes")
+    later = getattr(arguments, f"{side}_later_tree_nodes")
+    cutoff = getattr(arguments, f"{side}_opening_own_decisions")
+    split = (opening, later, cutoff)
+    if legacy is not None and any(value is not None for value in split):
+        raise RecordError(f"{side} profile mixes legacy and phase caps")
+    if legacy is not None:
+        opening, later, cutoff = legacy, legacy, 0
+    elif any(value is not None for value in split):
+        if any(value is None for value in split) or cutoff <= 0:
+            raise RecordError(f"{side} phase profile is incomplete")
+    else:
+        opening, later, cutoff = 80000, 80000, 0
     return {
-        "tree_nodes": getattr(arguments, f"{side}_tree_nodes"),
+        "opening_tree_nodes": opening,
+        "later_tree_nodes": later,
+        "opening_own_decisions": cutoff,
         "c": getattr(arguments, f"{side}_c"),
         "fpu": getattr(arguments, f"{side}_fpu"),
         "final": getattr(arguments, f"{side}_final"),
@@ -214,8 +247,8 @@ def parse_gate_stdout(
         raise RecordError("gate stdout has incomplete or extra transcript lines")
     if (
         not lines[0].startswith("runtime_sha256=")
-        or not lines[1].startswith("candidate_tree_nodes=")
-        or not lines[2].startswith("baseline_tree_nodes=")
+        or not lines[1].startswith("candidate_opening_tree_nodes=")
+        or not lines[2].startswith("baseline_opening_tree_nodes=")
         or not lines[-1].startswith("summary ")
     ):
         raise RecordError("gate stdout line ordering is not canonical")
@@ -232,7 +265,10 @@ def parse_gate_stdout(
         key.removeprefix("baseline_"): scalar(value)
         for key, value in key_values(lines[2], "baseline profile").items()
     }
-    expected_profile_fields = {"tree_nodes", "c", "fpu", "final"}
+    expected_profile_fields = {
+        "opening_tree_nodes", "later_tree_nodes", "opening_own_decisions",
+        "c", "fpu", "final",
+    }
     if set(candidate) != expected_profile_fields or set(baseline) != expected_profile_fields:
         raise RecordError("gate profile fields are incomplete")
     expected_candidate = _profile(arguments, "candidate")
@@ -289,7 +325,7 @@ def parse_gate_stdout(
         })
 
     summary = {
-        key: scalar(value)
+        key: value if key == "opening_turns" else scalar(value)
         for key, value in key_values(
             lines[-1][len("summary "):], "summary"
         ).items()
@@ -302,17 +338,26 @@ def parse_gate_stdout(
             summary.get("timing_scope") != "search-through-apply"):
         raise RecordError("gate summary violates the A/B isolation contract")
     expected_opening_turns = ",".join(map(str, opening_depths))
+    requested_candidate = _profile(arguments, "candidate")
+    requested_baseline = _profile(arguments, "baseline")
     expected_summary_config = {
         "profile": f"{arguments.first_ms}/{arguments.later_ms}",
         "pairs": arguments.pairs,
         "maximum_turns": arguments.maximum_turns,
         "opening_turns": expected_opening_turns,
         "opening_seed": arguments.seed,
-        "candidate_tree_nodes": arguments.candidate_tree_nodes,
+        "candidate_opening_tree_nodes":
+            requested_candidate["opening_tree_nodes"],
+        "candidate_later_tree_nodes": requested_candidate["later_tree_nodes"],
+        "candidate_opening_own_decisions":
+            requested_candidate["opening_own_decisions"],
         "candidate_c": arguments.candidate_c,
         "candidate_fpu": arguments.candidate_fpu,
         "candidate_final": arguments.candidate_final,
-        "baseline_tree_nodes": arguments.baseline_tree_nodes,
+        "baseline_opening_tree_nodes": requested_baseline["opening_tree_nodes"],
+        "baseline_later_tree_nodes": requested_baseline["later_tree_nodes"],
+        "baseline_opening_own_decisions":
+            requested_baseline["opening_own_decisions"],
         "baseline_c": arguments.baseline_c,
         "baseline_fpu": arguments.baseline_fpu,
         "baseline_final": arguments.baseline_final,
@@ -341,7 +386,9 @@ def parse_gate_stdout(
             for suffix in ("max_first_ms", "max_later_ms")
         ]
         if (
-            counts["max_tree"] > profile["tree_nodes"]
+            counts["max_tree"] > max(
+                profile["opening_tree_nodes"], profile["later_tree_nodes"]
+            )
             or any(counts[field] > counts["decisions"] for field in (
                 "tree_cap_searches", "final_overrides", "deadline_searches",
                 "headroom_failures", "operational_timeouts",
@@ -349,6 +396,62 @@ def parse_gate_stdout(
             or any(maximum > elapsed + 1e-9 for maximum in maxima)
         ):
             raise RecordError(f"gate {side} diagnostics contradict their limits")
+        phase = {}
+        for name in ("opening", "later"):
+            phase[name] = {
+                "decisions": _require_unsigned(
+                    summary[f"{side}_{name}_decisions"],
+                    f"{side}_{name}_decisions",
+                ),
+                "deadlines": _require_unsigned(
+                    summary[f"{side}_{name}_deadline_searches"],
+                    f"{side}_{name}_deadline_searches",
+                ),
+                "caps": _require_unsigned(
+                    summary[f"{side}_{name}_tree_cap_searches"],
+                    f"{side}_{name}_tree_cap_searches",
+                ),
+                "ms": _require_nonnegative_float(
+                    summary[f"{side}_{name}_ms"], f"{side}_{name}_ms"
+                ),
+                "max_ms": _require_nonnegative_float(
+                    summary[f"{side}_{name}_max_ms"],
+                    f"{side}_{name}_max_ms",
+                ),
+                "max_tree": _require_unsigned(
+                    summary[f"{side}_{name}_max_tree"],
+                    f"{side}_{name}_max_tree",
+                ),
+            }
+        if (
+            phase["opening"]["decisions"] + phase["later"]["decisions"]
+            != counts["decisions"]
+            or phase["opening"]["deadlines"] + phase["later"]["deadlines"]
+            != counts["deadline_searches"]
+            or phase["opening"]["caps"] + phase["later"]["caps"]
+            != counts["tree_cap_searches"]
+            or abs(phase["opening"]["ms"] + phase["later"]["ms"] - elapsed)
+            > 1e-5 * max(1.0, elapsed)
+            or phase["opening"]["max_tree"] > profile["opening_tree_nodes"]
+            or phase["later"]["max_tree"] > profile["later_tree_nodes"]
+            or counts["max_tree"] != max(
+                phase["opening"]["max_tree"], phase["later"]["max_tree"]
+            )
+        ):
+            raise RecordError(f"gate {side} phase diagnostics do not sum")
+        for values in phase.values():
+            if (
+                values["deadlines"] > values["decisions"]
+                or values["caps"] > values["decisions"]
+                or values["max_ms"] > values["ms"] + 1e-9
+                or (
+                    values["decisions"] == 0
+                    and any(values[key] != 0 for key in (
+                        "deadlines", "caps", "ms", "max_ms", "max_tree"
+                    ))
+                )
+            ):
+                raise RecordError(f"gate {side} phase diagnostics contradict")
 
     passed = (
         totals["unfinished"] == 0
@@ -388,7 +491,7 @@ def serial_clock_lock() -> Iterator[None]:
 
 
 def command(arguments: argparse.Namespace) -> list[str]:
-    return [
+    result = [
         str(arguments.gate_binary.resolve()),
         "--checkpoint", str(arguments.checkpoint.resolve()),
         "--pairs", str(arguments.pairs),
@@ -397,8 +500,22 @@ def command(arguments: argparse.Namespace) -> list[str]:
         "--maximum-turns", str(arguments.maximum_turns),
         "--opening-turns", arguments.opening_turns,
         "--seed", str(arguments.seed),
-        "--candidate-tree-nodes", str(arguments.candidate_tree_nodes),
-        "--baseline-tree-nodes", str(arguments.baseline_tree_nodes),
+    ]
+    for side in ("candidate", "baseline"):
+        profile = _profile(arguments, side)
+        if profile["opening_own_decisions"] == 0:
+            result.extend([
+                f"--{side}-tree-nodes", str(profile["later_tree_nodes"]),
+            ])
+        else:
+            result.extend([
+                f"--{side}-opening-tree-nodes",
+                str(profile["opening_tree_nodes"]),
+                f"--{side}-later-tree-nodes", str(profile["later_tree_nodes"]),
+                f"--{side}-opening-own-decisions",
+                str(profile["opening_own_decisions"]),
+            ])
+    result.extend([
         "--candidate-c", str(arguments.candidate_c),
         "--baseline-c", str(arguments.baseline_c),
         "--candidate-fpu", str(arguments.candidate_fpu),
@@ -407,7 +524,8 @@ def command(arguments: argparse.Namespace) -> list[str]:
         "--baseline-final", arguments.baseline_final,
         "--minimum-candidate-wins", str(arguments.minimum_candidate_wins),
         "--minimum-wins-per-color", str(arguments.minimum_wins_per_color),
-    ]
+    ])
+    return result
 
 
 def exclusive_write(path: pathlib.Path, raw: bytes) -> None:
@@ -496,8 +614,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--maximum-turns", type=int, default=384)
     result.add_argument("--opening-turns", default="0,4,8,12")
     result.add_argument("--seed", type=int, default=6510615555426900575)
-    result.add_argument("--candidate-tree-nodes", type=int, default=80000)
-    result.add_argument("--baseline-tree-nodes", type=int, default=80000)
+    result.add_argument("--candidate-tree-nodes", type=int)
+    result.add_argument("--baseline-tree-nodes", type=int)
+    result.add_argument("--candidate-opening-tree-nodes", type=int)
+    result.add_argument("--candidate-later-tree-nodes", type=int)
+    result.add_argument("--candidate-opening-own-decisions", type=int)
+    result.add_argument("--baseline-opening-tree-nodes", type=int)
+    result.add_argument("--baseline-later-tree-nodes", type=int)
+    result.add_argument("--baseline-opening-own-decisions", type=int)
     result.add_argument("--candidate-c", type=float, default=0.95)
     result.add_argument("--baseline-c", type=float, default=0.95)
     result.add_argument("--candidate-fpu", type=float, default=0.5)
