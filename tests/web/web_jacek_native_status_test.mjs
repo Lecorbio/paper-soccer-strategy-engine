@@ -38,6 +38,7 @@ test("the native status page is semantic, responsive, and independent of Wasm", 
   assert.match(html, /<nav\b[^>]*\baria-label="Site"/i);
   assert.match(html, /id="auditorLink"/);
   assert.match(html, /id="liveDetails"/);
+  assert.match(html, /id="historicalLiveDetails"/);
   assert.match(html, /<div\b[^>]*\brole="alert"/i);
   assert.doesNotMatch(html, /papersoccer-wasm|<canvas\b|game-engine|board-view/i);
   assert.match(css, /@media\s*\([^)]*max-width/i);
@@ -47,44 +48,92 @@ test("the native status page is semantic, responsive, and independent of Wasm", 
   assert.doesNotMatch(script, /innerHTML/);
 });
 
-test("the checked-in v2 ledger separates local round two from historical live evidence", () => {
+test("the checked-in v2 ledger separates current round two from historical live evidence", () => {
   assert.equal(statusPage.validate(ledger), ledger);
   assert.equal(ledger.schema, "papersoccer.jacek-native-status.v2");
-  assert.equal(ledger.candidate.stage, "round2-locally-activated");
+  assert.equal(ledger.candidate.stage, "round2-live-diagnostic-archived");
   assert.equal(ledger.candidate.status, "in-progress");
   assert.match(ledger.candidate.claim, /seed 20260822/i);
   assert.match(ledger.candidate.claim, /post-activation timing/i);
-  assert.match(ledger.candidate.claim, /activated locally/i);
-  assert.match(ledger.candidate.claim, /upload remains pending/i);
+  assert.match(ledger.candidate.claim, /90-game CodinGame diagnostic/i);
+  assert.match(ledger.candidate.claim, /no Rank 4 parity claim/i);
   assert.equal(ledger.live.status, "passed");
   assert.equal(ledger.live.batchStatus, "complete");
-  assert.equal(ledger.live.submissionId, 41123817);
-  assert.equal(ledger.live.agentId, 6609056);
-  assert.equal(ledger.live.historyVersion, 61);
-  assert.equal(ledger.live.rank, 9);
-  assert.equal(ledger.live.score, 39.54);
+  assert.equal(ledger.live.submissionId, 41124914);
+  assert.equal(ledger.live.agentId, 6609905);
+  assert.equal(ledger.live.historyVersion, 62);
+  assert.equal(ledger.live.rank, 5);
+  assert.equal(ledger.live.score, 42.68);
   assert.equal(ledger.live.percentage, 100);
   assert.equal(ledger.live.sourceBound, false);
   assert.equal(ledger.live.sourceBinding, "asserted-not-api-verified");
   assert.equal(
     ledger.live.sourceCommit,
-    "8cf6005aace930016b86ac05de2ac8743447612c",
+    "e1ae4c7c66a03d9a2c3b82ddf79adafcb7e0c661",
   );
   assert.equal(
     ledger.live.sourceSha256,
-    "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
+    "653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90",
   );
   assert.equal(
     ledger.live.modelSha256,
-    "19f954092bea404ab18ccc7aaec8b7f6627f0b459017a7f83b6d666b6bb03acc",
+    "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14",
   );
   assert.equal(
     ledger.live.packedSha256,
-    "7125339d76ade22b0d8e3de249876927b99611372ff81396994c074522394218",
+    "e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb",
   );
   assert.equal(ledger.live.developmentContaminated, true);
   assert.equal(ledger.live.candidateOperationalFailures, 0);
+  assert.deepEqual(ledger.live.coverage, {
+    expectedGames: 90,
+    acceptedGames: 90,
+    fullWindowAccounted: true,
+    cleanRuleTerminalGames: 71,
+  });
   assert.deepEqual(ledger.live.raw, {
+    games: 90,
+    wins: 63,
+    losses: 27,
+    colors: {
+      playerZero: { wins: 30, losses: 13 },
+      playerOne: { wins: 33, losses: 14 },
+    },
+  });
+  assert.deepEqual(ledger.live.clean, {
+    games: 71,
+    wins: 44,
+    losses: 27,
+    colors: {
+      playerZero: { wins: 18, losses: 13 },
+      playerOne: { wins: 26, losses: 14 },
+    },
+  });
+  assert.deepEqual(ledger.live.opponentForfeits, {
+    total: 19, illegalAction: 10, timeout: 9,
+  });
+  assert.deepEqual(ledger.live.cleanCohorts, {
+    top5: { wins: 11, losses: 14 },
+    top10: { wins: 26, losses: 22 },
+    top20: { wins: 34, losses: 24 },
+  });
+  assert.deepEqual(ledger.live.namedCleanOpponents, [
+    { name: "jacek", frozenRank: 1, games: 9, wins: 0, losses: 9 },
+    { name: "Deltaspace", frozenRank: 3, games: 7, wins: 6, losses: 1 },
+    { name: "Laars", frozenRank: 4, games: 7, wins: 5, losses: 2 },
+    { name: "Waffle3z", frozenRank: 7, games: 4, wins: 4, losses: 0 },
+    { name: "derjack", frozenRank: 8, games: 4, wins: 1, losses: 3 },
+    { name: "EricSMSO", frozenRank: 9, games: 6, wins: 3, losses: 3 },
+    { name: "YurkovAS", frozenRank: 10, games: 7, wins: 7, losses: 0 },
+  ]);
+  assert.match(ledger.live.label, /90-game diagnostic archived/i);
+  assert.match(ledger.live.label, /no Rank 4 parity claim/i);
+  assert.equal(ledger.historicalLive.submissionId, 41123817);
+  assert.equal(ledger.historicalLive.agentId, 6609056);
+  assert.equal(ledger.historicalLive.historyVersion, 61);
+  assert.equal(ledger.historicalLive.rank, 9);
+  assert.equal(ledger.historicalLive.score, 39.54);
+  assert.deepEqual(ledger.historicalLive.raw, {
     games: 90,
     wins: 52,
     losses: 38,
@@ -93,7 +142,7 @@ test("the checked-in v2 ledger separates local round two from historical live ev
       playerOne: { wins: 23, losses: 23 },
     },
   });
-  assert.deepEqual(ledger.live.clean, {
+  assert.deepEqual(ledger.historicalLive.clean, {
     games: 79,
     wins: 41,
     losses: 38,
@@ -102,16 +151,6 @@ test("the checked-in v2 ledger separates local round two from historical live ev
       playerOne: { wins: 20, losses: 23 },
     },
   });
-  assert.deepEqual(ledger.live.opponentForfeits, {
-    total: 11, illegalAction: 7, timeout: 4,
-  });
-  assert.deepEqual(ledger.live.cleanCohorts, {
-    top5: { wins: 4, losses: 25 },
-    top10: { wins: 6, losses: 32 },
-    top20: { wins: 22, losses: 37 },
-  });
-  assert.match(ledger.live.label, /90-game diagnostic archived/i);
-  assert.match(ledger.live.label, /no promotion claim/i);
   assert.equal(ledger.training.status, "hardened-bootstrap");
   assert.equal(ledger.training.games, 10_000);
   assert.equal(ledger.training.shards, 14);
@@ -137,7 +176,7 @@ test("the checked-in v2 ledger separates local round two from historical live ev
   assert.match(ledger.training.provenance, /source\/compiler\/binary contract/i);
   assert.match(ledger.training.nextRound, /historical round-one checkpoint/i);
   assert.match(ledger.training.nextRound, /seed 20260822/i);
-  assert.match(ledger.training.nextRound, /activated locally/i);
+  assert.match(ledger.training.nextRound, /activated, uploaded, and archived/i);
   assert.match(html, /selected clean states may seed fresh native continuations/i);
   assert.match(html, /never become policy or value labels/i);
   assert.throws(
@@ -169,31 +208,34 @@ test("the checked-in v2 ledger separates local round two from historical live ev
   assert.doesNotMatch(ledgerText, /matches\.json|protected[_ -]?bank|sealed[_ -]?bank/i);
   assert.match(ledger.links.auditor, /REPLAY_DECISION_AUDITOR\.md$/);
   assert.deepEqual(ledger.live.evidence, {
-    manifestSha256: "0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf",
-    cleanTsvSha256: "d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b",
-    fixed30kAuditSha256: "7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee",
-    fixed30kSummarySha256: "4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b",
+    manifestSha256: "bb5aaf7340ddee174ddf916aee2bfbcd4b3afb01f5d53bbc5c7d728bf610b4cf",
+    cleanTsvSha256: "4a25768aed11e7c4bc368e63bce8c335e420f02fee7e131d2b56dfa97ab048e2",
+    fixed30kAuditSha256: "9eb8d1741bbd11390c3d0b1c15ea0cac35f73931e6695635c2f5778d7c7ff8f1",
+    fixed30kSummarySha256: "79d88d6f608d2a78e86dd1f6abca8a5406a9866a417489dc7b2d99beb17cdd46",
   });
   assert.deepEqual(ledger.live.audit.classifications, {
-    bfmOverride: 1070,
-    match: 702,
-    initialEvaluatorOrdering: 136,
-    generatorOmission: 6,
-    operationalFailure: 4,
+    bfmOverride: 1015,
+    match: 715,
+    initialEvaluatorOrdering: 76,
+    generatorOmission: 4,
+    operationalFailure: 1,
+    boundaryEquivalent: 0,
+    tacticalMiss: 0,
   });
-  assert.equal(ledger.live.audit.games, 79);
-  assert.equal(ledger.live.audit.decisions, 1918);
+  assert.equal(ledger.live.audit.games, 71);
+  assert.equal(ledger.live.audit.decisions, 1811);
   assert.equal(ledger.live.audit.workPerDecision, 30000);
   assert.match(ledger.live.audit.interpretation, /diagnostic/i);
   assert.match(ledger.live.audit.interpretation, /not correct-move or promotion labels/i);
-  assert.match(ledger.live.audit.interpretation, /evaluator, reanalysis, and BFM allocation/i);
+  assert.match(ledger.live.audit.interpretation, /0–9 clean result against jacek/i);
   assert.match(html, /800 \/ 155 ms/);
   assert.match(html, /no Rank 4 parity claim is made/i);
   assert.match(html, /development-contaminated/i);
   assert.match(html, /not correct-move labels/i);
-  assert.match(html, /Historical live evidence/i);
-  assert.equal(ledger.round2.scope, "local-research");
-  assert.equal(ledger.round2.uploaded, false);
+  assert.match(html, /Round-two live evidence/i);
+  assert.match(html, /Historical history-61 evidence/i);
+  assert.equal(ledger.round2.scope, "live-diagnostic");
+  assert.equal(ledger.round2.uploaded, true);
   assert.equal(ledger.round2.status, "passed");
   assert.equal(ledger.round2.corpus.games, 22_238);
   assert.equal(ledger.round2.corpus.samples, 2_151_889);
@@ -310,31 +352,31 @@ test("every file-backed artifact hash and size matches the repository", async ()
   assert.equal(artifact("untrained-runtime").sha256,
                ledger.provenance.untrainedRuntimeSha256);
 
-  const submission = artifact("submission");
+  const submission = artifact("history61-source");
   assert.equal(
     submission.sha256,
     "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
   );
   assert.ok(submission.size < ledger.verification.sourceLimit);
   assert.equal(ledger.verification.sourceLimit - submission.size, 471);
-  assert.equal(submission.sha256, ledger.live.sourceSha256);
-  assert.equal(artifact("model-json").sha256, ledger.live.modelSha256);
-  assert.equal(artifact("packed-weights").sha256, ledger.live.packedSha256);
+  assert.equal(submission.sha256, ledger.historicalLive.sourceSha256);
+  assert.equal(artifact("model-json").sha256, ledger.historicalLive.modelSha256);
+  assert.equal(artifact("packed-weights").sha256, ledger.historicalLive.packedSha256);
   assert.equal(
-    artifact("live-manifest").sha256,
-    ledger.live.evidence.manifestSha256,
+    artifact("history61-live-manifest").sha256,
+    ledger.historicalLive.evidence.manifestSha256,
   );
   assert.equal(
-    artifact("clean-auditor-input").sha256,
-    ledger.live.evidence.cleanTsvSha256,
+    artifact("history61-clean-auditor-input").sha256,
+    ledger.historicalLive.evidence.cleanTsvSha256,
   );
   assert.equal(
-    artifact("fixed30k-audit").sha256,
-    ledger.live.evidence.fixed30kAuditSha256,
+    artifact("history61-fixed30k-audit").sha256,
+    ledger.historicalLive.evidence.fixed30kAuditSha256,
   );
   assert.equal(
-    artifact("fixed30k-summary").sha256,
-    ledger.live.evidence.fixed30kSummarySha256,
+    artifact("history61-fixed30k-summary").sha256,
+    ledger.historicalLive.evidence.fixed30kSummarySha256,
   );
 
   const header = await readFile(
@@ -353,6 +395,25 @@ test("every file-backed artifact hash and size matches the repository", async ()
   assert.equal(round2Deployment.sha256, ledger.round2.deployment.sha256);
   assert.equal(round2Header.sha256, ledger.round2.deployment.headerSha256);
   assert.equal(round2Source.sha256, ledger.round2.deployment.sourceSha256);
+  assert.equal(round2Source.sha256, ledger.live.sourceSha256);
+  assert.equal(round2Model.sha256, ledger.live.modelSha256);
+  assert.equal(ledger.round2.model.packedSha256, ledger.live.packedSha256);
+  assert.equal(
+    artifact("round2-live-manifest").sha256,
+    ledger.live.evidence.manifestSha256,
+  );
+  assert.equal(
+    artifact("round2-clean-auditor-input").sha256,
+    ledger.live.evidence.cleanTsvSha256,
+  );
+  assert.equal(
+    artifact("round2-fixed30k-audit").sha256,
+    ledger.live.evidence.fixed30kAuditSha256,
+  );
+  assert.equal(
+    artifact("round2-fixed30k-summary").sha256,
+    ledger.live.evidence.fixed30kSummarySha256,
+  );
   assert.ok(round2Source.size < ledger.round2.deployment.sourceLimit);
   assert.equal(
     ledger.round2.deployment.sourceLimit - round2Source.size,

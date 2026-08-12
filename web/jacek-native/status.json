@@ -3,10 +3,10 @@
   "updatedAt": "2026-08-12",
   "candidate": {
     "name": "jacek_native_bfm",
-    "stage": "round2-locally-activated",
-    "stageLabel": "Round two activated locally",
+    "stage": "round2-live-diagnostic-archived",
+    "stageLabel": "Round-two live diagnostic archived",
     "status": "in-progress",
-    "claim": "Round-two seed 20260822 passed both previous-native-champion gates and post-activation timing, and is activated locally; CodinGame upload remains pending"
+    "claim": "Round-two seed 20260822 passed both previous-native-champion gates and post-activation timing; its exact source completed a 90-game CodinGame diagnostic at 44–27 clean with zero candidate operational failures, but no Rank 4 parity claim is made"
   },
   "architecture": {
     "searchAction": "One complete legal turn",
@@ -135,40 +135,40 @@
       "sizeUnit": "bytes"
     },
     {
-      "id": "submission",
-      "label": "Live diagnostic source",
+      "id": "history61-source",
+      "label": "Historical history-61 live source",
       "path": null,
       "sha256": "3bda271b35695292324c4e1943062211d102d66b0bb69f43615ba7a0b89e6e20",
       "size": 94528,
       "sizeUnit": "characters"
     },
     {
-      "id": "live-manifest",
-      "label": "Complete live-batch manifest",
+      "id": "history61-live-manifest",
+      "label": "Historical history-61 live-batch manifest",
       "path": null,
       "sha256": "0328bded1916af5bd34554bbd315577cc346b7ba2e32b83f34ef3ef0e30351cf",
       "size": 90,
       "sizeUnit": "games"
     },
     {
-      "id": "clean-auditor-input",
-      "label": "Forfeit-clean replay index",
+      "id": "history61-clean-auditor-input",
+      "label": "Historical history-61 clean replay index",
       "path": null,
       "sha256": "d5cea44b03a340f220fcb5d2f4864c59151bfd25ad659302bf4c0ead1768b79b",
       "size": 79,
       "sizeUnit": "games"
     },
     {
-      "id": "fixed30k-audit",
-      "label": "Frozen fixed-30k decision audit",
+      "id": "history61-fixed30k-audit",
+      "label": "Historical history-61 fixed-30k audit",
       "path": null,
       "sha256": "7f06835b8cfc0e4a8a51ff02195aed12d06a729af70a66cf0ddced0cafd86fee",
       "size": 1918,
       "sizeUnit": "decisions"
     },
     {
-      "id": "fixed30k-summary",
-      "label": "Canonical decision-audit summary",
+      "id": "history61-fixed30k-summary",
+      "label": "Historical history-61 audit summary",
       "path": null,
       "sha256": "4d9d56bc1c66c8cac6366c64b4b2c2683bdd5a9f0302c45591c76a57a672972b",
       "size": 1918,
@@ -240,11 +240,43 @@
     },
     {
       "id": "round2-source",
-      "label": "Generated round-two local source",
+      "label": "Uploaded round-two source",
       "path": "submissions/codingame/bots/jacek_native_bfm/submission.cpp",
       "sha256": "653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90",
       "size": 94771,
       "sizeUnit": "characters"
+    },
+    {
+      "id": "round2-live-manifest",
+      "label": "Round-two history-62 live-batch manifest",
+      "path": null,
+      "sha256": "bb5aaf7340ddee174ddf916aee2bfbcd4b3afb01f5d53bbc5c7d728bf610b4cf",
+      "size": 90,
+      "sizeUnit": "games"
+    },
+    {
+      "id": "round2-clean-auditor-input",
+      "label": "Round-two forfeit-clean replay index",
+      "path": null,
+      "sha256": "4a25768aed11e7c4bc368e63bce8c335e420f02fee7e131d2b56dfa97ab048e2",
+      "size": 71,
+      "sizeUnit": "games"
+    },
+    {
+      "id": "round2-fixed30k-audit",
+      "label": "Round-two fixed-30k decision audit",
+      "path": null,
+      "sha256": "9eb8d1741bbd11390c3d0b1c15ea0cac35f73931e6695635c2f5778d7c7ff8f1",
+      "size": 1811,
+      "sizeUnit": "decisions"
+    },
+    {
+      "id": "round2-fixed30k-summary",
+      "label": "Round-two decision-audit summary",
+      "path": null,
+      "sha256": "79d88d6f608d2a78e86dd1f6abca8a5406a9866a417489dc7b2d99beb17cdd46",
+      "size": 1811,
+      "sizeUnit": "decisions"
     }
   ],
   "training": {
@@ -276,14 +308,14 @@
     "trainingExamplesPerSecond": 28380.18,
     "peakRssBytes": 7829962752,
     "peakFootprintBytes": 8256755952,
-    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but the historical 800/165 source lost the external Rank 4 screen 35–71. The completed 800/155 live batch is an exploratory diagnostic, not a strength claim.",
-    "nextRound": "Historical round-one checkpoint retained as the previous native champion; round-two seed 20260822 is selected and activated locally"
+    "warning": "The 10,000-game run establishes a reproducible checkpoint. It beat the frozen untrained runtime but the historical 800/165 source lost the external Rank 4 screen 35–71. Both completed live batches are exploratory diagnostics, not parity or superiority claims.",
+    "nextRound": "Historical round-one checkpoint retained as the previous native champion; round-two seed 20260822 is selected, activated, uploaded, and archived as a complete diagnostic batch"
   },
   "round2": {
-    "scope": "local-research",
-    "uploaded": false,
+    "scope": "live-diagnostic",
+    "uploaded": true,
     "status": "passed",
-    "label": "Seed 20260822 promoted over the previous native checkpoint and activated locally · CodinGame upload pending",
+    "label": "Seed 20260822 promoted over the previous native checkpoint · exact-source history-62 diagnostic archived",
     "corpus": {
       "games": 22238,
       "samples": 2151889,
@@ -541,7 +573,86 @@
   "live": {
     "status": "passed",
     "batchStatus": "complete",
-    "label": "90-game diagnostic archived · 52–38 raw · 41–38 clean · no promotion claim",
+    "label": "Round-two 90-game diagnostic archived · 63–27 raw · 44–27 clean · no Rank 4 parity claim",
+    "submissionId": 41124914,
+    "agentId": 6609905,
+    "historyVersion": 62,
+    "rank": 5,
+    "score": 42.68,
+    "percentage": 100,
+    "sourceBound": false,
+    "sourceBinding": "asserted-not-api-verified",
+    "sourceCommit": "e1ae4c7c66a03d9a2c3b82ddf79adafcb7e0c661",
+    "sourceSha256": "653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90",
+    "modelSha256": "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14",
+    "packedSha256": "e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb",
+    "developmentContaminated": true,
+    "candidateOperationalFailures": 0,
+    "coverage": {
+      "expectedGames": 90,
+      "acceptedGames": 90,
+      "fullWindowAccounted": true,
+      "cleanRuleTerminalGames": 71
+    },
+    "raw": {
+      "games": 90,
+      "wins": 63,
+      "losses": 27,
+      "colors": {
+        "playerZero": { "wins": 30, "losses": 13 },
+        "playerOne": { "wins": 33, "losses": 14 }
+      }
+    },
+    "clean": {
+      "games": 71,
+      "wins": 44,
+      "losses": 27,
+      "colors": {
+        "playerZero": { "wins": 18, "losses": 13 },
+        "playerOne": { "wins": 26, "losses": 14 }
+      }
+    },
+    "opponentForfeits": { "total": 19, "illegalAction": 10, "timeout": 9 },
+    "cleanCohorts": {
+      "top5": { "wins": 11, "losses": 14 },
+      "top10": { "wins": 26, "losses": 22 },
+      "top20": { "wins": 34, "losses": 24 }
+    },
+    "namedCleanOpponents": [
+      { "name": "jacek", "frozenRank": 1, "games": 9, "wins": 0, "losses": 9 },
+      { "name": "Deltaspace", "frozenRank": 3, "games": 7, "wins": 6, "losses": 1 },
+      { "name": "Laars", "frozenRank": 4, "games": 7, "wins": 5, "losses": 2 },
+      { "name": "Waffle3z", "frozenRank": 7, "games": 4, "wins": 4, "losses": 0 },
+      { "name": "derjack", "frozenRank": 8, "games": 4, "wins": 1, "losses": 3 },
+      { "name": "EricSMSO", "frozenRank": 9, "games": 6, "wins": 3, "losses": 3 },
+      { "name": "YurkovAS", "frozenRank": 10, "games": 7, "wins": 7, "losses": 0 }
+    ],
+    "evidence": {
+      "manifestSha256": "bb5aaf7340ddee174ddf916aee2bfbcd4b3afb01f5d53bbc5c7d728bf610b4cf",
+      "cleanTsvSha256": "4a25768aed11e7c4bc368e63bce8c335e420f02fee7e131d2b56dfa97ab048e2",
+      "fixed30kAuditSha256": "9eb8d1741bbd11390c3d0b1c15ea0cac35f73931e6695635c2f5778d7c7ff8f1",
+      "fixed30kSummarySha256": "79d88d6f608d2a78e86dd1f6abca8a5406a9866a417489dc7b2d99beb17cdd46"
+    },
+    "audit": {
+      "games": 71,
+      "decisions": 1811,
+      "workPerDecision": 30000,
+      "classifications": {
+        "bfmOverride": 1015,
+        "match": 715,
+        "initialEvaluatorOrdering": 76,
+        "generatorOmission": 4,
+        "operationalFailure": 1,
+        "boundaryEquivalent": 0,
+        "tacticalMiss": 0
+      },
+      "interpretation": "Fixed-work counterfactual classifications are diagnostic, not correct-move or promotion labels; the 0–9 clean result against jacek is a concrete live gap, and neither rank 5 nor the aggregate clean score establishes Rank 4 parity"
+    }
+  },
+  "historicalLive": {
+    "status": "passed",
+    "batchStatus": "complete",
+    "label": "Historical history-61 diagnostic · 52–38 raw · 41–38 clean · no promotion claim",
     "submissionId": 41123817,
     "agentId": 6609056,
     "historyVersion": 61,
@@ -597,7 +708,7 @@
         "generatorOmission": 6,
         "operationalFailure": 4
       },
-      "interpretation": "Fixed-work counterfactual classifications are diagnostic, not correct-move or promotion labels; the small omission count prioritizes evaluator, reanalysis, and BFM allocation work"
+      "interpretation": "Historical fixed-work counterfactual classifications are diagnostic, not correct-move or promotion labels"
     }
   },
   "links": {

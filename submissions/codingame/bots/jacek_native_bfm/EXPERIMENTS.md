@@ -329,9 +329,9 @@ The run failed both the 58-win threshold and the zero-headroom-failure
 condition. Per the frozen ladder, that phase stopped: there was no second seed,
 no 424-game parity gate, and no CodinGame upload of that historical source.
 
-## Exploratory live diagnostic baseline
+## Historical history-61 live diagnostic baseline
 
-The user authorized a new exploratory CodinGame diagnostic even though local
+The user authorized this exploratory CodinGame diagnostic even though local
 strength is not established. The only production change from the historical
 artifact is the later search budget reduction from 165 ms to 155 ms. The
 uploaded generated source is 94,528 characters with SHA-256
@@ -372,17 +372,19 @@ omissions are rare in this sample. The next native iteration therefore focuses
 on evaluator signal, reanalysis, and BFM allocation rather than treating action
 coverage as the primary weakness.
 
-This entire live batch is development-contaminated as soon as it informs that
+This entire history-61 batch is development-contaminated as soon as it informs that
 choice. It is excluded from promotion evidence and training-policy labels. No
 promotion, parity, or superiority claim follows from the raw rank or clean
 score.
 
-The behavior-preserving diagnostic successor to the uploaded source is 94,771
+The behavior-preserving diagnostic successor to the history-61 source was 94,771
 characters with SHA-256
 `ac63ab602e6b837032fd2e88e2d8ca07e56ebabde956587e005270f45fcaad93`.
 It short-circuits duplicate-boundary tactical classification and adds
 root/non-root truncation, depth, leader-change, entropy, margin, and cap
-telemetry. It is local research code, not a second live submission.
+telemetry. This pre-activation artifact was local research code; the later
+seed-`20260822` activation produced the distinct exact source uploaded as
+history 62 below.
 
 The historical corrected round-two pipeline pilot validated 32 paired-schedule games and
 1,430 augmented samples. Of 122 reanalysed boundaries, 21 passed the frozen
@@ -428,7 +430,7 @@ uint16 feature indices and releases Python samples while packing each split,
 reducing the steady sparse representation and avoiding simultaneous full native
 and NumPy copies at the intended million-scale corpus size.
 
-## Round-two corpus, model, and local activation
+## Round-two corpus, model, activation, and live diagnostic
 
 The completed cumulative corpus contains 22,238 games and has SHA-256
 `87cf43fe841dfe7d00fc98ff8d560dfea10a9c3a1832b19eaf092fd0e07edf47`.
@@ -494,15 +496,52 @@ activates that selection locally. The generated header/source identities are
 `3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458`
 (21,736 characters) and
 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
-(94,771 characters). Post-activation fresh-process timing measured P0 at
+(94,771 characters). Pre-upload post-activation fresh-process timing measured P0 at
 424.894/157.944 ms and P1 at 419.405/157.479 ms. Both pass the 900/180 ms
-construction-inclusive pre-upload ceilings. This is local operational evidence,
-not a new live result. Focused verification also passed immutable activation,
+construction-inclusive pre-upload ceilings. This is local operational evidence
+that preceded the live result below. Focused verification also passed immutable activation,
 transitive purity, exact-source freshness, three GCC activation tests, the
 AppleClang 21 Release build and seven focused tests, and four exact ASan/UBSan
 tests. The sanitizer statement refers only to those four built targets; a broad
 pattern that also names unrelated unbuilt targets is not evidence and is not
 reported as a failure.
+
+### Current round-two history-62 live diagnostic
+
+The exact selected source was uploaded from repository commit
+`e1ae4c7c66a03d9a2c3b82ddf79adafcb7e0c661` as agent `6609905`, submission
+`41124914`, history version `62`. The 94,771-character source SHA-256 is
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`,
+the model SHA-256 is
+`b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14`,
+and the packed-weight SHA-256 is
+`e2304195d491d7b2d5ae1334a8341b38d67d315073accc37915885ede3c6a2cb`.
+Editor read-back matched the generated source, but the platform API did not
+verify it, so the binding is `asserted-not-api-verified`.
+
+The complete 90-game window scored 63-27 raw, with candidate colors 30-13 and
+33-14, frozen rank 5, and score 42.68. The candidate had zero operational
+failures. Nineteen wins were opponent forfeits: ten illegal actions and nine
+timeouts. Removing them left 71 clean rule-terminal games at 44-27, with
+colors 18-13 and 26-14. Clean cohort results were 11-14 against the top 5,
+26-22 against the top 10, and 34-24 against the top 20. Named clean results
+with at least three games were jacek 0-9, Deltaspace 6-1, Laars 5-2, Waffle3z
+4-0, derjack 1-3, EricSMSO 3-3, and YurkovAS 7-0.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6609905/41124914/653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90/bb5aaf7340ddee174ddf916aee2bfbcd4b3afb01f5d53bbc5c7d728bf610b4cf.json` | `bb5aaf7340ddee174ddf916aee2bfbcd4b3afb01f5d53bbc5c7d728bf610b4cf` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-round2-41124914-20260812/clean-auditor.tsv` | `4a25768aed11e7c4bc368e63bce8c335e420f02fee7e131d2b56dfa97ab048e2` |
+| Fixed-30k decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-round2-41124914-20260812/native-decisions-fixed30k.jsonl` | `9eb8d1741bbd11390c3d0b1c15ea0cac35f73931e6695635c2f5778d7c7ff8f1` |
+| Decision-audit summary | `results/codingame_arena_diagnostics/runs/jacek-native-round2-41124914-20260812/native-decisions-fixed30k-summary.json` | `79d88d6f608d2a78e86dd1f6abca8a5406a9866a417489dc7b2d99beb17cdd46` |
+
+The fixed-30k audit covers 1,811 decisions in all 71 clean games: 1,015
+`bfm-override`, 715 `match`, 76 `initial-evaluator-ordering`, four
+`generator-omission`, and one `operational-failure`; `boundary-equivalent` and
+`tactical-miss` were both zero. Those counterfactual
+classifications are diagnostic, not correct-move labels or evidence that an
+alternative would have won. The 0-9 clean result against jacek remains a direct
+live gap; neither rank 5 nor the aggregate result establishes Rank 4 parity.
 
 ## Results ledger
 
@@ -522,15 +561,18 @@ reported as a failure.
 | Round-two seed23 screen vs bootstrap | 672 | 328 | 415 / 257 | 0 / 0 / 0 | 50/10 ms |
 | Round-two seed23 decisive vs bootstrap | 133 | 79 | 89 / 44 | 0 / 0 / 0; color floor failed | 800/155 ms |
 | External final parity | not run | not run | not run | stopped | 424-game design |
-| Exact-source live batch, raw | 52 | 38 | 29 / 23 | our operational 0 | CodinGame 90 games |
-| Exact-source live batch, clean | 41 | 38 | 21 / 20 | 11 opponent forfeits removed | CodinGame 79 games |
+| Historical history-61 live batch, raw | 52 | 38 | 29 / 23 | our operational 0 | CodinGame 90 games |
+| Historical history-61 live batch, clean | 41 | 38 | 21 / 20 | 11 opponent forfeits removed | CodinGame 79 games |
+| Current history-62 live batch, raw | 63 | 27 | 30 / 33 | our operational 0 | CodinGame 90 games |
+| Current history-62 live batch, clean | 44 | 27 | 18 / 26 | 19 opponent forfeits removed | CodinGame 71 games |
 
 The bootstrap passed both comparisons with its untrained ancestor, but its
 historical 800/165 ms source lost decisively to the external Rank 4 reference
 and breached local timing headroom once. The historically uploaded 800/155 ms
 source has better measured timing margin and is an auditable exploratory
-baseline, not a promotion, parity, or superiority result. The completed live
-batch is now diagnostic development evidence and cannot serve as an independent
-holdout. Round-two seed `20260822` is promoted over the previous native
-checkpoint and activated locally, but remains distinct from that historical
-live evidence until its exact source is actually uploaded and collected.
+baseline, not a promotion, parity, or superiority result. That history-61 batch
+is diagnostic development evidence and cannot serve as an independent holdout.
+Round-two seed `20260822` is promoted over the previous native checkpoint; its
+exact source is now the completed history-62 diagnostic. This newer batch is
+also development-contaminated and, especially given the 0-9 clean result
+against jacek, does not establish Rank 4 parity.

@@ -27,7 +27,7 @@
           <p class="eyebrow">Jacek-inspired complete-turn engine</p>
           <h1 id="pageTitle">Native bot research status</h1>
           <p class="hero-copy" data-field="claim">
-            Round-two seed 20260822 passed both previous-native-champion gates and post-activation timing, and is activated locally; CodinGame upload remains pending.
+            Round-two seed 20260822 passed both previous-native-champion gates and post-activation timing; its exact source completed a 90-game CodinGame diagnostic at 44–27 clean with zero candidate operational failures, but no Rank 4 parity claim is made.
           </p>
         </div>
         <div class="hero-status">
@@ -44,8 +44,8 @@
         <div><dt>Candidate</dt><dd data-field="candidateName">jacek_native_bfm</dd></div>
         <div><dt>Round-two corpus</dt><dd><span data-field="trainingGames">—</span> games</dd></div>
         <div><dt>Search clock</dt><dd data-field="clockProfile">800 / 155 ms</dd></div>
-        <div><dt>Local activation</dt><dd data-field="localActivationLabel">Round-two activation loading…</dd></div>
-        <div><dt>Historical live</dt><dd data-field="liveLabel">90-game diagnostic archived</dd></div>
+        <div><dt>Round-two deployment</dt><dd data-field="localActivationLabel">Round-two deployment loading…</dd></div>
+        <div><dt>Current live</dt><dd data-field="liveLabel">Round-two 90-game diagnostic archived</dd></div>
       </dl>
 
       <section class="panel" aria-labelledby="architectureHeading">
@@ -63,7 +63,7 @@
         </div>
         <div class="table-scroll" tabindex="0" aria-label="Scrollable artifact identities">
           <table>
-            <caption>Build, corpus, checkpoint, activation, and historical live identities</caption>
+            <caption>Build, corpus, checkpoint, activation, and current plus historical live identities</caption>
             <thead><tr><th scope="col">Artifact</th><th scope="col">Size</th><th scope="col">SHA-256</th></tr></thead>
             <tbody id="artifactRows"><tr><td colspan="3">Loading artifact ledger…</td></tr></tbody>
           </table>
@@ -72,10 +72,10 @@
 
       <section class="panel" aria-labelledby="round2Heading">
         <div class="section-heading">
-          <div><p class="eyebrow">Local research activation</p><h2 id="round2Heading">Round-two checkpoint</h2></div>
+          <div><p class="eyebrow">Selected and uploaded</p><h2 id="round2Heading">Round-two checkpoint</h2></div>
           <span id="round2Status" class="status-pill status-in-progress">Loading…</span>
         </div>
-        <p data-field="localActivationLabel">Seed 20260822 promoted over the previous native checkpoint and activated locally · CodinGame upload pending.</p>
+        <p data-field="localActivationLabel">Seed 20260822 promoted over the previous native checkpoint · exact-source history-62 diagnostic archived.</p>
         <dl id="round2Details" class="detail-grid"></dl>
         <p class="panel-note">The live-loss transcript supplies starting positions only. Observed candidate and opponent moves are never policy or value labels.</p>
       </section>
@@ -122,12 +122,23 @@
       <section class="live-panel" aria-labelledby="liveHeading">
         <div>
           <p class="eyebrow">CodinGame</p>
-          <h2 id="liveHeading">Historical live evidence</h2>
-          <p data-field="liveLabel">90-game diagnostic archived · 52–38 raw · 41–38 clean · no promotion claim.</p>
+          <h2 id="liveHeading">Round-two live evidence</h2>
+          <p data-field="liveLabel">Round-two 90-game diagnostic archived · 63–27 raw · 44–27 clean · no Rank 4 parity claim.</p>
         </div>
         <span id="liveStatus" class="status-pill status-passed">Passed</span>
         <dl id="liveDetails" class="live-details" aria-label="Live diagnostic results"></dl>
-        <p class="live-note">The batch is development-contaminated. Fixed-work alternatives diagnose search behavior; they are not correct-move labels or independent promotion evidence.</p>
+        <p class="live-note">The batch is development-contaminated. It finished 0–9 against jacek; rank 5 and the aggregate clean result do not establish Rank 4 parity. Fixed-work alternatives are diagnostic, not correct-move labels or independent promotion evidence.</p>
+      </section>
+
+      <section class="live-panel historical-live" aria-labelledby="historicalLiveHeading">
+        <div>
+          <p class="eyebrow">Frozen prior baseline</p>
+          <h2 id="historicalLiveHeading">Historical history-61 evidence</h2>
+          <p data-field="historicalLiveLabel">Historical history-61 diagnostic · 52–38 raw · 41–38 clean · no promotion claim.</p>
+        </div>
+        <span id="historicalLiveStatus" class="status-pill status-passed">Passed</span>
+        <dl id="historicalLiveDetails" class="live-details" aria-label="Historical live diagnostic results"></dl>
+        <p class="live-note">This archived round-one batch remains visible as historical development evidence. It is not the current deployed bot and is not an independent holdout.</p>
       </section>
 
       <section class="documentation" aria-labelledby="docsHeading">

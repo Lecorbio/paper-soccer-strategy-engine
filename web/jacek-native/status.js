@@ -13,7 +13,7 @@
     }
     for (const key of [
       "candidate", "architecture", "provenance", "training", "round2", "clock",
-      "verification", "live", "links",
+      "verification", "live", "historicalLive", "links",
     ]) {
       if (!ledger[key] || typeof ledger[key] !== "object") {
         throw new Error(`Native status ledger is missing ${key}.`);
@@ -58,31 +58,45 @@
         }
       }
     }
-    for (const key of ["raw", "clean", "opponentForfeits", "cleanCohorts",
-      "evidence", "audit"]) {
-      if (!ledger.live[key] || typeof ledger.live[key] !== "object") {
-        throw new Error(`Native live ledger is missing ${key}.`);
+    for (const [label, live] of [
+      ["current", ledger.live], ["historical", ledger.historicalLive],
+    ]) {
+      for (const key of ["raw", "clean", "opponentForfeits", "cleanCohorts",
+        "evidence", "audit"]) {
+        if (!live[key] || typeof live[key] !== "object") {
+          throw new Error(`Native ${label} live ledger is missing ${key}.`);
+        }
+      }
+      for (const [key, value] of Object.entries(live.evidence)) {
+        if (!validSha256(value)) {
+          throw new Error(`Native ${label} live evidence identity ${key} is incomplete.`);
+        }
+      }
+      for (const key of ["sourceSha256", "modelSha256", "packedSha256"]) {
+        if (!validSha256(live[key])) {
+          throw new Error(`Native ${label} live identity ${key} is incomplete.`);
+        }
+      }
+      if (typeof live.sourceCommit !== "string" ||
+          !/^[0-9a-f]{40}$/.test(live.sourceCommit)) {
+        throw new Error(`Native ${label} live source commit is incomplete.`);
       }
     }
-    for (const [key, value] of Object.entries(ledger.live.evidence)) {
-      if (!validSha256(value)) {
-        throw new Error(`Native live evidence identity ${key} is incomplete.`);
-      }
+    if (!Array.isArray(ledger.live.namedCleanOpponents) ||
+        ledger.live.namedCleanOpponents.length === 0) {
+      throw new Error("Native current live named-opponent ledger is incomplete.");
     }
-    for (const key of ["sourceSha256", "modelSha256", "packedSha256"]) {
-      if (!validSha256(ledger.live[key])) {
-        throw new Error(`Native live identity ${key} is incomplete.`);
-      }
-    }
-    if (typeof ledger.live.sourceCommit !== "string" ||
-        !/^[0-9a-f]{40}$/.test(ledger.live.sourceCommit)) {
-      throw new Error("Native live source commit is incomplete.");
+    if (!ledger.live.coverage || ledger.live.coverage.expectedGames !== 90 ||
+        ledger.live.coverage.acceptedGames !== 90 ||
+        ledger.live.coverage.fullWindowAccounted !== true ||
+        ledger.live.coverage.cleanRuleTerminalGames !== ledger.live.clean.games) {
+      throw new Error("Native current live coverage is incomplete.");
     }
     const round2 = ledger.round2;
-    if (round2.scope !== "local-research" || round2.uploaded !== false ||
+    if (round2.scope !== "live-diagnostic" || round2.uploaded !== true ||
         round2.status !== "passed" || !Array.isArray(round2.gates) ||
         round2.gates.length !== 6) {
-      throw new Error("Native round-two local activation status is incomplete.");
+      throw new Error("Native round-two deployment status is incomplete.");
     }
     for (const key of [
       "corpus", "model", "selection", "deployment", "verification", "timing",
@@ -179,6 +193,7 @@
       clockProfile: `${ledger.clock.search.firstMs} / ${ledger.clock.search.laterMs} ms`,
       localActivationLabel: ledger.round2.label,
       liveLabel: ledger.live.label,
+      historicalLiveLabel: ledger.historicalLive.label,
     });
     for (const element of doc.querySelectorAll('[data-field="stage"]')) {
       element.className = `status-pill ${statusClass(ledger.candidate.status)}`;
@@ -246,7 +261,7 @@
       const model = ledger.round2.model;
       const timing = ledger.round2.timing;
       round2Details.replaceChildren(
-        definition(doc, "Scope", "Local research · not uploaded"),
+        definition(doc, "Scope", "Live diagnostic · exact source archived"),
         definition(doc, "Cumulative corpus", `${formatInteger(corpus.games)} games · ${formatInteger(corpus.samples)} retained samples`),
         definition(doc, "Whole-game split", `${formatInteger(corpus.splitGames.train)} / ${formatInteger(corpus.splitGames.validation)} / ${formatInteger(corpus.splitGames.test)}`),
         definition(doc, "Corpus lineage", `${formatInteger(corpus.lineage.strictCurrent.games)} native league + ${formatInteger(corpus.lineage.archivedRound1.games)} archived + ${formatInteger(corpus.lineage.liveRestartRound2.games)} restart games`),
@@ -330,16 +345,36 @@
       const forfeits = ledger.live.opponentForfeits;
       const cohorts = ledger.live.cleanCohorts;
       const classes = ledger.live.audit.classifications;
+      const named = ledger.live.namedCleanOpponents;
       liveDetails.replaceChildren(
         definition(doc, "Arena identity", `agent ${ledger.live.agentId} · submission ${ledger.live.submissionId} · history ${ledger.live.historyVersion}`),
         definition(doc, "Placement", `rank ${ledger.live.rank} · score ${ledger.live.score.toFixed(2)}`),
+        definition(doc, "Archive coverage", `${ledger.live.coverage.acceptedGames}/${ledger.live.coverage.expectedGames} games · full window accounted`),
         definition(doc, "Raw result", `${raw.wins}–${raw.losses} / ${raw.games} · colors ${raw.colors.playerZero.wins}–${raw.colors.playerZero.losses} and ${raw.colors.playerOne.wins}–${raw.colors.playerOne.losses}`),
         definition(doc, "Clean result", `${clean.wins}–${clean.losses} / ${clean.games} · colors ${clean.colors.playerZero.wins}–${clean.colors.playerZero.losses} and ${clean.colors.playerOne.wins}–${clean.colors.playerOne.losses}`),
         definition(doc, "Opponent forfeits", `${forfeits.total} · ${forfeits.illegalAction} illegal action · ${forfeits.timeout} timeout`),
         definition(doc, "Candidate operations", `${ledger.live.candidateOperationalFailures} failures`),
         definition(doc, "Clean cohorts", `top 5 ${cohorts.top5.wins}–${cohorts.top5.losses} · top 10 ${cohorts.top10.wins}–${cohorts.top10.losses} · top 20 ${cohorts.top20.wins}–${cohorts.top20.losses}`),
+        definition(doc, "Named clean opponents", named.map((opponent) => `${opponent.name} ${opponent.wins}–${opponent.losses}`).join(" · ")),
         definition(doc, "Source binding", ledger.live.sourceBinding),
-        definition(doc, "Fixed-30k audit", `${ledger.live.audit.decisions.toLocaleString("en-US")} decisions · BFM override ${classes.bfmOverride.toLocaleString("en-US")} · match ${classes.match} · evaluator ${classes.initialEvaluatorOrdering} · omission ${classes.generatorOmission} · operational ${classes.operationalFailure}`),
+        definition(doc, "Fixed-30k audit", `${ledger.live.audit.decisions.toLocaleString("en-US")} decisions · BFM override ${classes.bfmOverride.toLocaleString("en-US")} · match ${classes.match} · evaluator ${classes.initialEvaluatorOrdering} · omission ${classes.generatorOmission} · operational ${classes.operationalFailure} · equivalent ${classes.boundaryEquivalent} · tactical ${classes.tacticalMiss}`),
+      );
+    }
+    const historicalLiveStatus = doc.getElementById("historicalLiveStatus");
+    if (historicalLiveStatus) {
+      historicalLiveStatus.className = `status-pill ${statusClass(ledger.historicalLive.status)}`;
+      historicalLiveStatus.textContent = statusLabel(ledger.historicalLive.status);
+    }
+    const historicalLiveDetails = doc.getElementById("historicalLiveDetails");
+    if (historicalLiveDetails) {
+      const historical = ledger.historicalLive;
+      historicalLiveDetails.replaceChildren(
+        definition(doc, "Arena identity", `agent ${historical.agentId} · submission ${historical.submissionId} · history ${historical.historyVersion}`),
+        definition(doc, "Placement", `rank ${historical.rank} · score ${historical.score.toFixed(2)}`),
+        definition(doc, "Raw result", `${historical.raw.wins}–${historical.raw.losses} / ${historical.raw.games}`),
+        definition(doc, "Clean result", `${historical.clean.wins}–${historical.clean.losses} / ${historical.clean.games}`),
+        definition(doc, "Opponent forfeits", `${historical.opponentForfeits.total} · ${historical.opponentForfeits.illegalAction} illegal action · ${historical.opponentForfeits.timeout} timeout`),
+        definition(doc, "Archive manifest", historical.evidence.manifestSha256),
       );
     }
     const readme = doc.getElementById("readmeLink");
