@@ -866,6 +866,93 @@ the diagnostic root recorded a deadline. The first-decision slice contained
 the cap. The five diagnostic operational rows are fixed-work classifications,
 not live candidate failures, and do not contradict the manifest's zero.
 
+## 2.5-hour first-decision work-cap campaign
+
+Commit `b7b8a41e8f9512008da0c5442b6b401dc89479fd` added an
+evidence-bound phase profile to the same-runtime search gate. A split profile
+binds its opening and later tree caps, opening own-decision count, and separate
+opening/later decision, deadline, tree-cap, time, and maximum-tree telemetry.
+The phase gate uses report schema v3; the legacy global-cap CLI remains
+supported and the earlier global experiment remains a v2 report. Own-decision
+ordinals include the procedural prefix and advance only after applying a
+complete legal action.
+
+All comparisons used the exact history-62 runtime, constant deployment shuffle
+seed, balanced colors, `C=0.95`, `FPU=0.5`, the production final rule, and
+800/155 ms clocks. The 53-pair gates used opening seed `2026081303` and depths
+`0,4,8,12`:
+
+| Candidate schedule | Candidate-reference | Colors | Decision | Report / stdout SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| Global 20k | 52-54 | 26 / 26 | reject: below 58 total | `ce0742c581c668d1ef896dd60a176419f58423b4b2d10e131936052c8a907fbe` / `c9ce3110f5601c2e30da3a6b7f64810a7bf53f1818837afec0e66d4bd674f308` |
+| First four own decisions 20k, then 80k | 50-56 | 28 / 22 | reject: total and color floors | `04dd63b485774cfa14e84072b6a79ce1deb0c03e0a990728291d714910e8caf3` / `1c9af275d3df029ac41f1c6449185216a73a32190ded613c50783aa89a49bd1a` |
+| First own decision 20k, then 80k | 67-39 | 34 / 33 | pass | `e8e2c4d2212a067651f2db0a72083534e6cccbefad8dffa3e29ce2ca16c73af8` / `e5ed4a6c92338f96f493a771fa3e3412ed661c56f2b65f9351993e1c6f95af3e` |
+| First-decision depth-0 replication, 32 games | 29-3 | 13 / 16 | pass | `86ce7d9ccd1c2d0c6c33c67851c1f45a7ba0ad53c3d626430d7dd4e34c099a9c` / `8c533a23062f659f7c299184ffdc712fbe9152b9a881e8bfa9506e8eda84ea97` |
+
+Global 20k had five deadline searches versus 2,065 for the baseline and
+first/later maxima of 119.027/157.771 ms versus 464.825/167.546 ms. The
+first-four candidate had 2,002 deadlines versus 2,144 and maxima of
+118.411/161.274 ms versus 473.559/161.283 ms. The passing first-decision
+candidate had 2,274 deadlines versus 2,279 and maxima of 117.899/162.761 ms
+versus 465.300/164.118 ms. Its seed-`2026081304` depth-0 replication passed
+29-3 with maxima of 117.513/160.899 ms versus 469.189/162.025 ms. Every gate
+had zero unfinished games, headroom failures, and operational timeouts.
+
+The two isolated first-decision passes advanced a source changing only the
+first own decision from 80,000 to 20,000 tree nodes. Commit
+`b7b8a41e8f9512008da0c5442b6b401dc89479fd` produced the exact
+94,942-character source SHA-256
+`10a00c74e65866e84be3086427b6b14c6b9fb1b50be8451bb382d12cec36bf10`,
+uploaded as agent `6612628`, submission `41128698`, history 67.
+
+All 90 matching-submission games completed and were fully accounted for. The
+candidate had zero operational failures and scored 62-28 raw, colors 34-11 and
+28-17, at frozen rank 9 and score 40.05. Ten wins were opponent forfeits: six
+illegal actions and four timeouts. The 80 clean rule-terminal games scored
+52-28, colors 29-11 and 23-17. Clean cohorts were 3-11 against the top 5,
+11-17 against the top 10, and 32-20 against the top 20. Named clean results
+were jacek 0-2, Marchete 1-4, Deltaspace 1-1, Laars 1-3, and Snekkers 0-1.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6612628/41128698/10a00c74e65866e84be3086427b6b14c6b9fb1b50be8451bb382d12cec36bf10/a3dbbb8a9fcd4f11f584fe80ea109b7a19335c6b6ea1748824eb4d655524003d.json` | `a3dbbb8a9fcd4f11f584fe80ea109b7a19335c6b6ea1748824eb4d655524003d` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/clean-auditor.tsv` | `7434010bf57293b831a81f395399503df2eed2ba07a38c72665d7b8a6d52ebc3` |
+| Fixed-30k decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-decisions-fixed30k.jsonl` | `154acf50fd0e613ec9c0f18235b0c2787c0f3fa1526f15d116e6cee2ebd77727` |
+| Fixed-30k summary | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-decisions-fixed30k-summary.json` | `37cb7d27cf5610fc0d8be73fb8aeb0f523aab57ebc47c68f5304c510849bf25e` |
+| First-decision fixed-20k audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-fixed20000.jsonl` | `33e0d90fefbdb381424b102032ac73500ebd6530896ae8053c44bb8bedc6a6a2` |
+| First-decision fixed-80k audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-fixed80000.jsonl` | `fe7e1e51e26dc7a8cc00e2f2af4abb722741fc60e7fc033ef2df25163b2f14e7` |
+| First-decision comparison | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-20k-vs80k-summary.json` | `8c8410fb173959395ee7a6465a2df107383a5675d54538e507d2d0b7e763681b` |
+
+The fixed-30k audit covers 2,011 decisions: 1,109 `bfm-override`, 803
+`match`, 91 `initial-evaluator-ordering`, six `generator-omission`, and two
+diagnostic `operational-failure`; `tactical-miss` is zero. Actual-boundary
+retention is 99.453%, the tree-cap rate is 91.596%, and neither search nor the
+diagnostic root recorded a deadline.
+
+The fixed-20k/fixed-80k first-decision comparison aligned all 80 clean games
+and changed 49 actions. Live actions matched fixed 20k only 31 times, versus 56
+for fixed 80k. Player 0 repeats one identical initial state 40 times: history
+67 played `0` 34 times, `7` five times, and `1` once, while fixed 20k always
+chose `7` and fixed 80k always chose `0`. Their match counts are 5 and 34.
+Player-1 replies favored fixed 20k by 26-22 but did not repair the Player-0
+contradiction.
+
+The experiment failed its proposed stabilization mechanism and the live rank
+test. The evidence cannot distinguish production clock/compiler/environment
+divergence from an asserted source that was not the arena source, because the
+collector binding is explicitly `asserted-not-api-verified`. This attribution
+gap is now a root weakness. The next useful enabler is API-independent
+deployed-source attestation or deterministic work telemetry in production, not
+further cap fishing.
+
+History 67 is rejected. Commit
+`a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
+history-62 schedule and regenerated the 94,771-character source SHA-256
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`.
+It was launched as agent `6612745`, submission `41128812`, history 68. Its
+90-game window was still running at this ledger cutoff, so no result is
+claimed.
+
 ## Results ledger
 
 | Evaluation | Candidate | Reference | Candidate colors | Unfinished / headroom / operational | Clock |
@@ -899,6 +986,10 @@ not live candidate failures, and do not contradict the manifest's zero.
 | Search `FPU=0.25` | 57 | 71 | 40 / 17 | 0 / 0 / 0 | 50/10 ms |
 | Search `FPU=0.75` screen | 87 | 41 | 41 / 46 | 0 / 0 / 0 | 50/10 ms |
 | Search `FPU=0.75` decisive | 55 | 51 | 37 / 18 | 0 / 0 / 0; total/color failed | 800/155 ms |
+| Search global 20k vs 80k | 52 | 54 | 26 / 26 | 0 / 0 / 0; total failed | 800/155 ms |
+| Search first-four 20k then 80k | 50 | 56 | 28 / 22 | 0 / 0 / 0; total/color failed | 800/155 ms |
+| Search first-decision 20k then 80k | 67 | 39 | 34 / 33 | 0 / 0 / 0; pass | 800/155 ms |
+| Search first-decision depth-0 replication | 29 | 3 | 13 / 16 | 0 / 0 / 0; pass | 800/155 ms |
 | External final parity | not run | not run | not run | stopped | 424-game design |
 | Historical history-61 live batch, raw | 52 | 38 | 29 / 23 | our operational 0 | CodinGame 90 games |
 | Historical history-61 live batch, clean | 41 | 38 | 21 / 20 | 11 opponent forfeits removed | CodinGame 79 games |
@@ -910,8 +1001,10 @@ not live candidate failures, and do not contradict the manifest's zero.
 | History-64 exact rollback, clean | 53 | 26 | 26 / 27 | 11 opponent forfeits removed | CodinGame 79 games |
 | Rejected history-65 `C=0.80`, raw | 55 | 35 | 26 / 29 | our operational 0 | CodinGame 90 games |
 | Rejected history-65 `C=0.80`, clean | 46 | 35 | 24 / 22 | 9 opponent forfeits removed | CodinGame 81 games |
-| Current history-66 exact rollback, raw | 60 | 30 | 34 / 26 | our operational 0 | CodinGame 90 games |
-| Current history-66 exact rollback, clean | 52 | 30 | 29 / 23 | 8 opponent forfeits removed | CodinGame 82 games |
+| History-66 exact rollback, raw | 60 | 30 | 34 / 26 | our operational 0 | CodinGame 90 games |
+| History-66 exact rollback, clean | 52 | 30 | 29 / 23 | 8 opponent forfeits removed | CodinGame 82 games |
+| Rejected history-67 first-decision 20k, raw | 62 | 28 | 34 / 28 | our operational 0 | CodinGame 90 games |
+| Rejected history-67 first-decision 20k, clean | 52 | 28 | 29 / 23 | 10 opponent forfeits removed | CodinGame 80 games |
 
 The bootstrap passed both comparisons with its untrained ancestor, but its
 historical 800/165 ms source lost decisively to the external Rank 4 reference
@@ -925,11 +1018,18 @@ Round three passed its local checkpoint gate but regressed from rank 5 to rank
 search alternatives failed their frozen total or color gates. `C=0.80` passed
 its decisive local gate but then regressed to rank 9, 6-14 against the clean
 top-five cohort, and 0-6 against jacek; its paired replay audit changed 615 of
-1,986 actions. It is rejected. All completed history-62/63/64/65/66 batches
-are development-contaminated and none establishes Rank 4 parity, particularly
-given their combined 0-29 clean record against jacek. Revert commit
-`07317cebf680eb4394ca424801ebb0cfb644002a` restored the exact
-history-62 source; it completed history 66 at rank 6, 60-30 raw and 52-30
-clean, with zero candidate operational failures. This is the final deployed
-state. The historical history-62 batch remains the best recorded rank at 5.
+1,986 actions. It is rejected. The first-decision 20k schedule also passed its
+isolated gate and replication, but history 67 regressed to rank 9, 3-11
+against the clean top-five cohort, and 0-2 against jacek. On the repeated
+Player-0 initial state, its live action matched fixed 80k in 34/40 games and
+fixed 20k in only 5/40, contradicting the proposed mechanism. It is rejected.
+All completed history-62/63/64/65/66/67 batches are
+development-contaminated and none establishes Rank 4 parity, particularly
+given their combined 0-31 clean record against jacek. Commit
+`a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
+94,771-character history-62 source SHA-256
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
+and launched it as agent `6612745`, submission `41128812`, history 68. Its
+90-game window was still running at this ledger cutoff, so no result is
+claimed. The historical history-62 batch remains the best recorded rank at 5.
 The rank-1 target was not met.

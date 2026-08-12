@@ -10,20 +10,19 @@ The checkpoint, training, clock, verification, and live-gate ledger is retained
 in this README and the adjacent [experiment log](EXPERIMENTS.md).
 The strongest completed live result remains the round-two seed-`20260822`
 history-62 checkpoint: 63-27 raw, 44-27 after removing opponent forfeits, rank
-5, and zero candidate operational failures. Round-three history 63 regressed to
-rank 6 and was rejected; exact history-62 rollback history 64 also completed at
-rank 6. A final isolated `C=0.80` search candidate passed its 800/155 ms local
-gate and was uploaded as history 65, but its complete batch fell to rank 9 at
-55-35 raw and 46-35 clean. Paired fixed-work replay analysis showed that the
-constant changed 615/1,986 choices without improving the live result, so it was
-rejected. Commit `07317cebf680eb4394ca424801ebb0cfb644002a` restored the exact
-history-62 source, which was copied back byte-for-byte and uploaded as history
-66. That final rollback completed 90 games at 60-30 raw and 52-30 clean, rank
-6, with zero candidate operational failures. History 66 is the current remote
-source; history 62 remains the strongest completed result under the campaign
-ordering because it reached rank 5. None of these live batches is a strength,
-superiority, or Rank 4 parity claim. The prior history-61 round-one upload
-remains frozen below as an explicit historical baseline.
+5, and zero candidate operational failures. Histories 63 and 65 tested a new
+model and `C=0.80`; both were rejected after complete windows. Exact
+history-62 rollback history 66 completed at rank 6. A later first-decision
+20,000-node hypothesis passed two isolated local gates, but history 67 fell to
+rank 9 at 62-28 raw and 52-28 clean. Its live opening behavior also failed to
+reproduce its deterministic fixed-20k prediction, so the hypothesis was
+rejected. Commit `a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
+94,771-character history-62 source and launched it as history 68. That new
+rollback window is not yet reported as complete. History 62 therefore remains
+the strongest completed result under the campaign ordering. None of these live
+batches is a strength, superiority, or Rank 4 parity claim. The prior
+history-61 round-one upload remains frozen below as an explicit historical
+baseline.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -831,6 +830,78 @@ median 3, and was top-five in 81/82, with every first decision tree-capped. The
 five diagnostic operational rows do not contradict the manifest's zero live
 candidate failures.
 
-The campaign therefore terminates with `C=0.80` rejected and the exact
+The eight-hour campaign therefore terminated with `C=0.80` rejected and the exact
 history-62 source deployed as history 66 at rank 6. The historical history-62
 batch remains the best recorded rank at 5; rank 1 was not reached.
+
+### Rejected first-decision 20k history-67 diagnostic and history-68 rollback
+
+Commit `b7b8a41e8f9512008da0c5442b6b401dc89479fd` added a phase-aware
+same-runtime gate and a production schedule that could use a separate tree cap
+for the first own decisions. The gate binds opening and later caps, the number
+of opening own decisions, and opening/later decision, deadline, tree-cap, time,
+and maximum-tree telemetry. The legacy global tree-cap interface remains
+supported.
+
+Four exact-history-62 actual-clock comparisons isolated the hypothesis. All
+used 800/155 ms clocks, balanced colors, constant deployment shuffling,
+`C=0.95`, `FPU=0.5`, and the production final rule:
+
+| Gate | Candidate-reference | Colors | Result | Report / stdout SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| Global 20k versus global 80k, 106 games | 52-54 | 26 / 26 | reject: 58-win total floor | `ce0742c581c668d1ef896dd60a176419f58423b4b2d10e131936052c8a907fbe` / `c9ce3110f5601c2e30da3a6b7f64810a7bf53f1818837afec0e66d4bd674f308` |
+| First four own decisions 20k, then 80k, 106 games | 50-56 | 28 / 22 | reject: total and color floors | `04dd63b485774cfa14e84072b6a79ce1deb0c03e0a990728291d714910e8caf3` / `1c9af275d3df029ac41f1c6449185216a73a32190ded613c50783aa89a49bd1a` |
+| First own decision 20k, then 80k, 106 games | 67-39 | 34 / 33 | pass | `e8e2c4d2212a067651f2db0a72083534e6cccbefad8dffa3e29ce2ca16c73af8` / `e5ed4a6c92338f96f493a771fa3e3412ed661c56f2b65f9351993e1c6f95af3e` |
+| First-decision depth-0 replication, 32 games | 29-3 | 13 / 16 | pass | `86ce7d9ccd1c2d0c6c33c67851c1f45a7ba0ad53c3d626430d7dd4e34c099a9c` / `8c533a23062f659f7c299184ffdc712fbe9152b9a881e8bfa9506e8eda84ea97` |
+
+The isolated first-decision result and its depth-0 replication justified an
+experimental upload despite the rejected broader schedules. The exact
+94,942-character source SHA-256
+`10a00c74e65866e84be3086427b6b14c6b9fb1b50be8451bb382d12cec36bf10`
+was uploaded as agent `6612628`, submission `41128698`, history 67. All 90
+matching-submission games completed with zero candidate operational failures.
+It scored 62-28 raw, colors 34-11 and 28-17, at frozen rank 9 and score 40.05.
+Ten wins were opponent forfeits: six illegal actions and four timeouts. The 80
+clean rule-terminal games scored 52-28, colors 29-11 and 23-17. Clean cohorts
+were 3-11 against the top 5, 11-17 against the top 10, and 32-20 against the
+top 20. Named clean results were jacek 0-2, Marchete 1-4, Deltaspace 1-1,
+Laars 1-3, and Snekkers 0-1.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6612628/41128698/10a00c74e65866e84be3086427b6b14c6b9fb1b50be8451bb382d12cec36bf10/a3dbbb8a9fcd4f11f584fe80ea109b7a19335c6b6ea1748824eb4d655524003d.json` | `a3dbbb8a9fcd4f11f584fe80ea109b7a19335c6b6ea1748824eb4d655524003d` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/clean-auditor.tsv` | `7434010bf57293b831a81f395399503df2eed2ba07a38c72665d7b8a6d52ebc3` |
+| Fixed-30k decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-decisions-fixed30k.jsonl` | `154acf50fd0e613ec9c0f18235b0c2787c0f3fa1526f15d116e6cee2ebd77727` |
+| Fixed-30k summary | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-decisions-fixed30k-summary.json` | `37cb7d27cf5610fc0d8be73fb8aeb0f523aab57ebc47c68f5304c510849bf25e` |
+| First-decision fixed-20k audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-fixed20000.jsonl` | `33e0d90fefbdb381424b102032ac73500ebd6530896ae8053c44bb8bedc6a6a2` |
+| First-decision fixed-80k audit | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-fixed80000.jsonl` | `fe7e1e51e26dc7a8cc00e2f2af4abb722741fc60e7fc033ef2df25163b2f14e7` |
+| First-decision 20k-versus-80k summary | `results/codingame_arena_diagnostics/runs/jacek-native-first1-41128698-20260812/native-first1-20k-vs80k-summary.json` | `8c8410fb173959395ee7a6465a2df107383a5675d54538e507d2d0b7e763681b` |
+
+The valid fixed-30k audit covers 2,011 decisions: 1,109 `bfm-override`, 803
+`match`, 91 `initial-evaluator-ordering`, six `generator-omission`, and two
+diagnostic `operational-failure`; `tactical-miss` is zero. Actual-boundary
+retention is 99.453%, the tree-cap rate is 91.596%, and neither search nor the
+diagnostic root recorded a deadline.
+
+The first-decision counterfactual aligned all 80 clean games and changed 49
+choices. Live actions matched fixed 20k on 31/80 decisions and fixed 80k on
+56/80. Player 0 repeated one identical initial state 40 times: history 67
+played `0` 34 times, `7` five times, and `1` once, although fixed 20k always
+selected `7` and fixed 80k always selected `0`. Those choices match only 5/40
+for fixed 20k and 34/40 for fixed 80k. Player-1 replies instead matched fixed
+20k 26 times and fixed 80k 22 times.
+
+This disproves the intended stabilization mechanism. The evidence cannot
+distinguish production clock/compiler/environment divergence from an asserted
+source that was not the arena source, because the collector binding is
+explicitly `asserted-not-api-verified`. The next foundational enabler is
+API-independent deployed-source attestation or deterministic work telemetry in
+production, not another round of cap fishing. History 67 is rejected on its
+rank, clean elite result, and failed mechanism check.
+
+Commit `a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
+history-62 schedule and regenerated the 94,771-character source SHA-256
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`.
+It was launched as agent `6612745`, submission `41128812`, history 68. This is
+the current remote rollback, but its arena window was still running when this
+ledger entry was frozen; no result is claimed. Rank 1 was not reached.
