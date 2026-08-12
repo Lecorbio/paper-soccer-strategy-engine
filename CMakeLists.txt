@@ -832,11 +832,6 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_benchmark_ui_test.mjs
     )
     add_test(
-      NAME papersoccer_web_jacek_native_status_tests
-      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
-              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_jacek_native_status_test.mjs
-    )
-    add_test(
       NAME papersoccer_web_replay_setup_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_replay_setup_test.mjs

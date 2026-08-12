@@ -6,9 +6,8 @@ function. It is intentionally independent of every incumbent bot, replay table,
 and historical action label in this repository. The established `rank_4` bot is
 used only as an external opponent in `comparison_gate.cpp`.
 
-The public-safe checkpoint, training, clock, verification, and live-gate ledger
-is published on the [native bot research status
-page](https://lecorbio.github.io/paper-soccer-strategy-engine/jacek-native/).
+The checkpoint, training, clock, verification, and live-gate ledger is retained
+in this README and the adjacent [experiment log](EXPERIMENTS.md).
 The round-two checkpoint is a reproducible research candidate. Seed `20260822`
 passed the previous-native-champion gates, was activated from an immutable
 deployment descriptor, and completed an exact-source 90-game CodinGame
