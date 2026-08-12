@@ -837,13 +837,26 @@ class JacekNativeHistoricalActiveCompatibilityTest(unittest.TestCase):
                     repository_root=ROOT,
                 )
 
-    def test_exact_predecessor_descriptor_remains_valid_but_unknown_hash_fails(self):
+    def test_exact_predecessor_activation_hash_is_admitted_but_unknown_hash_fails(self):
         deployment = (
             ROOT
             / "models/jacek_native_round3_rank1_2026083111_deployment.json"
         )
-        validated = activation.load_deployment(deployment, ROOT)
-        self.assertEqual(validated["selected"]["seed"], 20260832)
+        # The archived round-three gate correctly becomes stale when bot.cpp's
+        # search constants change.  Isolate this test to the predecessor-tool
+        # compatibility boundary instead of bypassing that deeper provenance
+        # check or pretending the old gate was executed by the current bot.
+        with mock.patch.object(
+            activation,
+            "_validate_file_identity",
+            side_effect=activation.ActivationError(
+                "past activation-tool compatibility check"
+            ),
+        ), self.assertRaisesRegex(
+            activation.ActivationError,
+            "past activation-tool compatibility check",
+        ):
+            activation.load_deployment(deployment, ROOT)
         descriptor = json.loads(deployment.read_text())
         descriptor["activation_tool_sha256"] = "0" * 64
         with tempfile.TemporaryDirectory(dir=ROOT / "build") as temporary:
