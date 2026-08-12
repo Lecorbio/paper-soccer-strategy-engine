@@ -174,8 +174,6 @@ void constants_freeze_the_direct_contract() {
   static_assert(candidate::kProductionPartialPaths == 4'000);
   static_assert(candidate::kNonrootPartialPaths == 512);
   static_assert(candidate::kProductionTreeNodes == 80'000);
-  static_assert(candidate::production_tree_nodes(0) == 20'000);
-  static_assert(candidate::production_tree_nodes(1) == 80'000);
   static_assert(candidate::kFifoPeriod == 10);
   static_assert(candidate::kLifoExtractionsPerPeriod == 9);
   static_assert(candidate::kFeatureInputs == 1156);

@@ -79,10 +79,9 @@ ps::GameState later_response_state(ps::Player player) {
   throw std::logic_error("could not construct a nonterminal later state");
 }
 
-double timed_choice(ps::GameState &state, std::size_t own_decision) {
+double timed_choice(ps::GameState &state, std::uint32_t budget_ms) {
   const auto start = std::chrono::steady_clock::now();
-  const std::string action =
-      candidate::choose_complete_turn(state, own_decision);
+  const std::string action = candidate::choose_complete_turn(state, budget_ms);
   const auto finish = std::chrono::steady_clock::now();
   if (action.empty()) {
     throw std::logic_error("timing probe produced an empty action");
@@ -102,9 +101,9 @@ int main(int argc, char **argv) {
   const ps::Player player =
       player_id == 0 ? ps::Player::One : ps::Player::Two;
   ps::GameState first_state = first_response_state(player);
-  const double first = timed_choice(first_state, 0);
+  const double first = timed_choice(first_state, candidate::kFirstSearchTimeMs);
   ps::GameState later_state = later_response_state(player);
-  const double later = timed_choice(later_state, 1);
+  const double later = timed_choice(later_state, candidate::kLaterSearchTimeMs);
   std::cout << "player=" << player_id << " first_ms=" << first
             << " later_ms=" << later << '\n';
   return first < kFirstSafetyCeilingMs && later < kLaterSafetyCeilingMs ? 0 : 1;

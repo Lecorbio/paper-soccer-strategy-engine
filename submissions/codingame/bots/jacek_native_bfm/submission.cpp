@@ -1113,10 +1113,6 @@ static_assert(jacek_native_model::kInputs == kFeatureCount);
 static_assert(jacek_native_model::kHiddenOne == kHiddenOne);
 static_assert(jacek_native_model::kHiddenTwo == kHiddenTwo);
 
-constexpr std::size_t production_tree_nodes(std::size_t own_decision) noexcept {
-return own_decision == 0 ? 20'000 : kProductionTreeNodes;
-}
-
 inline constexpr std::array<Point, 8> kDirectionDeltas{{
 {0, -1}, {1, -1}, {1, 0}, {1, 1},
 {0, 1},  {-1, 1}, {-1, 0}, {-1, -1},
@@ -2566,11 +2562,10 @@ state = std::move(next);
 }
 
 std::string choose_complete_turn(GameState &state,
-std::size_t own_decision) {
+std::uint32_t search_time_ms) {
 SearchConfig config;
-config.max_tree_nodes = production_tree_nodes(own_decision);
-config.absolute_deadline = SearchClock::now() + std::chrono::milliseconds(
-own_decision == 0 ? kFirstSearchTimeMs : kLaterSearchTimeMs);
+config.absolute_deadline =
+SearchClock::now() + std::chrono::milliseconds(search_time_ms);
 SearchResult result = choose_complete_turn(
 static_cast<const GameState &>(state), config);
 apply_encoded_turn(state, result.encoded);
@@ -2600,7 +2595,7 @@ RulesConfig rules;
 rules.goal_rule = kProductionGoalRule;
 rules.blocked_rule = kProductionBlockedRule;
 GameState state = make_initial_state(rules);
-std::size_t own_decision{};
+bool first_execution = true;
 while (true) {
 int opponent_length = 0;
 if (!(std::cin >> opponent_length)) break;
@@ -2613,15 +2608,17 @@ return 1;
 }
 try {
 if (opponent_move == "-") {
-if (player_id != 0 || own_decision != 0) return 1;
+if (player_id != 0 || !first_execution) return 1;
 } else {
 apply_encoded_turn(state, opponent_move);
 }
 if (is_terminal(state)) return 0;
 if (state.to_move != me) return 1;
-const std::string action = choose_complete_turn(state, own_decision);
-if (!(std::cout << action << std::endl)) return 1;
-++own_decision;
+const std::uint32_t budget =
+first_execution ? kFirstSearchTimeMs : kLaterSearchTimeMs;
+const std::string action = choose_complete_turn(state, budget);
+std::cout << action << std::endl;
+first_execution = false;
 } catch (const std::exception &) {
 return 1;
 }
