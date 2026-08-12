@@ -8,15 +8,17 @@ used only as an external opponent in `comparison_gate.cpp`.
 
 The checkpoint, training, clock, verification, and live-gate ledger is retained
 in this README and the adjacent [experiment log](EXPERIMENTS.md).
-The round-two checkpoint is a reproducible research candidate. Seed `20260822`
-passed the previous-native-champion gates, was activated from an immutable
-deployment descriptor, and completed an exact-source 90-game CodinGame
-diagnostic as history version `62`. The raw result was 63-27 and the
-forfeit-clean result was 44-27, with zero candidate operational failures. It
-finished 0-9 in clean games against jacek. Rank 5 and the aggregate clean score
-are exploratory evidence, not a strength, promotion, superiority, or Rank 4
-parity claim. The prior history-61 round-one upload remains frozen below as an
-explicit historical baseline.
+The strongest completed live result remains the round-two seed-`20260822`
+history-62 checkpoint: 63-27 raw, 44-27 after removing opponent forfeits, rank
+5, and zero candidate operational failures. A cumulative round-three candidate
+was subsequently selected and uploaded as history 63. It completed 90 games at
+59-31 raw and 55-31 clean, but fell to rank 6 and regressed from 11-14 to 7-16
+against the clean top-five cohort. It was therefore rejected. The exact
+history-62 model and production search profile have been reactivated locally;
+at the time of this ledger update that rollback has not yet been re-uploaded,
+so history 63 remains the last completed remote source. Neither live batch is a
+strength, superiority, or Rank 4 parity claim. The prior history-61 round-one
+upload remains frozen below as an explicit historical baseline.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -219,6 +221,63 @@ exclusion-registry SHA-256
 and the historical asserted source identity. That lineage discloses the live
 origin without converting an observed action into a policy or value label.
 
+## Round-three campaign candidate and local rollback
+
+Round three retained the native architecture and trained on 26,402 cumulative
+games: the archived 10,000-game round-one corpus, 12,000 existing native league
+games, 4,000 new balanced native league games, 238 history-61 restart
+continuations, and 164 history-62 restart continuations. The corpus SHA-256 is
+`f58768b6090eb60968334310bd4ea7e62d9977b7a8318ba382803bdcbc1d3130`.
+Its whole-game split contains 21,111/2,645/2,646
+train/validation/test games and 2,030,276/231,690/228,884 retained samples after
+0/25,003/26,579 canonical overlap removals. Training used seeds
+`20260831,20260832,20260833`, phase weights `3.0/1.5/1.0` for turns
+`0-11/12-23/24+`, and applied the weights to the combined target after exact
+outcome override while retaining the 25% stable-reanalysis auxiliary term.
+
+| Artifact | Round-three identity |
+| --- | --- |
+| Training JSON | 2,664,686 bytes; SHA-256 `a13b86accd168ae51cecf5df85092642ba8edb21d9ef944ac7c002bfa6a5d19a` |
+| Selected checkpoint | seed `20260832`; checkpoint SHA-256 `fedbab01a0f44e0612575aeee867bb846da2ec6eed7cd4383327dd67112213bd` |
+| Selection sidecar | 4,985 bytes; SHA-256 `84cc694cf390fc6a0ddc19c5e61d5770a84172c31618d9d14576365e7e16f635`; payload SHA-256 `6abb8884a7c8a8a72dd75360d0a7d8f1f0255159c8b9b6f3098a4f841b24e45c` |
+| Runtime / packed weights | SHA-256 `0aaff836c1e96b949713c2a25b88456ca1f60f4599d5ce303f4f46fcc1ed7b52`; `d8e1110caddf4bbd65a8c7e7d387c979c1a15807f29e5ab908d471e3159bab94` |
+| Deployment descriptor | 7,137 bytes; SHA-256 `a872281d7d3c458df38507578e01c3e5d663ac487a9cad3128685615b15b817a` |
+| Generated header | 21,737 characters; SHA-256 `205a5a7c8ec67fa86df768024e7c6458d29e15a6d846079ef15a31cb4ed9cb47` |
+| Uploaded history-63 source | 94,772 characters; SHA-256 `5e628e5552da4a22f6dd3c73064d8f2670d13d3e3e6f23ce3ee93bdd79fb306a` |
+
+Only seed `20260832` passed both local model gates: 562-438 at 50/10 ms
+(colors 252/310) and exactly 112-100 at 800/155 ms (56/56). Seed `20260831`
+scored 610-390 and 123-89 but failed the decisive second-color floor at 78/45;
+seed `20260833` scored 540-460 and 108-104 and failed at 75/33. All six runs
+had zero unfinished games, headroom failures, or operational timeouts. The
+complete report and stdout hashes are recorded in `EXPERIMENTS.md`.
+
+The isolated same-runtime search campaign retained the original history-62
+profile. Every row had zero unfinished games, headroom failures, and
+operational timeouts:
+
+| Candidate versus exact history-62 search | Result; colors | Clock | Decision | Report / stdout SHA-256 |
+| --- | --- | --- | --- | --- |
+| 120,000 versus 80,000 nodes | 65-63; 32/33 | 800/155 | reject: total below 70 | `8bcc269aba0e34543d7ca896a2d8846c6674decc60c39b4444a51986dc7b25c8`; `8c9c2036c44921a4ba596c7d4256f45017a75413f681f87c2d05103420a02f14` |
+| `value + log(selectionVisits + 3)` | 63-65; 38/25 | 50/10 | reject: total and color | `45dcef903263a8b07de38403b201c5d583f88e80250cb32ab679cbe052dec52a`; `bcc4157eb1820cca753d9983c14a2c0d7225d919c35359595765051d85d530b0` |
+| `C=0.65` | 73-55; 30/43 | 50/10 | reject: first-color floor 31 | `0fa284cefc82048c5135e1ce60ca9c541aa185b19fb4be40875c58b9b4d24bf7`; `1afb59cadda61ccaed4c77100ce4b920d89eebb0a5b6e5b6adb859fba8b3082c` |
+| `C=1.25` | 43-85; 24/19 | 50/10 | reject | `0e241235e32b09f3cb6617ed77b4a22eabfb0c0cb026c1ee5e2da31fde110d29`; `10a77b8ec0b426140d9095fd4eb28a014ba0f65eb04334f4af06511afed09411` |
+| `FPU=0.25` | 57-71; 40/17 | 50/10 | reject | `9c8ee163c1902db53a6b8d088049bd32bc6d9c8194bdcbf7fd79753340116732`; `8e925f4bca5680cbf4402737a3dd5c3f4190a7d30f89b77ca469830b6c9eed47` |
+| `FPU=0.75` screen | 87-41; 41/46 | 50/10 | advance | `80047c77d5b5f146ab45b247027e554723fe7667441741beb9d3fed4b8f7846b`; `aa5d798a891db547129de45f9fef092077e35ae3b78ce2e12edc867a3e850564` |
+| `FPU=0.75` decisive | 55-51; 37/18 | 800/155 | reject: total 58 and color 25 floors | `6a5d0c7a55c3a3514faa321fddc5933848232b33993ca106185d6228f679c35f`; `2dbd6553e56155be23bea562dbf20f3436ef30e6554082b6291bab398547a08c` |
+
+The completed history-63 window then rejected this local promotion. The final
+local state is the exact history-62 seed-`20260822` model with the original
+80,000-node, `C=0.95`, `FPU=0.5`, `value + log(visits)` search. Immutable v2
+reactivation descriptor SHA-256
+`31772c68cd9da04503e2fa760926ccbd825820d62d45584da3c857d2e6b26aa6`
+regenerates header SHA-256
+`3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458`
+and source SHA-256
+`653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
+exactly. This is a local rollback identity, not evidence of a new remote
+submission; it had not yet been re-uploaded when this text was written.
+
 ## Verification boundary
 
 Local fixed-work matches are diagnostic: they make regressions reproducible
@@ -251,9 +310,10 @@ production switch.
 Source-bound public live games can be diagnosed with the separate, read-only
 [replay decision auditor](REPLAY_DECISION_AUDITOR.md). Its output is diagnostic
 evidence only and never enters the candidate model or promotion holdout.
-The history-61 batch already influenced round-two development, and the current
-history-62 batch now informs the next diagnosis. Neither batch nor any derived
-fixed-work counterfactual may be reused as independent promotion evidence.
+The history-61 batch influenced round-two development, and the history-62 and
+history-63 batches informed the round-three campaign and rollback diagnosis.
+None of those batches or any derived fixed-work counterfactual may be reused as
+independent promotion evidence.
 
 The timing probe measures model construction, search construction, action
 selection, and application together. It must remain below 900 ms for a first
@@ -523,7 +583,7 @@ iteration toward evaluator/reanalysis and BFM allocation rather than broader
 action generation. This batch remains explicitly historical; it is not the
 current deployed checkpoint.
 
-### Current round-two history-62 diagnostic
+### Retained round-two history-62 diagnostic
 
 The selected seed-`20260822` source was uploaded from repository commit
 `e1ae4c7c66a03d9a2c3b82ddf79adafcb7e0c661` as agent `6609905`, submission
@@ -571,6 +631,48 @@ at 800/155 ms, with decisive colors 84/62 and zero unfinished games, headroom
 failures, or operational timeouts for either side. The checkpoint is activated
 locally through deployment descriptor SHA-256
 `88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f`.
-That exact activated checkpoint is the current history-62 live diagnostic
-described above. It remains development-contaminated as soon as it informs the
-next iteration and does not replace the unrun 424-game Rank 4 parity gate.
+That exact activated checkpoint produced the retained history-62 live
+diagnostic described above. It became development evidence as soon as it
+informed round three and does not replace the unrun 424-game Rank 4 parity
+gate.
+
+### Rejected round-three history-63 diagnostic
+
+Round-three seed `20260832` was uploaded from commit
+`cf3800e35dbb3dc870e23450c34d66484bc953a8` as agent `6611653`, submission
+`41127173`, history version `63`. Editor read-back matched the exact
+94,772-character source SHA-256
+`5e628e5552da4a22f6dd3c73064d8f2670d13d3e3e6f23ce3ee93bdd79fb306a`.
+The binding remains `asserted-not-api-verified`. Its model and packed-weight
+SHA-256 identities are respectively
+`a13b86accd168ae51cecf5df85092642ba8edb21d9ef944ac7c002bfa6a5d19a`
+and `d8e1110caddf4bbd65a8c7e7d387c979c1a15807f29e5ab908d471e3159bab94`.
+
+The full 90-game window was accounted for with zero candidate operational
+failures. It scored 59-31 raw, with colors 32-20 and 27-11, at frozen rank 6
+and score 42.09. Four wins were opponent forfeits: one illegal action and three
+timeouts. The 86 clean rule-terminal games scored 55-31, with colors 31-20 and
+24-11. Clean cohorts were 7-16 against the top 5, 23-27 against the top 10,
+and 41-31 against the top 20. Named clean results with at least three games
+were jacek 0-4, Marchete 1-3, Deltaspace 2-5, Laars 3-1, Snekkers 1-3,
+Waffle3z 5-3, EricSMSO 3-4, derjack 4-3, YurkovAS 4-1, trictrac 5-4,
+ILove47 3-0, and Spoonboy82 4-0.
+
+| Evidence | Archive path | SHA-256 |
+| --- | --- | --- |
+| Complete-batch manifest | `results/codingame_arena_diagnostics/manifests/6611653/41127173/5e628e5552da4a22f6dd3c73064d8f2670d13d3e3e6f23ce3ee93bdd79fb306a/d57434f808654b25b78999bc1a9e9d1e97754225c51327675e2172084e863620.json` | `d57434f808654b25b78999bc1a9e9d1e97754225c51327675e2172084e863620` |
+| Clean auditor TSV | `results/codingame_arena_diagnostics/runs/jacek-native-round3-41127173-20260812/clean-auditor.tsv` | `bf349361300b30063eb8e0d3f28802f3585ef9d556b227f6c75607663d80d95c` |
+| Fixed-30k decision audit | `results/codingame_arena_diagnostics/runs/jacek-native-round3-41127173-20260812/native-decisions-fixed30k.jsonl` | `201d1343037a9104ffea2a68ffc4573a056b7319272646642e946960736a5a87` |
+
+The fixed-30k audit covers 2,075 decisions: 1,094 `bfm-override`, 861
+`match`, 115 `initial-evaluator-ordering`, two `generator-omission`, and three
+diagnostic `operational-failure`; `tactical-miss` is zero and actual-boundary
+retention is 99.904%. There are no search or diagnostic-root deadline events,
+while the search reaches its 30,000-node audit cap on 91.13% of decisions,
+almost identical to history 62. The decisive regression is at the first own
+decision: the observed history-63 choice has mean/median initial evaluator rank
+5.837/7 and is top-five only 40.7% of the time, versus 3.211/3 and 94.4% for
+history 62. This, together with the worse clean top-five result, points to an
+early evaluator/search-allocation regression rather than action coverage,
+tactical classification, deadlines, or a larger tree budget. History 63 is
+rejected and remains diagnostic development evidence only.

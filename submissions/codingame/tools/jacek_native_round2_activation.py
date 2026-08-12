@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import copy
 import fcntl
 import hashlib
 import json
@@ -108,6 +109,74 @@ CANONICAL_BASELINE_RUNTIME_SHA256 = (
     "877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d"
 )
 
+# The first v2 activation tool remains valid for descriptors it already
+# created.  This is one exact predecessor, not a general stale-tool bypass.
+# Its semantics are a strict subset of this implementation and the rest of
+# every descriptor (model, selection, runtime, evidence and ancestry) is still
+# revalidated below.
+COMPATIBLE_ACTIVATION_TOOL_SHA256 = frozenset({
+    "3792d2fcc3b18ce9814949443bbf2c5941525828ffa3153c3e9c0e31c306bf6f",
+})
+
+# History 62 predates the phase-weighted round-two trainer now used by the
+# exporter.  It may be reactivated only through this complete, content-addressed
+# archive.  These identities deliberately name one model, selected seed,
+# runtime, selection, old deployment, generated header and full gate window.
+HISTORICAL_ACTIVE_MODEL_SHA256 = (
+    "b00b9d543fbc7d58fe342d5340cbdeb4e3e2d6d522938ef2b8e0aaea18193d14"
+)
+HISTORICAL_ACTIVE_MODEL = pathlib.PurePosixPath(
+    "models/jacek_native_history62_champion.json"
+)
+HISTORICAL_ACTIVE_SEED = 20260822
+HISTORICAL_ACTIVE_RUNTIME = pathlib.PurePosixPath(
+    "models/jacek_native_history62_champion.runtime"
+)
+HISTORICAL_ACTIVE_RUNTIME_SHA256 = (
+    "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3"
+)
+HISTORICAL_ACTIVE_SELECTION_SHA256 = (
+    "5597e4228850cd44aac4adc5f11e3d6533e5528e3e04c51700d2f04b2cbe2cef"
+)
+HISTORICAL_ACTIVE_SELECTION = pathlib.PurePosixPath(
+    "models/jacek_native_history62_selection.json"
+)
+HISTORICAL_ACTIVE_DEPLOYMENT = pathlib.PurePosixPath(
+    "models/jacek_native_history62_deployment.json"
+)
+HISTORICAL_ACTIVE_DEPLOYMENT_SHA256 = (
+    "88092ac6601faac0f3da31bdaa1e2a5eca15bdb762b18810d450b33ee0d6ef2f"
+)
+HISTORICAL_ACTIVE_HEADER_SHA256 = (
+    "3c1a8ef97f6dc14b9eed64679bd698939380db6fb72181d0b45d1aea74bd3458"
+)
+HISTORICAL_ACTIVE_GATE_EVIDENCE = frozenset({
+    (
+        "b44c1cec78c5c86421ea693af329662451ac9301665dd8fd3db0997721e3854a",
+        "56791ba0eaed563c9774b0b8eac3e070f27aa842320367d8f2bbc4a943b450d1",
+    ),
+    (
+        "2baee0a80f18b045357aef2686d58bacc89a1cf147e3699b1538be3e6c788ee2",
+        "8eeadd7083536d26e87d0971422767cb4d7ee025af1b1df146439acd1b1886e8",
+    ),
+    (
+        "28138eab2218e7a574dc4b7379fd19f8219a5efdbca5f107f507540f0761a98d",
+        "4e956927891e51b6380d63b10e4bcd487b7201c595c21e821cf8f490c7e34091",
+    ),
+    (
+        "41c8dc7c19f3ccacaf74de7e318fee129a4eedc7735ce5d0d2e940f2e3e9a983",
+        "bbdc5056c6aeb1d3e51362a6303b384179a758c628d5d70a9e3cf74bb25cd62c",
+    ),
+    (
+        "93ac04d0d020015d270738785b75225960d88280b4a4c62bd438d47f549db938",
+        "a23a6390b3e32e6fe858bcae6a2f524cb6635c53cc602d972de0c4e8d01a7f1d",
+    ),
+    (
+        "662122aba29156f3400c34f0b4dc4b25068c9f05b5027583f8eb8efdbfe73f19",
+        "ac5b58aca9ae8635de89489e498da52e08adb9f1010072926b763a6d7740dd67",
+    ),
+})
+
 
 class ActivationError(ValueError):
     """An immutable selection or deployment binding is invalid."""
@@ -168,6 +237,7 @@ def validate_selection(
     report_paths: Sequence[pathlib.Path],
     baseline_selection: pathlib.Path | None = None,
     baseline_deployment: pathlib.Path | None = None,
+    repository_root: pathlib.Path = ROOT,
 ) -> dict[str, Any]:
     try:
         model_raw, model = selection_tool._load_round2_model(model_path)
@@ -178,6 +248,23 @@ def validate_selection(
     sidecar_raw, sidecar = _load_canonical(selection_path, "selection sidecar")
     if not isinstance(model, Mapping) or not isinstance(sidecar, Mapping):
         raise ActivationError("model and selection roots must be objects")
+    model_sha = _sha256(model_raw)
+    if model_sha == HISTORICAL_ACTIVE_MODEL_SHA256:
+        return _validate_historical_active_selection(
+            repository_root=repository_root,
+            model_path=model_path,
+            model_raw=model_raw,
+            model=model,
+            selection_path=selection_path,
+            sidecar_raw=sidecar_raw,
+            sidecar=sidecar,
+            baseline_model=baseline_model,
+            baseline_seed=baseline_seed,
+            baseline_runtime=baseline_runtime,
+            baseline_selection=baseline_selection,
+            baseline_deployment=baseline_deployment,
+            report_paths=report_paths,
+        )
     if sidecar.get("schema") not in SELECTION_SCHEMAS:
         raise ActivationError("selection sidecar schema is not deployable")
     try:
@@ -204,7 +291,6 @@ def validate_selection(
             "selection does not match deterministic frozen gate evidence"
         )
 
-    model_sha = _sha256(model_raw)
     selected = expected["selected"]
     runtime_raw = round2_exporter.render_runtime(
         model, model_sha, selected["seed"]
@@ -220,6 +306,8 @@ def validate_selection(
         "selection": expected,
         "selection_bytes": sidecar_raw,
         "selection_sha256": _sha256(sidecar_raw),
+        "historical_active": False,
+        "historical_deployment_path": None,
     }
 
 
@@ -271,6 +359,165 @@ def _is_canonical_bootstrap_baseline(
         and _sha256(runtime_path.read_bytes())
         == CANONICAL_BASELINE_RUNTIME_SHA256
     )
+
+
+def _validate_historical_active_gate_evidence(
+    root: pathlib.Path,
+    sidecar: Mapping[str, Any],
+    report_paths: Sequence[pathlib.Path],
+) -> None:
+    reports = sidecar.get("reports")
+    if not isinstance(reports, list):
+        raise ActivationError("historical active selection has no gate evidence")
+    declared: set[tuple[str, str]] = set()
+    for report in reports:
+        if not isinstance(report, Mapping):
+            raise ActivationError("historical active gate declaration is malformed")
+        report_sha = report.get("report_sha256")
+        stdout_sha = report.get("stdout_sha256")
+        if not _valid_sha256(report_sha) or not _valid_sha256(stdout_sha):
+            raise ActivationError("historical active gate identity is malformed")
+        declared.add((report_sha, stdout_sha))
+    if (
+        declared != HISTORICAL_ACTIVE_GATE_EVIDENCE
+        or len(reports) != len(HISTORICAL_ACTIVE_GATE_EVIDENCE)
+    ):
+        raise ActivationError("historical active gate declarations are not frozen")
+
+    try:
+        canonical_reports = selection_tool._report_paths(report_paths)
+    except selection_tool.SelectionError as error:
+        raise ActivationError("historical active gate report set is invalid") from error
+    observed: set[tuple[str, str]] = set()
+    for report_path in canonical_reports:
+        report_path = _require_evidence_path(root, report_path, "gate report")
+        report_raw, report = _load_canonical(report_path, "gate report")
+        report_sha = _sha256(report_raw)
+        expected = dict(HISTORICAL_ACTIVE_GATE_EVIDENCE).get(report_sha)
+        stdout = report.get("stdout") if isinstance(report, Mapping) else None
+        stdout_name = stdout.get("path") if isinstance(stdout, Mapping) else None
+        if (
+            expected is None
+            or not isinstance(stdout_name, str)
+            or pathlib.PurePath(stdout_name).name != stdout_name
+        ):
+            raise ActivationError("historical active gate report is not frozen")
+        stdout_path = _require_evidence_path(
+            root, report_path.parent / stdout_name, "gate stdout"
+        )
+        stdout_raw = stdout_path.read_bytes()
+        if (
+            _sha256(stdout_raw) != expected
+            or stdout.get("sha256") != expected
+            or stdout.get("bytes") != len(stdout_raw)
+        ):
+            raise ActivationError("historical active gate stdout is not frozen")
+        observed.add((report_sha, expected))
+    if (
+        observed != HISTORICAL_ACTIVE_GATE_EVIDENCE
+        or len(canonical_reports) != len(HISTORICAL_ACTIVE_GATE_EVIDENCE)
+    ):
+        raise ActivationError("historical active gate evidence is incomplete")
+
+
+def _validate_historical_active_selection(
+    *,
+    repository_root: pathlib.Path,
+    model_path: pathlib.Path,
+    model_raw: bytes,
+    model: Mapping[str, Any],
+    selection_path: pathlib.Path,
+    sidecar_raw: bytes,
+    sidecar: Mapping[str, Any],
+    baseline_model: pathlib.Path,
+    baseline_seed: int,
+    baseline_runtime: pathlib.Path,
+    baseline_selection: pathlib.Path | None,
+    baseline_deployment: pathlib.Path | None,
+    report_paths: Sequence[pathlib.Path],
+) -> dict[str, Any]:
+    root = repository_root.resolve()
+    if (
+        _sha256(model_raw) != HISTORICAL_ACTIVE_MODEL_SHA256
+        or _sha256(sidecar_raw) != HISTORICAL_ACTIVE_SELECTION_SHA256
+        or _relative(root, model_path, "historical active model")
+        != HISTORICAL_ACTIVE_MODEL.as_posix()
+        or _relative(root, selection_path, "historical active selection")
+        != HISTORICAL_ACTIVE_SELECTION.as_posix()
+        or sidecar.get("schema") != selection_tool.SELECTION_SCHEMA
+    ):
+        raise ActivationError("historical active model/selection identity is stale")
+    if (
+        baseline_selection is not None
+        or baseline_deployment is not None
+        or not _is_canonical_bootstrap_baseline(
+            root, baseline_model, baseline_seed, baseline_runtime
+        )
+    ):
+        raise ActivationError(
+            "historical active model requires the frozen canonical bootstrap baseline"
+        )
+
+    runtime_path = _require_model_artifact_path(
+        root,
+        root / HISTORICAL_ACTIVE_RUNTIME,
+        "historical active runtime",
+        ".runtime",
+    )
+    deployment_path = _require_model_artifact_path(
+        root,
+        root / HISTORICAL_ACTIVE_DEPLOYMENT,
+        "historical active deployment",
+        ".json",
+    )
+    runtime_raw = runtime_path.read_bytes()
+    if (
+        _sha256(runtime_raw) != HISTORICAL_ACTIVE_RUNTIME_SHA256
+        or _sha256(deployment_path.read_bytes())
+        != HISTORICAL_ACTIVE_DEPLOYMENT_SHA256
+    ):
+        raise ActivationError("historical active archive bytes are stale")
+    try:
+        identity = selection_tool._baseline_identity(
+            model_path,
+            HISTORICAL_ACTIVE_SEED,
+            runtime_path,
+            selection_path,
+            deployment_path,
+        )
+    except (OSError, selection_tool.SelectionError) as error:
+        raise ActivationError(
+            "historical active archive is not the exact retained deployment"
+        ) from error
+    selected = sidecar.get("selected")
+    decision = sidecar.get("decision")
+    if (
+        not isinstance(selected, Mapping)
+        or selected.get("seed") != HISTORICAL_ACTIVE_SEED
+        or selected.get("checkpoint_sha256") != identity["checkpoint_sha256"]
+        or selected.get("runtime_sha256") != HISTORICAL_ACTIVE_RUNTIME_SHA256
+        or selected.get("model_sha256") != HISTORICAL_ACTIVE_MODEL_SHA256
+        or decision != {
+            "kind": "promotion",
+            "promotion_eligible": True,
+            "threshold_shortfalls": [],
+        }
+    ):
+        raise ActivationError("historical active selection contradicts its archive")
+    _validate_historical_active_gate_evidence(root, sidecar, report_paths)
+    return {
+        "decision": dict(decision),
+        "model": model,
+        "model_bytes": model_raw,
+        "model_sha256": HISTORICAL_ACTIVE_MODEL_SHA256,
+        "runtime_bytes": runtime_raw,
+        "selected": dict(selected),
+        "selection": dict(sidecar),
+        "selection_bytes": sidecar_raw,
+        "selection_sha256": HISTORICAL_ACTIVE_SELECTION_SHA256,
+        "historical_active": True,
+        "historical_deployment_path": deployment_path,
+    }
 
 
 def _require_evidence_path(
@@ -926,12 +1173,17 @@ def create_deployment(
         baseline_selection=baseline_selection,
         baseline_deployment=baseline_deployment,
         report_paths=canonical_reports,
+        repository_root=repository_root,
     )
     runtime_raw = _contained(
         repository_root, runtime_path, "selected runtime"
     ).read_bytes()
     if runtime_raw != validated["runtime_bytes"]:
         raise ActivationError("installed runtime is not the selected tested runtime")
+    if validated["historical_active"] and _relative(
+        repository_root, runtime_path, "historical active runtime"
+    ) != HISTORICAL_ACTIVE_RUNTIME.as_posix():
+        raise ActivationError("historical active runtime path is not frozen")
     normalized_pairs = [
         (
             _require_model_artifact_path(
@@ -1071,9 +1323,11 @@ def load_deployment(
         or descriptor.get("schema") != DEPLOYMENT_SCHEMA
     ):
         raise ActivationError("deployment descriptor schema is not frozen")
-    if descriptor.get("activation_tool_sha256") != _sha256(
-        pathlib.Path(__file__).read_bytes()
-    ):
+    activation_tool_sha256 = descriptor.get("activation_tool_sha256")
+    if activation_tool_sha256 not in {
+        _sha256(pathlib.Path(__file__).read_bytes()),
+        *COMPATIBLE_ACTIVATION_TOOL_SHA256,
+    }:
         raise ActivationError("deployment activation-tool SHA-256 is stale")
     if descriptor.get("selection_tool_sha256") != _sha256(
         pathlib.Path(selection_tool.__file__).read_bytes()
@@ -1199,7 +1453,12 @@ def load_deployment(
         baseline_selection=baseline_selection,
         baseline_deployment=baseline_deployment,
         report_paths=report_paths,
+        repository_root=repository_root,
     )
+    if validated["historical_active"] and _relative(
+        repository_root, resolved["runtime"], "historical active runtime"
+    ) != HISTORICAL_ACTIVE_RUNTIME.as_posix():
+        raise ActivationError("historical active runtime path is not frozen")
     if (
         descriptor.get("decision") != validated["decision"]
         or descriptor.get("selected_seed") != validated["selected"]["seed"]
@@ -1304,12 +1563,58 @@ def load_deployment(
     }
 
 
-def render_deployment(validated: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    header, metadata = round2_exporter.render(
-        validated["model"],
-        validated["model_sha256"],
-        validated["selected"]["seed"],
+def _render_historical_active_header(
+    validated: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    if (
+        validated.get("model_sha256") != HISTORICAL_ACTIVE_MODEL_SHA256
+        or validated.get("selection_sha256")
+        != HISTORICAL_ACTIVE_SELECTION_SHA256
+        or validated.get("selected", {}).get("seed") != HISTORICAL_ACTIVE_SEED
+        or validated.get("selected", {}).get("runtime_sha256")
+        != HISTORICAL_ACTIVE_RUNTIME_SHA256
+        or validated.get("runtime_bytes") is None
+        or _sha256(validated["runtime_bytes"])
+        != HISTORICAL_ACTIVE_RUNTIME_SHA256
+    ):
+        raise ActivationError("historical active render identity is stale")
+    compatible = copy.deepcopy(validated["model"])
+    provenance = compatible.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ActivationError("historical active model provenance is malformed")
+    round1 = round2_exporter.round1_exporter
+    provenance["trainer_sha256"] = _sha256(
+        pathlib.Path(round1.TRAINER).read_bytes()
     )
+    provenance["corpus_validator_sha256"] = _sha256(
+        pathlib.Path(round1.CORPUS_VALIDATOR).read_bytes()
+    )
+    try:
+        header, metadata = round1.render(
+            compatible,
+            HISTORICAL_ACTIVE_MODEL_SHA256,
+            HISTORICAL_ACTIVE_SEED,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ActivationError("historical active header cannot be rendered") from error
+    if (
+        _sha256(header.encode()) != HISTORICAL_ACTIVE_HEADER_SHA256
+        or metadata.get("packed_sha256")
+        != validated["selected"].get("packed_sha256")
+    ):
+        raise ActivationError("historical active generated header is not frozen")
+    return header, metadata
+
+
+def render_deployment(validated: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    if validated.get("historical_active") is True:
+        header, metadata = _render_historical_active_header(validated)
+    else:
+        header, metadata = round2_exporter.render(
+            validated["model"],
+            validated["model_sha256"],
+            validated["selected"]["seed"],
+        )
     return header, {
         **metadata,
         "deployment_sha256": validated["deployment_sha256"],

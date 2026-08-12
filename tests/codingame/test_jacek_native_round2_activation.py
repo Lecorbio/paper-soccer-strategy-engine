@@ -4,6 +4,7 @@ import json
 import pathlib
 import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -512,16 +513,16 @@ class JacekNativeRound2ActivationTest(unittest.TestCase):
         selection = self.directory / "models/historical-selection.json"
         deployment = self.directory / "models/historical-deployment.json"
         model.write_bytes(
-            (ROOT / "models/jacek_native_round2_candidate.json").read_bytes()
+            (ROOT / "models/jacek_native_history62_champion.json").read_bytes()
         )
         runtime.write_bytes(
-            (ROOT / "models/jacek_native_round2_selected.runtime").read_bytes()
+            (ROOT / "models/jacek_native_history62_champion.runtime").read_bytes()
         )
         selection.write_bytes(
-            (ROOT / "models/jacek_native_round2_selection.json").read_bytes()
+            (ROOT / "models/jacek_native_history62_selection.json").read_bytes()
         )
         deployment.write_bytes(
-            (ROOT / "models/jacek_native_round2_deployment.json").read_bytes()
+            (ROOT / "models/jacek_native_history62_deployment.json").read_bytes()
         )
         identity = activation._checkpoint_model_identity(
             model, runtime, selection, deployment
@@ -695,6 +696,163 @@ class JacekNativeRound2ActivationTest(unittest.TestCase):
                 self.directory,
             )
         self.assertEqual(canonical.read_bytes(), previous.read_bytes())
+
+
+class JacekNativeHistoricalActiveCompatibilityTest(unittest.TestCase):
+    REPORTS = tuple(
+        ROOT / "models/jacek_native_round2_gate_evidence" / name
+        for name in (
+            "b44c1cec78c5c86421ea693af329662451ac9301665dd8fd3db0997721e3854a.json",
+            "2baee0a80f18b045357aef2686d58bacc89a1cf147e3699b1538be3e6c788ee2.json",
+            "28138eab2218e7a574dc4b7379fd19f8219a5efdbca5f107f507540f0761a98d.json",
+            "41c8dc7c19f3ccacaf74de7e318fee129a4eedc7735ce5d0d2e940f2e3e9a983.json",
+            "93ac04d0d020015d270738785b75225960d88280b4a4c62bd438d47f549db938.json",
+            "662122aba29156f3400c34f0b4dc4b25068c9f05b5027583f8eb8efdbfe73f19.json",
+        )
+    )
+
+    def validate(self, reports=None, baseline_seed=20260813):
+        return activation.validate_selection(
+            ROOT / "models/jacek_native_history62_champion.json",
+            ROOT / "models/jacek_native_history62_selection.json",
+            baseline_model=ROOT / "models/jacek_native_bootstrap_model.json",
+            baseline_seed=baseline_seed,
+            baseline_runtime=(
+                ROOT
+                / f"models/jacek_native_bootstrap_seed_{baseline_seed}.runtime"
+            ),
+            report_paths=self.REPORTS if reports is None else reports,
+            repository_root=ROOT,
+        )
+
+    def copy_archive(self, root):
+        relatives = [
+            "models/jacek_native_history62_champion.json",
+            "models/jacek_native_history62_champion.runtime",
+            "models/jacek_native_history62_selection.json",
+            "models/jacek_native_history62_deployment.json",
+            "models/jacek_native_bootstrap_model.json",
+            "models/jacek_native_bootstrap_seed_20260811.runtime",
+            "models/jacek_native_bootstrap_seed_20260812.runtime",
+            "models/jacek_native_bootstrap_seed_20260813.runtime",
+            "models/jacek_native_untrained_seed.json",
+            "models/jacek_native_untrained_seed.runtime",
+            "tools/generate_jacek_native_seed.py",
+        ]
+        for report in self.REPORTS:
+            relative = report.relative_to(ROOT)
+            relatives.append(relative.as_posix())
+            payload = json.loads(report.read_text())
+            relatives.append((relative.parent / payload["stdout"]["path"]).as_posix())
+        for relative in relatives:
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, destination)
+
+    def test_exact_history62_archive_renders_the_frozen_header_and_runtime(self):
+        validated = self.validate()
+        validated["deployment_sha256"] = "0" * 64
+        header, metadata = activation.render_deployment(validated)
+        self.assertTrue(validated["historical_active"])
+        self.assertEqual(
+            hashlib.sha256(validated["runtime_bytes"]).hexdigest(),
+            activation.HISTORICAL_ACTIVE_RUNTIME_SHA256,
+        )
+        self.assertEqual(
+            hashlib.sha256(header.encode()).hexdigest(),
+            activation.HISTORICAL_ACTIVE_HEADER_SHA256,
+        )
+        self.assertEqual(metadata["training_seed"], 20260822)
+
+    def test_exact_archive_creates_and_reloads_one_v2_descriptor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            self.copy_archive(root)
+            reports = [root / path.relative_to(ROOT) for path in self.REPORTS]
+            model = root / "models/jacek_native_history62_champion.json"
+            bootstrap = root / "models/jacek_native_bootstrap_model.json"
+            output = root / "models/history62-reactivation-v2.json"
+            descriptor = activation.create_deployment(
+                model_path=model,
+                selection_path=root / "models/jacek_native_history62_selection.json",
+                runtime_path=root / "models/jacek_native_history62_champion.runtime",
+                baseline_model=bootstrap,
+                baseline_seed=20260813,
+                baseline_runtime=(
+                    root / "models/jacek_native_bootstrap_seed_20260813.runtime"
+                ),
+                report_paths=reports,
+                checkpoint_pairs=[
+                    (
+                        bootstrap,
+                        root / f"models/jacek_native_bootstrap_seed_{seed}.runtime",
+                    )
+                    for seed in (20260811, 20260812, 20260813)
+                ],
+                output=output,
+                repository_root=root,
+            )
+            self.assertEqual(descriptor["selected_seed"], 20260822)
+            loaded = activation.load_deployment(output, root)
+            self.assertTrue(loaded["historical_active"])
+            self.assertEqual(len(loaded["checkpoint_paths"]), 3)
+
+    def test_historical_active_path_rejects_noncanonical_baseline_and_gate_set(self):
+        with self.assertRaisesRegex(
+            activation.ActivationError, "canonical bootstrap baseline"
+        ):
+            self.validate(baseline_seed=20260812)
+        with self.assertRaisesRegex(
+            activation.ActivationError, "(report set|incomplete)"
+        ):
+            self.validate(reports=self.REPORTS[:-1])
+
+    def test_historical_active_render_rejects_runtime_identity_tamper(self):
+        validated = self.validate()
+        validated["deployment_sha256"] = "0" * 64
+        validated["runtime_bytes"] += b"x"
+        with self.assertRaisesRegex(
+            activation.ActivationError, "render identity is stale"
+        ):
+            activation.render_deployment(validated)
+
+    def test_arbitrary_legacy_model_is_not_admitted_as_historical_active(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            model = json.loads(
+                (ROOT / "models/jacek_native_history62_champion.json").read_text()
+            )
+            model["provenance"]["trainer_sha256"] = "0" * 64
+            path = pathlib.Path(temporary) / "legacy.json"
+            path.write_bytes(activation._canonical_json_bytes(model))
+            with self.assertRaises(activation.ActivationError):
+                activation.validate_selection(
+                    path,
+                    ROOT / "models/jacek_native_history62_selection.json",
+                    baseline_model=ROOT / "models/jacek_native_bootstrap_model.json",
+                    baseline_seed=20260813,
+                    baseline_runtime=(
+                        ROOT / "models/jacek_native_bootstrap_seed_20260813.runtime"
+                    ),
+                    report_paths=self.REPORTS,
+                    repository_root=ROOT,
+                )
+
+    def test_exact_predecessor_descriptor_remains_valid_but_unknown_hash_fails(self):
+        deployment = (
+            ROOT
+            / "models/jacek_native_round3_rank1_2026083111_deployment.json"
+        )
+        validated = activation.load_deployment(deployment, ROOT)
+        self.assertEqual(validated["selected"]["seed"], 20260832)
+        descriptor = json.loads(deployment.read_text())
+        descriptor["activation_tool_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as temporary:
+            tampered = pathlib.Path(temporary) / "tampered-deployment.json"
+            tampered.write_bytes(activation._canonical_json_bytes(descriptor))
+            with self.assertRaisesRegex(
+                activation.ActivationError, "activation-tool SHA-256 is stale"
+            ):
+                activation.load_deployment(tampered, ROOT)
 
 
 if __name__ == "__main__":

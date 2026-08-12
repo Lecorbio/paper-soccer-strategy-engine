@@ -467,6 +467,37 @@ def _validate_native_model_provenance(
     return model
 
 
+def _validate_historical_round2_model(model_path: pathlib.Path) -> dict:
+    raw = model_path.read_bytes()
+    model_sha256 = hashlib.sha256(raw).hexdigest()
+    historical = HISTORICAL_ROUND2_BASELINES.get(model_sha256)
+    if historical is None:
+        raise ValueError("historical active model bytes are not allowlisted")
+    model = json.loads(raw)
+    provenance = model.get("provenance")
+    if (
+        not isinstance(provenance, dict)
+        or model.get("schema") != MODEL_SCHEMA
+        or model.get("feature_schema") != FEATURE_SCHEMA
+        or provenance.get("trainer_sha256") != historical["trainer_sha256"]
+        or provenance.get("corpus_validator_sha256")
+        != historical["corpus_validator_sha256"]
+        or provenance.get("restart_corpus_validator_sha256")
+        != historical["restart_corpus_validator_sha256"]
+        or provenance.get("incumbent_labels") is not False
+        or provenance.get("protected_data") is not False
+        or model.get("target") != {
+            "primary": "mover-relative-final-outcome",
+            "auxiliary": "stable-native-bfm-reanalysis",
+            "auxiliary_weight": 0.25,
+            "policy_target": None,
+        }
+    ):
+        raise ValueError("historical active model identity is not frozen")
+    _validate_build_provenance(model, "historical active model", "round2")
+    return model
+
+
 def _validate_round2_model_metadata(
     model: dict, repository_root: pathlib.Path
 ) -> None:
@@ -1304,12 +1335,15 @@ def purity_violations(
             deployment_path, repository_root
         )
         track = "round2"
-        model = _validate_native_model_provenance(
-            activated["model_path"],
-            repository_root / "tools/train_jacek_native_round2.py",
-            repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0],
-            track,
-        )
+        if activated.get("historical_active") is True:
+            model = _validate_historical_round2_model(activated["model_path"])
+        else:
+            model = _validate_native_model_provenance(
+                activated["model_path"],
+                repository_root / "tools/train_jacek_native_round2.py",
+                repository_root / ROUND2_SEMANTIC_DEPENDENCIES[0],
+                track,
+            )
         expected_header, _ = activation.render_deployment(activated)
         header_path = bot_directory / "jacek_native_model.hpp"
         if header_path.read_text(encoding="utf-8") != expected_header:
@@ -1332,6 +1366,7 @@ def purity_violations(
             activated["baseline_runtime_path"],
             activated.get("baseline_selection_path"),
             activated.get("baseline_deployment_path"),
+            activated.get("historical_deployment_path"),
             *activated["evidence_paths"],
         ):
             if path is None:

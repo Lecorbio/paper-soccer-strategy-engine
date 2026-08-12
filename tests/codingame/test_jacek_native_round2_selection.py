@@ -382,10 +382,10 @@ class JacekNativeRound2SelectionTest(unittest.TestCase):
             )
 
     def test_historical_deployed_baseline_is_exactly_allowlisted(self):
-        historical_model = ROOT / "models/jacek_native_round2_candidate.json"
-        historical_runtime = ROOT / "models/jacek_native_round2_selected.runtime"
-        historical_selection = ROOT / "models/jacek_native_round2_selection.json"
-        historical_deployment = ROOT / "models/jacek_native_round2_deployment.json"
+        historical_model = ROOT / "models/jacek_native_history62_champion.json"
+        historical_runtime = ROOT / "models/jacek_native_history62_champion.runtime"
+        historical_selection = ROOT / "models/jacek_native_history62_selection.json"
+        historical_deployment = ROOT / "models/jacek_native_history62_deployment.json"
         identity = self.selection._baseline_identity(
             historical_model,
             20260822,

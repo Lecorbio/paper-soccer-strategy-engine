@@ -1021,5 +1021,18 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                 purity.purity_violations(bot, root)
 
 
+class JacekNativeHistoricalActivePurityTest(unittest.TestCase):
+    def test_only_the_exact_history62_model_is_accepted(self):
+        historical = ROOT / "models/jacek_native_history62_champion.json"
+        model = purity._validate_historical_round2_model(historical)
+        self.assertEqual(model["training"]["seeds"], [20260821, 20260822, 20260823])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            tampered = pathlib.Path(temporary) / "history62-tampered.json"
+            tampered.write_bytes(historical.read_bytes() + b" ")
+            with self.assertRaisesRegex(ValueError, "not allowlisted"):
+                purity._validate_historical_round2_model(tampered)
+
+
 if __name__ == "__main__":
     unittest.main()
