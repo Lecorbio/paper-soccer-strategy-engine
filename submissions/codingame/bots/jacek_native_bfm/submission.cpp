@@ -2337,6 +2337,8 @@ backup(*path);
 return make_result();
 }
 
+const SearchStats &stats() const noexcept { return stats_; }
+
 private:
 struct Node {
 SearchPosition position;
@@ -2673,15 +2675,9 @@ invalid("incomplete action");
 state = std::move(next);
 }
 
-constexpr double production_c(unsigned d) {
-return d < 12 ? .95 : .8;
-}
-
 SearchResult choose_production_turn(const GameState &state,
-std::uint32_t search_time_ms,
-double c = kExplorationConstant) {
+std::uint32_t search_time_ms) {
 SearchConfig config;
-config.exploration_constant = c;
 config.root_reply_width = kProductionRootReplyWidth;
 config.supported_advance_penalty = kProductionSupportedAdvancePenalty;
 config.absolute_deadline =
@@ -2690,9 +2686,9 @@ return choose_complete_turn(state, config);
 }
 
 void write_production_profile(std::ostream &output,
-std::uint32_t search_time_ms, double c) {
+std::uint32_t search_time_ms) {
 output << "p=" << kProductionRootReplyWidth
-<< ",sp=" << kProductionSupportedAdvancePenalty << ",c=" << c
+<< ",sp=" << kProductionSupportedAdvancePenalty
 << ",b=" << search_time_ms;
 }
 
@@ -2748,14 +2744,13 @@ if (is_terminal(state)) return 0;
 if (state.to_move != me) return 1;
 const std::uint32_t budget =
 first_execution ? kFirstSearchTimeMs : kLaterSearchTimeMs;
-const double c = production_c(own_decision);
-const SearchResult result = choose_production_turn(state, budget, c);
+const SearchResult result = choose_production_turn(state, budget);
 apply_encoded_turn(state, result.encoded);
 std::cout << result.encoded << std::endl;
 if (!std::cout) return 1;
 const SearchStats &stats = result.stats;
 std::cerr << "JNB ";
-write_production_profile(std::cerr, budget, c);
+write_production_profile(std::cerr, budget);
 std::cerr << " m=" << jacek_native_model::kModelSha256.substr(0, 8)
 << " d=" << own_decision << " a=" << result.encoded
 << " n=" << stats.tree_nodes << " dl=" << stats.deadline_reached

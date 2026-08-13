@@ -201,21 +201,12 @@ void constants_freeze_the_direct_contract() {
           "The deployed UCT constant must remain explicit.");
   require(candidate::kFirstPlayUrgency == 0.5,
           "The deployed first-play urgency must remain explicit.");
-  static_assert(candidate::production_c(11) == 0.95);
-  static_assert(candidate::production_c(12) == 0.8);
 
-  std::ostringstream opening_profile;
-  candidate::write_production_profile(
-      opening_profile, 155, candidate::production_c(11));
-  require(opening_profile.str() == "p=0,sp=0,c=0.95,b=155",
-          "Live telemetry must bind opening exploration, reply width, "
-          "supported-advance penalty, and the active clock budget.");
-  std::ostringstream later_profile;
-  candidate::write_production_profile(
-      later_profile, 155, candidate::production_c(12));
-  require(later_profile.str() == "p=0,sp=0,c=0.8,b=155",
+  std::ostringstream profile;
+  candidate::write_production_profile(profile, 155);
+  require(profile.str() == "p=0,sp=0,b=155",
           "Live telemetry must bind reply width, supported-advance penalty, "
-          "later exploration, and the active clock budget.");
+          "and the active clock budget.");
 }
 
 void uct_fpu_and_final_visit_formulas_are_literal() {
