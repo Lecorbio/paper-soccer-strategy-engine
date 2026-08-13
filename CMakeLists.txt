@@ -320,7 +320,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 rank_4 rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  alpha_beta rank_5 rank_4 rank_4_jacek_hybrid rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
   jacek_native_bfm jacek_arena_bfm
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
@@ -548,6 +548,17 @@ if(NOT EMSCRIPTEN)
       endif()
     endif()
   endforeach()
+
+  add_executable(papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    submissions/codingame/bots/rank_4_jacek_hybrid/parity_test.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_parity_test)
 
   add_executable(papersoccer_codingame_jacek_arena_bfm_generator_benchmark
     submissions/codingame/bots/jacek_arena_bfm/generator_benchmark.cpp)

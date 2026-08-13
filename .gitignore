@@ -30,6 +30,8 @@ build/
 !/results/jacek_arena_bfm/scratch/manifests/**
 !/results/jacek_arena_bfm/scratch/producers/
 !/results/jacek_arena_bfm/scratch/producers/**
+!/results/rank_4_jacek_hybrid/
+!/results/rank_4_jacek_hybrid/**
 /.venv/
 __pycache__/
 *.pyc
