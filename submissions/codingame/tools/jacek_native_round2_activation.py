@@ -109,13 +109,22 @@ CANONICAL_BASELINE_RUNTIME_SHA256 = (
     "877ee8d0afdb20cf3466bee4c09f654d33c6ac4ecc230b8022f570a31e60f93d"
 )
 
-# The first v2 activation tool remains valid for descriptors it already
-# created.  This is one exact predecessor, not a general stale-tool bypass.
-# Its semantics are a strict subset of this implementation and the rest of
+# The prior v2 activation tools remain valid for descriptors they already
+# created.  These are exact predecessors, not a general stale-tool bypass.
+# Their semantics are strict subsets of this implementation and the rest of
 # every descriptor (model, selection, runtime, evidence and ancestry) is still
 # revalidated below.
 COMPATIBLE_ACTIVATION_TOOL_SHA256 = frozenset({
     "3792d2fcc3b18ce9814949443bbf2c5941525828ffa3153c3e9c0e31c306bf6f",
+    "2dd153dad38698e698e3cc89a7cbbacfc47c6ead86ac27ba2e8da03937c110f4",
+})
+
+# The last exporter emitted the immutable history-62 and round-three
+# deployment descriptors before phase-weight profiles became explicit.  It is
+# admitted only by this exact digest; its frozen target contract is validated
+# by that archived descriptor's remaining content-addressed identities.
+COMPATIBLE_ROUND2_EXPORTER_SHA256 = frozenset({
+    "a4a24311c9d3abd839008971afc2e2d3389b84bb7365878c3e30c721573e7968",
 })
 
 # History 62 predates the phase-weighted round-two trainer now used by the
@@ -1329,11 +1338,13 @@ def load_deployment(
         *COMPATIBLE_ACTIVATION_TOOL_SHA256,
     }:
         raise ActivationError("deployment activation-tool SHA-256 is stale")
+    round2_exporter_sha256 = descriptor.get("round2_exporter_sha256")
     if descriptor.get("selection_tool_sha256") != _sha256(
         pathlib.Path(selection_tool.__file__).read_bytes()
-    ) or descriptor.get("round2_exporter_sha256") != _sha256(
-        pathlib.Path(round2_exporter.__file__).read_bytes()
-    ):
+    ) or round2_exporter_sha256 not in {
+        _sha256(pathlib.Path(round2_exporter.__file__).read_bytes()),
+        *COMPATIBLE_ROUND2_EXPORTER_SHA256,
+    }:
         raise ActivationError("deployment selector/exporter identity is stale")
 
     resolved: dict[str, pathlib.Path] = {}

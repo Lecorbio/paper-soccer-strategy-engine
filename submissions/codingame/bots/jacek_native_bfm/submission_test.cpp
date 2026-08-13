@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -169,11 +170,24 @@ std::string reflected_action(std::string action) {
   return action;
 }
 
+std::string rotated_action(std::string action) {
+  for (char &direction : action) {
+    direction = static_cast<char>('0' + (direction - '0' + 4) % 8);
+  }
+  return action;
+}
+
 void constants_freeze_the_direct_contract() {
   static_assert(candidate::kMaximumActions == 250);
   static_assert(candidate::kProductionPartialPaths == 4'000);
   static_assert(candidate::kNonrootPartialPaths == 512);
   static_assert(candidate::kProductionTreeNodes == 80'000);
+  static_assert(candidate::kProductionRootReplyWidth == 0);
+  static_assert(candidate::kProductionSupportedAdvancePenalty == 0.0);
+  static_assert(candidate::kMaximumSupportedAdvancePenalty == 0.20);
+  static_assert(candidate::kSupportedAdvanceSparseEdgeLimit == 48);
+  static_assert(candidate::kSupportedAdvanceStartProgress == 2);
+  static_assert(candidate::kSupportedAdvanceEndpointProgressThreshold == 4);
   static_assert(candidate::kFifoPeriod == 10);
   static_assert(candidate::kLifoExtractionsPerPeriod == 9);
   static_assert(candidate::kFeatureInputs == 1156);
@@ -182,10 +196,17 @@ void constants_freeze_the_direct_contract() {
   static_assert(candidate::kDistanceBuckets == 8);
   static_assert(candidate::SearchConfig{}.shuffle_seed ==
                 0x6a09e667f3bcc909ULL);
+  static_assert(candidate::SearchConfig{}.supported_advance_penalty == 0.0);
   require(candidate::kExplorationConstant == 0.95,
           "The deployed UCT constant must remain explicit.");
   require(candidate::kFirstPlayUrgency == 0.5,
           "The deployed first-play urgency must remain explicit.");
+
+  std::ostringstream profile;
+  candidate::write_production_profile(profile, 155);
+  require(profile.str() == "p=0,sp=0,b=155",
+          "Live telemetry must bind reply width, supported-advance penalty, "
+          "and the active clock budget.");
 }
 
 void uct_fpu_and_final_visit_formulas_are_literal() {
@@ -693,6 +714,120 @@ const candidate::QuantizedModel &zero_model() {
 }
 
 const candidate::RootActionStat &root_action(
+    const candidate::SearchResult &result, std::string_view encoded);
+
+ps::GameState reply_trap_with_safe_sibling() {
+  const ps::Point root{4, 6};
+  const ps::Point trap{4, 5};
+  const ps::Point reply{4, 4};
+  const ps::Point cutoff{4, 3};
+  const ps::Point safe{5, 6};
+  const ps::Point safe_reply{6, 6};
+  ps::GameState state = make_clean_state_at(root);
+  state.visit_count[cutoff] = 1;
+  block_edges_except(state, root, {trap, safe});
+  block_edges_except(state, trap, {root, reply});
+  block_edges_except(state, reply, {trap, cutoff});
+  block_edges_except(state, cutoff, {reply});
+  block_edges_except(state, safe, {root, safe_reply});
+  block_edges_except(state, safe_reply, {safe, {6, 5}, {7, 6}});
+  return state;
+}
+
+candidate::SearchConfig reply_probe_config(std::size_t width) {
+  candidate::SearchConfig config;
+  config.max_actions = 8;
+  config.max_partial_paths = 64;
+  config.max_tree_nodes = 128;
+  config.root_reply_width = width;
+  config.max_expansions = 1 + width;
+  config.shuffle_seed = 0;
+  config.model = &zero_model();
+  return config;
+}
+
+void exact_root_reply_probes_reject_only_proven_traps() {
+  const ps::GameState state = reply_trap_with_safe_sibling();
+  const candidate::SearchResult control =
+      candidate::choose_complete_turn(state, reply_probe_config(0));
+  require(control.encoded == "0" &&
+              control.stats.root_reply_probe_candidates == 0 &&
+              control.stats.root_reply_probe_attempts == 0 &&
+              control.stats.root_reply_probe_expansions == 0 &&
+              control.stats.root_reply_probe_refutations == 0 &&
+              control.stats.root_reply_probe_generator_truncations == 0 &&
+              control.stats.root_reply_probe_budget_truncations == 0,
+          "K=0 must preserve the lexical fixed-work control exactly.");
+
+  const candidate::SearchResult probed =
+      candidate::choose_complete_turn(state, reply_probe_config(2));
+  const candidate::RootActionStat &trap = root_action(probed, "0");
+  const candidate::RootActionStat &safe = root_action(probed, "2");
+  require(probed.encoded == "2" && trap.exact_reply_refuted &&
+              !safe.exact_reply_refuted,
+          "A proven opponent mate reply must be skipped for a safe sibling.");
+  require(probed.stats.root_reply_probe_candidates == 2 &&
+              probed.stats.root_reply_probe_attempts == 2 &&
+              probed.stats.root_reply_probe_expansions == 2 &&
+              probed.stats.root_reply_probe_refutations == 1 &&
+              probed.stats.root_reply_probe_generator_truncations == 0 &&
+              probed.stats.root_reply_probe_budget_truncations == 0 &&
+              trap.visits == 2 && trap.selection_visits == 1 &&
+              safe.visits == 2 && safe.selection_visits == 1,
+          "Forced probes must account for candidates, work, proofs and visits.");
+
+  const candidate::SearchResult rotated = candidate::choose_complete_turn(
+      rotated_state(state), reply_probe_config(2));
+  require(rotated.encoded == rotated_action(probed.encoded) &&
+              rotated.stats.root_reply_probe_candidates == 2 &&
+              rotated.stats.root_reply_probe_refutations == 1,
+          "Exact reply probing must rotate with player perspective.");
+}
+
+void reply_probe_budget_and_tactical_fallbacks_are_safe() {
+  const ps::GameState trap = reply_trap_with_safe_sibling();
+  candidate::SearchConfig capped = reply_probe_config(2);
+  capped.max_tree_nodes = 3;
+  capped.max_expansions = 3;
+  const candidate::SearchResult truncated =
+      candidate::choose_complete_turn(trap, capped);
+  require(!truncated.encoded.empty() &&
+              truncated.stats.root_reply_probe_candidates == 2 &&
+              truncated.stats.root_reply_probe_attempts == 0 &&
+              truncated.stats.root_reply_probe_expansions == 0 &&
+              truncated.stats.root_reply_probe_budget_truncations == 2 &&
+              truncated.stats.tree_cap_reached,
+          "Tree exhaustion must skip unattempted probes without losing action.");
+
+  candidate::SearchConfig expired = reply_probe_config(2);
+  expired.absolute_deadline = candidate::SearchClock::time_point::min();
+  const candidate::SearchResult deadline =
+      candidate::choose_complete_turn(trap, expired);
+  require(!deadline.encoded.empty() && deadline.stats.deadline_reached &&
+              deadline.stats.root_reply_probe_candidates >= 1 &&
+              deadline.stats.root_reply_probe_attempts == 0 &&
+              deadline.stats.root_reply_probe_budget_truncations ==
+                  deadline.stats.root_reply_probe_candidates,
+          "An expired deadline must retain a legal deterministic fallback.");
+
+  ps::GameState goal = make_clean_state_at({4, 1}, ps::Player::One);
+  block_edges_except(goal, goal.ball, {{4, 0}, {5, 1}});
+  const candidate::SearchResult tactical =
+      candidate::choose_complete_turn(goal, reply_probe_config(2));
+  require(tactical.encoded == "0" &&
+              !root_action(tactical, "0").exact_reply_refuted,
+          "An immediate attacking goal must survive root reply filtering.");
+
+  ps::GameState own_goal = make_clean_state_at({4, 11}, ps::Player::One);
+  block_edges_except(own_goal, own_goal.ball, {{4, 12}});
+  const candidate::SearchResult forced_loss =
+      candidate::choose_complete_turn(own_goal, reply_probe_config(2));
+  require(forced_loss.encoded == "4" &&
+              root_action(forced_loss, "4").exact_reply_refuted,
+          "When every action loses exactly, the own goal must remain legal.");
+}
+
+const candidate::RootActionStat &root_action(
     const candidate::SearchResult &result, std::string_view encoded) {
   const auto found = std::find_if(
       result.root_actions.begin(), result.root_actions.end(),
@@ -741,6 +876,82 @@ void search_uses_fpu_uct_visits_and_lexical_ties() {
           "Unequal visits must feed final value+log(visits) selection.");
 }
 
+void supported_advance_penalty_is_narrow_final_only_and_rotates() {
+  require(candidate::mover_normalized_progress({4, 4}, ps::Player::One) == 2 &&
+              candidate::mover_normalized_progress(
+                  {4, 8}, ps::Player::Two) == 2,
+          "Mover-normalized progress must rotate around midfield y=6.");
+  require(candidate::supported_advance_penalty_eligible(
+              {4, 4}, {4, 2}, ps::Player::One,
+              candidate::TacticalClass::SafeHandoff, 47, false) &&
+              candidate::supported_advance_penalty_eligible(
+                  {4, 8}, {4, 10}, ps::Player::Two,
+                  candidate::TacticalClass::SafeHandoff, 47, false),
+          "A sparse safe handoff crossing from +2 to +4 must rotate exactly.");
+  require(!candidate::supported_advance_penalty_eligible(
+              {4, 4}, {4, 2}, ps::Player::One,
+              candidate::TacticalClass::SafeHandoff, 48, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 3}, {4, 2}, ps::Player::One,
+                  candidate::TacticalClass::SafeHandoff, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 4}, {4, 3}, ps::Player::One,
+                  candidate::TacticalClass::SafeHandoff, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 6}, {4, 2}, ps::Player::One,
+                  candidate::TacticalClass::SafeHandoff, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 4}, {4, 5}, ps::Player::One,
+                  candidate::TacticalClass::SafeHandoff, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 4}, {4, 2}, ps::Player::One,
+                  candidate::TacticalClass::ImmediateGoal, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 4}, {4, 2}, ps::Player::One,
+                  candidate::TacticalClass::ForcedCutoff, 12, false) &&
+              !candidate::supported_advance_penalty_eligible(
+                  {4, 4}, {4, 2}, ps::Player::One,
+                  candidate::TacticalClass::SafeHandoff, 12, true),
+          "Dense roots, shallow +3 advances, deep-origin surges, established "
+          "attacks, defensive movement and exact tactics must remain exempt.");
+
+  candidate::SearchConfig config = one_expansion_config();
+  config.max_actions = 8;
+  config.max_partial_paths = 64;
+  config.max_tree_nodes = 64;
+  config.shuffle_seed = 0;
+  config.model = &zero_model();
+  ps::GameState crossing = make_clean_state_at({4, 4}, ps::Player::One);
+  crossing.visit_count[{4, 3}] = 1;
+  const candidate::SearchResult control =
+      candidate::choose_complete_turn(crossing, config);
+  require(control.encoded == "00" &&
+              root_action(control, "00").penalty_applied == 0.0 &&
+              root_action(control, "02").penalty_applied == 0.0,
+          "Penalty zero must preserve the lexical K=0 root exactly.");
+
+  config.supported_advance_penalty = 0.15;
+  const candidate::SearchResult penalized =
+      candidate::choose_complete_turn(crossing, config);
+  const candidate::RootActionStat &north = root_action(penalized, "00");
+  const candidate::RootActionStat &east = root_action(penalized, "02");
+  require(penalized.encoded == "02" && north.penalty_applied == 0.15 &&
+              east.penalty_applied == 0.0 &&
+              north.value == east.value && north.visits == east.visits,
+          "The isolated penalty must change only final selection telemetry.");
+
+  candidate::SearchConfig invalid = config;
+  invalid.supported_advance_penalty = -0.01;
+  require_invalid_argument(
+      [&] { (void)candidate::choose_complete_turn(crossing, invalid); },
+      "A negative supported-advance penalty must fail closed.");
+  invalid.supported_advance_penalty =
+      candidate::kMaximumSupportedAdvancePenalty + 0.01;
+  require_invalid_argument(
+      [&] { (void)candidate::choose_complete_turn(crossing, invalid); },
+      "An excessive supported-advance penalty must fail closed.");
+}
+
 void fixed_work_search_is_deterministic_legal_and_capped() {
   candidate::SearchConfig config;
   config.max_actions = 16;
@@ -783,7 +994,9 @@ void fixed_work_search_is_deterministic_legal_and_capped() {
                 left.initial_value == right.initial_value &&
                 left.visits == right.visits &&
                 left.selection_visits == right.selection_visits &&
-                left.tactical == right.tactical,
+                left.tactical == right.tactical &&
+                left.penalty_applied == 0.0 &&
+                left.solved == right.solved,
             "Repeated fixed-work root telemetry must be bit-exact.");
   }
   require(first.root_actions.size() <= config.max_actions &&
@@ -855,6 +1068,9 @@ int main() {
     closed_branches_backtrack_and_reflection_preserves_generation();
     minimax_values_are_mover_relative_and_distance_sensitive();
     search_uses_fpu_uct_visits_and_lexical_ties();
+    exact_root_reply_probes_reject_only_proven_traps();
+    reply_probe_budget_and_tactical_fallbacks_are_safe();
+    supported_advance_penalty_is_narrow_final_only_and_rotates();
     fixed_work_search_is_deterministic_legal_and_capped();
     timed_search_returns_a_complete_replayable_action();
     std::cout << "jacek_native_bfm submission tests passed\n";

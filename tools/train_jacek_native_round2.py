@@ -51,11 +51,25 @@ parse_seeds = round1_trainer.parse_seeds
 tensor = round1_trainer.tensor
 integer_tensor = round1_trainer.integer_tensor
 
-PHASE_WEIGHTS = (
-    ("turns_0_11", 0, 12, np.float32(3.0)),
-    ("turns_12_23", 12, 24, np.float32(1.5)),
-    ("turns_24_plus", 24, None, np.float32(1.0)),
-)
+OPENING_EMPHASIS_PROFILE = "opening-emphasis-v1"
+LATE_PACING_PROFILE = "late-pacing-v1"
+PHASE_WEIGHT_PROFILES = {
+    OPENING_EMPHASIS_PROFILE: (
+        ("turns_0_11", 0, 12, np.float32(3.0)),
+        ("turns_12_23", 12, 24, np.float32(1.5)),
+        ("turns_24_plus", 24, None, np.float32(1.0)),
+    ),
+    LATE_PACING_PROFILE: (
+        ("turns_0_11", 0, 12, np.float32(1.0)),
+        ("turns_12_23", 12, 24, np.float32(1.5)),
+        ("turns_24_plus", 24, None, np.float32(2.0)),
+    ),
+}
+# Preserve the opening-emphasis default used by historical commands and
+# callers. Every new artifact binds the resolved profile in its immutable
+# target; the late-pacing experiment must select its profile explicitly.
+PHASE_WEIGHTS = PHASE_WEIGHT_PROFILES[OPENING_EMPHASIS_PROFILE]
+LATE_PACING_PHASE_WEIGHTS = PHASE_WEIGHT_PROFILES[LATE_PACING_PROFILE]
 PHASE_WEIGHT_APPLICATION = "after-exact-override-combined-target-loss/v1"
 AUXILIARY_WEIGHT = 0.25
 VALIDATION_SELECTION_METRIC = (
@@ -346,9 +360,12 @@ def _turn_calibration(
     return result
 
 
-def _phase_weights(turns: np.ndarray) -> np.ndarray:
+def _phase_weights(
+    turns: np.ndarray,
+    phase_weights=PHASE_WEIGHTS,
+) -> np.ndarray:
     weights = np.full(turns.shape, np.float32(1.0), dtype=np.float32)
-    for _, lower, upper, weight in PHASE_WEIGHTS:
+    for _, lower, upper, weight in phase_weights:
         mask = turns >= lower
         if upper is not None:
             mask &= turns < upper
@@ -364,6 +381,7 @@ def _combined_target_loss(
     exact_mask: np.ndarray,
     turns: np.ndarray,
     auxiliary_weight: float = AUXILIARY_WEIGHT,
+    phase_weights=PHASE_WEIGHTS,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return the exact-overridden mixture before and after phase weighting."""
     outcome_weights = np.where(
@@ -382,22 +400,25 @@ def _combined_target_loss(
         outcome_weights * outcome_difference * outcome_difference
         + auxiliary_weights * auxiliary_difference * auxiliary_difference
     )
-    phase_weights = _phase_weights(turns)
-    weighted = phase_weights * unweighted
+    sample_phase_weights = _phase_weights(turns, phase_weights)
+    weighted = sample_phase_weights * unweighted
     return (
         unweighted,
         weighted,
         outcome_weights,
         auxiliary_weights,
-        phase_weights,
+        sample_phase_weights,
     )
 
 
 def _phase_metrics(
-    combined: np.ndarray, weighted: np.ndarray, dataset: Dataset
+    combined: np.ndarray,
+    weighted: np.ndarray,
+    dataset: Dataset,
+    phase_weights=PHASE_WEIGHTS,
 ) -> dict[str, dict]:
     result = {}
-    for name, lower, upper, weight in PHASE_WEIGHTS:
+    for name, lower, upper, weight in phase_weights:
         mask = dataset.turn >= lower
         if upper is not None:
             mask &= dataset.turn < upper
@@ -433,6 +454,7 @@ def metrics(
     parameters: Mapping[str, np.ndarray],
     dataset: Dataset,
     batch_size: int = 1024,
+    phase_weights=PHASE_WEIGHTS,
 ) -> dict:
     predictions = np.empty(len(dataset), dtype=np.float32)
     for start in range(0, len(dataset), batch_size):
@@ -454,6 +476,7 @@ def metrics(
         auxiliary_mask,
         dataset.exact_mask,
         dataset.turn,
+        phase_weights=phase_weights,
     )
     weighted_mse = float(np.mean(weighted))
     return {
@@ -474,7 +497,9 @@ def metrics(
         "exact_reanalysis_samples": int(np.count_nonzero(dataset.exact_mask)),
         "stable_reanalysis_mse": auxiliary_mse,
         "prediction_mean": float(np.mean(predictions)),
-        "phase_metrics": _phase_metrics(combined, weighted, dataset),
+        "phase_metrics": _phase_metrics(
+            combined, weighted, dataset, phase_weights
+        ),
         "turn_calibration": _turn_calibration(predictions, dataset),
     }
 
@@ -597,7 +622,9 @@ def _robust_scale_candidates(value: np.ndarray) -> tuple[np.float32, ...]:
 
 
 def select_fixed_scales(
-    parameters: Mapping[str, np.ndarray], validation: Dataset
+    parameters: Mapping[str, np.ndarray],
+    validation: Dataset,
+    phase_weights=PHASE_WEIGHTS,
 ) -> tuple[dict[str, np.float32], dict[str, np.ndarray], dict]:
     """Choose robust per-layer scales by deterministic coordinate search."""
     names = ("w1", "w2", "w3")
@@ -615,7 +642,9 @@ def select_fixed_scales(
                 _, trial_scales, effective = _canonical_fixed_quantization(
                     parameters, trial_requested
                 )
-                validation_metrics = metrics(effective, validation)
+                validation_metrics = metrics(
+                    effective, validation, phase_weights=phase_weights
+                )
                 coverage = quantized_w1_coverage(effective)
                 loss = _weighted_validation_loss(validation_metrics)
                 trial = {
@@ -645,7 +674,9 @@ def select_fixed_scales(
     _, selected_scales, selected = _canonical_fixed_quantization(
         parameters, requested
     )
-    selected_metrics = metrics(selected, validation)
+    selected_metrics = metrics(
+        selected, validation, phase_weights=phase_weights
+    )
     report = {
         "scheme": (
             "fixed-symmetric-3bit-validation-coordinate-search-"
@@ -694,6 +725,7 @@ def train_batch(
     auxiliary_weight: float,
     quantization_aware: bool,
     fixed_scales: Mapping[str, object] | None = None,
+    phase_weights=PHASE_WEIGHTS,
 ) -> float:
     active = tuple(dataset.active[int(index)] for index in indices)
     if not quantization_aware:
@@ -708,7 +740,10 @@ def train_batch(
     difference = prediction - outcome
     exact_mask = dataset.exact_mask[indices]
     auxiliary_mask = dataset.auxiliary_mask[indices]
-    _, weighted_loss, outcome_weights, auxiliary_weights, phase_weights = (
+    (
+        _, weighted_loss, outcome_weights, auxiliary_weights,
+        sample_phase_weights,
+    ) = (
         _combined_target_loss(
             prediction,
             outcome,
@@ -717,10 +752,11 @@ def train_batch(
             exact_mask,
             dataset.turn[indices],
             auxiliary_weight,
+            phase_weights,
         )
     )
-    weighted_outcome = phase_weights * outcome_weights
-    weighted_auxiliary = phase_weights * auxiliary_weights
+    weighted_outcome = sample_phase_weights * outcome_weights
+    weighted_auxiliary = sample_phase_weights * auxiliary_weights
     loss = float(np.mean(weighted_loss))
     output_gradient = (
         2.0 * weighted_outcome * difference / max(len(indices), 1)
@@ -773,6 +809,7 @@ def train_seed(
     weight_decay: float,
     auxiliary_weight: float,
     qat_epochs: int,
+    phase_weights=PHASE_WEIGHTS,
 ) -> tuple[dict[str, np.ndarray], dict]:
     master = initialize(seed)
     optimizer = AdamW(master, learning_rate, weight_decay)
@@ -788,11 +825,15 @@ def train_seed(
             losses.append(train_batch(
                 master, optimizer, datasets["train"],
                 order[start:start + batch_size], auxiliary_weight, False,
+                phase_weights=phase_weights,
             ))
-        validation = metrics(master, datasets["validation"])
+        validation = metrics(
+            master, datasets["validation"], phase_weights=phase_weights
+        )
         _, dynamic_scales, dynamic_effective = quantize(master)
         dynamic_validation = metrics(
-            dynamic_effective, datasets["validation"]
+            dynamic_effective, datasets["validation"],
+            phase_weights=phase_weights,
         )
         history.append({
             "epoch": epoch,
@@ -844,26 +885,30 @@ def train_seed(
         raise RuntimeError("training did not produce a float checkpoint")
 
     float_best_metrics = {
-        split: metrics(best_float, dataset)
+        split: metrics(best_float, dataset, phase_weights=phase_weights)
         for split, dataset in datasets.items()
     }
     _, dynamic_scales, dynamic_effective = quantize(best_float)
     dynamic_max_baseline = {
         "scales": _scale_payload(dynamic_scales),
         "metrics": {
-            split: metrics(dynamic_effective, dataset)
+            split: metrics(
+                dynamic_effective, dataset, phase_weights=phase_weights
+            )
             for split, dataset in datasets.items()
         },
         "w1_coverage": quantized_w1_coverage(best_float),
     }
     fixed_scales, pre_qat_effective, scale_search = select_fixed_scales(
-        best_float, datasets["validation"]
+        best_float, datasets["validation"], phase_weights
     )
     selected = {
         name: value.copy() for name, value in pre_qat_effective.items()
     }
     pre_qat_quantized_metrics = {
-        split: metrics(pre_qat_effective, dataset)
+        split: metrics(
+            pre_qat_effective, dataset, phase_weights=phase_weights
+        )
         for split, dataset in datasets.items()
     }
     selected_loss = _weighted_validation_loss(
@@ -880,11 +925,14 @@ def train_seed(
                 master, optimizer, datasets["train"],
                 order[start:start + batch_size], auxiliary_weight, True,
                 fixed_scales=fixed_scales,
+                phase_weights=phase_weights,
             )
         _, canonical_scales, effective = _canonical_fixed_quantization(
             master, fixed_scales
         )
-        validation = metrics(effective, datasets["validation"])
+        validation = metrics(
+            effective, datasets["validation"], phase_weights=phase_weights
+        )
         validation_loss = _weighted_validation_loss(validation)
         history.append({
             "qat_epoch": qat_epoch,
@@ -936,11 +984,11 @@ def train_seed(
         "scale_search": scale_search,
         "pre_qat_quantized_metrics": pre_qat_quantized_metrics,
         "selected_dequantized_metrics": {
-            split: metrics(selected, dataset)
+            split: metrics(selected, dataset, phase_weights=phase_weights)
             for split, dataset in datasets.items()
         },
         "quantized_metrics": {
-            split: metrics(effective, dataset)
+            split: metrics(effective, dataset, phase_weights=phase_weights)
             for split, dataset in datasets.items()
         },
         "quantized_w1_coverage": quantized_w1_coverage(selected),
@@ -975,6 +1023,12 @@ def build_report(
     corpus_report: dict,
     arguments: argparse.Namespace,
 ) -> dict:
+    phase_weight_profile = getattr(
+        arguments, "phase_weight_profile", OPENING_EMPHASIS_PROFILE
+    )
+    if phase_weight_profile not in PHASE_WEIGHT_PROFILES:
+        raise ValueError("unknown phase-weight profile")
+    phase_weights = PHASE_WEIGHT_PROFILES[phase_weight_profile]
     ordering = sorted(
         range(len(seed_reports)),
         key=lambda index: (
@@ -1011,9 +1065,10 @@ def build_report(
             "auxiliary": "stable-native-bfm-reanalysis",
             "auxiliary_weight": arguments.auxiliary_weight,
             "phase_weights": {
-                name: float(weight) for name, _, _, weight in PHASE_WEIGHTS
+                name: float(weight) for name, _, _, weight in phase_weights
             },
             "phase_weight_application": PHASE_WEIGHT_APPLICATION,
+            "phase_weight_profile": phase_weight_profile,
             "policy_target": None,
         },
         "provenance": {
@@ -1129,6 +1184,16 @@ def main() -> int:
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--auxiliary-weight", type=float, default=0.25)
     parser.add_argument("--qat-epochs", type=int, default=4)
+    parser.add_argument(
+        "--phase-weight-profile",
+        choices=tuple(PHASE_WEIGHT_PROFILES),
+        default=OPENING_EMPHASIS_PROFILE,
+        help=(
+            "provenance-bound loss schedule (default: opening-emphasis-v1); "
+            "pass late-pacing-v1 explicitly for the late-game consolidation "
+            "experiment"
+        ),
+    )
     arguments = parser.parse_args()
     if (
         arguments.epochs <= 0 or arguments.patience <= 0
@@ -1155,13 +1220,14 @@ def main() -> int:
     )
     candidates = []
     reports = []
+    phase_weights = PHASE_WEIGHT_PROFILES[arguments.phase_weight_profile]
     started = time.perf_counter()
     for seed in arguments.seeds:
         candidate, report = train_seed(
             datasets, seed, arguments.epochs, arguments.patience,
             arguments.batch_size, arguments.learning_rate,
             arguments.weight_decay, arguments.auxiliary_weight,
-            arguments.qat_epochs,
+            arguments.qat_epochs, phase_weights,
         )
         candidates.append(candidate)
         reports.append(report)

@@ -192,7 +192,7 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
             "schema": "papersoccer.codingame-submission.v1",
             "sources": "sources.txt",
             "output": "submission.cpp",
-            "source_limit": 94_999,
+            "source_limit": 99_999,
             "allowed_local_includes": [],
             "purity_dependencies": dependencies,
             "purity_semantic_dependencies": semantic_dependencies,
@@ -611,6 +611,26 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "phase-weighted target"):
                     purity._validate_round2_model_metadata(model, root)
 
+    def test_round2_purity_accepts_bound_late_profile_and_rejects_spoof(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _, model_path = self.round2_fixture(temporary)
+            model = json.loads(model_path.read_text(encoding="utf-8"))
+            model["target"]["phase_weight_profile"] = "late-pacing-v1"
+            model["target"]["phase_weights"] = {
+                "turns_0_11": 1.0,
+                "turns_12_23": 1.5,
+                "turns_24_plus": 2.0,
+            }
+            purity._validate_round2_model_metadata(model, root)
+            model["target"]["phase_weights"]["turns_0_11"] = 3.0
+            with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+                purity._validate_round2_model_metadata(model, root)
+
+            model["target"]["phase_weights"]["turns_0_11"] = 1.0
+            model["target"]["phase_weight_profile"] = "unbound-experiment-v1"
+            with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+                purity._validate_round2_model_metadata(model, root)
+
     def test_historical_deployed_checkpoint_is_exactly_allowlisted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -1010,7 +1030,7 @@ class JacekNativeBfmPurityTest(unittest.TestCase):
     def test_source_limit_must_preserve_headroom(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, bot = self.fixture(temporary, source_limit=100_000)
-            with self.assertRaisesRegex(ValueError, "source_limit must be exactly 94999"):
+            with self.assertRaisesRegex(ValueError, "source_limit must be exactly 99999"):
                 purity.purity_violations(bot, root)
 
     def test_escaping_source_manifest_is_rejected(self):

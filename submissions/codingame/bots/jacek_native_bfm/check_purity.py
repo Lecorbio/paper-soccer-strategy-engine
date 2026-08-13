@@ -18,7 +18,7 @@ import sys
 
 BOT_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = BOT_DIRECTORY.parents[3]
-EXPECTED_SOURCE_LIMIT = 94_999
+EXPECTED_SOURCE_LIMIT = 99_999
 ROUND1_PURITY_DEPENDENCIES = (
     "models/jacek_native_bootstrap_model.json",
     "models/jacek_native_untrained_seed.json",
@@ -503,11 +503,36 @@ def _validate_round2_model_metadata(
 ) -> None:
     target = model.get("target")
     phase_weights = target.get("phase_weights") if isinstance(target, dict) else None
+    legacy_target_fields = {
+        "primary", "auxiliary", "auxiliary_weight", "phase_weights",
+        "phase_weight_application", "policy_target",
+    }
+    profiled_target_fields = {*legacy_target_fields, "phase_weight_profile"}
+    profile = (
+        target.get("phase_weight_profile")
+        if isinstance(target, dict) else None
+    )
+    expected_phase_weights = {
+        None: {
+            "turns_0_11": 3.0,
+            "turns_12_23": 1.5,
+            "turns_24_plus": 1.0,
+        },
+        "opening-emphasis-v1": {
+            "turns_0_11": 3.0,
+            "turns_12_23": 1.5,
+            "turns_24_plus": 1.0,
+        },
+        "late-pacing-v1": {
+            "turns_0_11": 1.0,
+            "turns_12_23": 1.5,
+            "turns_24_plus": 2.0,
+        },
+    }.get(profile)
     if (
         not isinstance(target, dict)
-        or set(target) != {
-            "primary", "auxiliary", "auxiliary_weight", "phase_weights",
-            "phase_weight_application", "policy_target",
+        or frozenset(target) not in {
+            frozenset(legacy_target_fields), frozenset(profiled_target_fields),
         }
         or target.get("primary") != "mover-relative-final-outcome"
         or target.get("auxiliary") != "stable-native-bfm-reanalysis"
@@ -516,6 +541,7 @@ def _validate_round2_model_metadata(
         or target.get("policy_target") is not None
         or target.get("phase_weight_application")
         != "after-exact-override-combined-target-loss/v1"
+        or expected_phase_weights is None
         or not isinstance(phase_weights, dict)
         or set(phase_weights) != {
             "turns_0_11", "turns_12_23", "turns_24_plus"
@@ -524,11 +550,7 @@ def _validate_round2_model_metadata(
             isinstance(phase_weights.get(name), bool)
             or not isinstance(phase_weights.get(name), (int, float))
             or phase_weights[name] != expected
-            for name, expected in {
-                "turns_0_11": 3.0,
-                "turns_12_23": 1.5,
-                "turns_24_plus": 1.0,
-            }.items()
+            for name, expected in expected_phase_weights.items()
         )
     ):
         raise ValueError("round-two phase-weighted target contract is stale")

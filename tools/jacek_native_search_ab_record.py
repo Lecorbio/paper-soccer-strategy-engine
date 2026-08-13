@@ -19,7 +19,7 @@ from typing import Any, Iterator, Sequence
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v3"
+REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v6"
 SOURCE_PATHS = (
     "tools/jacek_native_search_ab_gate.cpp",
     "submissions/codingame/bots/jacek_native_bfm/bot.cpp",
@@ -56,7 +56,21 @@ SUMMARY_FIELDS = {
     "candidate_expansions", "candidate_child_evaluations",
     "candidate_completed_actions", "candidate_partial_paths",
     "candidate_max_tree", "candidate_tree_cap_searches",
-    "candidate_final_overrides", "candidate_ms", "candidate_max_first_ms",
+    "candidate_final_overrides", "candidate_root_reply_probe_candidates",
+    "candidate_root_reply_probe_attempts",
+    "candidate_root_reply_probe_expansions",
+    "candidate_root_reply_probe_refutations",
+    "candidate_root_reply_probe_generator_truncations",
+    "candidate_root_reply_probe_budget_truncations",
+    "candidate_supported_advance_penalized_actions",
+    "candidate_supported_advance_selected_actions",
+    "candidate_supported_advance_selection_overrides",
+    "candidate_supported_advance_player_one_selection_overrides",
+    "candidate_supported_advance_player_two_selection_overrides",
+    "candidate_ms",
+    "candidate_first_clock_decisions", "candidate_later_clock_decisions",
+    "candidate_first_clock_ms", "candidate_later_clock_ms",
+    "candidate_max_first_ms",
     "candidate_max_later_ms", "candidate_deadline_searches",
     "candidate_headroom_failures", "candidate_operational_timeouts",
     "candidate_opening_decisions", "candidate_opening_deadline_searches",
@@ -69,7 +83,21 @@ SUMMARY_FIELDS = {
     "baseline_decisions", "baseline_expansions",
     "baseline_child_evaluations", "baseline_completed_actions",
     "baseline_partial_paths", "baseline_max_tree",
-    "baseline_tree_cap_searches", "baseline_final_overrides", "baseline_ms",
+    "baseline_tree_cap_searches", "baseline_final_overrides",
+    "baseline_root_reply_probe_candidates",
+    "baseline_root_reply_probe_attempts",
+    "baseline_root_reply_probe_expansions",
+    "baseline_root_reply_probe_refutations",
+    "baseline_root_reply_probe_generator_truncations",
+    "baseline_root_reply_probe_budget_truncations",
+    "baseline_supported_advance_penalized_actions",
+    "baseline_supported_advance_selected_actions",
+    "baseline_supported_advance_selection_overrides",
+    "baseline_supported_advance_player_one_selection_overrides",
+    "baseline_supported_advance_player_two_selection_overrides",
+    "baseline_ms",
+    "baseline_first_clock_decisions", "baseline_later_clock_decisions",
+    "baseline_first_clock_ms", "baseline_later_clock_ms",
     "baseline_max_first_ms", "baseline_max_later_ms",
     "baseline_deadline_searches", "baseline_headroom_failures",
     "baseline_operational_timeouts", "profile", "pairs", "maximum_turns",
@@ -82,10 +110,23 @@ SUMMARY_FIELDS = {
     "baseline_later_max_ms", "baseline_later_max_tree",
     "opening_turns", "opening_seed", "shuffle_seed_policy",
     "runtime_policy", "game_order_policy", "timing_scope",
+    "search_construction_timing",
+    "first_headroom_limit_ms", "later_headroom_limit_ms",
+    "first_operational_limit_ms", "later_operational_limit_ms",
+    "supported_advance_sparse_edge_limit",
+    "supported_advance_start_progress",
+    "supported_advance_endpoint_progress_threshold",
+    "maximum_supported_advance_penalty",
     "candidate_opening_tree_nodes", "candidate_later_tree_nodes",
-    "candidate_opening_own_decisions", "candidate_c", "candidate_fpu",
+    "candidate_opening_own_decisions", "candidate_root_reply_width",
+    "candidate_supported_advance_penalty",
+    "candidate_first_budget_ms", "candidate_later_budget_ms",
+    "candidate_c", "candidate_fpu",
     "candidate_final", "baseline_opening_tree_nodes",
     "baseline_later_tree_nodes", "baseline_opening_own_decisions",
+    "baseline_root_reply_width", "baseline_first_budget_ms",
+    "baseline_supported_advance_penalty",
+    "baseline_later_budget_ms",
     "baseline_c", "baseline_fpu",
     "baseline_final", "required_total", "required_per_color", "passed",
 }
@@ -93,6 +134,13 @@ COUNT_SUFFIXES = (
     "decisions", "expansions", "child_evaluations", "completed_actions",
     "partial_paths", "max_tree", "tree_cap_searches", "final_overrides",
     "deadline_searches", "headroom_failures", "operational_timeouts",
+    "root_reply_probe_candidates", "root_reply_probe_attempts",
+    "root_reply_probe_expansions", "root_reply_probe_refutations",
+    "root_reply_probe_generator_truncations",
+    "root_reply_probe_budget_truncations",
+    "supported_advance_penalized_actions",
+    "supported_advance_selected_actions",
+    "supported_advance_selection_overrides",
 )
 
 
@@ -145,6 +193,53 @@ def _opening_depths(value: str) -> list[int]:
     return values
 
 
+def _independent_clocks_requested(arguments: argparse.Namespace) -> bool:
+    return any(
+        getattr(arguments, f"{side}_{phase}_ms") is not None
+        for side in ("candidate", "baseline")
+        for phase in ("first", "later")
+    )
+
+
+def _clocks(arguments: argparse.Namespace) -> dict[str, dict[str, int]]:
+    shared_first = arguments.first_ms
+    shared_later = arguments.later_ms
+    independent = {
+        side: {
+            "first_ms": getattr(arguments, f"{side}_first_ms"),
+            "later_ms": getattr(arguments, f"{side}_later_ms"),
+        }
+        for side in ("candidate", "baseline")
+    }
+    independent_values = [
+        value for profile in independent.values() for value in profile.values()
+    ]
+    if (shared_first is None) != (shared_later is None):
+        raise RecordError("shared clock profile is incomplete")
+    if any(value is not None for value in independent_values):
+        if shared_first is not None or shared_later is not None:
+            raise RecordError("clock profile mixes shared and independent clocks")
+        if any(value is None for value in independent_values):
+            raise RecordError("independent clock profile is incomplete")
+        return independent
+    first = 800 if shared_first is None else shared_first
+    later = 155 if shared_later is None else shared_later
+    return {
+        "candidate": {"first_ms": first, "later_ms": later},
+        "baseline": {"first_ms": first, "later_ms": later},
+    }
+
+
+def _clock_profile_text(arguments: argparse.Namespace) -> str:
+    clocks = _clocks(arguments)
+    candidate = clocks["candidate"]
+    baseline = clocks["baseline"]
+    candidate_text = f'{candidate["first_ms"]}/{candidate["later_ms"]}'
+    if not _independent_clocks_requested(arguments):
+        return candidate_text
+    return f'{candidate_text}|{baseline["first_ms"]}/{baseline["later_ms"]}'
+
+
 def _profile(arguments: argparse.Namespace, side: str) -> dict[str, Any]:
     legacy = getattr(arguments, f"{side}_tree_nodes")
     opening = getattr(arguments, f"{side}_opening_tree_nodes")
@@ -160,10 +255,16 @@ def _profile(arguments: argparse.Namespace, side: str) -> dict[str, Any]:
             raise RecordError(f"{side} phase profile is incomplete")
     else:
         opening, later, cutoff = 80000, 80000, 0
+    penalty = getattr(arguments, f"{side}_supported_advance_penalty")
+    if not math.isfinite(penalty) or penalty < 0.0 or penalty > 0.20:
+        raise RecordError(f"{side} supported advance penalty is outside bounds")
     return {
         "opening_tree_nodes": opening,
         "later_tree_nodes": later,
         "opening_own_decisions": cutoff,
+        "root_reply_width": getattr(arguments, f"{side}_root_reply_width"),
+        "supported_advance_penalty": penalty,
+        **_clocks(arguments)[side],
         "c": getattr(arguments, f"{side}_c"),
         "fpu": getattr(arguments, f"{side}_fpu"),
         "final": getattr(arguments, f"{side}_final"),
@@ -267,7 +368,8 @@ def parse_gate_stdout(
     }
     expected_profile_fields = {
         "opening_tree_nodes", "later_tree_nodes", "opening_own_decisions",
-        "c", "fpu", "final",
+        "root_reply_width", "supported_advance_penalty", "first_ms",
+        "later_ms", "c", "fpu", "final",
     }
     if set(candidate) != expected_profile_fields or set(baseline) != expected_profile_fields:
         raise RecordError("gate profile fields are incomplete")
@@ -335,22 +437,36 @@ def parse_gate_stdout(
     if (summary.get("runtime_policy") != "same" or
             summary.get("shuffle_seed_policy") != "deployment-constant" or
             summary.get("game_order_policy") != "pair-parity-color-swap" or
-            summary.get("timing_scope") != "search-through-apply"):
+            summary.get("timing_scope") != "search-through-apply" or
+            summary.get("search_construction_timing") != "included"):
         raise RecordError("gate summary violates the A/B isolation contract")
     expected_opening_turns = ",".join(map(str, opening_depths))
     requested_candidate = _profile(arguments, "candidate")
     requested_baseline = _profile(arguments, "baseline")
     expected_summary_config = {
-        "profile": f"{arguments.first_ms}/{arguments.later_ms}",
+        "profile": _clock_profile_text(arguments),
         "pairs": arguments.pairs,
         "maximum_turns": arguments.maximum_turns,
         "opening_turns": expected_opening_turns,
         "opening_seed": arguments.seed,
+        "first_headroom_limit_ms": 990,
+        "later_headroom_limit_ms": 198,
+        "first_operational_limit_ms": 1000,
+        "later_operational_limit_ms": 200,
+        "supported_advance_sparse_edge_limit": 48,
+        "supported_advance_start_progress": 2,
+        "supported_advance_endpoint_progress_threshold": 4,
+        "maximum_supported_advance_penalty": 0.20,
         "candidate_opening_tree_nodes":
             requested_candidate["opening_tree_nodes"],
         "candidate_later_tree_nodes": requested_candidate["later_tree_nodes"],
         "candidate_opening_own_decisions":
             requested_candidate["opening_own_decisions"],
+        "candidate_root_reply_width": requested_candidate["root_reply_width"],
+        "candidate_supported_advance_penalty":
+            requested_candidate["supported_advance_penalty"],
+        "candidate_first_budget_ms": requested_candidate["first_ms"],
+        "candidate_later_budget_ms": requested_candidate["later_ms"],
         "candidate_c": arguments.candidate_c,
         "candidate_fpu": arguments.candidate_fpu,
         "candidate_final": arguments.candidate_final,
@@ -358,6 +474,11 @@ def parse_gate_stdout(
         "baseline_later_tree_nodes": requested_baseline["later_tree_nodes"],
         "baseline_opening_own_decisions":
             requested_baseline["opening_own_decisions"],
+        "baseline_root_reply_width": requested_baseline["root_reply_width"],
+        "baseline_supported_advance_penalty":
+            requested_baseline["supported_advance_penalty"],
+        "baseline_first_budget_ms": requested_baseline["first_ms"],
+        "baseline_later_budget_ms": requested_baseline["later_ms"],
         "baseline_c": arguments.baseline_c,
         "baseline_fpu": arguments.baseline_fpu,
         "baseline_final": arguments.baseline_final,
@@ -379,6 +500,20 @@ def parse_gate_stdout(
             for suffix in COUNT_SUFFIXES
         }
         elapsed = _require_nonnegative_float(summary[f"{side}_ms"], f"{side}_ms")
+        clock_decisions = [
+            _require_unsigned(
+                summary[f"{side}_{clock}_clock_decisions"],
+                f"{side}_{clock}_clock_decisions",
+            )
+            for clock in ("first", "later")
+        ]
+        clock_elapsed = [
+            _require_nonnegative_float(
+                summary[f"{side}_{clock}_clock_ms"],
+                f"{side}_{clock}_clock_ms",
+            )
+            for clock in ("first", "later")
+        ]
         maxima = [
             _require_nonnegative_float(
                 summary[f"{side}_{suffix}"], f"{side}_{suffix}"
@@ -394,8 +529,43 @@ def parse_gate_stdout(
                 "headroom_failures", "operational_timeouts",
             ))
             or any(maximum > elapsed + 1e-9 for maximum in maxima)
+            or sum(clock_decisions) != counts["decisions"]
+            or abs(sum(clock_elapsed) - elapsed) > 1e-5 * max(1.0, elapsed)
+            or any(maximum > clock_ms + 1e-9
+                   for maximum, clock_ms in zip(maxima, clock_elapsed))
+            or any(decisions == 0 and clock_ms != 0
+                   for decisions, clock_ms in zip(
+                       clock_decisions, clock_elapsed))
+            or counts["root_reply_probe_attempts"]
+            > counts["root_reply_probe_candidates"]
+            or counts["root_reply_probe_expansions"]
+            > counts["root_reply_probe_attempts"]
+            or counts["root_reply_probe_refutations"]
+            > counts["root_reply_probe_expansions"]
+            or counts["root_reply_probe_generator_truncations"]
+            > counts["root_reply_probe_expansions"]
+            or counts["root_reply_probe_candidates"] !=
+            counts["root_reply_probe_expansions"] +
+            counts["root_reply_probe_budget_truncations"]
+            or counts["supported_advance_selected_actions"]
+            > counts["supported_advance_penalized_actions"]
+            or counts["supported_advance_selected_actions"]
+            > counts["decisions"]
+            or counts["supported_advance_selection_overrides"]
+            > counts["decisions"]
         ):
             raise RecordError(f"gate {side} diagnostics contradict their limits")
+        override_colors = [
+            _require_unsigned(
+                summary[
+                    f"{side}_supported_advance_player_{color}_selection_overrides"
+                ],
+                f"{side} supported advance {color} overrides",
+            )
+            for color in ("one", "two")
+        ]
+        if sum(override_colors) != counts["supported_advance_selection_overrides"]:
+            raise RecordError(f"gate {side} override colors do not sum")
         phase = {}
         for name in ("opening", "later"):
             phase[name] = {
@@ -495,12 +665,22 @@ def command(arguments: argparse.Namespace) -> list[str]:
         str(arguments.gate_binary.resolve()),
         "--checkpoint", str(arguments.checkpoint.resolve()),
         "--pairs", str(arguments.pairs),
-        "--first-ms", str(arguments.first_ms),
-        "--later-ms", str(arguments.later_ms),
         "--maximum-turns", str(arguments.maximum_turns),
         "--opening-turns", arguments.opening_turns,
         "--seed", str(arguments.seed),
     ]
+    clocks = _clocks(arguments)
+    if not _independent_clocks_requested(arguments):
+        result.extend([
+            "--first-ms", str(clocks["candidate"]["first_ms"]),
+            "--later-ms", str(clocks["candidate"]["later_ms"]),
+        ])
+    else:
+        for side in ("candidate", "baseline"):
+            result.extend([
+                f"--{side}-first-ms", str(clocks[side]["first_ms"]),
+                f"--{side}-later-ms", str(clocks[side]["later_ms"]),
+            ])
     for side in ("candidate", "baseline"):
         profile = _profile(arguments, side)
         if profile["opening_own_decisions"] == 0:
@@ -515,6 +695,12 @@ def command(arguments: argparse.Namespace) -> list[str]:
                 f"--{side}-opening-own-decisions",
                 str(profile["opening_own_decisions"]),
             ])
+        result.extend([
+            f"--{side}-root-reply-width",
+            str(profile["root_reply_width"]),
+            f"--{side}-supported-advance-penalty",
+            str(profile["supported_advance_penalty"]),
+        ])
     result.extend([
         "--candidate-c", str(arguments.candidate_c),
         "--baseline-c", str(arguments.baseline_c),
@@ -609,8 +795,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--checkpoint", type=pathlib.Path, required=True)
     result.add_argument("--output-dir", type=pathlib.Path, required=True)
     result.add_argument("--pairs", type=int, default=64)
-    result.add_argument("--first-ms", type=int, default=800)
-    result.add_argument("--later-ms", type=int, default=155)
+    result.add_argument("--first-ms", type=int)
+    result.add_argument("--later-ms", type=int)
+    result.add_argument("--candidate-first-ms", type=int)
+    result.add_argument("--candidate-later-ms", type=int)
+    result.add_argument("--baseline-first-ms", type=int)
+    result.add_argument("--baseline-later-ms", type=int)
     result.add_argument("--maximum-turns", type=int, default=384)
     result.add_argument("--opening-turns", default="0,4,8,12")
     result.add_argument("--seed", type=int, default=6510615555426900575)
@@ -622,6 +812,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--baseline-opening-tree-nodes", type=int)
     result.add_argument("--baseline-later-tree-nodes", type=int)
     result.add_argument("--baseline-opening-own-decisions", type=int)
+    result.add_argument("--candidate-root-reply-width", type=int, default=0)
+    result.add_argument("--baseline-root-reply-width", type=int, default=0)
+    result.add_argument("--candidate-supported-advance-penalty", type=float,
+                        default=0.0)
+    result.add_argument("--baseline-supported-advance-penalty", type=float,
+                        default=0.0)
     result.add_argument("--candidate-c", type=float, default=0.95)
     result.add_argument("--baseline-c", type=float, default=0.95)
     result.add_argument("--candidate-fpu", type=float, default=0.5)

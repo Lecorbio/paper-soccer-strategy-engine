@@ -58,6 +58,15 @@ PHASE_WEIGHTS = {
     "turns_12_23": 1.5,
     "turns_24_plus": 1.0,
 }
+LATE_PACING_PHASE_WEIGHTS = {
+    "turns_0_11": 1.0,
+    "turns_12_23": 1.5,
+    "turns_24_plus": 2.0,
+}
+PHASE_WEIGHT_PROFILES = {
+    "opening-emphasis-v1": PHASE_WEIGHTS,
+    "late-pacing-v1": LATE_PACING_PHASE_WEIGHTS,
+}
 PHASE_WEIGHT_APPLICATION = "after-exact-override-combined-target-loss/v1"
 
 
@@ -240,13 +249,25 @@ def _validate_checkpoint_provenance(provenance: Mapping[str, object]) -> None:
 
 def _validate_phase_weight_contract(model: Mapping[str, object]) -> None:
     target = model.get("target")
-    expected_fields = {
+    legacy_fields = {
         "primary", "auxiliary", "auxiliary_weight", "phase_weights",
         "phase_weight_application", "policy_target",
     }
-    if not isinstance(target, dict) or set(target) != expected_fields:
+    profiled_fields = {*legacy_fields, "phase_weight_profile"}
+    if (
+        not isinstance(target, dict)
+        or frozenset(target) not in {
+            frozenset(legacy_fields), frozenset(profiled_fields)
+        }
+    ):
         raise ValueError("round-two phase-weighted target contract is missing")
     phase_weights = target.get("phase_weights")
+    profile = target.get("phase_weight_profile")
+    expected_weights = (
+        PHASE_WEIGHTS
+        if profile is None
+        else PHASE_WEIGHT_PROFILES.get(profile)
+    )
     if (
         target.get("primary") != "mover-relative-final-outcome"
         or target.get("auxiliary") != "stable-native-bfm-reanalysis"
@@ -255,13 +276,14 @@ def _validate_phase_weight_contract(model: Mapping[str, object]) -> None:
         or target.get("policy_target") is not None
         or target.get("phase_weight_application")
         != PHASE_WEIGHT_APPLICATION
+        or expected_weights is None
         or not isinstance(phase_weights, dict)
-        or set(phase_weights) != set(PHASE_WEIGHTS)
+        or set(phase_weights) != set(expected_weights)
         or any(
             isinstance(phase_weights.get(name), bool)
             or not isinstance(phase_weights.get(name), (int, float))
             or phase_weights[name] != expected
-            for name, expected in PHASE_WEIGHTS.items()
+            for name, expected in expected_weights.items()
         )
     ):
         raise ValueError("round-two phase-weighted target contract is stale")

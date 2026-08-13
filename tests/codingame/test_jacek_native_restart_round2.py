@@ -94,6 +94,36 @@ class RestartContractTests(unittest.TestCase):
             (first[1],),
         )
 
+    def test_selected_prefix_manifest_replays_and_binds_exact_state(self):
+        raw = collector_bytes()
+        parsed = corpus.parse_collector_bytes(raw)
+        prefix = corpus.select_prefixes(parsed, 1)[0]
+        state = corpus.round1._initial_replay_state()
+        corpus.round1._apply_complete_turn(
+            state, parsed.games[0].actions[0], 0, 1, opening=False
+        )
+        canonical_key = corpus.canonical_reflection_key(state)
+        selected = (
+            f"# arena_manifest_sha256={'a' * 64}\n"
+            f"# collector_tsv_sha256={corpus.sha256_bytes(raw)}\n"
+            "# observed_moves_usage=state-construction-only\n"
+            f"# panel_sha256={'f' * 64}\n"
+            "# policy_target=null\n"
+            f"# schema={corpus.SELECTED_PREFIX_SCHEMA}\n"
+            f"# source_sha256={'b' * 64}\n"
+            "# value_target=null\n"
+            "game_id\tcandidate_own_decision\tprefix_turn\tstate_id\t"
+            "canonical_key\trole\n"
+            f"1001\t0\t1\t{prefix.state_id}\t{canonical_key}\t"
+            "one-own-before-mate\n"
+        ).encode()
+        self.assertEqual(
+            corpus.select_manifest_prefixes(parsed, selected), (prefix,)
+        )
+        tampered = selected.replace(prefix.state_id.encode(), b"fnv1a64:" + b"0" * 16)
+        with self.assertRaisesRegex(ValueError, "state identity"):
+            corpus.select_manifest_prefixes(parsed, tampered)
+
     def test_malformed_duplicate_and_operationally_unclean_inputs_fail(self):
         with self.assertRaisesRegex(ValueError, "metadata fields"):
             corpus.parse_collector_bytes(collector_bytes(

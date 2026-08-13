@@ -212,6 +212,12 @@ def run_shard(
         "--reanalysis-work", str(arguments.reanalysis_work),
         "--verification-work", str(arguments.verification_work),
     ]
+    if arguments.selected_prefixes is not None:
+        command.extend([
+            "--selected-prefixes",
+            str(input_path.parent / contract.ARCHIVED_SELECTED_PREFIXES_NAME),
+            "--selected-prefixes-sha256", arguments.selected_prefixes_sha256,
+        ])
     if arguments.reanalysis_work:
         command.extend([
             "--reanalysis-checkpoint", str(checkpoints["teacher"][0]),
@@ -239,15 +245,28 @@ def run_shard(
 
 def run(arguments: argparse.Namespace) -> pathlib.Path:
     parallel_workers = resolve_parallel_workers(arguments)
+    arguments.selected_prefixes = getattr(arguments, "selected_prefixes", None)
     input_path = contract._safe_explicit_path(
         arguments.input, "collector TSV"
     )
     collector = contract.parse_collector_bytes(input_path.read_bytes())
     assert_expected_input(collector, arguments)
-    selected = contract.select_prefixes(
-        collector, arguments.prefixes_per_loss,
-        arguments.max_selected_prefixes,
-    )
+    selected_input = None
+    if arguments.selected_prefixes is None:
+        selected = contract.select_prefixes(
+            collector, arguments.prefixes_per_loss,
+            arguments.max_selected_prefixes,
+        )
+        arguments.selected_prefixes_sha256 = None
+    else:
+        selected_path = contract._safe_explicit_path(
+            arguments.selected_prefixes, "selected-prefix manifest"
+        )
+        selected_input = selected_path.read_bytes()
+        selected = contract.select_manifest_prefixes(collector, selected_input)
+        arguments.selected_prefixes_sha256 = hashlib.sha256(
+            selected_input
+        ).hexdigest()
     record_count = len(selected) * arguments.continuations_per_prefix
     if record_count > 65_536:
         raise ValueError("live-restart record plan exceeds 65536 games")
@@ -265,6 +284,12 @@ def run(arguments: argparse.Namespace) -> pathlib.Path:
         shutil.copyfile(input_path, archived_input)
         if sha256(archived_input) != collector.sha256:
             raise RuntimeError("archived collector TSV hash mismatch")
+        archived_selected = None
+        if selected_input is not None:
+            archived_selected = directory / contract.ARCHIVED_SELECTED_PREFIXES_NAME
+            archived_selected.write_bytes(selected_input)
+            if sha256(archived_selected) != arguments.selected_prefixes_sha256:
+                raise RuntimeError("archived selected-prefix manifest hash mismatch")
         build_report, build_sha = build_binary(directory, arguments.compiler)
         binary = directory / contract.ARCHIVED_BINARY_NAME
         checkpoints = {
@@ -304,13 +329,19 @@ def run(arguments: argparse.Namespace) -> pathlib.Path:
         shard_reports.sort(key=lambda report: report["shard"])
         if sum(report["records"] for report in shard_reports) != record_count:
             raise RuntimeError("restart producer emitted an incomplete record set")
+        input_manifest = {
+            "path": contract.ARCHIVED_INPUT_NAME,
+            "sha256": collector.sha256,
+            "metadata": dict(collector.metadata),
+        }
+        if archived_selected is not None:
+            input_manifest.update({
+                "selected_prefixes_path": contract.ARCHIVED_SELECTED_PREFIXES_NAME,
+                "selected_prefixes_sha256": arguments.selected_prefixes_sha256,
+            })
         manifest = {
             "schema": contract.RUN_SCHEMA,
-            "input": {
-                "path": contract.ARCHIVED_INPUT_NAME,
-                "sha256": collector.sha256,
-                "metadata": dict(collector.metadata),
-            },
+            "input": input_manifest,
             "build_provenance": {
                 "path": contract.BUILD_PROVENANCE_NAME,
                 "sha256": build_sha,
@@ -365,6 +396,13 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     parser.add_argument("--input", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--selected-prefixes", type=pathlib.Path,
+        help=(
+            "explicit provenance-bound prefix manifest; every full collector "
+            "transcript is replay-validated and observed moves remain state-only"
+        ),
+    )
     parser.add_argument("--output-dir", required=True, type=pathlib.Path)
     parser.add_argument("--expected-agent-id", required=True)
     parser.add_argument("--expected-submission-id", required=True)

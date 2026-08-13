@@ -118,6 +118,38 @@ void full_replay_and_loss_filtering() {
   require(first[0].state.config.goal_rule == ps::GoalRule::OwnGoalsAllowed &&
               first[0].state.config.blocked_rule == ps::BlockedRule::MoverLoses,
           "replay must use the exact CodinGame rules");
+
+  const auto active = active_features(first[0].state);
+  const auto reflected = active_features(reflected_state(first[0].state));
+  const std::string canonical_key =
+      feature_id(reflected < active ? reflected : active);
+  const std::string selected =
+      "# arena_manifest_sha256=" + std::string(64, 'a') +
+      "\n# collector_tsv_sha256=" + input.sha256 +
+      "\n# observed_moves_usage=state-construction-only"
+      "\n# panel_sha256=" + std::string(64, 'f') +
+      "\n# policy_target=null"
+      "\n# schema=papersoccer.jacek-native-selected-prefixes.v1"
+      "\n# source_sha256=" + std::string(64, 'b') +
+      "\n# value_target=null"
+      "\ngame_id\tcandidate_own_decision\tprefix_turn\tstate_id\t"
+      "canonical_key\trole\n1001\t0\t1\t" + first[0].state_id + '\t' +
+      canonical_key + "\tone-own-before-mate\n";
+  const std::filesystem::path selected_path = temporary_path(".selected.tsv");
+  {
+    std::ofstream output(selected_path, std::ios::binary);
+    output << selected;
+  }
+  const std::string selected_sha = native::sha256_hex(
+      std::span<const std::uint8_t>(
+          reinterpret_cast<const std::uint8_t *>(selected.data()),
+          selected.size()));
+  const auto manifest_selected = validate_selected_prefix_manifest(
+      input, selected_path.string(), selected_sha);
+  std::filesystem::remove(selected_path);
+  require(manifest_selected.size() == 1U &&
+              manifest_selected[0].state_id == first[0].state_id,
+          "selected-prefix manifest must replay and bind the exact state");
   require_invalid(
       [] {
         const CollectorInput nonterminal = read_text(

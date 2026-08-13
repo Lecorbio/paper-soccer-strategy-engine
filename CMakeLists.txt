@@ -242,6 +242,18 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     papersoccer_codingame_jacek_native_restart_round2_unit_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+  add_test(
+    NAME papersoccer_codingame_jacek_native_late_pacing_gate_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest
+            tests.codingame.test_jacek_native_late_pacing_106_gate
+            tests.codingame.test_jacek_native_late_pacing_eval_panel
+            tests.codingame.test_jacek_native_late_pacing_game_gate)
+  set_tests_properties(
+    papersoccer_codingame_jacek_native_late_pacing_gate_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   execute_process(
     COMMAND ${Python3_EXECUTABLE} -c "import numpy"
     RESULT_VARIABLE PAPERSOCCER_JACEK_NATIVE_NUMPY_STATUS
@@ -642,6 +654,23 @@ if(NOT EMSCRIPTEN)
     PRIVATE papersoccer_core)
   add_test(NAME papersoccer_jacek_native_restart_round2_test
     COMMAND papersoccer_jacek_native_restart_round2_test)
+
+  add_executable(papersoccer_jacek_native_late_pacing_game_gate
+    tools/jacek_native_late_pacing_game_gate.cpp)
+  target_include_directories(papersoccer_jacek_native_late_pacing_game_gate
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_late_pacing_game_gate
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_native_late_pacing_game_gate_test
+    tests/codingame/jacek_native_late_pacing_game_gate_test.cpp)
+  target_include_directories(
+    papersoccer_jacek_native_late_pacing_game_gate_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_native_late_pacing_game_gate_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_native_late_pacing_game_gate_test
+    COMMAND papersoccer_jacek_native_late_pacing_game_gate_test)
 
   add_executable(papersoccer_jacek_native_replay_decision_auditor
     submissions/codingame/bots/jacek_native_bfm/replay_decision_auditor.cpp)

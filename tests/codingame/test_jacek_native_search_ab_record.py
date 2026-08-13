@@ -49,7 +49,22 @@ class SearchAbRecordTest(unittest.TestCase):
                 "max_tree": 64,
                 "tree_cap_searches": 0,
                 "final_overrides": 0,
+                "root_reply_probe_candidates": 0,
+                "root_reply_probe_attempts": 0,
+                "root_reply_probe_expansions": 0,
+                "root_reply_probe_refutations": 0,
+                "root_reply_probe_generator_truncations": 0,
+                "root_reply_probe_budget_truncations": 0,
+                "supported_advance_penalized_actions": 0,
+                "supported_advance_selected_actions": 0,
+                "supported_advance_selection_overrides": 0,
+                "supported_advance_player_one_selection_overrides": 0,
+                "supported_advance_player_two_selection_overrides": 0,
                 "ms": 4.0,
+                "first_clock_decisions": 2,
+                "later_clock_decisions": 2,
+                "first_clock_ms": 2.0,
+                "later_clock_ms": 2.0,
                 "max_first_ms": 1.0,
                 "max_later_ms": 1.0,
                 "deadline_searches": 0,
@@ -87,15 +102,32 @@ class SearchAbRecordTest(unittest.TestCase):
             "runtime_policy": "same",
             "game_order_policy": "pair-parity-color-swap",
             "timing_scope": "search-through-apply",
+            "search_construction_timing": "included",
+            "first_headroom_limit_ms": 990,
+            "later_headroom_limit_ms": 198,
+            "first_operational_limit_ms": 1000,
+            "later_operational_limit_ms": 200,
+            "supported_advance_sparse_edge_limit": 48,
+            "supported_advance_start_progress": 2,
+            "supported_advance_endpoint_progress_threshold": 4,
+            "maximum_supported_advance_penalty": 0.2,
             "candidate_opening_tree_nodes": 20000,
             "candidate_later_tree_nodes": 120000,
             "candidate_opening_own_decisions": 4,
+            "candidate_root_reply_width": 0,
+            "candidate_supported_advance_penalty": 0,
+            "candidate_first_budget_ms": 10,
+            "candidate_later_budget_ms": 2,
             "candidate_c": 0.95,
             "candidate_fpu": 0.5,
             "candidate_final": "value-log-visits",
             "baseline_opening_tree_nodes": 80000,
             "baseline_later_tree_nodes": 80000,
             "baseline_opening_own_decisions": 4,
+            "baseline_root_reply_width": 0,
+            "baseline_supported_advance_penalty": 0,
+            "baseline_first_budget_ms": 10,
+            "baseline_later_budget_ms": 2,
             "baseline_c": 0.95,
             "baseline_fpu": 0.5,
             "baseline_final": "value-log-visits",
@@ -122,11 +154,15 @@ class SearchAbRecordTest(unittest.TestCase):
             f"packed_sha256={'3' * 64}",
             "candidate_opening_tree_nodes=20000 "
             "candidate_later_tree_nodes=120000 "
-            "candidate_opening_own_decisions=4 candidate_c=0.95 "
+            "candidate_opening_own_decisions=4 candidate_root_reply_width=0 "
+            "candidate_supported_advance_penalty=0 "
+            "candidate_first_ms=10 candidate_later_ms=2 candidate_c=0.95 "
             "candidate_fpu=0.5 candidate_final=value-log-visits",
             "baseline_opening_tree_nodes=80000 "
             "baseline_later_tree_nodes=80000 "
-            "baseline_opening_own_decisions=4 baseline_c=0.95 "
+            "baseline_opening_own_decisions=4 baseline_root_reply_width=0 "
+            "baseline_supported_advance_penalty=0 "
+            "baseline_first_ms=10 baseline_later_ms=2 baseline_c=0.95 "
             "baseline_fpu=0.5 baseline_final=value-log-visits",
             *pair_lines,
             f"summary {summary}",
@@ -138,6 +174,9 @@ class SearchAbRecordTest(unittest.TestCase):
         self.assertEqual(parsed["candidate_profile"]["opening_tree_nodes"], 20000)
         self.assertEqual(parsed["candidate_profile"]["later_tree_nodes"], 120000)
         self.assertEqual(parsed["baseline_profile"]["later_tree_nodes"], 80000)
+        self.assertEqual(
+            parsed["candidate_profile"]["supported_advance_penalty"], 0
+        )
         self.assertTrue(parsed["summary"]["passed"])
         self.assertEqual(parsed["summary"]["candidate"], 2)
         self.assertEqual([pair["pair"] for pair in parsed["pairs"]], [0, 1])
@@ -158,6 +197,13 @@ class SearchAbRecordTest(unittest.TestCase):
         with self.assertRaisesRegex(record.RecordError, "isolation contract"):
             record.parse_gate_stdout(
                 self.transcript(summary_updates={"timing_scope": "unspecified"}),
+                self.arguments(),
+            )
+        with self.assertRaisesRegex(record.RecordError, "isolation contract"):
+            record.parse_gate_stdout(
+                self.transcript(
+                    summary_updates={"search_construction_timing": "excluded"}
+                ),
                 self.arguments(),
             )
 
@@ -212,6 +258,13 @@ class SearchAbRecordTest(unittest.TestCase):
                 ),
                 self.arguments(),
             )
+        with self.assertRaisesRegex(record.RecordError, "diagnostics"):
+            record.parse_gate_stdout(
+                self.transcript(
+                    summary_updates={"candidate_first_clock_decisions": 3}
+                ),
+                self.arguments(),
+            )
         with self.assertRaisesRegex(record.RecordError, "phase diagnostics"):
             record.parse_gate_stdout(
                 self.transcript(
@@ -225,6 +278,100 @@ class SearchAbRecordTest(unittest.TestCase):
         self.assertEqual(command.count("--checkpoint"), 1)
         self.assertEqual(command[command.index("--first-ms") + 1], "10")
         self.assertEqual(command[command.index("--later-ms") + 1], "2")
+        self.assertEqual(
+            command[
+                command.index("--candidate-supported-advance-penalty") + 1
+            ],
+            "0.0",
+        )
+
+    def test_supported_advance_profiles_are_bound_and_bounded(self):
+        arguments = self.arguments()
+        arguments.candidate_supported_advance_penalty = 0.11
+        arguments.baseline_supported_advance_penalty = 0.15
+        raw = self.transcript().decode().replace(
+            "candidate_supported_advance_penalty=0",
+            "candidate_supported_advance_penalty=0.11",
+        ).replace(
+            "baseline_supported_advance_penalty=0",
+            "baseline_supported_advance_penalty=0.15",
+        )
+        parsed = record.parse_gate_stdout(raw.encode(), arguments)
+        self.assertEqual(
+            parsed["candidate_profile"]["supported_advance_penalty"], 0.11
+        )
+        invalid = self.arguments()
+        invalid.candidate_supported_advance_penalty = -0.01
+        with self.assertRaisesRegex(record.RecordError, "supported advance"):
+            record.command(invalid)
+        invalid.candidate_supported_advance_penalty = 0.201
+        with self.assertRaisesRegex(record.RecordError, "supported advance"):
+            record.command(invalid)
+
+    def test_command_supports_complete_independent_clocks(self):
+        arguments = self.arguments()
+        arguments.first_ms = None
+        arguments.later_ms = None
+        arguments.candidate_first_ms = 950
+        arguments.candidate_later_ms = 175
+        arguments.baseline_first_ms = 950
+        arguments.baseline_later_ms = 170
+        command = record.command(arguments)
+        self.assertNotIn("--first-ms", command)
+        self.assertEqual(
+            command[command.index("--candidate-first-ms") + 1], "950"
+        )
+        self.assertEqual(
+            command[command.index("--candidate-later-ms") + 1], "175"
+        )
+        self.assertEqual(
+            command[command.index("--baseline-later-ms") + 1], "170"
+        )
+
+    def test_transcript_binds_all_four_independent_clocks(self):
+        arguments = self.arguments()
+        arguments.first_ms = None
+        arguments.later_ms = None
+        arguments.candidate_first_ms = 950
+        arguments.candidate_later_ms = 175
+        arguments.baseline_first_ms = 950
+        arguments.baseline_later_ms = 170
+        raw = self.transcript().decode()
+        raw = raw.replace(
+            "candidate_first_ms=10 candidate_later_ms=2",
+            "candidate_first_ms=950 candidate_later_ms=175",
+        ).replace(
+            "baseline_first_ms=10 baseline_later_ms=2",
+            "baseline_first_ms=950 baseline_later_ms=170",
+        ).replace(
+            "candidate_first_budget_ms=10 candidate_later_budget_ms=2",
+            "candidate_first_budget_ms=950 candidate_later_budget_ms=175",
+        ).replace(
+            "baseline_first_budget_ms=10 baseline_later_budget_ms=2",
+            "baseline_first_budget_ms=950 baseline_later_budget_ms=170",
+        ).replace("profile=10/2", "profile=950/175|950/170")
+        parsed = record.parse_gate_stdout(raw.encode(), arguments)
+        self.assertEqual(parsed["candidate_profile"]["later_ms"], 175)
+        self.assertEqual(parsed["baseline_profile"]["later_ms"], 170)
+
+    def test_clock_resolution_rejects_mixed_or_partial_profiles(self):
+        mixed = self.arguments()
+        mixed.candidate_first_ms = 950
+        mixed.candidate_later_ms = 175
+        mixed.baseline_first_ms = 950
+        mixed.baseline_later_ms = 170
+        with self.assertRaisesRegex(record.RecordError, "mixes"):
+            record.command(mixed)
+        partial = self.arguments()
+        partial.first_ms = None
+        partial.later_ms = None
+        partial.candidate_first_ms = 950
+        with self.assertRaisesRegex(record.RecordError, "incomplete"):
+            record.command(partial)
+        partial_shared = self.arguments()
+        partial_shared.later_ms = None
+        with self.assertRaisesRegex(record.RecordError, "incomplete"):
+            record.command(partial_shared)
 
     def test_command_preserves_legacy_and_mixed_profile_interfaces(self):
         legacy = record.parser().parse_args([

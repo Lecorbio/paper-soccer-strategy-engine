@@ -42,6 +42,7 @@ BUILD_PROVENANCE_SCHEMA = (
 BUILD_PROVENANCE_NAME = "build-provenance.json"
 ARCHIVED_BINARY_NAME = "selfplay-restart-round2-binary"
 ARCHIVED_INPUT_NAME = "collector-clean.tsv"
+ARCHIVED_SELECTED_PREFIXES_NAME = "selected-prefixes.tsv"
 MANIFEST_NAME = "manifest.json"
 OPENING_SCHEMA = "collector-clean-candidate-loss-prefix/v1"
 COLOR_SCHEDULE = "swap-player-checkpoints-on-odd-continuations/v1"
@@ -50,6 +51,16 @@ TEMPERATURE_SCHEDULE = (
 )
 OBSERVED_USAGE = "state-construction-only"
 COLLECTOR_HEADER = b"game_id\tcandidate_player\twinner\tturns"
+SELECTED_PREFIX_SCHEMA = "papersoccer.jacek-native-selected-prefixes.v1"
+SELECTED_PREFIX_HEADER = (
+    b"game_id\tcandidate_own_decision\tprefix_turn\tstate_id\t"
+    b"canonical_key\trole"
+)
+SELECTED_PREFIX_METADATA = (
+    "arena_manifest_sha256", "collector_tsv_sha256",
+    "observed_moves_usage", "panel_sha256", "policy_target", "schema",
+    "source_sha256", "value_target",
+)
 REQUIRED_METADATA = (
     "agent_id",
     "arena_manifest_sha256",
@@ -116,6 +127,16 @@ class CollectorInput:
     sha256: str
     metadata: Mapping[str, str]
     games: tuple[CollectorGame, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class SelectedPrefixRequest:
+    game_id: str
+    candidate_own_decision: int
+    prefix_turn: int
+    state_id: str
+    canonical_key: str
+    role: str
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -258,6 +279,143 @@ def read_collector(path: pathlib.Path) -> CollectorInput:
     return parse_collector_bytes(
         _safe_explicit_path(path, "collector TSV").read_bytes()
     )
+
+
+def canonical_reflection_key(state: round1._ReplayState) -> str:
+    active = round1._encode_replay_features(state)
+    reflected = round1._encode_replay_features(state, reflected=True)
+    return round1.canonical_state_id(min(active, reflected))
+
+
+def parse_selected_prefix_bytes(
+    raw: bytes, collector: CollectorInput,
+) -> tuple[tuple[SelectedPrefixRequest, ...], str]:
+    if (
+        not raw or len(raw) > 4 * 1024 * 1024 or b"\x00" in raw
+        or b"\r" in raw
+    ):
+        raise ValueError("selected-prefix manifest must be bounded canonical LF text")
+    lines = raw.split(b"\n")
+    if lines[-1] == b"":
+        lines.pop()
+    if not lines or any(not line for line in lines):
+        raise ValueError("selected-prefix manifest contains a blank line")
+    metadata: dict[str, str] = {}
+    header_index = None
+    for index, line in enumerate(lines):
+        if line.startswith(b"# "):
+            if header_index is not None or line.count(b"=") != 1:
+                raise ValueError("selected-prefix metadata syntax/order is invalid")
+            try:
+                key, value = (part.decode("ascii") for part in line[2:].split(b"=", 1))
+            except UnicodeDecodeError as error:
+                raise ValueError("selected-prefix metadata is not ASCII") from error
+            if (
+                not IDENTIFIER.fullmatch(key) or not value or len(value) > 128
+                or key in metadata
+            ):
+                raise ValueError("selected-prefix metadata is unsafe or duplicated")
+            metadata[key] = value
+            continue
+        if line != SELECTED_PREFIX_HEADER:
+            raise ValueError("selected-prefix TSV header is not exact")
+        header_index = index
+        break
+    if header_index is None or set(metadata) != set(SELECTED_PREFIX_METADATA):
+        raise ValueError("selected-prefix metadata fields are not frozen")
+    expected = {
+        "arena_manifest_sha256": collector.metadata["arena_manifest_sha256"],
+        "collector_tsv_sha256": collector.sha256,
+        "observed_moves_usage": OBSERVED_USAGE,
+        "policy_target": "null",
+        "schema": SELECTED_PREFIX_SCHEMA,
+        "source_sha256": collector.metadata["asserted_source_sha256"],
+        "value_target": "null",
+    }
+    if any(metadata[key] != value for key, value in expected.items()):
+        raise ValueError("selected-prefix manifest does not bind the collector")
+    if LOWER_SHA.fullmatch(metadata["panel_sha256"]) is None:
+        raise ValueError("selected-prefix panel identity is malformed")
+    requests = []
+    seen_keys = set()
+    seen_canonical = set()
+    for line_number, line in enumerate(lines[header_index + 1:], header_index + 2):
+        fields = line.split(b"\t")
+        if len(fields) != 6:
+            raise ValueError(f"selected-prefix row {line_number} is malformed")
+        try:
+            game_id, own, turn, state_id, canonical_key, role = (
+                field.decode("ascii") for field in fields
+            )
+        except UnicodeDecodeError as error:
+            raise ValueError("selected-prefix row is not ASCII") from error
+        if (
+            not game_id.isdigit() or not own.isdigit() or not turn.isdigit()
+            or int(game_id) >= 1 << 64 or int(own) >= 1 << 32
+            or int(turn) >= 1 << 32
+            or re.fullmatch(r"fnv1a64:[0-9a-f]{16}", state_id) is None
+            or re.fullmatch(r"fnv1a64:[0-9a-f]{16}", canonical_key) is None
+            or IDENTIFIER.fullmatch(role) is None
+        ):
+            raise ValueError(f"selected-prefix row {line_number} is unsafe")
+        key = game_id, int(turn)
+        if key in seen_keys or canonical_key in seen_canonical:
+            raise ValueError("selected-prefix manifest repeats a state")
+        seen_keys.add(key)
+        seen_canonical.add(canonical_key)
+        requests.append(SelectedPrefixRequest(
+            game_id, int(own), int(turn), state_id, canonical_key, role
+        ))
+    if not requests or len(requests) > 4_096:
+        raise ValueError("selected-prefix manifest is empty or too large")
+    return tuple(requests), sha256_bytes(raw)
+
+
+def select_manifest_prefixes(
+    collector: CollectorInput, raw: bytes,
+) -> tuple[SelectedPrefix, ...]:
+    requests, _ = parse_selected_prefix_bytes(raw, collector)
+    requested = {(item.game_id, item.prefix_turn): item for item in requests}
+    found: dict[tuple[str, int], SelectedPrefix] = {}
+    for game in collector.games:
+        state = round1._initial_replay_state()
+        prefix_actions: list[str] = []
+        candidate_own_decision = 0
+        is_loss = game.winner != game.candidate_player
+        for turn, action in enumerate(game.actions):
+            if state.winner is not None:
+                raise ValueError(
+                    f"collector game {game.game_id} continues after terminal"
+                )
+            is_candidate_decision = state.to_move == game.candidate_player
+            request = requested.get((game.game_id, turn))
+            if request is not None:
+                if not is_loss or turn == 0 or not is_candidate_decision:
+                    raise ValueError("selected prefix is not a candidate loss decision")
+                active = round1._encode_replay_features(state)
+                state_id = round1.canonical_state_id(active)
+                canonical_key = canonical_reflection_key(state)
+                if (
+                    request.candidate_own_decision != candidate_own_decision
+                    or request.state_id != state_id
+                    or request.canonical_key != canonical_key
+                ):
+                    raise ValueError("selected-prefix state identity is stale")
+                found[(game.game_id, turn)] = SelectedPrefix(
+                    game.game_id, game.candidate_player, game.winner,
+                    len(game.actions), turn, "/".join(prefix_actions), state_id,
+                )
+            if is_candidate_decision:
+                candidate_own_decision += 1
+            round1._apply_complete_turn(state, action, turn, 1, opening=False)
+            prefix_actions.append(action)
+        if state.winner is None or state.winner != game.winner:
+            raise ValueError(
+                f"collector game {game.game_id} is nonterminal or mismatched"
+            )
+    if set(found) != set(requested):
+        raise ValueError("selected-prefix manifest names a missing decision")
+    return tuple(found[(request.game_id, request.prefix_turn)] for request in requests)
 
 
 def select_prefixes(
@@ -480,9 +638,16 @@ def _validate_manifest(
         raise ValueError("restart manifest build identity is inconsistent")
 
     input_meta = manifest["input"]
-    if not isinstance(input_meta, dict) or set(input_meta) != {
-        "path", "sha256", "metadata",
-    } or input_meta["path"] != ARCHIVED_INPUT_NAME:
+    legacy_input_fields = {"path", "sha256", "metadata"}
+    selected_input_fields = legacy_input_fields | {
+        "selected_prefixes_path", "selected_prefixes_sha256",
+    }
+    if (
+        not isinstance(input_meta, dict)
+        or frozenset(input_meta) not in {frozenset(legacy_input_fields),
+                                         frozenset(selected_input_fields)}
+        or input_meta["path"] != ARCHIVED_INPUT_NAME
+    ):
         raise ValueError("restart manifest input identity is malformed")
     input_path = directory / ARCHIVED_INPUT_NAME
     collector = read_collector(input_path)
@@ -537,10 +702,22 @@ def _validate_manifest(
     ):
         raise ValueError("restart reanalysis budgets are not 30k/100k")
 
-    selected = select_prefixes(
-        collector, config["prefixes_per_loss"],
-        config["max_selected_prefixes"],
-    )
+    if "selected_prefixes_path" in input_meta:
+        if input_meta["selected_prefixes_path"] != ARCHIVED_SELECTED_PREFIXES_NAME:
+            raise ValueError("restart selected-prefix archive path is malformed")
+        selected_path = directory / ARCHIVED_SELECTED_PREFIXES_NAME
+        if (
+            not selected_path.is_file()
+            or sha256_bytes(selected_path.read_bytes())
+            != input_meta["selected_prefixes_sha256"]
+        ):
+            raise ValueError("restart selected-prefix archive is stale")
+        selected = select_manifest_prefixes(collector, selected_path.read_bytes())
+    else:
+        selected = select_prefixes(
+            collector, config["prefixes_per_loss"],
+            config["max_selected_prefixes"],
+        )
     expected_selected = [dataclasses.asdict(prefix) for prefix in selected]
     if manifest["selected_prefixes"] != expected_selected:
         raise ValueError("restart selected-prefix plan is stale or cherry-picked")

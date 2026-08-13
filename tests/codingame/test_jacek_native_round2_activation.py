@@ -837,7 +837,7 @@ class JacekNativeHistoricalActiveCompatibilityTest(unittest.TestCase):
                     repository_root=ROOT,
                 )
 
-    def test_exact_predecessor_activation_hash_is_admitted_but_unknown_hash_fails(self):
+    def test_exact_predecessor_tool_hashes_are_admitted_but_unknowns_fail(self):
         deployment = (
             ROOT
             / "models/jacek_native_round3_rank1_2026083111_deployment.json"
@@ -864,6 +864,16 @@ class JacekNativeHistoricalActiveCompatibilityTest(unittest.TestCase):
             tampered.write_bytes(activation._canonical_json_bytes(descriptor))
             with self.assertRaisesRegex(
                 activation.ActivationError, "activation-tool SHA-256 is stale"
+            ):
+                activation.load_deployment(tampered, ROOT)
+        descriptor = json.loads(deployment.read_text())
+        descriptor["round2_exporter_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as temporary:
+            tampered = pathlib.Path(temporary) / "tampered-exporter.json"
+            tampered.write_bytes(activation._canonical_json_bytes(descriptor))
+            with self.assertRaisesRegex(
+                activation.ActivationError,
+                "selector/exporter identity is stale",
             ):
                 activation.load_deployment(tampered, ROOT)
 

@@ -113,6 +113,44 @@ void replay_validation_uses_exact_codingame_rules() {
       "winner metadata must agree with native replay");
 }
 
+void selected_prefix_manifest_is_exact_and_fail_closed() {
+  const auto records = read(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "selected\t0\t0\t0/0/0/0/0/0\n");
+  audit::validate_records(records);
+  papersoccer::GameState initial =
+      papersoccer::make_initial_state(audit::codingame_rules());
+  const std::string state_id = audit::state_identity(initial);
+  std::istringstream manifest(
+      "game_id\tturn_index\tstate_id\nselected\t0\t" + state_id + "\n");
+  auto selected = audit::read_selected_prefixes(manifest);
+  const auto rows = audit::audit_records(records, fast_config(), &selected);
+  require(rows.size() == 1 && rows.front().turn_index == 0 &&
+              selected.front().matched,
+          "an exact manifest must search only the named candidate decision");
+
+  std::istringstream duplicate(
+      "game_id\tturn_index\tstate_id\nselected\t0\t" + state_id +
+      "\nselected\t0\t" + state_id + "\n");
+  require_invalid_argument(
+      [&] { (void)audit::read_selected_prefixes(duplicate); },
+      "duplicate manifest keys must fail closed");
+  std::istringstream wrong(
+      "game_id\tturn_index\tstate_id\nselected\t0\tfnv1a64:0000000000000000\n");
+  auto wrong_selection = audit::read_selected_prefixes(wrong);
+  require_invalid_argument(
+      [&] { (void)audit::audit_records(records, fast_config(),
+                                       &wrong_selection); },
+      "a stale manifest state identity must fail closed");
+  std::istringstream unknown(
+      "game_id\tturn_index\tstate_id\nmissing\t0\t" + state_id + "\n");
+  auto unknown_selection = audit::read_selected_prefixes(unknown);
+  require_invalid_argument(
+      [&] { (void)audit::audit_records(records, fast_config(),
+                                       &unknown_selection); },
+      "an unknown manifest decision must fail closed");
+}
+
 void native_diagnostics_are_complete_and_deterministic() {
   const auto records = read(
       "# agent_id=6600001\n"
@@ -133,8 +171,17 @@ void native_diagnostics_are_complete_and_deterministic() {
             "fixed-work diagnostics must be deterministic");
     require(left.search.stats.tree_nodes <= config.fixed_work &&
                 left.root.retained_actions <= config.max_actions &&
-                left.search.root_actions > 0,
+                left.search.root_actions > 0 &&
+                left.search.root_action_diagnostics.size() ==
+                    left.search.root_actions,
             "native work and action caps must be reported and enforced");
+    require(left.runtime.runtime_sha256 ==
+                "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3" &&
+                left.runtime.model_sha256 ==
+                    papersoccer::jacek_native_model::kModelSha256 &&
+                left.runtime.packed_sha256 ==
+                    papersoccer::jacek_native_model::kPackedSha256,
+            "every decision must bind the exact compile-time runtime identity");
     require(left.chosen.boundary_retained_ordinal >= 0 &&
                 left.chosen.initial_rank > 0 &&
                 left.chosen.final_backed_value.has_value() &&
@@ -150,6 +197,49 @@ void native_diagnostics_are_complete_and_deterministic() {
                 left.root.explored_partial_paths,
             "root deque extraction counters must account for every path");
   }
+}
+
+void strict_runtime_loader_binds_and_rejects_payload_tamper() {
+  const std::string raw = audit::default_runtime_text();
+  const audit::LoadedRuntime runtime = audit::parse_runtime(raw);
+  require(runtime.identity.runtime_sha256 ==
+              "17038c104bf79c4d5c4c47f09ea144acdeb5dc8e2b01137d46f6b0c589d304c3" &&
+              runtime.identity.model_sha256 ==
+                  papersoccer::jacek_native_model::kModelSha256 &&
+              runtime.identity.packed_sha256 ==
+                  papersoccer::jacek_native_model::kPackedSha256,
+          "the strict loader must reproduce the frozen history-62 runtime");
+  std::string tampered = raw;
+  const std::size_t payload = tampered.rfind('\n', tampered.size() - 2U);
+  require(payload != std::string::npos && payload + 1U < tampered.size() - 1U,
+          "the runtime fixture must expose one packed payload line");
+  tampered[payload + 1U] = tampered[payload + 1U] == 'A' ? 'B' : 'A';
+  require_invalid_argument(
+      [&] { (void)audit::parse_runtime(tampered); },
+      "packed runtime tamper must fail its declared SHA-256");
+  require_invalid_argument(
+      [&] { (void)audit::parse_runtime(raw.substr(0, raw.size() - 1U)); },
+      "runtime checkpoints without their canonical final LF must fail closed");
+
+  std::string alternate = raw;
+  const std::string original_model =
+      std::string(papersoccer::jacek_native_model::kModelSha256);
+  const std::string alternate_model(64, '2');
+  const std::size_t model_offset = alternate.find(original_model);
+  require(model_offset != std::string::npos,
+          "the runtime fixture must contain its model identity");
+  alternate.replace(model_offset, original_model.size(), alternate_model);
+  const audit::LoadedRuntime loaded = audit::parse_runtime(alternate);
+  const auto records = read(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "alternate\t0\t0\t0/0/0/0/0/0\n");
+  audit::validate_records(records);
+  const auto rows =
+      audit::audit_records(records, fast_config(), nullptr, &loaded);
+  require(!rows.empty() && rows.front().runtime.model_sha256 == alternate_model &&
+              rows.front().runtime.runtime_sha256 ==
+                  loaded.identity.runtime_sha256,
+          "auditor rows must bind the loaded runtime, never default_model");
 }
 
 void decision_limit_preserves_full_replay_and_first_decision_semantics() {
@@ -273,7 +363,7 @@ void jsonl_and_tsv_preserve_required_fields() {
   std::ostringstream jsonl;
   audit::write_audits(jsonl, rows, config);
   const std::string json = jsonl.str();
-  require(json.find("\"schema_version\":\"jacek-native-decision-audit-v2\"") !=
+  require(json.find("\"schema_version\":\"jacek-native-decision-audit-v4\"") !=
               std::string::npos &&
               json.find("\"input_provenance\":{\"agent_id\":\"6600001\"") !=
                   std::string::npos &&
@@ -285,6 +375,30 @@ void jsonl_and_tsv_preserve_required_fields() {
                   std::string::npos &&
               json.find("\"search_tactical_proof_paths\":") !=
                   std::string::npos &&
+              json.find("\"root_reply_width\":0") != std::string::npos &&
+              json.find("\"supported_advance_penalty\":0") !=
+                  std::string::npos &&
+              json.find("\"supported_advance_start_progress\":2") !=
+                  std::string::npos &&
+              json.find("\"supported_advance_endpoint_progress_threshold\":4") !=
+                  std::string::npos &&
+              json.find("\"maximum_supported_advance_penalty\":0.2") !=
+                  std::string::npos &&
+              json.find("\"pre_action_used_edges\":0") !=
+                  std::string::npos &&
+              json.find("\"runtime_sha256\":\"17038c104") !=
+                  std::string::npos &&
+              json.find("\"actual_exact_reply_refuted\":false") !=
+                  std::string::npos &&
+              json.find("\"chosen_supported_advance_eligible\":") !=
+                  std::string::npos &&
+              json.find("\"search_root_reply_probe_candidates\":0") !=
+                  std::string::npos &&
+              json.find("\"search_exact_reply_refuted_actions\":[]") !=
+                  std::string::npos &&
+              json.find("\"search_root_action_diagnostics\":[{") !=
+                  std::string::npos &&
+              json.find("\"initial_value\":") != std::string::npos &&
               json.find("\"diagnostic_root_tactical_proof_truncated\":") !=
                   std::string::npos &&
               json.find("\"max_own_decisions_per_game\":1") !=
@@ -320,9 +434,15 @@ void clock_and_cli_configuration_are_bounded() {
               audit::decision_time_limit(clock, 1) == 155,
           "first clock must be keyed to first own decision");
   const audit::AuditConfig larger_clock_tree =
-      parse_options({"--codingame-clocks", "--tree-nodes", "120000"});
+      parse_options({"--codingame-clocks", "--tree-nodes", "120000",
+                     "--root-reply-width", "32",
+                     "--supported-advance-penalty", "0.15",
+                     "--checkpoint", "seed.runtime"});
   require(larger_clock_tree.mode == audit::AuditMode::Clock &&
               larger_clock_tree.fixed_work == 120000 &&
+              larger_clock_tree.root_reply_width == 32 &&
+              larger_clock_tree.supported_advance_penalty == 0.15 &&
+              larger_clock_tree.checkpoint_path == "seed.runtime" &&
               larger_clock_tree.first_time_ms == 800 &&
               larger_clock_tree.later_time_ms == 155,
           "clock mode must honor an explicit supported tree-node cap");
@@ -357,6 +477,19 @@ void clock_and_cli_configuration_are_bounded() {
       },
       "clock-mode tree caps above the native maximum must fail closed");
   require_invalid_argument(
+      [] { (void)parse_options({"--root-reply-width", "251"}); },
+      "reply width above the root action limit must fail closed");
+  require_invalid_argument(
+      [] {
+        (void)parse_options({"--supported-advance-penalty", "-0.01"});
+      },
+      "negative supported-advance penalties must fail closed");
+  require_invalid_argument(
+      [] {
+        (void)parse_options({"--supported-advance-penalty", "0.201"});
+      },
+      "supported-advance penalties above the native bound must fail closed");
+  require_invalid_argument(
       [] { (void)parse_options({"--max-own-decisions-per-game", "0"}); },
       "a zero decision limit must fail closed");
   require_invalid_argument(
@@ -380,6 +513,25 @@ void run_validates_all_input_before_writing() {
   require(status == 2 && output.str().empty() &&
               error.str().find("not terminal") != std::string::npos,
           "invalid replay input must fail before emitting any partial audit");
+
+  std::istringstream valid_input(
+      "game_id\tcandidate_player\twinner\tturns\n"
+      "terminal\t0\t0\t0/0/0/0/0/0\n");
+  std::ostringstream missing_output;
+  std::ostringstream missing_error;
+  std::vector<std::string> missing_options{
+      "auditor", "--checkpoint", "/definitely/missing/jacek.runtime"};
+  std::vector<char *> missing_arguments;
+  for (std::string &option : missing_options) {
+    missing_arguments.push_back(option.data());
+  }
+  const int missing_status = audit::run(
+      static_cast<int>(missing_arguments.size()), missing_arguments.data(),
+      valid_input, missing_output, missing_error);
+  require(missing_status == 2 && missing_output.str().empty() &&
+              missing_error.str().find("cannot open runtime checkpoint") !=
+                  std::string::npos,
+          "an unavailable external runtime must fail before any audit output");
 }
 
 }  // namespace
@@ -388,7 +540,9 @@ int main() {
   try {
     strict_collector_contract_and_provenance();
     replay_validation_uses_exact_codingame_rules();
+    selected_prefix_manifest_is_exact_and_fail_closed();
     native_diagnostics_are_complete_and_deterministic();
+    strict_runtime_loader_binds_and_rejects_payload_tamper();
     decision_limit_preserves_full_replay_and_first_decision_semantics();
     classification_taxonomy_is_explicit();
     jsonl_and_tsv_preserve_required_fields();

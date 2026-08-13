@@ -26,6 +26,11 @@ constexpr std::string_view kRestartTemperatureSchedule =
     "restart-relative-complete-turn-index-before-cutoff/v1";
 constexpr std::string_view kCollectorHeader =
     "game_id\tcandidate_player\twinner\tturns";
+constexpr std::string_view kSelectedPrefixHeader =
+    "game_id\tcandidate_own_decision\tprefix_turn\tstate_id\t"
+    "canonical_key\trole";
+constexpr std::string_view kSelectedPrefixSchema =
+    "papersoccer.jacek-native-selected-prefixes.v1";
 constexpr std::size_t kMaximumCollectorBytes = 32U * 1024U * 1024U;
 constexpr std::size_t kMaximumCollectorGames = 512U;
 constexpr std::size_t kMaximumCollectorTurns = 1'024U;
@@ -52,6 +57,8 @@ struct RestartArguments {
   std::string input;
   std::string output;
   std::string input_sha256;
+  std::string selected_prefixes;
+  std::string selected_prefixes_sha256;
   std::string expected_source_sha256;
   std::string expected_manifest_sha256;
   std::string expected_exclusion_registry_sha256;
@@ -104,6 +111,15 @@ struct RestartPrefix {
   std::string transcript;
   std::string state_id;
   ps::GameState state;
+};
+
+struct SelectedPrefixRequest {
+  std::string game_id;
+  std::size_t candidate_own_decision{};
+  std::size_t prefix_turn{};
+  std::string state_id;
+  std::string canonical_key;
+  std::string role;
 };
 
 std::vector<std::string_view> split_exact(std::string_view text,
@@ -382,6 +398,180 @@ std::vector<RestartPrefix> limit_restart_prefixes(
   return limited;
 }
 
+std::vector<RestartPrefix> validate_selected_prefix_manifest(
+    const CollectorInput &input, const std::string &path,
+    std::string_view expected_sha256) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) {
+    throw std::runtime_error("could not open explicit selected-prefix manifest");
+  }
+  const std::string bytes{std::istreambuf_iterator<char>(stream),
+                          std::istreambuf_iterator<char>()};
+  if (bytes.empty() || bytes.size() > 4U * 1024U * 1024U ||
+      bytes.find('\0') != std::string::npos ||
+      bytes.find('\r') != std::string::npos) {
+    throw std::invalid_argument(
+        "selected-prefix manifest bytes are not canonical LF text");
+  }
+  const std::string digest = native::sha256_hex(std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
+  if (digest != expected_sha256) {
+    throw std::invalid_argument("selected-prefix manifest SHA-256 mismatch");
+  }
+
+  std::map<std::string, std::string> metadata;
+  std::vector<SelectedPrefixRequest> requests;
+  std::set<std::pair<std::string, std::size_t>> request_keys;
+  std::set<std::string> canonical_keys;
+  bool saw_header = false;
+  const auto lines = split_exact(bytes, '\n');
+  for (std::size_t index = 0; index < lines.size(); ++index) {
+    const std::string_view line = lines[index];
+    if (line.empty()) {
+      if (index + 1U == lines.size()) continue;
+      throw std::invalid_argument(
+          "selected-prefix manifest contains a blank line");
+    }
+    if (!saw_header && line.starts_with("# ")) {
+      const std::size_t equals = line.find('=');
+      if (equals <= 2U || equals == std::string_view::npos ||
+          line.find('=', equals + 1U) != std::string_view::npos) {
+        throw std::invalid_argument("selected-prefix metadata syntax is invalid");
+      }
+      const std::string key(line.substr(2U, equals - 2U));
+      const std::string value(line.substr(equals + 1U));
+      if (!safe_identifier(key, 64U) || value.empty() || value.size() > 128U ||
+          !metadata.emplace(key, value).second) {
+        throw std::invalid_argument("selected-prefix metadata is unsafe");
+      }
+      continue;
+    }
+    if (!saw_header) {
+      if (line != kSelectedPrefixHeader) {
+        throw std::invalid_argument("selected-prefix TSV header is not exact");
+      }
+      saw_header = true;
+      continue;
+    }
+    const auto fields = split_exact(line, '\t');
+    if (fields.size() != 6U || requests.size() >= 4'096U) {
+      throw std::invalid_argument("selected-prefix row schema is invalid");
+    }
+    SelectedPrefixRequest request;
+    request.game_id = fields[0];
+    request.candidate_own_decision =
+        parse_decimal_exact<std::size_t>(fields[1], "candidate own decision");
+    request.prefix_turn =
+        parse_decimal_exact<std::size_t>(fields[2], "prefix turn");
+    request.state_id = fields[3];
+    request.canonical_key = fields[4];
+    request.role = fields[5];
+    const auto valid_state_id = [](std::string_view value) {
+      return value.starts_with("fnv1a64:") &&
+             lower_hex(value.substr(8U), 16U);
+    };
+    if (request.game_id.empty() || request.game_id.size() > 32U ||
+        !std::all_of(request.game_id.begin(), request.game_id.end(),
+                     [](char c) { return c >= '0' && c <= '9'; }) ||
+        !valid_state_id(request.state_id) ||
+        !valid_state_id(request.canonical_key) ||
+        !safe_identifier(request.role) ||
+        !request_keys.emplace(request.game_id, request.prefix_turn).second ||
+        !canonical_keys.insert(request.canonical_key).second) {
+      throw std::invalid_argument("selected-prefix row is unsafe or duplicated");
+    }
+    (void)parse_decimal_exact<std::uint64_t>(request.game_id, "game_id");
+    requests.push_back(std::move(request));
+  }
+  const std::set<std::string> expected_metadata{
+      "arena_manifest_sha256", "collector_tsv_sha256",
+      "observed_moves_usage", "panel_sha256", "policy_target", "schema",
+      "source_sha256", "value_target"};
+  std::set<std::string> actual_metadata;
+  for (const auto &[key, value] : metadata) {
+    (void)value;
+    actual_metadata.insert(key);
+  }
+  if (!saw_header || requests.empty() || actual_metadata != expected_metadata ||
+      metadata["schema"] != kSelectedPrefixSchema ||
+      metadata["collector_tsv_sha256"] != input.sha256 ||
+      metadata["arena_manifest_sha256"] !=
+          metadata_value(input, "arena_manifest_sha256") ||
+      metadata["source_sha256"] !=
+          metadata_value(input, "asserted_source_sha256") ||
+      metadata["observed_moves_usage"] != "state-construction-only" ||
+      metadata["policy_target"] != "null" ||
+      metadata["value_target"] != "null" ||
+      !lower_hex(metadata["panel_sha256"], 64U)) {
+    throw std::invalid_argument(
+        "selected-prefix manifest does not bind the collector");
+  }
+
+  std::map<std::pair<std::string, std::size_t>, RestartPrefix> found;
+  for (const CollectorRecord &record : input.records) {
+    ps::GameState state = ps::make_initial_state(restart_rules());
+    std::string transcript;
+    std::size_t candidate_own_decision = 0U;
+    const bool is_loss = record.winner != record.candidate_player;
+    for (std::size_t turn = 0; turn < record.actions.size(); ++turn) {
+      if (ps::is_terminal(state)) {
+        throw std::invalid_argument("collector game continues after terminal");
+      }
+      const bool candidate_decision =
+          (state.to_move == ps::Player::One ? 0 : 1) == record.candidate_player;
+      const auto key = std::make_pair(record.game_id, turn);
+      const auto requested = std::find_if(
+          requests.begin(), requests.end(), [&](const auto &item) {
+            return item.game_id == record.game_id && item.prefix_turn == turn;
+          });
+      if (requested != requests.end()) {
+        if (!is_loss || turn == 0U || !candidate_decision ||
+            requested->candidate_own_decision != candidate_own_decision) {
+          throw std::invalid_argument(
+              "selected prefix is not a candidate loss decision");
+        }
+        const auto active = active_features(state);
+        const auto reflected = active_features(reflected_state(state));
+        const std::string state_id = feature_id(active);
+        const std::string canonical_key =
+            feature_id(reflected < active ? reflected : active);
+        if (requested->state_id != state_id ||
+            requested->canonical_key != canonical_key) {
+          throw std::invalid_argument(
+              "selected-prefix state identity is stale");
+        }
+        found.emplace(key, RestartPrefix{
+            record.game_id, record.candidate_player, record.winner,
+            record.actions.size(), turn, transcript, state_id, state});
+      }
+      if (candidate_decision) ++candidate_own_decision;
+      try {
+        native::apply_encoded_turn(state, record.actions[turn]);
+      } catch (const std::exception &error) {
+        throw std::invalid_argument("collector selected-prefix replay failed: " +
+                                    std::string(error.what()));
+      }
+      if (!transcript.empty()) transcript.push_back('/');
+      transcript += record.actions[turn];
+    }
+    if (!ps::is_terminal(state) || !ps::winner(state).has_value() ||
+        (*ps::winner(state) == ps::Player::One ? 0 : 1) != record.winner) {
+      throw std::invalid_argument(
+          "collector selected-prefix replay is nonterminal or mismatched");
+    }
+  }
+  if (found.size() != requests.size()) {
+    throw std::invalid_argument(
+        "selected-prefix manifest names a missing decision");
+  }
+  std::vector<RestartPrefix> result;
+  result.reserve(requests.size());
+  for (const SelectedPrefixRequest &request : requests) {
+    result.push_back(found.at({request.game_id, request.prefix_turn}));
+  }
+  return result;
+}
+
 RestartArguments parse_restart_arguments(int argc, char **argv) {
   RestartArguments result;
   for (int index = 1; index < argc; ++index) {
@@ -393,6 +583,11 @@ RestartArguments parse_restart_arguments(int argc, char **argv) {
     if (option == "--input") result.input = value;
     else if (option == "--output") result.output = value;
     else if (option == "--input-sha256") result.input_sha256 = value;
+    else if (option == "--selected-prefixes") {
+      result.selected_prefixes = value;
+    } else if (option == "--selected-prefixes-sha256") {
+      result.selected_prefixes_sha256 = value;
+    }
     else if (option == "--expected-source-sha256") {
       result.expected_source_sha256 = value;
     } else if (option == "--expected-manifest-sha256") {
@@ -462,6 +657,7 @@ RestartArguments parse_restart_arguments(int argc, char **argv) {
     }
   }
   const bool reanalysis_enabled = result.reanalysis_work != 0U;
+  const bool selected_prefixes_enabled = !result.selected_prefixes.empty();
   if (result.input.empty() || result.output.empty() ||
       !valid_sha256(result.input_sha256) ||
       !valid_sha256(result.expected_source_sha256) ||
@@ -474,6 +670,8 @@ RestartArguments parse_restart_arguments(int argc, char **argv) {
       !valid_sha256(result.player_two_artifact_sha256) ||
       !valid_sha256(result.producer_sha256) ||
       !valid_sha256(result.build_provenance_sha256) || result.work < 2U ||
+      (selected_prefixes_enabled !=
+       valid_sha256(result.selected_prefixes_sha256)) ||
       result.samples_per_game == 0U || result.samples_per_game > 100U ||
       result.reanalysis_samples_per_game > result.samples_per_game ||
       result.prefixes_per_loss == 0U || result.prefixes_per_loss > 32U ||
@@ -667,9 +865,15 @@ int main(int argc, char **argv) {
     const RestartArguments arguments = parse_restart_arguments(argc, argv);
     const CollectorInput collector = read_collector(arguments.input);
     assert_expected_collector(arguments, collector);
-    const std::vector<RestartPrefix> prefixes = limit_restart_prefixes(
-        validate_and_select_prefixes(collector, arguments.prefixes_per_loss),
-        arguments.maximum_selected_prefixes);
+    const std::vector<RestartPrefix> prefixes =
+        arguments.selected_prefixes.empty()
+            ? limit_restart_prefixes(
+                  validate_and_select_prefixes(
+                      collector, arguments.prefixes_per_loss),
+                  arguments.maximum_selected_prefixes)
+            : validate_selected_prefix_manifest(
+                  collector, arguments.selected_prefixes,
+                  arguments.selected_prefixes_sha256);
     if (prefixes.size() > 65'536U / arguments.continuations_per_prefix) {
       throw std::invalid_argument("live-restart record plan exceeds 65536 games");
     }

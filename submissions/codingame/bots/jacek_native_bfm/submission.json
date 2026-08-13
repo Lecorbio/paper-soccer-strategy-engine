@@ -2,7 +2,7 @@
   "schema": "papersoccer.codingame-submission.v1",
   "sources": "sources.txt",
   "output": "submission.cpp",
-  "source_limit": 94999,
+  "source_limit": 99999,
   "strip_leading_whitespace": true,
   "allowed_local_includes": [
     "jacek_native_model.hpp",

@@ -620,6 +620,40 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
             np.asarray([3.0, 3.0, 1.5, 1.5, 1.0, 1.0], dtype=np.float32),
         )
 
+    def test_late_pacing_profile_is_exact_override_safe_and_bound(self):
+        dataset = self.trainer.Dataset(
+            active=tuple(
+                np.asarray([index], dtype=np.uint16) for index in range(3)
+            ),
+            outcome=np.asarray([0.5, -1.0, 1.0], dtype=np.float32),
+            auxiliary=np.asarray([-1.0, 1.0, 0.0], dtype=np.float32),
+            auxiliary_mask=np.asarray([True, True, False], dtype=bool),
+            exact_mask=np.asarray([True, False, False], dtype=bool),
+            game_keys=("exact", "stable", "outcome"),
+            turn=np.asarray([11, 12, 24], dtype=np.int32),
+        )
+        predictions = np.asarray([0.5, 0.5, 0.5], dtype=np.float32)
+        with mock.patch.object(
+            self.trainer, "forward", return_value=(predictions, None)
+        ):
+            result = self.trainer.metrics(
+                {}, dataset, batch_size=3,
+                phase_weights=self.trainer.LATE_PACING_PHASE_WEIGHTS,
+            )
+        expected_unweighted = (2.25 + 1.75 + 0.25) / 3.0
+        expected_weighted = (2.25 + 1.75 * 1.5 + 0.25 * 2.0) / 3.0
+        self.assertAlmostEqual(
+            result["unweighted_combined_target_mse"], expected_unweighted
+        )
+        self.assertAlmostEqual(
+            result["weighted_combined_target_mse"], expected_weighted
+        )
+        self.assertEqual(
+            [result["phase_metrics"][name]["weight"]
+             for name, _, _, _ in self.trainer.LATE_PACING_PHASE_WEIGHTS],
+            [1.0, 1.5, 2.0],
+        )
+
     def test_phase_weights_scale_float_and_fixed_qat_gradients(self):
         parameters = {
             "w1": np.zeros(
@@ -751,6 +785,21 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
         self.assertEqual(
             model["target"]["phase_weight_application"],
             self.trainer.PHASE_WEIGHT_APPLICATION,
+        )
+
+        late_arguments = argparse.Namespace(
+            **vars(arguments), phase_weight_profile="late-pacing-v1"
+        )
+        late_model = self.trainer.build_report(
+            candidates, reports, {"corpus_sha256": "a" * 64}, late_arguments
+        )
+        self.assertEqual(
+            late_model["target"]["phase_weights"],
+            {"turns_0_11": 1.0, "turns_12_23": 1.5,
+             "turns_24_plus": 2.0},
+        )
+        self.assertEqual(
+            late_model["target"]["phase_weight_profile"], "late-pacing-v1"
         )
 
     def test_provisional_order_uses_explicit_weighted_metric_and_ties(self):
@@ -1053,6 +1102,24 @@ class JacekNativeRound2TrainerTest(unittest.TestCase):
                     model["target"]["phase_weights"]["turns_24_plus"] = True
                 with self.assertRaisesRegex(ValueError, "phase-weighted target"):
                     self.exporter.render_runtime(model, "e" * 64, seed=1)
+
+    def test_round2_exporter_accepts_late_profile_and_rejects_profile_spoof(self):
+        model = self.exportable_model()
+        model["target"]["phase_weight_profile"] = "late-pacing-v1"
+        model["target"]["phase_weights"] = {
+            "turns_0_11": 1.0,
+            "turns_12_23": 1.5,
+            "turns_24_plus": 2.0,
+        }
+        self.exporter.render_runtime(model, "e" * 64, seed=1)
+        model["target"]["phase_weights"]["turns_24_plus"] = 1.0
+        with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+            self.exporter.render_runtime(model, "e" * 64, seed=1)
+
+        model = self.exportable_model()
+        model["target"]["phase_weight_profile"] = "unbound-experiment-v1"
+        with self.assertRaisesRegex(ValueError, "phase-weighted target"):
+            self.exporter.render_runtime(model, "e" * 64, seed=1)
 
     def test_explicit_restart_paths_merge_without_observed_labels(self):
         artifact = corpus.NativeModelArtifact(

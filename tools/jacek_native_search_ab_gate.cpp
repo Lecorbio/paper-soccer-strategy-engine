@@ -26,11 +26,12 @@ namespace native = papersoccer::jacek_native_bfm;
 
 inline constexpr std::string_view kRuntimeSchema =
     "papersoccer.jacek-native-runtime-model/v1";
-inline constexpr std::uint32_t kFirstHeadroomLimitMs = 900;
-inline constexpr std::uint32_t kLaterHeadroomLimitMs = 180;
+inline constexpr std::uint32_t kFirstHeadroomLimitMs = 990;
+inline constexpr std::uint32_t kLaterHeadroomLimitMs = 198;
 inline constexpr std::uint32_t kFirstOperationalLimitMs = 1'000;
 inline constexpr std::uint32_t kLaterOperationalLimitMs = 200;
 inline constexpr std::string_view kTimingScope = "search-through-apply";
+inline constexpr std::string_view kSearchConstructionTiming = "included";
 
 enum class FinalFormula {
   Production,
@@ -43,6 +44,10 @@ struct SearchProfile {
   std::size_t tree_nodes{native::kProductionTreeNodes};
   std::size_t opening_tree_nodes{native::kProductionTreeNodes};
   std::size_t opening_own_decisions{};
+  std::size_t root_reply_width{};
+  double supported_advance_penalty{};
+  std::uint32_t first_ms{50};
+  std::uint32_t later_ms{10};
   double exploration{native::kExplorationConstant};
   double fpu{native::kFirstPlayUrgency};
   FinalFormula final_formula{FinalFormula::Production};
@@ -67,6 +72,7 @@ struct Arguments {
   std::size_t minimum_wins_per_color{};
   SearchProfile candidate;
   SearchProfile baseline;
+  bool independent_clocks{};
   bool verify_only{};
 };
 
@@ -75,6 +81,15 @@ struct ProfileOptions {
   bool opening_tree_nodes{};
   bool later_tree_nodes{};
   bool opening_own_decisions{};
+};
+
+struct ClockOptions {
+  bool shared_first{};
+  bool shared_later{};
+  bool candidate_first{};
+  bool candidate_later{};
+  bool baseline_first{};
+  bool baseline_later{};
 };
 
 struct LoadedModel {
@@ -119,10 +134,24 @@ struct SearchTotals {
   std::uint64_t deadline_searches{};
   std::uint64_t tree_cap_searches{};
   std::uint64_t final_overrides{};
+  std::uint64_t root_reply_probe_candidates{};
+  std::uint64_t root_reply_probe_attempts{};
+  std::uint64_t root_reply_probe_expansions{};
+  std::uint64_t root_reply_probe_refutations{};
+  std::uint64_t root_reply_probe_generator_truncations{};
+  std::uint64_t root_reply_probe_budget_truncations{};
+  std::uint64_t supported_advance_penalized_actions{};
+  std::uint64_t supported_advance_selected_actions{};
+  std::uint64_t supported_advance_selection_overrides{};
+  std::array<std::uint64_t, 2> supported_advance_selection_overrides_by_player{};
   std::uint64_t headroom_failures{};
   std::uint64_t operational_timeouts{};
   std::size_t maximum_tree_nodes{};
   double milliseconds{};
+  std::uint64_t first_clock_decisions{};
+  std::uint64_t later_clock_decisions{};
+  double first_clock_milliseconds{};
+  double later_clock_milliseconds{};
   double maximum_first_milliseconds{};
   double maximum_later_milliseconds{};
   PhaseTotals opening;
@@ -130,7 +159,8 @@ struct SearchTotals {
 
   void observe(const native::SearchResult &search, std::string_view selected,
                double elapsed, std::uint32_t prior_turns,
-               std::size_t opening_own_decisions) noexcept {
+               std::size_t opening_own_decisions,
+               bool supported_advance_override, int mover) noexcept {
     const native::SearchStats &stats = search.stats;
     ++decisions;
     expansions += stats.expansions;
@@ -140,13 +170,35 @@ struct SearchTotals {
     deadline_searches += stats.deadline_reached ? 1U : 0U;
     tree_cap_searches += stats.tree_cap_reached ? 1U : 0U;
     final_overrides += selected != search.encoded ? 1U : 0U;
+    root_reply_probe_candidates += stats.root_reply_probe_candidates;
+    root_reply_probe_attempts += stats.root_reply_probe_attempts;
+    root_reply_probe_expansions += stats.root_reply_probe_expansions;
+    root_reply_probe_refutations += stats.root_reply_probe_refutations;
+    root_reply_probe_generator_truncations +=
+        stats.root_reply_probe_generator_truncations;
+    root_reply_probe_budget_truncations +=
+        stats.root_reply_probe_budget_truncations;
+    for (const native::RootActionStat &action : search.root_actions) {
+      if (action.penalty_applied == 0.0) continue;
+      ++supported_advance_penalized_actions;
+      supported_advance_selected_actions += action.encoded == selected ? 1U : 0U;
+    }
+    if (supported_advance_override) {
+      ++supported_advance_selection_overrides;
+      ++supported_advance_selection_overrides_by_player[
+          static_cast<std::size_t>(mover)];
+    }
     maximum_tree_nodes = std::max(maximum_tree_nodes, stats.tree_nodes);
     milliseconds += elapsed;
     const bool first = prior_turns == 0;
     if (first) {
+      ++first_clock_decisions;
+      first_clock_milliseconds += elapsed;
       maximum_first_milliseconds =
           std::max(maximum_first_milliseconds, elapsed);
     } else {
+      ++later_clock_decisions;
+      later_clock_milliseconds += elapsed;
       maximum_later_milliseconds =
           std::max(maximum_later_milliseconds, elapsed);
     }
@@ -339,35 +391,49 @@ FinalFormula parse_final_formula(std::string_view value) {
 }
 
 double final_score(const native::RootActionStat &action,
-                   FinalFormula formula) {
-  if (!std::isfinite(action.value)) {
-    throw std::invalid_argument("root action value is not finite");
+                   FinalFormula formula, bool apply_penalty = true) {
+  if (!std::isfinite(action.value) || !std::isfinite(action.penalty_applied) ||
+      action.penalty_applied < 0.0 ||
+      action.penalty_applied > native::kMaximumSupportedAdvancePenalty) {
+    throw std::invalid_argument("root action score is outside native bounds");
   }
+  double score{};
   switch (formula) {
     case FinalFormula::Production:
-      return native::final_action_score(action.value, action.visits);
+      score = native::final_action_score(action.value, action.visits);
+      break;
     case FinalFormula::ValueOnly:
-      return static_cast<double>(action.value);
+      score = static_cast<double>(action.value);
+      break;
     case FinalFormula::ValueLogVisitsPlus3:
-      return static_cast<double>(action.value) +
-             std::log(static_cast<double>(action.visits) + 3.0);
+      score = static_cast<double>(action.value) +
+              std::log(static_cast<double>(action.visits) + 3.0);
+      break;
     case FinalFormula::ValueLogSelectionVisitsPlus3:
-      return static_cast<double>(action.value) +
-             std::log(static_cast<double>(action.selection_visits) + 3.0);
+      score = static_cast<double>(action.value) +
+              std::log(static_cast<double>(action.selection_visits) + 3.0);
+      break;
   }
-  throw std::logic_error("invalid final formula");
+  return score - (apply_penalty ? action.penalty_applied : 0.0);
 }
 
 std::string select_action(const native::SearchResult &search,
-                          FinalFormula formula) {
+                          FinalFormula formula,
+                          bool apply_penalty = true) {
   if (search.root_actions.empty()) {
     throw std::logic_error("native search returned no root actions");
   }
-  const native::RootActionStat *best = &search.root_actions.front();
-  double best_score = final_score(*best, formula);
+  const bool has_unrefuted = std::any_of(
+      search.root_actions.begin(), search.root_actions.end(),
+      [](const native::RootActionStat &action) {
+        return !action.exact_reply_refuted;
+      });
+  const native::RootActionStat *best = nullptr;
+  double best_score = -std::numeric_limits<double>::infinity();
   for (const native::RootActionStat &action : search.root_actions) {
-    const double score = final_score(action, formula);
-    if (score > best_score ||
+    if (has_unrefuted && action.exact_reply_refuted) continue;
+    const double score = final_score(action, formula, apply_penalty);
+    if (best == nullptr || score > best_score ||
         (score == best_score && action.encoded < best->encoded)) {
       best = &action;
       best_score = score;
@@ -378,31 +444,36 @@ std::string select_action(const native::SearchResult &search,
 
 std::string choose_turn(GameState &state, const native::QuantizedModel &model,
                         const SearchProfile &profile,
-                        const Arguments &arguments, std::uint32_t prior_turns,
+                        const Arguments &, std::uint32_t prior_turns,
                         SearchTotals &totals) {
+  const auto started = native::SearchClock::now();
   native::SearchConfig config;
   config.max_actions = native::kMaximumActions;
   config.max_partial_paths = native::kProductionPartialPaths;
   config.max_tree_nodes = tree_nodes_for_own_decision(profile, prior_turns);
+  config.root_reply_width = profile.root_reply_width;
+  config.supported_advance_penalty = profile.supported_advance_penalty;
   config.max_expansions = native::kMaximumExpansions;
   config.shuffle_seed = native::SearchConfig{}.shuffle_seed;
   config.exploration_constant = profile.exploration;
   config.first_play_urgency = profile.fpu;
   config.model = &model;
   const std::uint32_t budget =
-      prior_turns == 0 ? arguments.first_ms : arguments.later_ms;
-  const auto started = native::SearchClock::now();
+      prior_turns == 0 ? profile.first_ms : profile.later_ms;
   config.absolute_deadline = started + std::chrono::milliseconds(budget);
   const native::SearchResult search = native::choose_complete_turn(
       static_cast<const GameState &>(state), config);
   const std::string selected = select_action(search, profile.final_formula);
+  const std::string unpenalized =
+      select_action(search, profile.final_formula, false);
   GameState next = state;
   native::apply_encoded_turn(next, selected);
   const auto finished = native::SearchClock::now();
   const double elapsed =
       std::chrono::duration<double, std::milli>(finished - started).count();
   totals.observe(search, selected, elapsed, prior_turns,
-                 profile.opening_own_decisions);
+                 profile.opening_own_decisions, selected != unpenalized,
+                 player_id(state.to_move));
   state = std::move(next);
   return selected;
 }
@@ -486,6 +557,14 @@ void validate_profile(const SearchProfile &profile, std::string_view name) {
   if (profile.tree_nodes < 2 || profile.opening_tree_nodes < 2 ||
       profile.tree_nodes > native::kMaximumTreeNodes ||
       profile.opening_tree_nodes > native::kMaximumTreeNodes ||
+      profile.root_reply_width > native::kMaximumActions ||
+      !std::isfinite(profile.supported_advance_penalty) ||
+      profile.supported_advance_penalty < 0.0 ||
+      profile.supported_advance_penalty >
+          native::kMaximumSupportedAdvancePenalty ||
+      profile.first_ms == 0 || profile.later_ms == 0 ||
+      profile.first_ms > kFirstOperationalLimitMs ||
+      profile.later_ms > kLaterOperationalLimitMs ||
       !std::isfinite(profile.exploration) || profile.exploration < 0.0 ||
       !std::isfinite(profile.fpu)) {
     throw std::invalid_argument(std::string(name) +
@@ -499,6 +578,9 @@ void print_help() {
       << "  --checkpoint PATH             one runtime used by both profiles\n"
       << "  --pairs N                     paired openings; two colors each\n"
       << "  --first-ms N --later-ms N     shared actual search clocks\n"
+      << "  or all four independent clocks:\n"
+      << "     --candidate-first-ms N --candidate-later-ms N\n"
+      << "     --baseline-first-ms N --baseline-later-ms N\n"
       << "  --maximum-turns N             complete turns after the opening\n"
       << "  --opening-turns A,B,...       procedural depths, cycled by pair\n"
       << "  --seed N                      deterministic opening seed\n"
@@ -508,6 +590,9 @@ void print_help() {
       << "     --SIDE-opening-own-decisions N\n"
       << "  --candidate-c X --baseline-c X\n"
       << "  --candidate-fpu X --baseline-fpu X\n"
+      << "  --candidate-root-reply-width K --baseline-root-reply-width K\n"
+      << "  --candidate-supported-advance-penalty X\n"
+      << "  --baseline-supported-advance-penalty X\n"
       << "  --candidate-final NAME --baseline-final NAME\n"
       << "     NAME: value-log-visits | value-only |\n"
       << "           value-log-visits-plus3 |\n"
@@ -521,6 +606,7 @@ Arguments parse_arguments(int argc, char **argv) {
   Arguments result;
   ProfileOptions candidate_options;
   ProfileOptions baseline_options;
+  ClockOptions clock_options;
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
     if (option == "--help") {
@@ -540,9 +626,49 @@ Arguments parse_arguments(int argc, char **argv) {
     } else if (option == "--pairs") {
       result.pairs = parse_integer<std::size_t>(value, "pairs");
     } else if (option == "--first-ms") {
+      if (clock_options.shared_first) {
+        throw std::invalid_argument("first ms was specified more than once");
+      }
+      clock_options.shared_first = true;
       result.first_ms = parse_integer<std::uint32_t>(value, "first ms");
     } else if (option == "--later-ms") {
+      if (clock_options.shared_later) {
+        throw std::invalid_argument("later ms was specified more than once");
+      }
+      clock_options.shared_later = true;
       result.later_ms = parse_integer<std::uint32_t>(value, "later ms");
+    } else if (option == "--candidate-first-ms") {
+      if (clock_options.candidate_first) {
+        throw std::invalid_argument(
+            "candidate first ms was specified more than once");
+      }
+      clock_options.candidate_first = true;
+      result.candidate.first_ms =
+          parse_integer<std::uint32_t>(value, "candidate first ms");
+    } else if (option == "--candidate-later-ms") {
+      if (clock_options.candidate_later) {
+        throw std::invalid_argument(
+            "candidate later ms was specified more than once");
+      }
+      clock_options.candidate_later = true;
+      result.candidate.later_ms =
+          parse_integer<std::uint32_t>(value, "candidate later ms");
+    } else if (option == "--baseline-first-ms") {
+      if (clock_options.baseline_first) {
+        throw std::invalid_argument(
+            "baseline first ms was specified more than once");
+      }
+      clock_options.baseline_first = true;
+      result.baseline.first_ms =
+          parse_integer<std::uint32_t>(value, "baseline first ms");
+    } else if (option == "--baseline-later-ms") {
+      if (clock_options.baseline_later) {
+        throw std::invalid_argument(
+            "baseline later ms was specified more than once");
+      }
+      clock_options.baseline_later = true;
+      result.baseline.later_ms =
+          parse_integer<std::uint32_t>(value, "baseline later ms");
     } else if (option == "--maximum-turns") {
       result.maximum_turns =
           parse_integer<std::size_t>(value, "maximum turns");
@@ -596,6 +722,18 @@ Arguments parse_arguments(int argc, char **argv) {
       result.candidate.fpu = parse_double(value, "candidate FPU");
     } else if (option == "--baseline-fpu") {
       result.baseline.fpu = parse_double(value, "baseline FPU");
+    } else if (option == "--candidate-root-reply-width") {
+      result.candidate.root_reply_width = parse_integer<std::size_t>(
+          value, "candidate root reply width");
+    } else if (option == "--baseline-root-reply-width") {
+      result.baseline.root_reply_width = parse_integer<std::size_t>(
+          value, "baseline root reply width");
+    } else if (option == "--candidate-supported-advance-penalty") {
+      result.candidate.supported_advance_penalty =
+          parse_double(value, "candidate supported advance penalty");
+    } else if (option == "--baseline-supported-advance-penalty") {
+      result.baseline.supported_advance_penalty =
+          parse_double(value, "baseline supported advance penalty");
     } else if (option == "--candidate-final") {
       result.candidate.final_formula = parse_final_formula(value);
     } else if (option == "--baseline-final") {
@@ -606,6 +744,33 @@ Arguments parse_arguments(int argc, char **argv) {
   }
   if (result.checkpoint.empty()) {
     throw std::invalid_argument("one shared runtime checkpoint is required");
+  }
+  const bool any_shared_clock =
+      clock_options.shared_first || clock_options.shared_later;
+  if (clock_options.shared_first != clock_options.shared_later) {
+    throw std::invalid_argument(
+        "shared clocks must specify both first and later fields");
+  }
+  const bool any_independent_clock =
+      clock_options.candidate_first || clock_options.candidate_later ||
+      clock_options.baseline_first || clock_options.baseline_later;
+  const bool all_independent_clocks =
+      clock_options.candidate_first && clock_options.candidate_later &&
+      clock_options.baseline_first && clock_options.baseline_later;
+  if (any_shared_clock && any_independent_clock) {
+    throw std::invalid_argument(
+        "shared and independent clocks cannot be mixed");
+  }
+  if (any_independent_clock && !all_independent_clocks) {
+    throw std::invalid_argument(
+        "independent clocks must specify all four fields");
+  }
+  result.independent_clocks = any_independent_clock;
+  if (!result.independent_clocks) {
+    result.candidate.first_ms = result.first_ms;
+    result.candidate.later_ms = result.later_ms;
+    result.baseline.first_ms = result.first_ms;
+    result.baseline.later_ms = result.later_ms;
   }
   const auto finalize_profile = [](SearchProfile &profile,
                                    const ProfileOptions &options,
@@ -635,9 +800,7 @@ Arguments parse_arguments(int argc, char **argv) {
   };
   finalize_profile(result.candidate, candidate_options, "candidate");
   finalize_profile(result.baseline, baseline_options, "baseline");
-  if (result.pairs == 0 || result.first_ms == 0 || result.later_ms == 0 ||
-      result.first_ms > native::kFirstSearchTimeMs ||
-      result.later_ms > native::kLaterSearchTimeMs ||
+  if (result.pairs == 0 ||
       result.maximum_turns == 0 || result.opening_turns.empty() ||
       result.candidate.opening_own_decisions > result.maximum_turns ||
       result.baseline.opening_own_decisions > result.maximum_turns ||
@@ -662,6 +825,11 @@ void print_profile(std::string_view name, const SearchProfile &profile) {
             << name << "_later_tree_nodes=" << profile.tree_nodes << ' '
             << name << "_opening_own_decisions="
             << profile.opening_own_decisions << ' '
+            << name << "_root_reply_width=" << profile.root_reply_width << ' '
+            << name << "_supported_advance_penalty="
+            << profile.supported_advance_penalty << ' '
+            << name << "_first_ms=" << profile.first_ms << ' '
+            << name << "_later_ms=" << profile.later_ms << ' '
             << name << "_c=" << profile.exploration << ' '
             << name << "_fpu=" << profile.fpu << ' '
             << name << "_final=" << final_formula_name(profile.final_formula)
@@ -740,7 +908,37 @@ int main_impl(int argc, char **argv) {
       << " candidate_tree_cap_searches="
       << summary.candidate.tree_cap_searches
       << " candidate_final_overrides=" << summary.candidate.final_overrides
+      << " candidate_root_reply_probe_candidates="
+      << summary.candidate.root_reply_probe_candidates
+      << " candidate_root_reply_probe_attempts="
+      << summary.candidate.root_reply_probe_attempts
+      << " candidate_root_reply_probe_expansions="
+      << summary.candidate.root_reply_probe_expansions
+      << " candidate_root_reply_probe_refutations="
+      << summary.candidate.root_reply_probe_refutations
+      << " candidate_root_reply_probe_generator_truncations="
+      << summary.candidate.root_reply_probe_generator_truncations
+      << " candidate_root_reply_probe_budget_truncations="
+      << summary.candidate.root_reply_probe_budget_truncations
+      << " candidate_supported_advance_penalized_actions="
+      << summary.candidate.supported_advance_penalized_actions
+      << " candidate_supported_advance_selected_actions="
+      << summary.candidate.supported_advance_selected_actions
+      << " candidate_supported_advance_selection_overrides="
+      << summary.candidate.supported_advance_selection_overrides
+      << " candidate_supported_advance_player_one_selection_overrides="
+      << summary.candidate.supported_advance_selection_overrides_by_player[0]
+      << " candidate_supported_advance_player_two_selection_overrides="
+      << summary.candidate.supported_advance_selection_overrides_by_player[1]
       << " candidate_ms=" << summary.candidate.milliseconds
+      << " candidate_first_clock_decisions="
+      << summary.candidate.first_clock_decisions
+      << " candidate_later_clock_decisions="
+      << summary.candidate.later_clock_decisions
+      << " candidate_first_clock_ms="
+      << summary.candidate.first_clock_milliseconds
+      << " candidate_later_clock_ms="
+      << summary.candidate.later_clock_milliseconds
       << " candidate_max_first_ms="
       << summary.candidate.maximum_first_milliseconds
       << " candidate_max_later_ms="
@@ -782,7 +980,37 @@ int main_impl(int argc, char **argv) {
       << " baseline_max_tree=" << summary.baseline.maximum_tree_nodes
       << " baseline_tree_cap_searches=" << summary.baseline.tree_cap_searches
       << " baseline_final_overrides=" << summary.baseline.final_overrides
+      << " baseline_root_reply_probe_candidates="
+      << summary.baseline.root_reply_probe_candidates
+      << " baseline_root_reply_probe_attempts="
+      << summary.baseline.root_reply_probe_attempts
+      << " baseline_root_reply_probe_expansions="
+      << summary.baseline.root_reply_probe_expansions
+      << " baseline_root_reply_probe_refutations="
+      << summary.baseline.root_reply_probe_refutations
+      << " baseline_root_reply_probe_generator_truncations="
+      << summary.baseline.root_reply_probe_generator_truncations
+      << " baseline_root_reply_probe_budget_truncations="
+      << summary.baseline.root_reply_probe_budget_truncations
+      << " baseline_supported_advance_penalized_actions="
+      << summary.baseline.supported_advance_penalized_actions
+      << " baseline_supported_advance_selected_actions="
+      << summary.baseline.supported_advance_selected_actions
+      << " baseline_supported_advance_selection_overrides="
+      << summary.baseline.supported_advance_selection_overrides
+      << " baseline_supported_advance_player_one_selection_overrides="
+      << summary.baseline.supported_advance_selection_overrides_by_player[0]
+      << " baseline_supported_advance_player_two_selection_overrides="
+      << summary.baseline.supported_advance_selection_overrides_by_player[1]
       << " baseline_ms=" << summary.baseline.milliseconds
+      << " baseline_first_clock_decisions="
+      << summary.baseline.first_clock_decisions
+      << " baseline_later_clock_decisions="
+      << summary.baseline.later_clock_decisions
+      << " baseline_first_clock_ms="
+      << summary.baseline.first_clock_milliseconds
+      << " baseline_later_clock_ms="
+      << summary.baseline.later_clock_milliseconds
       << " baseline_max_first_ms="
       << summary.baseline.maximum_first_milliseconds
       << " baseline_max_later_ms="
@@ -813,7 +1041,13 @@ int main_impl(int argc, char **argv) {
       << summary.baseline.later.maximum_milliseconds
       << " baseline_later_max_tree="
       << summary.baseline.later.maximum_tree_nodes
-      << " profile=" << arguments.first_ms << '/' << arguments.later_ms
+      << " profile=" << arguments.candidate.first_ms << '/'
+      << arguments.candidate.later_ms
+      << (arguments.independent_clocks ? "|" : "")
+      << (arguments.independent_clocks
+              ? std::to_string(arguments.baseline.first_ms) + "/" +
+                    std::to_string(arguments.baseline.later_ms)
+              : "")
       << " pairs=" << arguments.pairs
       << " maximum_turns=" << arguments.maximum_turns
       << " opening_turns=" << opening_turns_text(arguments.opening_turns)
@@ -822,11 +1056,30 @@ int main_impl(int argc, char **argv) {
       << " runtime_policy=same"
       << " game_order_policy=pair-parity-color-swap"
       << " timing_scope=" << kTimingScope
+      << " search_construction_timing=" << kSearchConstructionTiming
+      << " first_headroom_limit_ms=" << kFirstHeadroomLimitMs
+      << " later_headroom_limit_ms=" << kLaterHeadroomLimitMs
+      << " first_operational_limit_ms=" << kFirstOperationalLimitMs
+      << " later_operational_limit_ms=" << kLaterOperationalLimitMs
+      << " supported_advance_sparse_edge_limit="
+      << native::kSupportedAdvanceSparseEdgeLimit
+      << " supported_advance_start_progress="
+      << native::kSupportedAdvanceStartProgress
+      << " supported_advance_endpoint_progress_threshold="
+      << native::kSupportedAdvanceEndpointProgressThreshold
+      << " maximum_supported_advance_penalty="
+      << native::kMaximumSupportedAdvancePenalty
       << " candidate_opening_tree_nodes="
       << arguments.candidate.opening_tree_nodes
       << " candidate_later_tree_nodes=" << arguments.candidate.tree_nodes
       << " candidate_opening_own_decisions="
       << arguments.candidate.opening_own_decisions
+      << " candidate_root_reply_width="
+      << arguments.candidate.root_reply_width
+      << " candidate_supported_advance_penalty="
+      << arguments.candidate.supported_advance_penalty
+      << " candidate_first_budget_ms=" << arguments.candidate.first_ms
+      << " candidate_later_budget_ms=" << arguments.candidate.later_ms
       << " candidate_c=" << arguments.candidate.exploration
       << " candidate_fpu=" << arguments.candidate.fpu
       << " candidate_final="
@@ -836,6 +1089,12 @@ int main_impl(int argc, char **argv) {
       << " baseline_later_tree_nodes=" << arguments.baseline.tree_nodes
       << " baseline_opening_own_decisions="
       << arguments.baseline.opening_own_decisions
+      << " baseline_root_reply_width="
+      << arguments.baseline.root_reply_width
+      << " baseline_supported_advance_penalty="
+      << arguments.baseline.supported_advance_penalty
+      << " baseline_first_budget_ms=" << arguments.baseline.first_ms
+      << " baseline_later_budget_ms=" << arguments.baseline.later_ms
       << " baseline_c=" << arguments.baseline.exploration
       << " baseline_fpu=" << arguments.baseline.fpu
       << " baseline_final="

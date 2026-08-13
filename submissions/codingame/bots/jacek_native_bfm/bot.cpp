@@ -44,6 +44,12 @@ inline constexpr std::size_t kProductionPartialPaths = 4'000;
 inline constexpr std::size_t kNonrootPartialPaths = 512;
 inline constexpr std::size_t kMaximumTreeNodes = 120'000;
 inline constexpr std::size_t kProductionTreeNodes = 80'000;
+inline constexpr std::size_t kProductionRootReplyWidth = 0;
+inline constexpr double kProductionSupportedAdvancePenalty = 0.0;
+inline constexpr double kMaximumSupportedAdvancePenalty = 0.20;
+inline constexpr std::size_t kSupportedAdvanceSparseEdgeLimit = 48;
+inline constexpr int kSupportedAdvanceStartProgress = 2;
+inline constexpr int kSupportedAdvanceEndpointProgressThreshold = 4;
 inline constexpr std::uint64_t kMaximumExpansions = 2'000'000;
 inline constexpr std::size_t kFifoPeriod = 10;
 inline constexpr std::size_t kLifoExtractionsPerPeriod = 9;
@@ -165,6 +171,10 @@ float terminal_value(Player winner, Player perspective,
 
 bool proven_action_win(bool solved, float action_value) noexcept {
   return solved && action_value > 0.0F;
+}
+
+bool proven_mate_win(bool solved, float value) noexcept {
+  return solved && value >= 1.0F;
 }
 
 double uct_action_score(float action_value, std::uint32_t parent_visits,
@@ -719,6 +729,25 @@ enum class TacticalClass {
   OwnGoal,
 };
 
+int mover_normalized_progress(Point point, Player mover) noexcept {
+  return (6 - point.y) * player_sign(mover);
+}
+
+bool supported_advance_penalty_eligible(Point start, Point endpoint,
+                                        Player mover,
+                                        TacticalClass tactical,
+                                        std::size_t pre_action_used_edges,
+                                        bool solved) noexcept {
+  if (pre_action_used_edges >= kSupportedAdvanceSparseEdgeLimit ||
+      tactical != TacticalClass::SafeHandoff || solved) {
+    return false;
+  }
+  const int start_progress = mover_normalized_progress(start, mover);
+  const int endpoint_progress = mover_normalized_progress(endpoint, mover);
+  return start_progress == kSupportedAdvanceStartProgress &&
+         endpoint_progress >= kSupportedAdvanceEndpointProgressThreshold;
+}
+
 struct TurnTactics {
   bool can_score{};
   bool can_handoff{};
@@ -1152,6 +1181,8 @@ struct SearchConfig {
   std::size_t max_actions{kMaximumActions};
   std::size_t max_partial_paths{kProductionPartialPaths};
   std::size_t max_tree_nodes{kProductionTreeNodes};
+  std::size_t root_reply_width{};
+  double supported_advance_penalty{};
   std::uint64_t max_expansions{kMaximumExpansions};
   std::optional<SearchClock::time_point> absolute_deadline{};
   std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
@@ -1177,6 +1208,12 @@ struct SearchStats {
   std::uint64_t generator_truncations{};
   std::uint64_t root_generator_truncations{};
   std::uint64_t nonroot_generator_truncations{};
+  std::uint64_t root_reply_probe_candidates{};
+  std::uint64_t root_reply_probe_attempts{};
+  std::uint64_t root_reply_probe_expansions{};
+  std::uint64_t root_reply_probe_refutations{};
+  std::uint64_t root_reply_probe_generator_truncations{};
+  std::uint64_t root_reply_probe_budget_truncations{};
   std::size_t tree_nodes{};
   std::uint32_t max_complete_turn_depth{};
   bool deadline_reached{};
@@ -1191,6 +1228,9 @@ struct RootActionStat {
   std::uint32_t visits{};
   std::uint32_t selection_visits{};
   TacticalClass tactical{TacticalClass::SafeHandoff};
+  bool exact_reply_refuted{};
+  double penalty_applied{};
+  bool solved{};
 };
 
 struct SearchResult {
@@ -1208,13 +1248,20 @@ class BestFirstMinimaxSearch {
   BestFirstMinimaxSearch(const GameState &state, SearchConfig config = {})
       : config_(config),
         topology_(std::make_shared<SearchTopology>(state.config)),
-        root_(topology_, state), evaluator_(topology_, selected_model()) {
+        root_(topology_, state), evaluator_(topology_, selected_model()),
+        root_used_edges_(config.supported_advance_penalty == 0.0
+                             ? 0U
+                             : state.used_segments.size()) {
     if (!is_production_rules(state.config) ||
         config_.max_actions == 0 || config_.max_actions > kMaximumActions ||
         config_.max_partial_paths == 0 ||
         config_.max_partial_paths > kMaximumPartialPaths ||
         config_.max_tree_nodes < 2 ||
         config_.max_tree_nodes > kMaximumTreeNodes ||
+        config_.root_reply_width > config_.max_actions ||
+        !std::isfinite(config_.supported_advance_penalty) ||
+        config_.supported_advance_penalty < 0.0 ||
+        config_.supported_advance_penalty > kMaximumSupportedAdvancePenalty ||
         config_.max_expansions == 0 ||
         config_.max_expansions > kMaximumExpansions ||
         !std::isfinite(config_.exploration_constant) ||
@@ -1232,6 +1279,7 @@ class BestFirstMinimaxSearch {
                         false, false, false);
     if (!expand(0)) impossible("root expansion");
     refresh(0);
+    probe_root_replies();
     while (!nodes_[0].closed && budget_available()) {
       const auto path = select_path();
       if (!path.has_value()) break;
@@ -1286,6 +1334,7 @@ class BestFirstMinimaxSearch {
   NeuralEvaluator evaluator_;
   std::vector<Node> nodes_;
   SearchStats stats_{};
+  std::size_t root_used_edges_{};
 
   static constexpr std::size_t no_parent() noexcept {
     return std::numeric_limits<std::size_t>::max();
@@ -1461,6 +1510,53 @@ class BestFirstMinimaxSearch {
     }
   }
 
+  bool exact_reply_refutation(const Node &child) const noexcept {
+    return config_.root_reply_width != 0 &&
+           proven_mate_win(child.solved, child.value);
+  }
+
+  void probe_root_replies() {
+    if (config_.root_reply_width == 0 || nodes_[0].closed) return;
+    std::vector<std::size_t> candidates;
+    for (const std::size_t child_index : nodes_[0].children) {
+      const Node &child = nodes_[child_index];
+      if (!child.expanded && !child.solved) candidates.push_back(child_index);
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [&](std::size_t left, std::size_t right) {
+                const float left_value = -nodes_[left].prior_value;
+                const float right_value = -nodes_[right].prior_value;
+                return left_value != right_value
+                           ? left_value > right_value
+                           : nodes_[left].action_key < nodes_[right].action_key;
+              });
+    if (candidates.size() > config_.root_reply_width) {
+      candidates.resize(config_.root_reply_width);
+    }
+    stats_.root_reply_probe_candidates = candidates.size();
+    for (const std::size_t child_index : candidates) {
+      if (!budget_available()) break;
+      ++stats_.root_reply_probe_attempts;
+      const std::vector<std::size_t> path{0, child_index};
+      for (const std::size_t index : path) {
+        ++nodes_[index].visits;
+        ++nodes_[index].selection_visits;
+      }
+      if (!expand(child_index)) break;
+      ++stats_.root_reply_probe_expansions;
+      if (!nodes_[child_index].exhaustive) {
+        ++stats_.root_reply_probe_generator_truncations;
+      }
+      if (exact_reply_refutation(nodes_[child_index])) {
+        ++stats_.root_reply_probe_refutations;
+      }
+      backup(path);
+    }
+    stats_.root_reply_probe_budget_truncations =
+        stats_.root_reply_probe_candidates -
+        stats_.root_reply_probe_expansions;
+  }
+
   SearchResult make_result() const {
     if (nodes_.empty() || nodes_[0].children.empty()) {
       impossible("root action");
@@ -1468,20 +1564,38 @@ class BestFirstMinimaxSearch {
     const Node &root = nodes_[0];
     std::size_t best = root.children.front();
     double best_score = -std::numeric_limits<double>::infinity();
+    const bool has_unrefuted =
+        config_.root_reply_width != 0 &&
+        std::any_of(root.children.begin(), root.children.end(),
+                    [&](std::size_t child_index) {
+                      return !exact_reply_refutation(nodes_[child_index]);
+                    });
     SearchResult result;
     result.root_actions.reserve(root.children.size());
     for (const std::size_t child_index : root.children) {
       const Node &child = nodes_[child_index];
       const float action_value = -child.value;
-      const double score = final_action_score(action_value, child.visits);
-      if (score > best_score ||
-          (score == best_score && child.action_key < nodes_[best].action_key)) {
+      double score = final_action_score(action_value, child.visits);
+      const double penalty =
+          config_.supported_advance_penalty != 0.0 &&
+                  supported_advance_penalty_eligible(
+                      root_.ball(), child.position.ball(), root_.to_move(),
+                      child.tactical, root_used_edges_, child.solved)
+              ? config_.supported_advance_penalty
+              : 0.0;
+      score -= penalty;
+      const bool refuted = exact_reply_refutation(child);
+      if ((!has_unrefuted || !refuted) &&
+          (score > best_score ||
+           (score == best_score &&
+            child.action_key < nodes_[best].action_key))) {
         best = child_index;
         best_score = score;
       }
       result.root_actions.push_back(RootActionStat{
           child.action_key, action_value, -child.prior_value, child.visits,
-          child.selection_visits, child.tactical});
+          child.selection_visits, child.tactical, refuted, penalty,
+          child.solved});
     }
     const Node &chosen = nodes_[best];
     result.moves = chosen.incoming_action;
@@ -1518,13 +1632,26 @@ void apply_encoded_turn(GameState &state, std::string_view encoded) {
   state = std::move(next);
 }
 
-std::string choose_complete_turn(GameState &state,
-                                 std::uint32_t search_time_ms) {
+SearchResult choose_production_turn(const GameState &state,
+                                    std::uint32_t search_time_ms) {
   SearchConfig config;
+  config.root_reply_width = kProductionRootReplyWidth;
+  config.supported_advance_penalty = kProductionSupportedAdvancePenalty;
   config.absolute_deadline =
       SearchClock::now() + std::chrono::milliseconds(search_time_ms);
-  SearchResult result = choose_complete_turn(
-      static_cast<const GameState &>(state), config);
+  return choose_complete_turn(state, config);
+}
+
+void write_production_profile(std::ostream &output,
+                              std::uint32_t search_time_ms) {
+  output << "p=" << kProductionRootReplyWidth
+         << ",sp=" << kProductionSupportedAdvancePenalty
+         << ",b=" << search_time_ms;
+}
+
+std::string choose_complete_turn(GameState &state,
+                                 std::uint32_t search_time_ms) {
+  SearchResult result = choose_production_turn(state, search_time_ms);
   apply_encoded_turn(state, result.encoded);
   return result.encoded;
 }
@@ -1553,6 +1680,7 @@ int main() {
   rules.blocked_rule = kProductionBlockedRule;
   GameState state = make_initial_state(rules);
   bool first_execution = true;
+  std::uint32_t own_decision = 0;
   while (true) {
     int opponent_length = 0;
     if (!(std::cin >> opponent_length)) break;
@@ -1573,8 +1701,18 @@ int main() {
       if (state.to_move != me) return 1;
       const std::uint32_t budget =
           first_execution ? kFirstSearchTimeMs : kLaterSearchTimeMs;
-      const std::string action = choose_complete_turn(state, budget);
-      std::cout << action << std::endl;
+      const SearchResult result = choose_production_turn(state, budget);
+      apply_encoded_turn(state, result.encoded);
+      std::cout << result.encoded << std::endl;
+      if (!std::cout) return 1;
+      const SearchStats &stats = result.stats;
+      std::cerr << "JNB ";
+      write_production_profile(std::cerr, budget);
+      std::cerr << " m=" << jacek_native_model::kModelSha256.substr(0, 8)
+                << " d=" << own_decision << " a=" << result.encoded
+                << " n=" << stats.tree_nodes << " dl=" << stats.deadline_reached
+                << " pr=" << stats.root_reply_probe_refutations << '\n';
+      ++own_decision;
       first_execution = false;
     } catch (const std::exception &) {
       return 1;

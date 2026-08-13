@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -27,7 +28,9 @@ namespace papersoccer::jacek_native_replay_audit {
 namespace native = papersoccer::jacek_native_bfm;
 
 inline constexpr std::string_view kSchemaVersion =
-    "jacek-native-decision-audit-v2";
+    "jacek-native-decision-audit-v4";
+inline constexpr std::string_view kRuntimeSchema =
+    "papersoccer.jacek-native-runtime-model/v1";
 inline constexpr std::string_view kInputHeader =
     "game_id\tcandidate_player\twinner\tturns";
 inline constexpr std::size_t kMaximumGames = 4'096;
@@ -50,13 +53,40 @@ struct AuditConfig {
   std::size_t max_actions{native::kMaximumActions};
   std::size_t max_partial_paths{native::kProductionPartialPaths};
   std::uint64_t max_expansions{native::kMaximumExpansions};
+  std::size_t root_reply_width{};
+  double supported_advance_penalty{};
   double exploration{native::kExplorationConstant};
   double first_play_urgency{native::kFirstPlayUrgency};
   std::uint32_t first_time_ms{};
   std::uint32_t later_time_ms{};
   OutputFormat output_format{OutputFormat::JsonLines};
   std::optional<std::string> input_path{};
+  std::optional<std::string> checkpoint_path{};
+  std::optional<std::string> selected_prefixes_path{};
   std::optional<std::size_t> max_own_decisions_per_game{};
+};
+
+struct RuntimeIdentity {
+  std::string runtime_sha256;
+  std::string model_sha256;
+  std::string packed_sha256;
+};
+
+struct LoadedRuntime {
+  std::string model_schema;
+  std::string feature_schema;
+  std::string packed;
+  float scale_one{};
+  float scale_two{};
+  float scale_three{};
+  RuntimeIdentity identity;
+};
+
+struct SelectedPrefix {
+  std::string game_id;
+  std::size_t turn_index{};
+  std::string state_id;
+  bool matched{};
 };
 
 struct GameRecord {
@@ -80,6 +110,15 @@ struct ActionDiagnostic {
   std::optional<std::uint32_t> final_visits;
   std::optional<std::uint32_t> final_selection_visits;
   std::string final_tactical_class{"not-searched"};
+  bool exact_reply_refuted{};
+  bool final_solved{};
+  bool final_proven_win{};
+  std::optional<int> start_progress;
+  std::optional<int> endpoint_progress;
+  bool supported_advance_eligible{};
+  double supported_advance_penalty{};
+  std::optional<double> final_unpenalized_score;
+  std::optional<double> final_penalized_score;
 };
 
 struct RootDiagnostics {
@@ -108,7 +147,26 @@ struct SearchDecision {
   std::optional<int> solved_winner;
   double elapsed_ms{};
   std::size_t root_actions{};
+  std::vector<std::string> exact_reply_refuted_actions;
   native::SearchStats stats{};
+  struct RootAction {
+    std::string encoded;
+    float value{};
+    float initial_value{};
+    std::uint32_t visits{};
+    std::uint32_t selection_visits{};
+    std::string tactical_class;
+    bool solved{};
+    bool proven_win{};
+    bool exact_reply_refuted{};
+    int start_progress{};
+    int endpoint_progress{};
+    bool supported_advance_eligible{};
+    double supported_advance_penalty{};
+    double unpenalized_final_score{};
+    double penalized_final_score{};
+  };
+  std::vector<RootAction> root_action_diagnostics;
 };
 
 struct DecisionAudit {
@@ -120,6 +178,7 @@ struct DecisionAudit {
   int candidate_player{};
   int winner{};
   std::uint32_t time_limit_ms{};
+  std::size_t pre_action_used_edges{};
   ProvenanceMetadata provenance;
   RootDiagnostics root;
   ActionDiagnostic actual;
@@ -127,6 +186,7 @@ struct DecisionAudit {
   SearchDecision search;
   std::string classification;
   std::string classification_reason;
+  RuntimeIdentity runtime;
 };
 
 RulesConfig codingame_rules() {
@@ -180,6 +240,93 @@ double parse_double(std::string_view raw, std::string_view label) {
                                 owned);
   }
   return value;
+}
+
+bool valid_sha256(std::string_view value) noexcept {
+  return value.size() == 64 &&
+         std::all_of(value.begin(), value.end(), [](char character) {
+           return (character >= '0' && character <= '9') ||
+                  (character >= 'a' && character <= 'f');
+         });
+}
+
+LoadedRuntime parse_runtime(std::string_view raw) {
+  if (raw.empty() || raw.back() != '\n' || raw.find('\r') != raw.npos ||
+      raw.find('\0') != raw.npos) {
+    throw std::invalid_argument("runtime checkpoint is not canonical text");
+  }
+  const std::vector<std::string_view> lines =
+      split_preserving_empty(raw, '\n');
+  if (lines.size() != 8 || !lines.back().empty() ||
+      lines[0] != kRuntimeSchema || !valid_sha256(lines[3]) ||
+      !valid_sha256(lines[4])) {
+    throw std::invalid_argument("runtime checkpoint metadata is invalid");
+  }
+  std::istringstream scales{std::string(lines[5])};
+  LoadedRuntime runtime;
+  if (!(scales >> runtime.scale_one >> runtime.scale_two >>
+        runtime.scale_three)) {
+    throw std::invalid_argument("runtime checkpoint scales are invalid");
+  }
+  scales >> std::ws;
+  if (!scales.eof() || !std::isfinite(runtime.scale_one) ||
+      !std::isfinite(runtime.scale_two) ||
+      !std::isfinite(runtime.scale_three) || runtime.scale_one <= 0.0F ||
+      runtime.scale_two <= 0.0F || runtime.scale_three <= 0.0F) {
+    throw std::invalid_argument("runtime checkpoint scales are invalid");
+  }
+  runtime.model_schema = lines[1];
+  runtime.feature_schema = lines[2];
+  runtime.packed = lines[6];
+  runtime.identity.model_sha256 = lines[3];
+  runtime.identity.packed_sha256 = lines[4];
+  const std::vector<std::uint8_t> bytes(raw.begin(), raw.end());
+  runtime.identity.runtime_sha256 =
+      native::sha256_hex(std::span<const std::uint8_t>(bytes));
+  const native::QuantizedModel verified(
+      runtime.packed, runtime.scale_one, runtime.scale_two,
+      runtime.scale_three, runtime.model_schema, runtime.feature_schema,
+      runtime.identity.model_sha256, runtime.identity.model_sha256, false,
+      runtime.identity.packed_sha256);
+  if (verified.model_sha256() != runtime.identity.model_sha256 ||
+      verified.packed_sha256() != runtime.identity.packed_sha256) {
+    throw std::invalid_argument("runtime checkpoint hashes do not match payload");
+  }
+  return runtime;
+}
+
+std::string default_runtime_text() {
+  std::ostringstream output;
+  output << kRuntimeSchema << '\n' << jacek_native_model::kModelSchema << '\n'
+         << jacek_native_model::kFeatureSchema << '\n'
+         << jacek_native_model::kModelSha256 << '\n'
+         << jacek_native_model::kPackedSha256 << '\n' << std::setprecision(9)
+         << jacek_native_model::kScale1 << ' '
+         << jacek_native_model::kScale2 << ' '
+         << jacek_native_model::kScale3 << '\n'
+         << jacek_native_model::kPackedWeights << '\n';
+  return output.str();
+}
+
+LoadedRuntime default_runtime() { return parse_runtime(default_runtime_text()); }
+
+LoadedRuntime load_runtime(const std::optional<std::string> &path) {
+  if (!path.has_value()) return default_runtime();
+  std::ifstream input(*path, std::ios::binary);
+  if (!input) {
+    throw std::invalid_argument("cannot open runtime checkpoint: " + *path);
+  }
+  const std::string raw{std::istreambuf_iterator<char>(input),
+                        std::istreambuf_iterator<char>()};
+  return parse_runtime(raw);
+}
+
+native::QuantizedModel make_runtime_model(const LoadedRuntime &runtime) {
+  return native::QuantizedModel(
+      runtime.packed, runtime.scale_one, runtime.scale_two,
+      runtime.scale_three, runtime.model_schema, runtime.feature_schema,
+      runtime.identity.model_sha256, runtime.identity.model_sha256, false,
+      runtime.identity.packed_sha256);
 }
 
 bool safe_game_id(std::string_view value) noexcept {
@@ -314,6 +461,55 @@ std::vector<GameRecord> read_records(std::istream &input) {
   if (!saw_header) throw std::invalid_argument("missing TSV input header");
   if (records.empty()) throw std::invalid_argument("input contains no games");
   return records;
+}
+
+std::vector<SelectedPrefix> read_selected_prefixes(std::istream &input) {
+  constexpr std::string_view header = "game_id\tturn_index\tstate_id";
+  std::vector<SelectedPrefix> result;
+  std::unordered_set<std::string> keys;
+  std::string line;
+  if (!std::getline(input, line) || line != header) {
+    throw std::invalid_argument("selected-prefix manifest header must be: " +
+                                std::string(header));
+  }
+  if (line.find('\r') != std::string::npos) {
+    throw std::invalid_argument("selected-prefix manifest must use LF");
+  }
+  while (std::getline(input, line)) {
+    if (line.empty() || line.find('\r') != std::string::npos) {
+      throw std::invalid_argument(
+          "selected-prefix manifest contains a blank or CR line");
+    }
+    if (result.size() >= kMaximumGames) {
+      throw std::invalid_argument("selected-prefix manifest is too large");
+    }
+    const auto fields = split_preserving_empty(line, '\t');
+    if (fields.size() != 3 || !safe_game_id(fields[0]) ||
+        fields[2].size() != 24 || fields[2].substr(0, 8) != "fnv1a64:" ||
+        !std::all_of(fields[2].begin() + 8, fields[2].end(), [](char value) {
+          return (value >= '0' && value <= '9') ||
+                 (value >= 'a' && value <= 'f');
+        })) {
+      throw std::invalid_argument("selected-prefix manifest row is malformed");
+    }
+    const std::size_t turn =
+        parse_integer<std::size_t>(fields[1], "selected turn index");
+    if (turn >= kMaximumTurns) {
+      throw std::invalid_argument("selected turn index is out of range");
+    }
+    std::string key(fields[0]);
+    key.push_back('\t');
+    key.append(fields[1]);
+    if (!keys.insert(key).second) {
+      throw std::invalid_argument("duplicate selected-prefix key: " + key);
+    }
+    result.push_back(
+        {std::string(fields[0]), turn, std::string(fields[2]), false});
+  }
+  if (result.empty()) {
+    throw std::invalid_argument("selected-prefix manifest is empty");
+  }
+  return result;
 }
 
 void validate_record(const GameRecord &record) {
@@ -550,6 +746,8 @@ native::SearchConfig native_search_config(const AuditConfig &config,
   search.max_actions = config.max_actions;
   search.max_partial_paths = config.max_partial_paths;
   search.max_tree_nodes = config.fixed_work;
+  search.root_reply_width = config.root_reply_width;
+  search.supported_advance_penalty = config.supported_advance_penalty;
   search.max_expansions = config.max_expansions;
   search.exploration_constant = config.exploration;
   search.first_play_urgency = config.first_play_urgency;
@@ -567,16 +765,11 @@ struct SearchRun {
 
 SearchRun choose_native(const GameState &state, const AuditConfig &config,
                         std::uint32_t time_limit_ms,
-                        std::optional<native::QuantizedModel> &game_model) {
+                        std::optional<native::QuantizedModel> &game_model,
+                        const LoadedRuntime &runtime) {
   const auto started = native::SearchClock::now();
   if (!game_model.has_value()) {
-    game_model.emplace(
-        jacek_native_model::kPackedWeights, jacek_native_model::kScale1,
-        jacek_native_model::kScale2, jacek_native_model::kScale3,
-        jacek_native_model::kModelSchema, jacek_native_model::kFeatureSchema,
-        jacek_native_model::kModelSha256, jacek_native_model::kModelSha256,
-        jacek_native_model::kPackedWeights.empty(),
-        jacek_native_model::kPackedSha256);
+    game_model.emplace(make_runtime_model(runtime));
   }
   native::SearchConfig search_config =
       native_search_config(config, time_limit_ms);
@@ -600,6 +793,37 @@ SearchRun choose_native(const GameState &state, const AuditConfig &config,
     run.decision.solved_winner = player_id(*run.result.solved_winner);
   }
   run.decision.root_actions = run.result.root_actions.size();
+  for (const native::RootActionStat &action : run.result.root_actions) {
+    if (action.exact_reply_refuted) {
+      run.decision.exact_reply_refuted_actions.push_back(action.encoded);
+    }
+    GameState endpoint = state;
+    native::apply_encoded_turn(endpoint, action.encoded);
+    const bool proven_win =
+        native::proven_action_win(action.solved, action.value);
+    const bool penalty_eligible = native::supported_advance_penalty_eligible(
+        state.ball, endpoint.ball, state.to_move, action.tactical,
+        state.used_segments.size(), action.solved);
+    const double unpenalized =
+        native::final_action_score(action.value, action.visits);
+    run.decision.root_action_diagnostics.push_back(
+        SearchDecision::RootAction{
+            action.encoded,
+            action.value,
+            action.initial_value,
+            action.visits,
+            action.selection_visits,
+            tactical_class_name(action.tactical),
+            action.solved,
+            proven_win,
+            action.exact_reply_refuted,
+            native::mover_normalized_progress(state.ball, state.to_move),
+            native::mover_normalized_progress(endpoint.ball, state.to_move),
+            penalty_eligible,
+            action.penalty_applied,
+            unpenalized,
+            unpenalized - action.penalty_applied});
+  }
   run.decision.stats = run.result.stats;
   return run;
 }
@@ -665,6 +889,25 @@ ActionDiagnostic inspect_action(
     result.final_visits = root_action.visits;
     result.final_selection_visits = root_action.selection_visits;
     result.final_tactical_class = tactical_class_name(root_action.tactical);
+    result.exact_reply_refuted = root_action.exact_reply_refuted;
+    result.final_solved = root_action.solved;
+    result.final_proven_win =
+        native::proven_action_win(root_action.solved, root_action.value);
+    GameState endpoint = state;
+    native::apply_encoded_turn(endpoint, root_action.encoded);
+    result.start_progress =
+        native::mover_normalized_progress(state.ball, state.to_move);
+    result.endpoint_progress =
+        native::mover_normalized_progress(endpoint.ball, state.to_move);
+    result.supported_advance_eligible =
+        native::supported_advance_penalty_eligible(
+            state.ball, endpoint.ball, state.to_move, root_action.tactical,
+            state.used_segments.size(), root_action.solved);
+    result.supported_advance_penalty = root_action.penalty_applied;
+    result.final_unpenalized_score =
+        native::final_action_score(root_action.value, root_action.visits);
+    result.final_penalized_score =
+        *result.final_unpenalized_score - root_action.penalty_applied;
   };
   for (const native::RootActionStat &root_action : search_result.root_actions) {
     if (root_action.encoded == action) {
@@ -727,7 +970,13 @@ void append_turn(std::string &transcript, std::string_view action) {
 }
 
 std::vector<DecisionAudit> audit_records(
-    const std::vector<GameRecord> &records, const AuditConfig &config) {
+    const std::vector<GameRecord> &records, const AuditConfig &config,
+    std::vector<SelectedPrefix> *selected_prefixes = nullptr,
+    const LoadedRuntime *runtime_override = nullptr) {
+  std::optional<LoadedRuntime> compiled_runtime;
+  if (runtime_override == nullptr) compiled_runtime.emplace(default_runtime());
+  const LoadedRuntime &runtime =
+      runtime_override == nullptr ? *compiled_runtime : *runtime_override;
   std::vector<DecisionAudit> audits;
   for (const GameRecord &record : records) {
     GameState state = make_initial_state(codingame_rules());
@@ -737,9 +986,25 @@ std::vector<DecisionAudit> audit_records(
     for (std::size_t turn = 0; turn < record.actions.size(); ++turn) {
       if (player_id(state.to_move) == record.candidate_player) {
         const std::size_t decision_index = own_decision++;
-        const bool audit_decision =
+        bool audit_decision =
             !config.max_own_decisions_per_game.has_value() ||
             decision_index < *config.max_own_decisions_per_game;
+        std::string selected_state_id;
+        if (selected_prefixes != nullptr) {
+          audit_decision = false;
+          for (SelectedPrefix &selected : *selected_prefixes) {
+            if (selected.game_id != record.game_id ||
+                selected.turn_index != turn) continue;
+            selected_state_id = state_identity(state);
+            if (selected.state_id != selected_state_id) {
+              throw std::invalid_argument(
+                  "selected-prefix state identity disagrees with replay");
+            }
+            selected.matched = true;
+            audit_decision = true;
+            break;
+          }
+        }
         if (!audit_decision) {
           native::apply_encoded_turn(state, record.actions[turn]);
           append_turn(prefix, record.actions[turn]);
@@ -747,17 +1012,21 @@ std::vector<DecisionAudit> audit_records(
         }
         DecisionAudit audit;
         audit.game_id = record.game_id;
-        audit.state_id = state_identity(state);
+        audit.state_id = selected_state_id.empty() ? state_identity(state)
+                                                    : selected_state_id;
         audit.transcript_prefix = prefix;
         audit.turn_index = turn;
         audit.own_decision_index = decision_index;
         audit.candidate_player = record.candidate_player;
         audit.winner = record.winner;
+        audit.pre_action_used_edges = state.used_segments.size();
         audit.provenance = record.provenance;
+        audit.runtime = runtime.identity;
         audit.time_limit_ms = decision_time_limit(config,
                                                   audit.own_decision_index);
         SearchRun search =
-            choose_native(state, config, audit.time_limit_ms, game_model);
+            choose_native(state, config, audit.time_limit_ms, game_model,
+                          runtime);
         DiagnosticGeneration diagnostics =
             generate_root_diagnostics(state, config, *game_model);
         audit.root = diagnostics.root;
@@ -774,6 +1043,14 @@ std::vector<DecisionAudit> audit_records(
       native::apply_encoded_turn(state, record.actions[turn]);
       append_turn(prefix, record.actions[turn]);
     }
+  }
+  if (selected_prefixes != nullptr &&
+      std::any_of(selected_prefixes->begin(), selected_prefixes->end(),
+                  [](const SelectedPrefix &prefix) {
+                    return !prefix.matched;
+                  })) {
+    throw std::invalid_argument(
+        "selected-prefix manifest contains an unknown candidate decision");
   }
   return audits;
 }
@@ -866,7 +1143,84 @@ void write_json_action(std::ostream &output, std::string_view prefix,
          << json_quote(std::string(prefix) + "_final_selection_visits") << ':';
   write_json_optional(output, action.final_selection_visits);
   output << ',' << json_quote(std::string(prefix) + "_final_tactical_class")
-         << ':' << json_quote(action.final_tactical_class);
+         << ':' << json_quote(action.final_tactical_class) << ','
+         << json_quote(std::string(prefix) + "_exact_reply_refuted") << ':'
+         << (action.exact_reply_refuted ? "true" : "false") << ','
+         << json_quote(std::string(prefix) + "_final_solved") << ':'
+         << (action.final_solved ? "true" : "false") << ','
+         << json_quote(std::string(prefix) + "_final_proven_win") << ':'
+         << (action.final_proven_win ? "true" : "false") << ','
+         << json_quote(std::string(prefix) + "_start_progress") << ':';
+  write_json_optional(output, action.start_progress);
+  output << ',' << json_quote(std::string(prefix) + "_endpoint_progress")
+         << ':';
+  write_json_optional(output, action.endpoint_progress);
+  output << ','
+         << json_quote(std::string(prefix) +
+                       "_supported_advance_eligible")
+         << ':' << (action.supported_advance_eligible ? "true" : "false")
+         << ','
+         << json_quote(std::string(prefix) +
+                       "_supported_advance_penalty")
+         << ':' << action.supported_advance_penalty << ','
+         << json_quote(std::string(prefix) + "_final_unpenalized_score")
+         << ':';
+  write_json_optional(output, action.final_unpenalized_score);
+  output << ','
+         << json_quote(std::string(prefix) + "_final_penalized_score")
+         << ':';
+  write_json_optional(output, action.final_penalized_score);
+}
+
+std::string action_list_json(const std::vector<std::string> &actions) {
+  std::string result{"["};
+  for (std::size_t index = 0; index < actions.size(); ++index) {
+    if (index != 0) result.push_back(',');
+    result.append(json_quote(actions[index]));
+  }
+  result.push_back(']');
+  return result;
+}
+
+std::string action_list_text(const std::vector<std::string> &actions) {
+  std::string result;
+  for (const std::string &action : actions) {
+    if (!result.empty()) result.push_back(',');
+    result.append(action);
+  }
+  return result;
+}
+
+void write_json_root_actions(
+    std::ostream &output,
+    const std::vector<SearchDecision::RootAction> &actions) {
+  output << std::setprecision(std::numeric_limits<double>::max_digits10) << '[';
+  for (std::size_t index = 0; index < actions.size(); ++index) {
+    if (index != 0) output << ',';
+    const SearchDecision::RootAction &action = actions[index];
+    output << '{' << "\"encoded\":" << json_quote(action.encoded) << ','
+           << "\"value\":" << action.value << ',' << "\"initial_value\":"
+           << action.initial_value << ',' << "\"visits\":"
+           << action.visits << ',' << "\"selection_visits\":"
+           << action.selection_visits << ',' << "\"tactical_class\":"
+           << json_quote(action.tactical_class) << ',' << "\"solved\":"
+           << (action.solved ? "true" : "false") << ','
+           << "\"proven_win\":"
+           << (action.proven_win ? "true" : "false") << ','
+           << "\"exact_reply_refuted\":"
+           << (action.exact_reply_refuted ? "true" : "false") << ','
+           << "\"start_progress\":" << action.start_progress << ','
+           << "\"endpoint_progress\":" << action.endpoint_progress << ','
+           << "\"supported_advance_eligible\":"
+           << (action.supported_advance_eligible ? "true" : "false") << ','
+           << "\"supported_advance_penalty\":"
+           << action.supported_advance_penalty << ','
+           << "\"unpenalized_final_score\":"
+           << action.unpenalized_final_score << ','
+           << "\"penalized_final_score\":" << action.penalized_final_score
+           << '}';
+  }
+  output << ']';
 }
 
 void write_json_line(std::ostream &output, const DecisionAudit &audit,
@@ -890,14 +1244,28 @@ void write_json_line(std::ostream &output, const DecisionAudit &audit,
          << "\"audit_mode\":"
          << json_quote(config.mode == AuditMode::Clock ? "clock" :
                                                       "fixed-work")
-         << ',' << "\"model_sha256\":"
-         << json_quote(native::default_model().model_sha256()) << ','
+         << ',' << "\"runtime_sha256\":"
+         << json_quote(audit.runtime.runtime_sha256) << ','
+         << "\"model_sha256\":"
+         << json_quote(audit.runtime.model_sha256) << ','
          << "\"packed_weights_sha256\":"
-         << json_quote(native::default_model().packed_sha256()) << ','
+         << json_quote(audit.runtime.packed_sha256) << ','
          << "\"fixed_work_limit\":" << config.fixed_work << ','
          << "\"max_actions\":" << config.max_actions << ','
          << "\"max_partial_paths\":" << config.max_partial_paths << ','
          << "\"max_expansions\":" << config.max_expansions << ','
+         << "\"root_reply_width\":" << config.root_reply_width << ','
+         << "\"supported_advance_penalty\":" << std::setprecision(9)
+         << config.supported_advance_penalty << ','
+         << "\"supported_advance_sparse_edge_limit\":"
+         << native::kSupportedAdvanceSparseEdgeLimit << ','
+         << "\"supported_advance_start_progress\":"
+         << native::kSupportedAdvanceStartProgress << ','
+         << "\"supported_advance_endpoint_progress_threshold\":"
+         << native::kSupportedAdvanceEndpointProgressThreshold << ','
+         << "\"maximum_supported_advance_penalty\":"
+         << native::kMaximumSupportedAdvancePenalty << ','
+         << "\"pre_action_used_edges\":" << audit.pre_action_used_edges << ','
          << "\"exploration\":" << std::setprecision(9)
          << config.exploration << ',' << "\"first_play_urgency\":"
          << config.first_play_urgency << ','
@@ -942,6 +1310,23 @@ void write_json_line(std::ostream &output, const DecisionAudit &audit,
          << stats.proof_truncations << ','
          << "\"search_generator_truncations\":"
          << stats.generator_truncations << ','
+         << "\"search_root_reply_probe_candidates\":"
+         << stats.root_reply_probe_candidates << ','
+         << "\"search_root_reply_probe_attempts\":"
+         << stats.root_reply_probe_attempts << ','
+         << "\"search_root_reply_probe_expansions\":"
+         << stats.root_reply_probe_expansions << ','
+         << "\"search_root_reply_probe_refutations\":"
+         << stats.root_reply_probe_refutations << ','
+         << "\"search_root_reply_probe_generator_truncations\":"
+         << stats.root_reply_probe_generator_truncations << ','
+         << "\"search_root_reply_probe_budget_truncations\":"
+         << stats.root_reply_probe_budget_truncations << ','
+         << "\"search_exact_reply_refuted_actions\":"
+         << action_list_json(audit.search.exact_reply_refuted_actions) << ','
+         << "\"search_root_action_diagnostics\":";
+  write_json_root_actions(output, audit.search.root_action_diagnostics);
+  output << ','
          << "\"search_deadline_reached\":"
          << (stats.deadline_reached ? "true" : "false") << ','
          << "\"search_tree_cap_reached\":"
@@ -1020,7 +1405,26 @@ inline constexpr std::string_view kTsvHeader =
     "diagnostic_root_tactical_proof_truncated\t"
     "diagnostic_root_truncations\t"
     "diagnostic_root_maximum_deque_size\tdiagnostic_root_deadline_reached\t"
-    "diagnostic_root_exhaustive\tinitial_best_action\tinitial_best_value";
+    "diagnostic_root_exhaustive\tinitial_best_action\tinitial_best_value\t"
+    "root_reply_width\tactual_exact_reply_refuted\t"
+    "chosen_exact_reply_refuted\tsearch_root_reply_probe_candidates\t"
+    "search_root_reply_probe_attempts\tsearch_root_reply_probe_expansions\t"
+    "search_root_reply_probe_refutations\t"
+    "search_root_reply_probe_generator_truncations\t"
+    "search_root_reply_probe_budget_truncations\t"
+    "search_exact_reply_refuted_actions\truntime_sha256\t"
+    "supported_advance_penalty\tsupported_advance_sparse_edge_limit\t"
+    "supported_advance_start_progress\t"
+    "supported_advance_endpoint_progress_threshold\t"
+    "maximum_supported_advance_penalty\tpre_action_used_edges\t"
+    "actual_final_solved\tactual_final_proven_win\tactual_start_progress\t"
+    "actual_endpoint_progress\tactual_supported_advance_eligible\t"
+    "actual_supported_advance_penalty\tactual_final_unpenalized_score\t"
+    "actual_final_penalized_score\tchosen_final_solved\t"
+    "chosen_final_proven_win\tchosen_start_progress\t"
+    "chosen_endpoint_progress\tchosen_supported_advance_eligible\t"
+    "chosen_supported_advance_penalty\tchosen_final_unpenalized_score\t"
+    "chosen_final_penalized_score\tsearch_root_action_diagnostics_json";
 
 void write_tsv_action(std::ostream &output, const ActionDiagnostic &action) {
   output << action.action << '\t' << action.exact_retained_ordinal << '\t'
@@ -1038,6 +1442,19 @@ void write_tsv_action(std::ostream &output, const ActionDiagnostic &action) {
   output << '\t' << action.final_tactical_class;
 }
 
+void write_tsv_supported_advance(std::ostream &output,
+                                 const ActionDiagnostic &action) {
+  output << action.final_solved << '\t' << action.final_proven_win << '\t';
+  write_tsv_optional(output, action.start_progress);
+  output << '\t';
+  write_tsv_optional(output, action.endpoint_progress);
+  output << '\t' << action.supported_advance_eligible << '\t'
+         << action.supported_advance_penalty << '\t';
+  write_tsv_optional(output, action.final_unpenalized_score);
+  output << '\t';
+  write_tsv_optional(output, action.final_penalized_score);
+}
+
 void write_tsv_line(std::ostream &output, const DecisionAudit &audit,
                     const AuditConfig &config) {
   output << kSchemaVersion << '\t' << provenance_json(audit.provenance) << '\t'
@@ -1048,8 +1465,8 @@ void write_tsv_line(std::ostream &output, const DecisionAudit &audit,
          << result_name(audit) << '\t' << audit.classification << '\t'
          << audit.classification_reason << '\t'
          << (config.mode == AuditMode::Clock ? "clock" : "fixed-work") << '\t'
-         << native::default_model().model_sha256() << '\t'
-         << native::default_model().packed_sha256() << '\t'
+         << audit.runtime.model_sha256 << '\t'
+         << audit.runtime.packed_sha256 << '\t'
          << config.fixed_work << '\t' << config.max_actions << '\t'
          << config.max_partial_paths << '\t' << config.max_expansions << '\t'
          << std::setprecision(9) << config.exploration << '\t'
@@ -1086,7 +1503,30 @@ void write_tsv_line(std::ostream &output, const DecisionAudit &audit,
          << audit.root.maximum_deque_size
          << '\t' << audit.root.deadline_reached << '\t'
          << audit.root.exhaustive << '\t' << audit.root.initial_best_action
-         << '\t' << audit.root.initial_best_value << '\n';
+         << '\t' << audit.root.initial_best_value << '\t'
+         << config.root_reply_width << '\t'
+         << audit.actual.exact_reply_refuted << '\t'
+         << audit.chosen.exact_reply_refuted << '\t'
+         << stats.root_reply_probe_candidates << '\t'
+         << stats.root_reply_probe_attempts << '\t'
+         << stats.root_reply_probe_expansions << '\t'
+         << stats.root_reply_probe_refutations << '\t'
+         << stats.root_reply_probe_generator_truncations << '\t'
+         << stats.root_reply_probe_budget_truncations << '\t'
+         << action_list_text(audit.search.exact_reply_refuted_actions) << '\t'
+         << audit.runtime.runtime_sha256 << '\t'
+         << config.supported_advance_penalty << '\t'
+         << native::kSupportedAdvanceSparseEdgeLimit << '\t'
+         << native::kSupportedAdvanceStartProgress << '\t'
+         << native::kSupportedAdvanceEndpointProgressThreshold << '\t'
+         << native::kMaximumSupportedAdvancePenalty << '\t'
+         << audit.pre_action_used_edges << '\t';
+  write_tsv_supported_advance(output, audit.actual);
+  output << '\t';
+  write_tsv_supported_advance(output, audit.chosen);
+  output << '\t';
+  write_json_root_actions(output, audit.search.root_action_diagnostics);
+  output << '\n';
 }
 
 void write_audits(std::ostream &output,
@@ -1110,6 +1550,11 @@ void validate_config(const AuditConfig &config) {
       config.max_partial_paths > native::kMaximumPartialPaths ||
       config.max_expansions == 0 ||
       config.max_expansions > native::kMaximumExpansions ||
+      config.root_reply_width > config.max_actions ||
+      !std::isfinite(config.supported_advance_penalty) ||
+      config.supported_advance_penalty < 0.0 ||
+      config.supported_advance_penalty >
+          native::kMaximumSupportedAdvancePenalty ||
       !std::isfinite(config.exploration) || config.exploration < 0.0 ||
       !std::isfinite(config.first_play_urgency)) {
     throw std::invalid_argument("invalid native replay-audit configuration");
@@ -1148,6 +1593,12 @@ AuditConfig parse_arguments(int argc, char **argv) {
     const std::string_view option = argv[index];
     if (option == "--input") {
       config.input_path = std::string(require_value(index, argc, argv, option));
+    } else if (option == "--checkpoint") {
+      config.checkpoint_path =
+          std::string(require_value(index, argc, argv, option));
+    } else if (option == "--selected-prefixes") {
+      config.selected_prefixes_path =
+          std::string(require_value(index, argc, argv, option));
     } else if (option == "--format") {
       const std::string_view format = require_value(index, argc, argv, option);
       if (format == "jsonl") config.output_format = OutputFormat::JsonLines;
@@ -1174,6 +1625,13 @@ AuditConfig parse_arguments(int argc, char **argv) {
     } else if (option == "--max-expansions") {
       config.max_expansions = parse_integer<std::uint64_t>(
           require_value(index, argc, argv, option), "maximum expansions");
+    } else if (option == "--root-reply-width") {
+      config.root_reply_width = parse_integer<std::size_t>(
+          require_value(index, argc, argv, option), "root reply width");
+    } else if (option == "--supported-advance-penalty") {
+      config.supported_advance_penalty = parse_double(
+          require_value(index, argc, argv, option),
+          "supported advance penalty");
     } else if (option == "--exploration") {
       config.exploration = parse_double(
           require_value(index, argc, argv, option), "exploration");
@@ -1226,6 +1684,9 @@ void write_usage(std::ostream &output, std::string_view executable) {
          << "input header: " << kInputHeader << "\n"
          << "options:\n"
          << "  --input PATH\n"
+         << "  --checkpoint PATH      strict exported runtime checkpoint\n"
+         << "  --selected-prefixes PATH\n"
+         << "                         game_id/turn_index/state_id TSV filter\n"
          << "  --format jsonl|tsv\n"
          << "  --fixed-work N        deterministic tree-node work (default 30000)\n"
          << "  --tree-nodes N        tree cap, including with clock mode\n"
@@ -1235,6 +1696,8 @@ void write_usage(std::ostream &output, std::string_view executable) {
          << "  --max-actions N\n"
          << "  --max-partial-paths N\n"
          << "  --max-expansions N\n"
+         << "  --root-reply-width K\n"
+         << "  --supported-advance-penalty X\n"
          << "  --exploration X\n"
          << "  --fpu X\n"
          << "  --first-ms N --later-ms N\n"
@@ -1245,6 +1708,7 @@ int run(int argc, char **argv, std::istream &standard_input,
         std::ostream &output, std::ostream &error) {
   try {
     const AuditConfig config = parse_arguments(argc, argv);
+    const LoadedRuntime runtime = load_runtime(config.checkpoint_path);
     std::ifstream file;
     std::istream *input = &standard_input;
     if (config.input_path.has_value()) {
@@ -1257,7 +1721,20 @@ int run(int argc, char **argv, std::istream &standard_input,
     }
     const std::vector<GameRecord> records = read_records(*input);
     validate_records(records);
-    const std::vector<DecisionAudit> audits = audit_records(records, config);
+    std::ifstream selected_file;
+    std::vector<SelectedPrefix> selected;
+    std::vector<SelectedPrefix> *selected_pointer = nullptr;
+    if (config.selected_prefixes_path.has_value()) {
+      selected_file.open(*config.selected_prefixes_path);
+      if (!selected_file) {
+        throw std::invalid_argument("cannot open selected-prefix manifest: " +
+                                    *config.selected_prefixes_path);
+      }
+      selected = read_selected_prefixes(selected_file);
+      selected_pointer = &selected;
+    }
+    const std::vector<DecisionAudit> audits =
+        audit_records(records, config, selected_pointer, &runtime);
     write_audits(output, audits, config);
     return 0;
   } catch (const std::invalid_argument &error_value) {
