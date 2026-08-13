@@ -1167,7 +1167,17 @@ def validate_arena_detail(
         )
 
     any_failure = any(status != "ok" for status in statuses.values())
-    if validation["status"] == "terminal-valid" and any_failure:
+    terminal_forfeit = (
+        validation["status"] == "terminal-valid"
+        and statuses[winner] == "ok"
+        and statuses[1 - winner] != "ok"
+        and not parsed["unscoped_signals"]
+    )
+    if (
+        validation["status"] == "terminal-valid"
+        and any_failure
+        and not terminal_forfeit
+    ):
         raise ValueError(
             f"game {game_id} has a rule-terminal transcript and operational failure signals"
         )

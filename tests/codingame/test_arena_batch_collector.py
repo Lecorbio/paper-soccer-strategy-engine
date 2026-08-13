@@ -106,6 +106,35 @@ def timeout_game(game_id, focus_agent, opponent_agent):
     }
 
 
+def terminal_game_with_failure(game_id, first_agent, second_agent, failure):
+    payload = clean_game(game_id, first_agent, second_agent)
+    if failure == "loser":
+        payload["frames"].append(
+            {"agentId": 1, "summary": "¤RED¤$1 timeout!§RED§"}
+        )
+    elif failure == "winner":
+        payload["frames"].append(
+            {"agentId": 0, "summary": "¤RED¤$0 timeout!§RED§"}
+        )
+    elif failure == "mixed":
+        payload["frames"].extend(
+            [
+                {"agentId": 0, "summary": "¤RED¤$0 timeout!§RED§"},
+                {"agentId": 1, "summary": "¤RED¤$1 timeout!§RED§"},
+            ]
+        )
+    elif failure == "unscoped":
+        payload["frames"].extend(
+            [
+                {"agentId": 1, "summary": "¤RED¤$1 timeout!§RED§"},
+                {"agentId": -1, "summary": "timeout!"},
+            ]
+        )
+    else:
+        raise ValueError(f"unknown failure fixture: {failure}")
+    return payload
+
+
 class StepClock:
     def __init__(self):
         self.value = 0
@@ -278,6 +307,57 @@ class ArenaBatchCollectorTest(unittest.TestCase):
                     pathlib.Path(temporary) / "timeout.tsv",
                     collector.registry_sha256,
                 )
+
+    def test_terminal_loser_forfeit_is_accounted_but_not_clean(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            api = FakeApi()
+            self.add_common(api, [battle(2002, 101, 202)])
+            api.add(
+                "game-detail-v1",
+                [2002, None],
+                terminal_game_with_failure(2002, 101, 202, "loser"),
+            )
+            collector = self.make_collector(temporary, api)
+            result = collector.collect(
+                run_id="terminal-forfeit",
+                binding=self.bind(collector, temporary),
+                expected_games=1,
+            )
+            record = self.manifest(temporary, result)["games"][0]["record"]
+
+            self.assertTrue(result["coverage"]["full_window_accounted"])
+            self.assertEqual(result["coverage"]["accepted_games"], 1)
+            self.assertEqual(result["coverage"]["clean_rule_terminal_games"], 0)
+            self.assertEqual(result["coverage"]["focus_operational_failures"], 0)
+            self.assertEqual(result["coverage"]["opponent_operational_failures"], 1)
+            self.assertEqual(record["status"], "accepted")
+            self.assertEqual(
+                record["operational"]["classification"],
+                "operationally-terminated",
+            )
+            self.assertEqual(record["operational"]["focus_status"], "ok")
+            self.assertEqual(record["operational"]["opponent_status"], "timeout")
+            self.assertEqual(
+                record["replay"]["rules_validation"]["status"], "terminal-valid"
+            )
+
+    def test_terminal_failure_rejects_winner_mixed_and_unscoped_signals(self):
+        normalized_battle = arena.shared.normalize_battle(
+            battle(2003, 202, 101), 101
+        )
+        for failure in ("winner", "mixed", "unscoped"):
+            with self.subTest(failure=failure):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "rule-terminal transcript and operational failure signals",
+                ):
+                    arena.validate_arena_detail(
+                        terminal_game_with_failure(2003, 202, 101, failure),
+                        game_id=2003,
+                        battle=normalized_battle,
+                        focus_agent_id=101,
+                        leaderboard_frozen_at="2026-08-11T00:00:00Z",
+                    )
 
     def test_offline_export_validates_approved_archive_cross_references(self):
         with tempfile.TemporaryDirectory() as temporary:
