@@ -941,19 +941,12 @@ constexpr std::array<Point, 8> kDirectionDeltas{{
 }};
 
 class SearchBudgetReached final {};
+class ScoutBudgetReached final {};
 
 using SearchClock = std::chrono::steady_clock;
 
 enum class ScoreBound { Exact, Lower, Upper };
 enum class ReboundOutcome { Unknown, Win, Loss };
-
-constexpr std::uint8_t kExactProofRootGoal = 1U << 0U;
-constexpr std::uint8_t kExactProofLeafBoundary = 1U << 1U;
-constexpr std::uint8_t kExactProofPlyOne = 1U << 2U;
-constexpr std::uint8_t kExactProofPlyTwo = 1U << 3U;
-constexpr std::uint8_t kAllExactProofs =
-kExactProofRootGoal | kExactProofLeafBoundary | kExactProofPlyOne |
-kExactProofPlyTwo;
 
 struct SearchConfig {
 std::uint32_t max_turn_depth{kMaximumTurnDepth};
@@ -965,7 +958,11 @@ std::optional<SearchClock::time_point> absolute_deadline{};
 bool root_seed_endpoints{true};
 bool terminal_bound_pruning{true};
 bool root_transposition_pruning{true};
-std::uint8_t exact_proof_mask{};
+bool exact_rebound_proof{};
+bool root_tactical_scout{};
+std::uint32_t scout_max_work{1'024};
+std::uint16_t scout_max_actions{128};
+std::uint16_t scout_max_time_ms{12};
 int replay_value_blend_percent{};
 int teacher_residual_weight_percent{};
 };
@@ -990,12 +987,6 @@ std::uint64_t terminal_bound_cutoffs{};
 std::uint64_t rebound_goal_probes{};
 std::uint64_t rebound_goal_hits{};
 std::uint64_t rebound_loss_hits{};
-std::uint64_t root_rebound_probes{};
-std::uint64_t root_rebound_win_hits{};
-std::uint64_t root_rebound_loss_hits{};
-std::uint64_t leaf_rebound_probes{};
-std::uint64_t leaf_rebound_win_hits{};
-std::uint64_t leaf_rebound_loss_hits{};
 std::uint64_t exchange_ply1_probes{};
 std::uint64_t exchange_ply1_win_hits{};
 std::uint64_t exchange_ply1_loss_hits{};
@@ -1007,9 +998,17 @@ std::uint64_t exchange_ply2_cutoffs{};
 std::uint64_t forced_edges{};
 std::uint64_t root_seed_actions{};
 std::uint64_t root_transposition_reuses{};
+std::uint64_t scout_work{};
+std::uint64_t scout_endpoints{};
+std::uint64_t scout_unique_boundaries{};
+std::uint64_t scout_duplicates{};
+std::uint32_t scout_covered_first_edges{};
+std::uint32_t scout_uncovered_first_edges{};
 std::uint32_t max_action_edges{};
 int root_score{};
 bool budget_exhausted{};
+bool scout_work_cap_reached{};
+bool scout_deadline_reached{};
 };
 
 struct TranspositionEntry {
@@ -1174,6 +1173,11 @@ int mover_sign{};
 std::array<float, kTeacherResidualInputs> features{};
 };
 
+struct ScoutEndpoint {
+detail::PositionKey key{};
+int score{};
+};
+
 struct ReplayValueOutput {
 float logit{};
 std::array<float, replay_value_model::kHiddenTwo> hidden{};
@@ -1194,7 +1198,7 @@ table_(config.transposition_entries),
 evaluations_(config.evaluation_entries),
 distances_(topology_->vertex_count(), -1),
 queue_(topology_->vertex_count()),
-rebound_seen_(config.exact_proof_mask != 0 ? topology_->vertex_count()
+rebound_seen_(config.exact_rebound_proof ? topology_->vertex_count()
 : 0),
 teacher_residual_root_enabled_(
 state.used_segments.size() >=
@@ -1203,8 +1207,9 @@ if (config_.max_turn_depth == 0 ||
 config_.max_turn_depth > kMaximumTurnDepth || config_.max_nodes == 0) {
 throw std::invalid_argument("invalid complete-turn search configuration");
 }
-if (config_.exact_proof_mask > kAllExactProofs) {
-throw std::invalid_argument("invalid exact proof mask");
+if (config_.root_tactical_scout &&
+(config_.scout_max_work == 0 || config_.scout_max_actions == 0)) {
+throw std::invalid_argument("invalid root scout configuration");
 }
 if (config_.replay_value_blend_percent < 0 ||
 config_.replay_value_blend_percent > 100 ||
@@ -1226,20 +1231,14 @@ if (position_.is_terminal()) {
 throw std::invalid_argument("cannot search a terminal state");
 }
 
-if (exact_proof_enabled(kExactProofRootGoal)) {
+if (config_.exact_rebound_proof) {
 std::vector<Move> rebound_goal;
-++stats_.root_rebound_probes;
-const ReboundOutcome rebound = analyze_rebound_component(&rebound_goal);
-if (rebound == ReboundOutcome::Win) {
-++stats_.root_rebound_win_hits;
+if (analyze_rebound_component(&rebound_goal) == ReboundOutcome::Win) {
 stats_.completed_actions = 1;
 stats_.max_action_edges =
 static_cast<std::uint32_t>(rebound_goal.size());
 stats_.root_score = immediate_win_score(position_.to_move(), 0);
 return rebound_goal;
-}
-if (rebound == ReboundOutcome::Loss) {
-++stats_.root_rebound_loss_hits;
 }
 }
 
@@ -1299,15 +1298,14 @@ std::deque<detail::SearchTopology::VertexIndex> distance_queue_;
 std::vector<detail::SearchTopology::VertexIndex> rotated_vertices_;
 std::vector<detail::SearchTopology::EdgeIndex> rotated_edges_;
 std::optional<SearchClock::time_point> deadline_;
+std::optional<SearchClock::time_point> scout_deadline_;
+std::vector<ScoutEndpoint> scout_endpoints_;
+std::array<int, detail::kMaximumMoves> scout_first_scores_{};
 std::vector<Move> current_action_;
 std::vector<Move> captured_action_;
 int captured_score_{};
 bool captured_any_{};
 bool teacher_residual_root_enabled_{};
-
-bool exact_proof_enabled(std::uint8_t proof) const noexcept {
-return (config_.exact_proof_mask & proof) != 0;
-}
 
 void visit_node() {
 if (stats_.nodes >= config_.max_nodes) {
@@ -2172,6 +2170,169 @@ throw;
 }
 }
 
+void scout_visit() {
+if (stats_.scout_work >= config_.scout_max_work) {
+stats_.scout_work_cap_reached = true;
+throw ScoutBudgetReached{};
+}
+if (scout_deadline_.has_value() &&
+SearchClock::now() >= *scout_deadline_) {
+stats_.scout_deadline_reached = true;
+throw ScoutBudgetReached{};
+}
+++stats_.scout_work;
+}
+
+int retain_scout_endpoint(std::uint8_t first, Player mover) {
+++stats_.scout_endpoints;
+const detail::PositionKey key = boundary_key();
+int score = 0;
+const auto duplicate = std::find_if(
+scout_endpoints_.begin(), scout_endpoints_.end(),
+[&](const ScoutEndpoint &endpoint) { return endpoint.key == key; });
+if (duplicate != scout_endpoints_.end()) {
+++stats_.scout_duplicates;
+score = duplicate->score;
+} else {
+if (scout_endpoints_.size() >= config_.scout_max_actions) {
+throw ScoutBudgetReached{};
+}
+score = position_.is_terminal() ? terminal_score(1) : cached_evaluate();
+scout_endpoints_.push_back(ScoutEndpoint{key, score});
+++stats_.scout_unique_boundaries;
+}
+record_completed_action(score, mover);
+const int relative = mover == Player::One ? score : -score;
+scout_first_scores_[first] =
+std::max(scout_first_scores_[first], relative);
+return relative;
+}
+
+int scout_greedy_endpoint(const OrderedMove &first, std::uint8_t index,
+Player mover) {
+const std::size_t base_depth = position_.undo_depth();
+const std::size_t base_action = current_action_.size();
+try {
+scout_visit();
+position_.make_move(first.slot);
+current_action_.push_back(first.move);
+while (!position_.is_terminal() && position_.to_move() == mover) {
+const OrderedMoveList next = ordered_moves();
+scout_visit();
+position_.make_move(next.values[0].slot);
+current_action_.push_back(next.values[0].move);
+}
+const int score = retain_scout_endpoint(index, mover);
+position_.unmake_to(base_depth);
+current_action_.resize(base_action);
+return score;
+} catch (...) {
+position_.unmake_to(base_depth);
+current_action_.resize(base_action);
+throw;
+}
+}
+
+void scout_dfs(std::uint8_t first, Player mover) {
+const OrderedMoveList moves = ordered_moves();
+for (int tactical = 1; tactical >= 0; --tactical) {
+for (std::uint8_t index = 0; index < moves.count; ++index) {
+const OrderedMove &candidate = moves.values[index];
+if ((std::abs(candidate.score) >= 900'000) != (tactical != 0)) {
+continue;
+}
+scout_visit();
+position_.make_move(candidate.slot);
+current_action_.push_back(candidate.move);
+if (position_.is_terminal() || position_.to_move() != mover) {
+(void)retain_scout_endpoint(first, mover);
+} else {
+scout_dfs(first, mover);
+}
+current_action_.pop_back();
+position_.unmake_move();
+}
+}
+}
+
+void scout_from_first(const OrderedMove &first, std::uint8_t index,
+Player mover) {
+const std::size_t base_depth = position_.undo_depth();
+const std::size_t base_action = current_action_.size();
+try {
+scout_visit();
+position_.make_move(first.slot);
+current_action_.push_back(first.move);
+if (position_.is_terminal() || position_.to_move() != mover) {
+(void)retain_scout_endpoint(index, mover);
+} else {
+scout_dfs(index, mover);
+}
+position_.unmake_to(base_depth);
+current_action_.resize(base_action);
+} catch (...) {
+position_.unmake_to(base_depth);
+current_action_.resize(base_action);
+throw;
+}
+}
+
+void run_root_scout(OrderedMoveList &moves, std::uint32_t turn_ply,
+int alpha, int beta, Player mover) {
+scout_endpoints_.clear();
+scout_endpoints_.reserve(config_.scout_max_actions);
+scout_first_scores_.fill(-kInfinity);
+scout_deadline_.reset();
+if (config_.scout_max_time_ms != 0) {
+scout_deadline_ = SearchClock::now() +
+std::chrono::milliseconds(config_.scout_max_time_ms);
+}
+if (deadline_.has_value() &&
+(!scout_deadline_.has_value() || *deadline_ < *scout_deadline_)) {
+scout_deadline_ = deadline_;
+}
+
+std::array<bool, detail::kMaximumMoves> covered{};
+for (std::uint8_t index = 0; index < moves.count; ++index) {
+try {
+(void)scout_greedy_endpoint(moves.values[index], index, mover);
+covered[index] = true;
+++stats_.scout_covered_first_edges;
+} catch (const ScoutBudgetReached &) {
+break;
+}
+}
+if (stats_.scout_covered_first_edges == moves.count) {
+try {
+for (std::uint8_t index = 0; index < moves.count; ++index) {
+scout_from_first(moves.values[index], index, mover);
+}
+} catch (const ScoutBudgetReached &) {
+}
+}
+scout_deadline_.reset();
+
+for (std::uint8_t index = 0; index < moves.count; ++index) {
+if (!covered[index]) {
+++stats_.scout_uncovered_first_edges;
+const int score = seed_root_endpoint(moves.values[index], turn_ply,
+alpha, beta, mover);
+scout_first_scores_[index] = mover == Player::One ? score : -score;
+}
+moves.values[index].score = scout_first_scores_[index];
+}
+for (std::uint8_t index = 1; index < moves.count; ++index) {
+const OrderedMove value = moves.values[index];
+std::uint8_t insertion = index;
+while (insertion > 0 &&
+value.score > moves.values[insertion - 1U].score) {
+moves.values[insertion] = moves.values[insertion - 1U];
+--insertion;
+}
+moves.values[insertion] = value;
+}
+}
+
 ActionSearchResult search_actions(
 std::uint32_t remaining_depth, std::uint32_t turn_ply, int alpha,
 int beta, std::optional<Move> preferred, bool capture_root) {
@@ -2182,6 +2343,9 @@ std::optional<Move> best_move;
 OrderedMoveList moves = ordered_moves(preferred);
 
 if (capture_root && remaining_depth == 1U &&
+config_.root_tactical_scout) {
+run_root_scout(moves, turn_ply, alpha, beta, mover);
+} else if (capture_root && remaining_depth == 1U &&
 config_.root_seed_endpoints) {
 for (std::uint8_t index = 0; index < moves.count; ++index) {
 const int score = seed_root_endpoint(moves.values[index], turn_ply,
@@ -2270,7 +2434,7 @@ if (position_.is_terminal()) {
 return terminal_score(turn_ply);
 }
 if (remaining_depth == 0) {
-if (!exact_proof_enabled(kExactProofLeafBoundary)) {
+if (!config_.exact_rebound_proof) {
 return cached_evaluate();
 }
 const detail::PositionKey key = boundary_key();
@@ -2279,14 +2443,11 @@ if (const std::optional<int> cached = evaluations_.find(key)) {
 ++stats_.evaluation_cache_hits;
 return *cached;
 }
-++stats_.leaf_rebound_probes;
 const ReboundOutcome rebound = analyze_rebound_component(nullptr);
 if (rebound == ReboundOutcome::Win) {
-++stats_.leaf_rebound_win_hits;
 return immediate_win_score(position_.to_move(), turn_ply);
 }
 if (rebound == ReboundOutcome::Loss) {
-++stats_.leaf_rebound_loss_hits;
 return immediate_win_score(opponent(position_.to_move()), turn_ply);
 }
 const int score = evaluate();
@@ -2317,8 +2478,8 @@ return entry->score;
 }
 }
 
-if ((turn_ply == 1U && exact_proof_enabled(kExactProofPlyOne)) ||
-(turn_ply == 2U && exact_proof_enabled(kExactProofPlyTwo))) {
+if (config_.exact_rebound_proof &&
+(turn_ply == 1U || turn_ply == 2U)) {
 std::uint64_t &probes = turn_ply == 1U
 ? stats_.exchange_ply1_probes
 : stats_.exchange_ply2_probes;
@@ -2486,7 +2647,7 @@ return true;
 std::string choose_complete_turn(GameState &state,
 std::uint32_t search_time_ms) {
 SearchConfig config;
-config.exact_proof_mask = kAllExactProofs;
+config.exact_rebound_proof = true;
 config.replay_value_blend_percent = 15;
 config.teacher_residual_weight_percent = 100;
 config.absolute_deadline =

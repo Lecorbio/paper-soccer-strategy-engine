@@ -25,12 +25,14 @@ gate now freezes the compact scaffold identity and audits a narrow semantic
 delta instead of requiring global action/stat equality. See `EXPERIMENTS.md`
 for the paired-rotation corpus results and frozen witnesses.
 
-The next isolated candidate adds a runtime-toggleable exact rebound/exchange
-proof. The configuration default is off for same-binary ablation gates; the
-operational choice path explicitly enables it. Unknown components preserve the
-prior search. Its generated identity is 92,830 ASCII characters with SHA-256
-`2ca2280f533bffc1750732ae55926b8353b16299a40c456e0b58a4cb8d426468`.
-See `EXPERIMENTS.md` for exact, disabled-parity, and symmetry evidence.
+The current isolated candidate splits the exact rebound/exchange proof into
+independently selectable root-goal, leaf-boundary, ply-one, and ply-two bits.
+Mask zero is the same-binary control; the operational choice path explicitly
+enables mask 15. Unknown components preserve the prior search. Its generated
+identity is 94,004 ASCII characters with SHA-256
+`6f3abb4bed53050937ee36789ec5cf1bfc22ad02f0ea13e7db6575a11ec06d6f`.
+See `EXPERIMENTS.md` for exact, disabled-parity, all-mask symmetry, and the
+preregistered development matrix.
 
 Generate and run the scaffold gates from the repository root:
 

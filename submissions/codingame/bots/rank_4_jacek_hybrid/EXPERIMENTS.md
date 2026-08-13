@@ -110,9 +110,9 @@ longer a valid requirement for this candidate.
 ## Ablation 2: toggleable exact rebound exchange proof
 
 The hybrid selectively adapts the exact, safe rebound-component analysis from
-`rank_4_exchange`. `SearchConfig::exact_rebound_proof` defaults to `false`, so
-fixed-work comparisons can switch the proof on and off within one binary. The
-operational `choose_complete_turn` path explicitly enables it.
+`rank_4_exchange`. The later `SearchConfig::exact_proof_mask` supersedes the
+original Boolean toggle; mask zero preserves the proof-off control and the
+operational `choose_complete_turn` path explicitly enables every safe scope.
 
 The enabled proof performs only these classifications:
 
@@ -152,3 +152,43 @@ Development evidence (not a validation or promotion-bank result):
 No protected validation/final bank was run for this isolated implementation
 step. Whole-game fixed-work and clock evidence belongs to the separate hybrid
 comparison gate and must decide whether this proof is retained.
+
+## Ablation 3: independently selectable exact-proof scopes
+
+The exact proof is split into four orthogonal `SearchConfig::exact_proof_mask`
+bits: root attacking-goal return (`1`), depth-zero boundary value (`2`), reply
+boundary at ply one (`4`), and counterturn boundary at ply two (`8`). Mask
+zero remains the tie-only control; the operational candidate uses mask `15`.
+Unknown mask bits are rejected at construction.
+
+Root and leaf scans now have separate probe/Win/Loss counters. Ply-one and
+ply-two counters remain separate, and tests assert that their sum equals the
+existing aggregate rebound counters. The comparison gate accepts independent
+candidate and hybrid-control masks and prints all four scopes for both sides.
+The old Boolean candidate option remains only as a `0`/`15` compatibility
+alias. All rejected root-scout switches and counters were removed from the
+gate.
+
+Local structural evidence:
+
+- Mask zero retained the frozen 32-decision tie-only bounded-delta result:
+  19 exact action/stat matches, 13 intentional traversal-only deltas, and no
+  action delta against the compact reference panel.
+- All 16 masks were exercised on six tactical/search witnesses and their
+  player/color rotations. All 96 paired cases returned legal complete turns,
+  actions rotated exactly, scores negated, disabled scopes did no work, and
+  per-scope counters summed exactly to the aggregate counters.
+- Isolated root, leaf, ply-one Win/Loss, and ply-two Win/Loss fixtures pass for
+  both movers. The submission suite passes 18/18 and the lightweight gate
+  schema/SHA tests pass 2/2.
+- Generated source: 94,004 ASCII characters, SHA-256
+  `6f3abb4bed53050937ee36789ec5cf1bfc22ad02f0ea13e7db6575a11ec06d6f`;
+  remaining allowance under 99,999: 5,995 characters.
+
+No whole-game match was run during this implementation step, and no protected
+validation or final bank was opened. The smallest proposed actual-clock
+development matrix uses one complete preregistered development bank and four
+nested hybrid-control comparisons: masks `1 vs 0`, `3 vs 1`, `7 vs 3`, and
+`15 vs 7`. This measures each scope's conditional marginal in search order.
+A cheap fixed-node screen should exercise all 16 masks first; only the selected
+mask should advance against mask zero and Rank-4 on the full development bank.

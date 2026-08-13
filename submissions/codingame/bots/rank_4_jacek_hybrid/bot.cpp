@@ -64,6 +64,14 @@ using SearchClock = std::chrono::steady_clock;
 enum class ScoreBound { Exact, Lower, Upper };
 enum class ReboundOutcome { Unknown, Win, Loss };
 
+constexpr std::uint8_t kExactProofRootGoal = 1U << 0U;
+constexpr std::uint8_t kExactProofLeafBoundary = 1U << 1U;
+constexpr std::uint8_t kExactProofPlyOne = 1U << 2U;
+constexpr std::uint8_t kExactProofPlyTwo = 1U << 3U;
+constexpr std::uint8_t kAllExactProofs =
+    kExactProofRootGoal | kExactProofLeafBoundary | kExactProofPlyOne |
+    kExactProofPlyTwo;
+
 struct SearchConfig {
   std::uint32_t max_turn_depth{kMaximumTurnDepth};
   std::uint64_t max_nodes{kMaximumNodes};
@@ -74,7 +82,7 @@ struct SearchConfig {
   bool root_seed_endpoints{true};
   bool terminal_bound_pruning{true};
   bool root_transposition_pruning{true};
-  bool exact_rebound_proof{};
+  std::uint8_t exact_proof_mask{};
   int replay_value_blend_percent{};
   int teacher_residual_weight_percent{};
 };
@@ -99,6 +107,12 @@ struct SearchStats {
   std::uint64_t rebound_goal_probes{};
   std::uint64_t rebound_goal_hits{};
   std::uint64_t rebound_loss_hits{};
+  std::uint64_t root_rebound_probes{};
+  std::uint64_t root_rebound_win_hits{};
+  std::uint64_t root_rebound_loss_hits{};
+  std::uint64_t leaf_rebound_probes{};
+  std::uint64_t leaf_rebound_win_hits{};
+  std::uint64_t leaf_rebound_loss_hits{};
   std::uint64_t exchange_ply1_probes{};
   std::uint64_t exchange_ply1_win_hits{};
   std::uint64_t exchange_ply1_loss_hits{};
@@ -297,14 +311,17 @@ class CompleteTurnSearch {
         evaluations_(config.evaluation_entries),
         distances_(topology_->vertex_count(), -1),
         queue_(topology_->vertex_count()),
-        rebound_seen_(config.exact_rebound_proof ? topology_->vertex_count()
-                                                 : 0),
+        rebound_seen_(config.exact_proof_mask != 0 ? topology_->vertex_count()
+                                                   : 0),
         teacher_residual_root_enabled_(
             state.used_segments.size() >=
             static_cast<std::size_t>(kTeacherResidualMinimumUsedEdges)) {
     if (config_.max_turn_depth == 0 ||
         config_.max_turn_depth > kMaximumTurnDepth || config_.max_nodes == 0) {
       throw std::invalid_argument("invalid complete-turn search configuration");
+    }
+    if (config_.exact_proof_mask > kAllExactProofs) {
+      throw std::invalid_argument("invalid exact proof mask");
     }
     if (config_.replay_value_blend_percent < 0 ||
         config_.replay_value_blend_percent > 100 ||
@@ -326,14 +343,20 @@ class CompleteTurnSearch {
       throw std::invalid_argument("cannot search a terminal state");
     }
 
-    if (config_.exact_rebound_proof) {
+    if (exact_proof_enabled(kExactProofRootGoal)) {
       std::vector<Move> rebound_goal;
-      if (analyze_rebound_component(&rebound_goal) == ReboundOutcome::Win) {
+      ++stats_.root_rebound_probes;
+      const ReboundOutcome rebound = analyze_rebound_component(&rebound_goal);
+      if (rebound == ReboundOutcome::Win) {
+        ++stats_.root_rebound_win_hits;
         stats_.completed_actions = 1;
         stats_.max_action_edges =
             static_cast<std::uint32_t>(rebound_goal.size());
         stats_.root_score = immediate_win_score(position_.to_move(), 0);
         return rebound_goal;
+      }
+      if (rebound == ReboundOutcome::Loss) {
+        ++stats_.root_rebound_loss_hits;
       }
     }
 
@@ -398,6 +421,10 @@ class CompleteTurnSearch {
   int captured_score_{};
   bool captured_any_{};
   bool teacher_residual_root_enabled_{};
+
+  bool exact_proof_enabled(std::uint8_t proof) const noexcept {
+    return (config_.exact_proof_mask & proof) != 0;
+  }
 
   void visit_node() {
     if (stats_.nodes >= config_.max_nodes) {
@@ -1369,7 +1396,7 @@ class CompleteTurnSearch {
       return terminal_score(turn_ply);
     }
     if (remaining_depth == 0) {
-      if (!config_.exact_rebound_proof) {
+      if (!exact_proof_enabled(kExactProofLeafBoundary)) {
         return cached_evaluate();
       }
       // Cached leaf values were stored only after the exact proof returned
@@ -1380,11 +1407,14 @@ class CompleteTurnSearch {
         ++stats_.evaluation_cache_hits;
         return *cached;
       }
+      ++stats_.leaf_rebound_probes;
       const ReboundOutcome rebound = analyze_rebound_component(nullptr);
       if (rebound == ReboundOutcome::Win) {
+        ++stats_.leaf_rebound_win_hits;
         return immediate_win_score(position_.to_move(), turn_ply);
       }
       if (rebound == ReboundOutcome::Loss) {
+        ++stats_.leaf_rebound_loss_hits;
         return immediate_win_score(opponent(position_.to_move()), turn_ply);
       }
       const int score = evaluate();
@@ -1418,8 +1448,8 @@ class CompleteTurnSearch {
     // Give an adequate TT entry the first opportunity to cut off. Only the
     // first reply and counterturn boundaries pay for this exact component
     // proof; Unknown falls through to the unchanged alpha-beta search.
-    if (config_.exact_rebound_proof &&
-        (turn_ply == 1U || turn_ply == 2U)) {
+    if ((turn_ply == 1U && exact_proof_enabled(kExactProofPlyOne)) ||
+        (turn_ply == 2U && exact_proof_enabled(kExactProofPlyTwo))) {
       std::uint64_t &probes = turn_ply == 1U
                                   ? stats_.exchange_ply1_probes
                                   : stats_.exchange_ply2_probes;
@@ -1587,7 +1617,7 @@ bool try_replay_correction(GameState &state, int player_id,
 std::string choose_complete_turn(GameState &state,
                                  std::uint32_t search_time_ms) {
   SearchConfig config;
-  config.exact_rebound_proof = true;
+  config.exact_proof_mask = kAllExactProofs;
   config.replay_value_blend_percent = 15;
   config.teacher_residual_weight_percent = 100;
   // Include construction and table initialization in the response budget.

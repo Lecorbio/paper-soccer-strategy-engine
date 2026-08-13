@@ -1,0 +1,68 @@
+{
+  "schema": "papersoccer.rank4-jacek-ranker-corpus-manifest.v2",
+  "created_at_utc": "2026-08-13T20:58:49Z",
+  "campaign_commit_at_generation": "23752acbf863214e2af78cb1f461256d81c1eda1",
+  "corpus": {
+    "path": "results/rank_4_jacek_hybrid/ranker/fresh_procedural_rank4_30k_100k_v2.jsonl",
+    "sha256": "3e4db036abfec4ca4e03f61622790378c75b2d61808fd1366001fc0aba8febb9",
+    "ascii_bytes": 1798214,
+    "lines": 3573,
+    "candidate_rows": 3572,
+    "root_families": 80,
+    "variant_groups": 320,
+    "candidates_per_variant": 893,
+    "candidates_per_root_mover": 1786,
+    "candidates_per_successor_mover": 1786
+  },
+  "generation": {
+    "seed": 10329613236578519405,
+    "procedural_complete_turn_depths": [4, 8, 12, 20],
+    "root_families_per_depth": 20,
+    "maximum_actions_per_variant": 20,
+    "low_teacher_nodes": 30000,
+    "high_teacher_nodes": 100000,
+    "variants": ["base", "mirror", "rotate", "rotate_mirror"],
+    "rotated_labels_recomputed": true,
+    "rules": "8x10;own-goals-allowed;mover-loses",
+    "generator_source": "tools/rank4_jacek_hybrid_ranker_samples.cpp",
+    "generator_source_sha256": "79d3c6ebf04614a03b5b716511e1d46c89464318a393069d71be3acbafe1eb64",
+    "generator_binary_sha256": "14a4021be5c574b13a52a211b12788510a1e71b91d144e5820b9f2d5cbbd7d18",
+    "compiler": "Apple clang 21.0.0; C++20; -O3 -DNDEBUG",
+    "command": "build/rank4_jacek_hybrid_ranker_samples --output results/rank_4_jacek_hybrid/ranker/fresh_procedural_rank4_30k_100k_v2.jsonl --roots 80 --max-actions 20 --low-nodes 30000 --high-nodes 100000 --seed 10329613236578519405 --mirror 1"
+  },
+  "teacher": {
+    "identity": "frozen-rank-4-proof-off",
+    "source": "submissions/codingame/bots/rank_4/submission.cpp",
+    "source_sha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9",
+    "every_low_and_high_search_constructed_independently": true
+  },
+  "whole_family_split": {
+    "train_families_per_depth": 14,
+    "validation_families_per_depth": 3,
+    "test_families_per_depth": 3,
+    "all_four_variants_share_family_split": true,
+    "exact_variant_and_mover_balance_verified": true
+  },
+  "model": {
+    "report": "results/rank_4_jacek_hybrid/ranker/successor_ranker_v2.json",
+    "report_sha256": "ce848fa647a0aa686349dfe69f1a4c65fc5fb28d00e31ec5018670d59026985b",
+    "header": "results/rank_4_jacek_hybrid/ranker/successor_ranker_v2.hpp",
+    "header_sha256": "928804dc1a678f23197067d44ef2e5b9ac74d17118ed085949b393ed4131d731",
+    "trainer_sha256": "91e010c453fa55b67371121030996378bd06e092e1cfc9749c0940cb66636e73",
+    "selected_seed": 2909,
+    "selected_ridge": 0.0001,
+    "stable_pairs": {"train": 458, "validation": 58, "test": 49},
+    "minimum_normalized_margin_at_both_budgets": 0.10,
+    "minimum_completed_depth_at_both_budgets": 3,
+    "decision": "rejected-no-production-integration"
+  },
+  "excluded_inputs": [
+    "arena payloads",
+    "arena moves and labels",
+    "replay payloads",
+    "existing model corpus",
+    "campaign validation opening banks",
+    "campaign final opening banks",
+    "protected historical evidence"
+  ]
+}

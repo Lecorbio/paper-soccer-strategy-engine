@@ -400,6 +400,12 @@ bool same_stats(const cg::SearchStats &left, const cg::SearchStats &right) {
          left.rebound_goal_probes == right.rebound_goal_probes &&
          left.rebound_goal_hits == right.rebound_goal_hits &&
          left.rebound_loss_hits == right.rebound_loss_hits &&
+         left.root_rebound_probes == right.root_rebound_probes &&
+         left.root_rebound_win_hits == right.root_rebound_win_hits &&
+         left.root_rebound_loss_hits == right.root_rebound_loss_hits &&
+         left.leaf_rebound_probes == right.leaf_rebound_probes &&
+         left.leaf_rebound_win_hits == right.leaf_rebound_win_hits &&
+         left.leaf_rebound_loss_hits == right.leaf_rebound_loss_hits &&
          left.exchange_ply1_probes == right.exchange_ply1_probes &&
          left.exchange_ply1_win_hits == right.exchange_ply1_win_hits &&
          left.exchange_ply1_loss_hits == right.exchange_ply1_loss_hits &&
@@ -418,7 +424,13 @@ bool same_stats(const cg::SearchStats &left, const cg::SearchStats &right) {
 
 bool proof_stats_are_zero(const cg::SearchStats &stats) {
   return stats.rebound_goal_probes == 0 && stats.rebound_goal_hits == 0 &&
-         stats.rebound_loss_hits == 0 && stats.exchange_ply1_probes == 0 &&
+         stats.rebound_loss_hits == 0 && stats.root_rebound_probes == 0 &&
+         stats.root_rebound_win_hits == 0 &&
+         stats.root_rebound_loss_hits == 0 &&
+         stats.leaf_rebound_probes == 0 &&
+         stats.leaf_rebound_win_hits == 0 &&
+         stats.leaf_rebound_loss_hits == 0 &&
+         stats.exchange_ply1_probes == 0 &&
          stats.exchange_ply1_win_hits == 0 &&
          stats.exchange_ply1_loss_hits == 0 &&
          stats.exchange_ply1_cutoffs == 0 &&
@@ -426,6 +438,45 @@ bool proof_stats_are_zero(const cg::SearchStats &stats) {
          stats.exchange_ply2_win_hits == 0 &&
          stats.exchange_ply2_loss_hits == 0 &&
          stats.exchange_ply2_cutoffs == 0;
+}
+
+bool proof_stats_are_consistent(const cg::SearchStats &stats) {
+  return stats.rebound_goal_probes ==
+             stats.root_rebound_probes + stats.leaf_rebound_probes +
+                 stats.exchange_ply1_probes +
+                 stats.exchange_ply2_probes &&
+         stats.rebound_goal_hits ==
+             stats.root_rebound_win_hits + stats.leaf_rebound_win_hits +
+                 stats.exchange_ply1_win_hits +
+                 stats.exchange_ply2_win_hits &&
+         stats.rebound_loss_hits ==
+             stats.root_rebound_loss_hits + stats.leaf_rebound_loss_hits +
+                 stats.exchange_ply1_loss_hits +
+                 stats.exchange_ply2_loss_hits;
+}
+
+bool disabled_scope_stats_are_zero(const cg::SearchStats &stats,
+                                   std::uint8_t mask) {
+  const bool root_zero =
+      stats.root_rebound_probes == 0 && stats.root_rebound_win_hits == 0 &&
+      stats.root_rebound_loss_hits == 0;
+  const bool leaf_zero =
+      stats.leaf_rebound_probes == 0 && stats.leaf_rebound_win_hits == 0 &&
+      stats.leaf_rebound_loss_hits == 0;
+  const bool ply_one_zero =
+      stats.exchange_ply1_probes == 0 &&
+      stats.exchange_ply1_win_hits == 0 &&
+      stats.exchange_ply1_loss_hits == 0 &&
+      stats.exchange_ply1_cutoffs == 0;
+  const bool ply_two_zero =
+      stats.exchange_ply2_probes == 0 &&
+      stats.exchange_ply2_win_hits == 0 &&
+      stats.exchange_ply2_loss_hits == 0 &&
+      stats.exchange_ply2_cutoffs == 0;
+  return ((mask & cg::kExactProofRootGoal) != 0 || root_zero) &&
+         ((mask & cg::kExactProofLeafBoundary) != 0 || leaf_zero) &&
+         ((mask & cg::kExactProofPlyOne) != 0 || ply_one_zero) &&
+         ((mask & cg::kExactProofPlyTwo) != 0 || ply_two_zero);
 }
 
 void mover_relative_ties_are_rotation_equivariant() {
@@ -495,7 +546,7 @@ void exact_proof_disabled_is_strict_parity() {
       implicit.replay_value_blend_percent = 15;
       implicit.teacher_residual_weight_percent = 100;
       cg::SearchConfig explicit_off = implicit;
-      explicit_off.exact_rebound_proof = false;
+      explicit_off.exact_proof_mask = 0;
       const FixedNodeDecision default_result =
           configured_decision(state, implicit);
       const FixedNodeDecision off_result =
@@ -518,7 +569,7 @@ void exact_root_rebound_goal_is_safe_and_symmetric() {
   cg::SearchConfig config;
   config.max_nodes = 1;
   config.max_time_ms = 0;
-  config.exact_rebound_proof = true;
+  config.exact_proof_mask = cg::kExactProofRootGoal;
   const FixedNodeDecision original = configured_decision(north, config);
   const ps::GameState south = rotate_and_swap(north);
   const FixedNodeDecision rotated = configured_decision(south, config);
@@ -559,7 +610,19 @@ void exact_leaf_and_exchange_proofs_are_symmetric() {
     config.max_nodes = 1'000'000;
     config.max_time_ms = 0;
     config.root_seed_endpoints = false;
-    config.exact_rebound_proof = true;
+    config.exact_proof_mask = cg::kExactProofLeafBoundary;
+
+    const FixedNodeDecision leaf =
+        fixed_depth_decision(layered_goal_choice(mover), config, 1);
+    require(leaf.stats.completed_turn_depth == 1 &&
+                leaf.stats.leaf_rebound_probes > 0 &&
+                leaf.stats.leaf_rebound_win_hits > 0 &&
+                leaf.stats.root_rebound_probes == 0 &&
+                leaf.stats.exchange_ply1_probes == 0 &&
+                leaf.stats.exchange_ply2_probes == 0,
+            "The isolated depth-zero boundary proof did not classify.");
+
+    config.exact_proof_mask = cg::kExactProofPlyOne;
 
     const FixedNodeDecision win =
         fixed_depth_decision(layered_goal_choice(mover), config, 2);
@@ -584,6 +647,7 @@ void exact_leaf_and_exchange_proofs_are_symmetric() {
                         loss.stats.exchange_ply1_loss_hits,
             "The first-reply Loss proof did not preserve the exact mate.");
 
+    config.exact_proof_mask = cg::kExactProofPlyTwo;
     for (const bool is_win : {true, false}) {
       const FixedNodeDecision exchange = fixed_depth_decision(
           two_ply_exchange_component(mover, is_win), config, 3);
@@ -592,8 +656,7 @@ void exact_leaf_and_exchange_proofs_are_symmetric() {
           (mover == ps::Player::One) == is_win ? 999'997 : -999'997;
       require(exchange.action == expected &&
                   exchange.stats.root_score == expected_score &&
-                  exchange.stats.exchange_ply1_probes > 0 &&
-                  exchange.stats.exchange_ply1_cutoffs == 0 &&
+                  exchange.stats.exchange_ply1_probes == 0 &&
                   exchange.stats.exchange_ply2_probes > 0 &&
                   exchange.stats.exchange_ply2_cutoffs ==
                       exchange.stats.exchange_ply2_win_hits +
@@ -603,6 +666,55 @@ void exact_leaf_and_exchange_proofs_are_symmetric() {
               "The counterturn proof did not preserve the exact mate.");
     }
   }
+}
+
+void every_exact_proof_mask_is_legal_and_symmetric() {
+  ps::GameState root_goal = make_clean_state_at({4, 2});
+  root_goal.visit_count[{4, 1}] = 1;
+  block_edges_except(root_goal, {4, 2}, {{4, 1}});
+  const std::vector<ps::GameState> witnesses{
+      root_goal,
+      layered_goal_choice(ps::Player::One),
+      root_child_loss_choice(ps::Player::One),
+      two_ply_exchange_component(ps::Player::One, true),
+      two_ply_exchange_component(ps::Player::One, false),
+      reconstruct("0/6/5/4/5/53/61/0633"),
+  };
+
+  for (std::uint8_t mask = 0; mask <= cg::kAllExactProofs; ++mask) {
+    for (const ps::GameState &state : witnesses) {
+      cg::SearchConfig config;
+      config.max_nodes = 4'000;
+      config.max_time_ms = 0;
+      config.exact_proof_mask = mask;
+      config.replay_value_blend_percent = 15;
+      config.teacher_residual_weight_percent = 100;
+      const FixedNodeDecision original = configured_decision(state, config);
+      const ps::GameState rotated_state = rotate_and_swap(state);
+      const FixedNodeDecision rotated =
+          configured_decision(rotated_state, config);
+      require(rotate_action(original.action) == rotated.action &&
+                  original.stats.root_score == -rotated.stats.root_score,
+              "An exact-proof mask changed under player rotation.");
+
+      ps::GameState original_after = state;
+      cg::apply_encoded_turn(original_after, original.action);
+      ps::GameState rotated_after = rotated_state;
+      cg::apply_encoded_turn(rotated_after, rotated.action);
+      require(proof_stats_are_consistent(original.stats) &&
+                  proof_stats_are_consistent(rotated.stats) &&
+                  disabled_scope_stats_are_zero(original.stats, mask) &&
+                  disabled_scope_stats_are_zero(rotated.stats, mask),
+              "An exact-proof mask leaked work or miscounted its scope.");
+    }
+  }
+
+  cg::SearchConfig invalid;
+  invalid.exact_proof_mask = static_cast<std::uint8_t>(
+      cg::kAllExactProofs + 1U);
+  require_invalid_argument(
+      [&] { cg::CompleteTurnSearch search(witnesses.front(), invalid); },
+      "An unknown exact-proof mask bit must be rejected.");
 }
 
 void teacher_residual_is_player_rotation_invariant() {
@@ -790,6 +902,8 @@ int main() {
        exact_root_rebound_goal_is_safe_and_symmetric},
       {"exact_leaf_and_exchange_proofs_are_symmetric",
        exact_leaf_and_exchange_proofs_are_symmetric},
+      {"every_exact_proof_mask_is_legal_and_symmetric",
+       every_exact_proof_mask_is_legal_and_symmetric},
       {"teacher_residual_is_player_rotation_invariant",
        teacher_residual_is_player_rotation_invariant},
       {"teacher_residual_obeys_the_root_phase_gate",
