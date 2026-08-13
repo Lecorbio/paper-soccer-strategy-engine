@@ -6,6 +6,9 @@ from unittest import mock
 import unittest
 
 
+HAS_NUMPY = importlib.util.find_spec("numpy") is not None
+
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "late_pacing_score",
@@ -87,6 +90,7 @@ class LatePacingPanelScoreTest(unittest.TestCase):
         self.assertEqual(arguments.penalty_11_audit, pathlib.Path("p011.jsonl"))
         self.assertEqual(arguments.penalty_15_audit, pathlib.Path("p015.jsonl"))
 
+    @unittest.skipUnless(HAS_NUMPY, "validation mode requires NumPy")
     def test_validation_routes_h62_round2_as_strict_current(self):
         arguments = argparse.Namespace(
             baseline_model=pathlib.Path("baseline.json"),
@@ -105,7 +109,7 @@ class LatePacingPanelScoreTest(unittest.TestCase):
                 side_effect=((baseline, "b" * 64), (candidate, "c" * 64)),
             ),
             mock.patch.object(score, "explicit_file", side_effect=lambda p, _: p),
-            mock.patch.object(score.trainer, "load_datasets",
+            mock.patch.object(score.training_dependencies()[1], "load_datasets",
                               side_effect=RuntimeError("sentinel")) as loader,
         ):
             with self.assertRaisesRegex(RuntimeError, "sentinel"):
@@ -116,11 +120,13 @@ class LatePacingPanelScoreTest(unittest.TestCase):
             archived_restart_round2_paths=[pathlib.Path("restart.jsonl")],
         )
 
+    @unittest.skipUnless(HAS_NUMPY, "validation mode requires NumPy")
     def test_frozen_loader_restores_strict_validator_after_failure(self):
-        contract = score.trainer.corpus_contract
+        trainer = score.training_dependencies()[1]
+        contract = trainer.corpus_contract
         original = contract._validate_round2_build_contract
         with mock.patch.object(
-            score.trainer, "load_datasets", side_effect=RuntimeError("sentinel")
+            trainer, "load_datasets", side_effect=RuntimeError("sentinel")
         ):
             with self.assertRaisesRegex(RuntimeError, "sentinel"):
                 score.load_frozen_h62_datasets([], [], [])

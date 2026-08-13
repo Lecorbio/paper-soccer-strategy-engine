@@ -28,14 +28,10 @@ import sys
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Mapping, Sequence
 
-import numpy as np
-
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL_DIR = pathlib.Path(__file__).resolve().parent
 if str(TOOL_DIR) not in sys.path:
     sys.path.insert(0, str(TOOL_DIR))
-import train_jacek_native_round2 as trainer  # noqa: E402
 
 
 SCHEMA = "papersoccer.jacek-native-late-pacing-score/v2"
@@ -70,6 +66,18 @@ FORBIDDEN_PATH_TOKENS = (
     "matches.json", "protected", "sealed", "prospective", "final-bank",
     "final_bank",
 )
+
+
+def training_dependencies():
+    """Load the optional numerical stack only for the validation subcommand."""
+    try:
+        import numpy as numpy_module
+        import train_jacek_native_round2 as trainer_module
+    except ModuleNotFoundError as error:
+        raise ValueError(
+            "validation mode requires the workspace NumPy runtime"
+        ) from error
+    return numpy_module, trainer_module
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -185,7 +193,8 @@ def checkpoint(artifact: Mapping[str, Any], seed: int) -> Mapping[str, Any]:
     return matches[0]
 
 
-def parameters(item: Mapping[str, Any]) -> dict[str, np.ndarray]:
+def parameters(item: Mapping[str, Any]) -> dict[str, Any]:
+    np, _ = training_dependencies()
     model = item.get("model")
     if not isinstance(model, dict) or set(model) != {"w1", "w2", "w3"}:
         raise ValueError("checkpoint model tensors are malformed")
@@ -230,6 +239,7 @@ def load_frozen_h62_datasets(
     payloads, every shard byte/hash, schedules, restart provenance, samples,
     deterministic split assignment and cross-split canonical purge.
     """
+    _, trainer = training_dependencies()
     contract = trainer.corpus_contract
     original = contract._validate_round2_build_contract
 
@@ -248,6 +258,7 @@ def load_frozen_h62_datasets(
 
 
 def score_validation(arguments: argparse.Namespace) -> dict:
+    _, trainer = training_dependencies()
     baseline, baseline_sha = load_canonical_json(
         arguments.baseline_model, "baseline model", trainer_model=True,
     )
