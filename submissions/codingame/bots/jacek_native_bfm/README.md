@@ -10,19 +10,24 @@ The checkpoint, training, clock, verification, and live-gate ledger is retained
 in this README and the adjacent [experiment log](EXPERIMENTS.md).
 The strongest completed live result remains the round-two seed-`20260822`
 history-62 checkpoint: 63-27 raw, 44-27 after removing opponent forfeits, rank
-5, and zero candidate operational failures. Histories 63 and 65 tested a new
-model and `C=0.80`; both were rejected after complete windows. Exact
-history-62 rollback history 66 completed at rank 6. A later first-decision
-20,000-node hypothesis passed two isolated local gates, but history 67 fell to
-rank 9 at 62-28 raw and 52-28 clean. Its live opening behavior also failed to
-reproduce its deterministic fixed-20k prediction, so the hypothesis was
-rejected. Commit `a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
-94,771-character history-62 source and launched it as history 68. That new
-rollback window is not yet reported as complete. History 62 therefore remains
-the strongest completed result under the campaign ordering. None of these live
-batches is a strength, superiority, or Rank 4 parity claim. The prior
-history-61 round-one upload remains frozen below as an explicit historical
-baseline.
+5, and zero candidate operational failures. History 68 reproduced its
+historical behavior at rank 6. The 2026-08-13 near-limit campaign then tested
+reply proof, a trap-focused model, sparse advance penalties, work allocation,
+and late-only exploration. The sole upload candidate used `C=0.95` for own
+decisions 0-11 and `C=0.80` afterward; despite two strong same-runtime gates,
+it completed at exact-window rank 7 and was rejected. Commit
+`cefb50f7a78a630d90252d74a4b0b66b8ed9eecb` deployed the instrumented
+history-62 behavior again as agent `6613798`, submission `41129433`. Its exact
+90-game rollback window completed at exact-window rank 9 with zero own failures;
+the later content-addressed collector snapshot was rank 7.
+The deployed source is 99,810 ASCII characters, SHA-256
+`d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71`;
+it is the instrumented history-62 behavior, not the byte-identical historical
+94,771-character source. History 62 therefore remains the strongest recorded
+result under the campaign ordering, and the rank-4 target was not met. None of
+these live batches establishes strength, superiority, or Rank 4 parity. The
+prior history-61 round-one upload remains frozen below as an explicit
+historical baseline.
 
 This is an auditable adaptation of public ideas, not a claim that Jacek
 Dermont's unpublished CodinGame source, weights, training corpus, or exact
@@ -46,7 +51,8 @@ inputs](https://www.codingame.com/playgrounds/157341/inputs-for-neural-networks-
 | Search family | Native best-first minimax, not the incumbent search | Explains BFM/UCT generally | BFM tree allocation and player-relative minimax backup | Single-thread BFM/UCT adapted to the CodinGame clock |
 | Neural input | Follow the disclosed CodinGame representation | 316 used-edge flags followed by 105 eight-way true-turn-distance buckets; rotate Player 2 by 180 degrees | Contains multiple newer desktop schemas; it does not identify the unpublished CodinGame checkpoint | Exact 1,156-input article schema, frozen by integration tests |
 | Neural shape | Train a new native model | Discloses `1156 -> 32 -> 32 -> 1` for the CodinGame bot | Public `NetworkDeep` supplies sparse evaluation and partial reevaluation machinery | Bias-free `1156 -> 32 -> 32 -> 1`, independently trained; artifact schema and hash are recorded below |
-| Runtime | Judge by CodinGame time, not node count | Article reports about 200 ms on one thread | Desktop application is threaded and is not a CodinGame timing contract | One thread; 800 ms first decision and 155 ms later decisions, with construction-inclusive 900/180 ms pre-upload ceilings |
+| Generated source | Use the platform allowance without padding | Not applicable | Not applicable | ASCII only; hard repository cap 99,999 characters; generated, editor-copyback, and asserted upload identities bind exact count and SHA-256 |
+| Runtime | Judge by CodinGame time, not node count | Article reports about 200 ms on one thread | Desktop application is threaded and is not a CodinGame timing contract | One thread; 800 ms first decision and 155 ms later decisions; hard 1,000/200 ms limits, campaign gates below 990/198 ms, and the legacy release probe's stronger 900/180 ms ceilings |
 | Comparison | Rank 4 is an opponent only | Not applicable | Not applicable | No incumbent source, model, replay, or labels enter the candidate artifact |
 
 The 9:1 schedule and full-boundary deduplication are direct requirements for
@@ -902,6 +908,113 @@ rank, clean elite result, and failed mechanism check.
 Commit `a7dd201dbaf32b98f6d661fe4b076c4c769e1815` restored the exact
 history-62 schedule and regenerated the 94,771-character source SHA-256
 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`.
-It was launched as agent `6612745`, submission `41128812`, history 68. This is
-the current remote rollback, but its arena window was still running when this
-ledger entry was frozen; no result is claimed. Rank 1 was not reached.
+It was launched as agent `6612745`, submission `41128812`, history 68. Its
+complete zero-own-failure window scored 62-28 raw, colors 26-19 and 36-9, at
+rank 6 and score 41.44. Ten opponent failures leave 80 clean games at 52-28,
+colors 21-19 and 31-9; clean top-five was 11-12, top-four 6-12, and Jacek
+0-3. The manifest and clean TSV SHA-256 identities are
+`32c5688dad406a3163f917aa30b2f093c26d179b6248b04a929b01df321cf8c1`
+and `4017131dcb3af888d929f36e03a3b5ca8a42c5938deef5a80be07a222dba1757`.
+Rank 1 was not reached.
+
+## Near-limit anti-trap campaign and final rollback
+
+The 2026-08-13 campaign raised `submission.json` and the purity contract from
+94,999 to 99,999 ASCII characters. The generator, purity checker, editor
+copy-back procedure, and source-bound collector retain exact character-count
+and SHA-256 validation; no padding was added. The same-runtime gate added
+independent candidate/baseline first and later clocks, construction-inclusive
+990/198 ms headroom, and hard 1,000/200 ms limits. The campaign also added
+checkpoint-bound decision audits, a default-off exact root-reply probe,
+default-off sparse advance overlays, and one `JNB` stderr line per decision
+with compact selected profile fields and search telemetry. Standard output
+remains the legal action alone. The legacy production timing probe retains its
+stronger 900/180 ms ceilings.
+
+The larger-clock control rejected 950/180 ms, 46-60 over 106 games, so every
+strategic experiment retained 800/155 ms. Root reply widths 8, 16, and 32
+completed the 192-state frozen panel without deadline truncation, but none
+directly refuted and replaced a preventable pre-mate selected action. The
+changes were allocation churn rather than the intended proof mechanism, so
+production remains width zero. The late-pacing trainer then built two seeds
+from 26,786 provenance-validated games with phase weights 1.0/1.5/2.0 and no
+observed policy labels. Both passed the frozen early-MSE ceiling but failed
+exact proof retention and the trap/control panel. The rejected model artifact
+is SHA-256 `95cdf851a47c0ca90a7131558e94333b6962057a3947041f6ce7e851a39dfbf8`;
+it was never activated.
+
+Additional isolated fallbacks also failed closed. Global 30,000 nodes scored
+49-57. A late-30,000 fixed-work screen introduced a proven-loss regression.
+The exact sparse endpoint-4 penalty changed two Jacek traps and zero controls
+on the frozen panel, but `0.11` scored only 52-54 at the actual-clock gate and
+exercised both candidate overrides in one color. Reply-frontier width was not
+trap-selective enough to implement. These negative results preserve
+production at 80,000 nodes, root-reply width zero, sparse penalty zero,
+`C=0.95`, and `FPU=0.5`.
+
+The final experimental family changed exploration only after 12 completed own
+decisions. Its frozen late slice changed 28/74 trap choices versus 11/74
+matched controls, including eight Jacek states across three histories and both
+colors, without a solved, proven, or exact-refutation regression. It passed two
+serial actual-clock gates:
+
+| Gate | Candidate-reference | Candidate colors | Candidate max first/later | Failures |
+| --- | ---: | ---: | ---: | ---: |
+| Seed `2026090115` | 65-41 | 33 / 32 | 475.737 / 162.320 ms | 0 |
+| Confirmation seed `2026090116` | 69-37 | 35 / 34 | 473.088 / 163.914 ms | 0 |
+
+The locally and editor-attested candidate was commit
+`62fb3b635fa0e4151a8eabc0946754b762ba9760`, 99,962 characters, SHA-256
+`6502f6c6c8db20b5c974c7a2effb4c216cedd15c43b8be21819d0e2795ec225e`,
+agent `6613732`, submission `41129405`. Editor copy-back matched twice and the
+Play check emitted the expected `C=0.95` opening telemetry. All 90 games were
+accounted for with zero own failures. At exact 90-game completion public
+metadata showed rank 7 and score 41.27; the collector shortly afterward froze
+rank 6 and score 41.41. The result was 59-31 raw and 50-31 clean; clean colors
+were 33-11 and 17-20, top-five 10-13, top-four 8-13, and Jacek 0-5. This is
+below both history 62's rank 5
+and history 68's clean elite/Jacek evidence, so the candidate was rejected.
+
+The candidate evidence is bound by manifest
+`248e6d5c9b9aeaf8d5a799bc50fa4ea53582a0b8858dcc018094fa0bc6cae8e3`
+and clean TSV
+`836ecea3edc8aa51386f4afe72fa797e475bb48593e3774ab960d9257212f36e`.
+The two fixed-30k audits aligned 2,075 decisions and changed 645 choices, but
+the live actions did not show the expected late-only match advantage. All 13
+clean top-five losses plus 12 deterministic extra losses were watched through
+their terminal frames. Elite losses were goals and commonly showed contained
+advanced attacks followed by a counterattack; the broader set also contained
+five blocks and sparse early defensive collapses. This supports conditional
+handoff/counterattack risk, not a blanket slowdown. The replay queue and review
+summary have SHA-256 `dcf5a636b32541caa46d65030e1f924f873891b8805bef53a8770bdd70c6f1a1`
+and `b8abcfa1fa7901091142e28a007deb453e54f1d8b8e69bb71a7e91673356f49e`.
+
+Commit `cefb50f7a78a630d90252d74a4b0b66b8ed9eecb` reverted the schedule and
+submitted the editor-attested 99,810-character instrumented source SHA-256
+`d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71`
+as agent `6613798`, submission `41129433`. This is the history-62 production
+behavior with telemetry and dormant experimental machinery; it is not the
+historical 94,771-character source. At exact 90-game completion public metadata
+showed rank 9 and score 40.57; the recovered content-addressed collector
+snapshot was rank 7 and score 40.76. The result was 64-26 raw, colors 26-15
+and 38-11; 53-26 clean, colors 22-15 and 31-11; top-five 2-13, top-four 1-11,
+and Jacek 0-6. Eleven opponent failures were removed and own failures were
+zero. The complete manifest is
+`45d8fb1653225ffa31e34622ee7821f7a9406275ea927bcaa2895721be351991`;
+the clean TSV is
+`68be316a586a2d3563d628ce8128160eba9651dc7d408752a3e867e188d3853c`.
+An earlier 89/90 manifest is retained as superseded evidence and is never used
+as the completion claim.
+
+The final deployed profile is therefore source SHA-256 `d9d96f83197f13...`,
+800/155 ms, 80,000 nodes, root-reply width zero, sparse penalty zero,
+`C=0.95`, `FPU=0.5`, model `b00b9d543fbc...`, runtime `17038c104bf7...`,
+and packed weights `e2304195d491...`. Fresh local Player-0/Player-1 timing was
+437.759/158.227 and 419.320/157.890 ms from one fresh construction-inclusive
+first/later probe per color. The candidate CI and rollback CI are
+[31666545315](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31666545315)
+and [31667800362](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31667800362),
+both green across GCC, Clang, ASan/UBSan, and Pages. Source binding remains
+`asserted-not-api-verified`: local/editor identities were exact, but the public
+arena API does not expose uploaded source bytes. Rank 4 was not reached; the
+historical history-62 rank 5 remains the result to beat.

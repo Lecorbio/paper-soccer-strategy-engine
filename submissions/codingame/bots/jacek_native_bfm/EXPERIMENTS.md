@@ -950,8 +950,11 @@ History 67 is rejected. Commit
 history-62 schedule and regenerated the 94,771-character source SHA-256
 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`.
 It was launched as agent `6612745`, submission `41128812`, history 68. Its
-90-game window was still running at this ledger cutoff, so no result is
-claimed.
+complete zero-own-failure window scored 62-28 raw, colors 26-19 and 36-9, at
+rank 6 and score 41.44. Ten opponent failures leave 80 clean games at 52-28,
+colors 21-19 and 31-9; clean top-five was 11-12, top-four 6-12, and Jacek
+0-3. Manifest SHA-256 is
+`32c5688dad406a3163f917aa30b2f093c26d179b6248b04a929b01df321cf8c1`.
 
 ## Results ledger
 
@@ -1005,6 +1008,12 @@ claimed.
 | History-66 exact rollback, clean | 52 | 30 | 29 / 23 | 8 opponent forfeits removed | CodinGame 82 games |
 | Rejected history-67 first-decision 20k, raw | 62 | 28 | 34 / 28 | our operational 0 | CodinGame 90 games |
 | Rejected history-67 first-decision 20k, clean | 52 | 28 | 29 / 23 | 10 opponent forfeits removed | CodinGame 80 games |
+| History-68 exact-source rollback, raw | 62 | 28 | 26 / 36 | our operational 0 | CodinGame 90 games |
+| History-68 exact-source rollback, clean | 52 | 28 | 21 / 31 | 10 opponent forfeits removed | CodinGame 80 games |
+| Rejected late-C candidate, raw | 59 | 31 | 36 / 23 | our operational 0 | CodinGame 90 games |
+| Rejected late-C candidate, clean | 50 | 31 | 33 / 17 | 9 opponent forfeits removed | CodinGame 81 games |
+| Final instrumented H62-behavior rollback, raw | 64 | 26 | 26 / 38 | our operational 0 | CodinGame 90 games |
+| Final instrumented H62-behavior rollback, clean | 53 | 26 | 22 / 31 | 11 opponent forfeits removed | CodinGame 79 games |
 
 The bootstrap passed both comparisons with its untrained ancestor, but its
 historical 800/165 ms source lost decisively to the external Rank 4 reference
@@ -1030,6 +1039,147 @@ given their combined 0-31 clean record against jacek. Commit
 94,771-character history-62 source SHA-256
 `653eba7d4b5f9b3e8737a6fb50bf16945e416bcdbc53e72520a6ee68acbbef90`
 and launched it as agent `6612745`, submission `41128812`, history 68. Its
-90-game window was still running at this ledger cutoff, so no result is
-claimed. The historical history-62 batch remains the best recorded rank at 5.
-The rank-1 target was not met.
+complete zero-own-failure window scored 62-28 raw and 52-28 clean at rank 6;
+the exact manifest is recorded above. The historical history-62 batch remains
+the best recorded rank at 5. The rank-1 target was not met.
+
+## 2026-08-13 near-limit anti-trap campaign
+
+This campaign changed the repository source contract to 99,999 ASCII
+characters without padding. Runtime/model/packed-weight validation, purity,
+schema validation, generator freshness, and editor copy-back SHA validation
+remain mandatory. The same-runtime gate now binds independent
+candidate/baseline first and later clocks, hard 1,000/200 ms limits,
+construction-inclusive 990/198 ms headroom, root reply width, sparse advance
+penalty, and phase-specific exploration. The legacy production timing probe
+retains its stronger 900/180 ms ceilings. Production stdout remains one legal
+action; one `JNB` line on stderr binds compact selected profile fields and
+search telemetry.
+
+### Frozen diagnostic and qualification results
+
+The trap panel is
+`results/codingame_arena_diagnostics/panels/jacek-native-late-trap-h62-h64-h66-h68-v2/panel.json`,
+SHA-256 `e21285b2582c162bf784dfd90c4e6ba33f15d6728f71d6c430b6ce6f430cee4a`.
+It contains 96 canonical trap states and 96 matched winning controls with no
+cross-population overlap. Replay observations construct states only and never
+supply policy, value, or imitation labels.
+
+| Intervention | Evidence | Result | Decision |
+| --- | --- | --- | --- |
+| 950/180 ms clocks | 106-game time-only control | 46-60, zero failures | reject; retain 800/155 |
+| Exact reply K=8 | 192 fixed-30k states | 1 trap / 4 control changes; no preventable selected-action refutation | reject |
+| Exact reply K=16 | 192 fixed-30k states | 6 / 10 changes; no preventable selected-action refutation | reject |
+| Exact reply K=32 | 192 fixed-30k states | 14 / 14 changes; no preventable selected-action refutation | reject |
+| Late-pacing model seeds 20260901/02 | frozen validation + model panel | early MSE passed; both lost exact proof retention and trap/control gates | reject |
+| Supported-advance 0.01/0.02 | panel SHA `3af01b93c2e814e16839a11d06e21a2c7604ad5713bc7b45df57114c038de87f` | zero trap/Jacek interventions, one control change | reject |
+| Sparse endpoint-4 penalty 0.11 | exact panel then 106 games | panel 2 Jacek traps / 0 controls; gate 52-54, colors 22/30, overrides 2/0 | reject |
+| Global 30k nodes | 106 actual-clock games | 49-57, colors 24/25, zero failures | reject |
+| Late 30k after own decision 12 | fixed-work discriminator | selected a move proven losing by the 80k audit | reject before games |
+| Reply-frontier width overlay | frozen 192-state reconstruction | trap/control churn not selective; insufficient safe coverage | reject before implementation |
+
+The provenance-bound late-pacing artifact used 26,786 games, split
+21,426/2,678/2,682 with 2,041,042/233,200/230,290 samples. Phase weights were
+1.0 for turns 0-11, 1.5 for 12-23, and 2.0 for 24+, applied after exact
+override; stable reanalysis retained weight 0.25. Observed policy labels were
+zero. The artifact SHA-256 is
+`95cdf851a47c0ca90a7131558e94333b6962057a3947041f6ce7e851a39dfbf8`.
+On the frozen 22,238-game H62 corpus's validation partition, seed 20260901
+scored early outcome MSE 1.000694 and seed 20260902 scored 1.001328 against
+baseline 0.999272, both below the 1.019257 ceiling. They nevertheless failed
+the exact proof and frozen model-panel gates; model-panel report SHA-256 is
+`503f37debd3cce3571ba8a60681eac91099da5daa3e3e00e775115a99cd963b3`.
+No seed was activated.
+
+### Late-only exploration candidate
+
+The last qualified hypothesis retained `C=0.95` for zero-based own decision
+ordinals 0-11 and used `C=0.80` from ordinal 12. On the frozen late slice it
+changed 28/74 traps versus 11/74 controls, including eight Jacek traps across
+three histories and both colors, with no solved, proven, or refuted-action
+regression.
+
+| Gate | Candidate-reference | Colors | Max first/later | Report / stdout SHA-256 |
+| --- | ---: | ---: | ---: | --- |
+| Seed 2026090115, strict | 65-41 | 33 / 32 | 475.737 / 162.320 ms | `d83fb3104829bbaa6dc4a7af0e6f27976432223ddc269d8ddcabe6d3bf61d20c` / `fcfc64ed0144748539d764e5047bb77e1480123c8a93b0ec67472b66fa026362` |
+| Seed 2026090116, confirmation | 69-37 | 35 / 34 | 473.088 / 163.914 ms | `8eeb540a7f9e0fec133f7cc187fabc2e830bd1a4defd2185bf3b7e34f8e861d1` / `4427b2b8baec037de43e680abd94d1e9b9297c2fb1448da3598ef082eafb4d8c` |
+
+Combined evidence was 134-78, colors 68/66, with zero unfinished games,
+headroom failures, or operational timeouts. Commit
+`62fb3b635fa0e4151a8eabc0946754b762ba9760` generated 99,962 ASCII
+characters, SHA-256
+`6502f6c6c8db20b5c974c7a2effb4c216cedd15c43b8be21819d0e2795ec225e`.
+Local/editor copy-back matched exactly; public source binding remains
+`asserted-not-api-verified`.
+
+The source ran as agent `6613732`, submission `41129405`. At exact 90-game
+completion metadata showed rank 7 and score 41.27; the content-addressed
+collector shortly afterward froze rank 6 and score 41.41. Raw result was
+59-31, colors 36-11 and 23-20. Nine opponent failures leave 81 clean games at
+50-31, colors 33-11 and 17-20. Clean cohorts were top 4 8-13, top 5 10-13,
+top 10 20-24, and top 20 39-31. Named clean results were Jacek 0-5,
+Marchete 1-5, Deltaspace 4-2, Laars 2-0, and Snekkers 3-1. Own failures were
+zero.
+
+| Candidate evidence | SHA-256 |
+| --- | --- |
+| Complete manifest | `248e6d5c9b9aeaf8d5a799bc50fa4ea53582a0b8858dcc018094fa0bc6cae8e3` |
+| Clean TSV | `836ecea3edc8aa51386f4afe72fa797e475bb48593e3774ab960d9257212f36e` |
+| C=0.95 fixed-30k audit | `b0249c0c5ba3eaf969f4ebe142ba8835ddb4256306dca3cad013c7c7184b7554` |
+| C=0.80 fixed-30k audit | `e54bae341a149d2caab577194c1a36773e79716147ae70610a7c40cf220119a0` |
+| Paired summary | `8bcbb4422200fe4a7c3b1efd6450e84dc078e4473cee435374ed8fd4ce5c0629` |
+| Live-window summary | `2242cfab0bc22abb5003c49b8d36ff079819a31e869a41e443ea1f7efd51706b` |
+| Replay queue / visual review | `dcf5a636b32541caa46d65030e1f924f873891b8805bef53a8770bdd70c6f1a1` / `b8abcfa1fa7901091142e28a007deb453e54f1d8b8e69bb71a7e91673356f49e` |
+
+The two fixed-30k counterfactuals aligned 2,075 decisions and differed on 645.
+Opening contained 942 decisions and 320 C-dependent changes; live actions
+matched C=0.95 370 times and C=0.80 335. Late contained 1,133 decisions and
+325 changes; live actions matched C=0.95 526 times and C=0.80 488. This is a
+fixed-work diagnostic rather than a production-clock replay, but it does not
+substantiate the expected live late-C signature. Visual review of all 13 elite
+losses plus 12 deterministic extras found contained attacks/counterattacks,
+blocking losses, and a separate early defensive-collapse family. The candidate
+is rejected on rank, clean elite result, Jacek result, weaker color, and failed
+mechanism attribution.
+
+### Instrumented history-62-behavior rollback
+
+Commit `cefb50f7a78a630d90252d74a4b0b66b8ed9eecb` reverted the live
+schedule to constant `C=0.95`. The deployed source is 99,810 ASCII characters,
+SHA-256 `d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71`.
+It is the history-62 production behavior with telemetry and dormant campaign
+machinery, not the byte-exact historical source SHA `653eba7d...`.
+
+Agent `6613798`, submission `41129433` completed exactly 90 matching games.
+At completion metadata showed rank 9 and score 40.57; the collector snapshot
+was rank 7 and score 40.76. Raw result was 64-26, colors 26-15 and 38-11.
+Eleven opponent failures (eight timeouts and three illegal actions) leave 79
+clean games at 53-26, colors 22-15 and 31-11. Clean cohorts were top 4 1-11,
+top 5 2-13, top 10 14-19, and top 20 30-23. Named clean results were Jacek
+0-6, Marchete 0-4, Deltaspace 1-0, Laars 5-1, and Snekkers 0-1. Own failures
+were zero.
+
+The complete recovered manifest is
+`45d8fb1653225ffa31e34622ee7821f7a9406275ea927bcaa2895721be351991`,
+clean TSV
+`68be316a586a2d3563d628ce8128160eba9651dc7d408752a3e867e188d3853c`,
+and live summary
+`cf164a30dea46566bfeb2e7d4da8e1afb1be49e0414c3d94084de15eaea61d74`.
+The initial manifest `1d9e6ffa...` accepted only 89 games and is retained as a
+superseded audit artifact, never as completion evidence. The recovered record
+uses a narrow tested rule: a rule-terminal game is an operational forfeit only
+when the winner is `ok`, the loser is non-`ok`, and there is no mixed or
+unscoped contradiction.
+
+Final production remains 800/155 ms, 80,000 nodes, K=0, sparse penalty 0,
+constant `C=0.95`, and `FPU=0.5`, with model/runtime/packed identities
+`b00b9d543fbc...` / `17038c104bf7...` / `e2304195d491...`. Fresh local
+Player-0 timing was 437.759/158.227 ms and Player-1 timing was
+419.320/157.890 ms from one fresh construction-inclusive first/later probe per
+color. Candidate CI
+[31666545315](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31666545315)
+and rollback CI
+[31667800362](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31667800362)
+both passed GCC, Clang, ASan/UBSan, and Pages. The rank-4 success condition was
+not met. Historical history 62 at rank 5 remains the strongest recorded live
+result and the result to beat.
