@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace jab = jacek_arena_bfm;
@@ -12,6 +13,7 @@ int main() {
   try {
     jab::State state = jab::initial_state();
     std::size_t checked = 0;
+    std::size_t exact_winning_positions = 0;
     for (int sample = 0; sample < 96; ++sample) {
       if (state.terminal() || sample % 19 == 0) state = jab::initial_state();
       const jab::State rotated = jab::rotate_and_swap(state);
@@ -30,9 +32,32 @@ int main() {
         exact_win = exact_win ||
             (successor.terminal() && successor.winner == state.to_move);
       }
+      const auto tactical = jab::generate_actions(
+          state, jab::GeneratorStrategy::TacticalProgressive, true);
+      bool tactical_exact_win = false;
+      for (const auto &action : tactical) {
+        jab::State successor = state;
+        if (!jab::apply_action(successor, action)) {
+          throw std::runtime_error("tactical generator produced illegal action");
+        }
+        tactical_exact_win = tactical_exact_win ||
+            (successor.terminal() && successor.winner == state.to_move);
+      }
+      if (exact_win && !tactical_exact_win) {
+        std::ostringstream message;
+        message << "tactical generator dropped exact winning action sample="
+                << sample << " state_hash=" << jab::state_hash(state)
+                << " reference_actions=" << reference.size()
+                << " tactical_actions=" << tactical.size();
+        throw std::runtime_error(message.str());
+      }
+      if (exact_win) ++exact_winning_positions;
+      // This is a tactical-retention invariant, not a wall-clock benchmark.
+      // A 3 ms deadline became vacuous once search reserved 6 ms for safe
+      // finalization.  An unbounded deadline plus a fixed 512-node cap makes
+      // the evidence deterministic while retaining finite work.
       const auto result = jab::search(
-          state, std::chrono::steady_clock::now() +
-                     std::chrono::milliseconds(3),
+          state, std::chrono::steady_clock::time_point::max(),
           jab::SearchConfig{jab::GeneratorStrategy::TacticalProgressive,
                             512, 0.95});
       jab::State selected = state;
@@ -42,7 +67,14 @@ int main() {
       }
       if (exact_win &&
           !(selected.terminal() && selected.winner == state.to_move)) {
-        throw std::runtime_error("exact winning action was displaced");
+        std::ostringstream message;
+        message << "exact winning action was displaced sample=" << sample
+                << " state_hash=" << jab::state_hash(state)
+                << " reference_actions=" << reference.size()
+                << " tactical_actions=" << tactical.size()
+                << " search_root_actions=" << result.root_actions
+                << " search_nodes=" << result.nodes;
+        throw std::runtime_error(message.str());
       }
       ++checked;
       const std::size_t advance =
@@ -53,7 +85,9 @@ int main() {
       }
     }
     std::cout << "jacek_arena_bfm comparison gate passed positions="
-              << checked << '\n';
+              << checked
+              << " exact_winning_positions=" << exact_winning_positions
+              << '\n';
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "jacek_arena_bfm comparison gate failed: " << error.what()

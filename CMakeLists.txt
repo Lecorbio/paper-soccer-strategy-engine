@@ -467,10 +467,12 @@ if(NOT EMSCRIPTEN)
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
-      target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
-        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
-      target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
-        PRIVATE papersoccer_core)
+      if(NOT PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+        target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+        target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE papersoccer_core)
+      endif()
       if(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
@@ -512,6 +514,9 @@ if(NOT EMSCRIPTEN)
         set_tests_properties(
           ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_score
           PROPERTIES WILL_FAIL TRUE)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate)
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
@@ -543,6 +548,20 @@ if(NOT EMSCRIPTEN)
       endif()
     endif()
   endforeach()
+
+  add_executable(papersoccer_codingame_jacek_arena_bfm_generator_benchmark
+    submissions/codingame/bots/jacek_arena_bfm/generator_benchmark.cpp)
+  add_executable(papersoccer_codingame_jacek_arena_bfm_selfplay_generator
+    submissions/codingame/bots/jacek_arena_bfm/selfplay_generator.cpp)
+
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME papersoccer_codingame_jacek_arena_bfm_purity
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/jacek_arena_bfm/check_purity.py)
+    set_tests_properties(papersoccer_codingame_jacek_arena_bfm_purity
+      PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
 
   add_executable(papersoccer_codingame_neural_puct_feature_probe
     submissions/codingame/bots/neural_puct/feature_probe.cpp)

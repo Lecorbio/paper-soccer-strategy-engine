@@ -34,3 +34,137 @@ both first-color protocol cases.  The dedicated probe measured 806.060 and
 802.034 ms for the two 800 ms cases, and 155.370 and 155.796 ms for the two
 155 ms later cases.  These measurements describe the bootstrap artifact only;
 each trained packed model must repeat the gates.
+
+## Fresh scratch bootstrap and collection candidate 001
+
+- Frozen scratch shard: 2,000 random-bootstrap games, balanced 500 each at
+  complete-turn opening depths `0,4,8,12`; 30,659 value rows; shard SHA-256
+  `79c136ba5c9f123730f34234957dced6ff660fa2410d0c90f34c61b0a601862a`.
+- Content-addressed shard manifest:
+  `72eb091180fc0191e679b97d1b789a05a13420bc8f661123f11069728344b60c`.
+- Frozen whole-game split favored bias-free `1156 -> 32 -> 32 -> 1`, seed
+  101, epoch 4: validation MSE `0.707235`, sign accuracy `0.719745`.
+  Width 48 produced MSE `0.711215`; width 64 produced `0.718366`.
+- The 48- and 64-wide packed headers were 82,390 and 109,589 bytes before
+  the 33,460-byte non-model submission body, so both fail the 99,999-source
+  contract.  The selected 32-wide source is 88,664 ASCII bytes.
+- Selected model identity: `fresh-32x32-s101-7f23a40ba6ca`; generated-source
+  SHA-256: `3883f4c3f29a32c039492adc6151e94b5dfd84653ce0dfb2383356e7f5e3c9f8`.
+- Trained-source gates: GCC and Clang pass; focused ASan/UBSan passes;
+  both-color protocol and action-legality passes; exact/tactical/rotation
+  comparison passes.  Measured first decisions were 800.909/801.127 ms and
+  later decisions 155.157/156.794 ms locally.
+- Editor paste and copy-back were byte-identical.  Play My Code produced only
+  legal stdout (`0`, `0`, `67`, `713`, `1411`), emitted expected model/timing
+  telemetry, and scored a goal.  The replay UI also displayed a CodinGame
+  internal-error banner, but its complete nine-turn log showed no timeout,
+  crash, malformed output, or illegal action by this bot.
+- Preassigned window `collection-001` was submitted at
+  `2026-08-13T10:55:59Z`: commit `dbce4dec8ca2f31ef7790992dcddda7948eef132`,
+  agent `6615613`, submission `41130787`.  Its exact 90-game window remains
+  training-role evidence and must complete before any superseding upload.
+
+## Collection candidate 001: completed window and safety rejection
+
+The final sentence above records the state at upload time.  The source-bound
+window subsequently completed with all 90 games accounted for.  Its immutable
+arena manifest is
+`8b8b3e5e59cda6817e54d17da7ef531a75bfd49ae5d0d7cefb1b650fb5795de0`;
+the derived window is
+`1a8bcd4a96236959059abe836613c3570e85966d3338f83fb9477b12c658c872`.
+
+- Coverage: 74 clean, unambiguous rule terminals; three focus operational
+  failures; 13 opponent operational failures.
+- Focus failures: game `898882047` timed out as player 0 at frame 15; games
+  `898882199` and `898882273` timed out as player 1 at frames 46 and 48.
+- Decision: reject the entire window.  The 74 clean-looking games are not
+  selected around the failures and cannot enter any training corpus.
+- Exact fresh arena use: value 0 games, action ranking 0 games, arena
+  validation 0 games, final holdout 0 games.
+- Content-addressed rejection report:
+  `48224d76f1e42ea453bf5afe1ab96abfbcd9cf8081a017f15f936b2f573fe9a6`.
+
+The own timeouts triggered the authorized emergency rollback.  The exact
+safe H62 source is 99,810 ASCII bytes with SHA-256
+`d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71`,
+constant `C=0.95`, 80,000 nodes, and 800/155 ms budgets.  Exact editor
+paste/copy-back equality and a legal Play My Code run preceded upload at
+`2026-08-13T11:13:22Z` as agent `6615714`, submission `41130866`.  This source
+is frozen rollback evidence only and is not part of the new bot's lineage.
+CodinGame upload bytes are editor-attested, not API-readable.
+
+## Additional fresh scratch continuation
+
+Before the live failure audit completed, the scratch-trained candidate above
+generated four non-overlapping 500-game shards.  Each shard has 125 games at
+opening depths `0,4,8,12`; together they contribute 2,000 games and 76,562
+value rows:
+
+| Shard | Rows | Bytes | SHA-256 |
+| --- | ---: | ---: | --- |
+| `interim-trained-0` | 19,331 | 59,703,046 | `4be5f599914a02c11dff797954c36ec964fa0288dd595bb1dd1724c91110a4a4` |
+| `interim-trained-1` | 18,985 | 58,634,564 | `dd2028ec111033d0b91a465f33c240783e65bf9c3ede94ab96c8b078d3e46a10` |
+| `interim-trained-2` | 19,703 | 60,852,452 | `985749dda471a83194703bea59191d1847587d35879d948d2f55a06147d6639f` |
+| `interim-trained-3` | 18,543 | 57,269,354 | `c85cccef92f61d374054565434fce10f76ef4727ea40f1cdd691a5e3f818a33c` |
+
+All four shards independently pass the frozen corpus validator.  Their
+content-addressed shard-set manifest is
+`3b77cdb7adf5936fe7358f92555475fc4a5fb624886f8a3ad177c275ce9fcab4`.
+Combined with the random bootstrap, the campaign has exactly 4,000 valid
+fresh scratch games and 107,221 value rows.
+
+## Arena-mixture decision
+
+The conservative (25%), balanced (40%), and aggressive (55%) final mixtures
+were not trained, and consequently no mixture seed was selected.  The only
+training-role arena window is ineligible in full because it contains three
+own operational failures.  Running scratch-only jobs under those mixture
+names would violate the requested exposure definitions and create misleading
+selection evidence.  The operationally failed candidate is not a finalist;
+rank 4 was not achieved by this fresh source.
+
+## Timeout diagnosis and offline hardening
+
+The three exact pre-timeout states were reconstructed solely as rejected-window
+operational diagnostics. The uploaded source exceeded its requested 155 ms
+deadline locally on all three states, with 10-run maxima of 159.912, 161.361,
+and 162.114 ms. Root cause: a complete-turn generator entered just before the
+clock check could run unbounded through its action/partial cap; the root
+fallback had the same defect.
+
+The offline-only source adds deadline checks inside partial expansion, a 6 ms
+finalization reserve, and a deterministic legal emergency complete turn. It
+uses 780/128 ms protocol work budgets. On the same states its 10-run maxima
+were 124.844, 126.253, and 126.734 ms. Clang, GCC, focused ASan/UBSan, both
+colors, source-generation, purity, timeout regression, and deterministic
+exact-win retention gates pass. This source is 92,685 ASCII bytes, SHA-256
+`e23f0d684fb7737b2c2a263e244933c8e407f7b180a7484aaa99a423ee230215`.
+It was not uploaded after the safety rollback.
+
+An isolated black-box fast screen ran 1,000 balanced-color games against the
+exact frozen H62 source. All games were operationally clean, but the offline
+source won only 57 and lost 943. It fails the required “beats H62” gate, so the
+212-game actual-clock qualification was not run. Aggregate report SHA-256:
+`ea8882f89199a09859c951d4da240e8b4f65d768909d42a606866470951587df`.
+
+## Frozen cumulative scratch retrain
+
+The cumulative 4,000-game corpus was retrained from random initialization with
+two otherwise identical one-epoch seeds. Seed 101
+(`fresh-32x32-s101-ad87209e4c6c`) achieved frozen validation MSE 0.883150 and
+sign accuracy 0.627034. Seed 1701
+(`fresh-32x32-s1701-95c4024fdbfa`) achieved MSE 0.891634 and sign accuracy
+0.618694. Seed 101 is the offline selection. It remains undeployed because no
+eligible arena window exists and the emergency rollback ended experimental
+uploads. Decision manifest:
+`4617ca6c044709110be852ae02e09aa76ee40091ebc0f6682cf439c9e40c9d5a`.
+
+## Safe rollback accounting
+
+The exact rollback submission window completed at 90 games under manifest
+`44530074995e48754100ace955d4d75c16021947194b7e2c3e87a802b7de7cb9`:
+76 clean rule terminals, 14 opponent operational failures, and zero focus
+operational failures. The frozen rank was 9. Clean results were 49-27 overall,
+20-14 as player 0, 29-13 as player 1, 4-17 against the frozen top five, and
+0-5 against Jacek. This window is rollback accounting only and never enters
+training.

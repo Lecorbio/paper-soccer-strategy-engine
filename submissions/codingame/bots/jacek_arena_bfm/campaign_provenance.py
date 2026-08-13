@@ -1031,7 +1031,14 @@ def validate_arena_derivation(
     repository: pathlib.Path,
     expected_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Validate a frozen derivation before any corpus builder may consume it."""
+    """Validate the immutable accounting structure of a frozen derivation.
+
+    Structural validity is deliberately distinct from permission to train on
+    the window.  Corpus consumers must additionally apply
+    :func:`arena_derivation_usage`; in particular, one focus operational
+    failure rejects every otherwise eligible candidate in that submission
+    window.
+    """
 
     derivation = load_content_addressed(derivation_path, ARENA_DERIVATION_SCHEMA)
     derivation_hash = sha256_file(derivation_path)
@@ -1176,6 +1183,57 @@ def validate_arena_derivation(
     if summary != expected_summary:
         raise ProvenanceError("arena derivation summary contradicts its games")
     return derivation
+
+
+def arena_derivation_usage(derivation: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an explicit whole-window usage decision for a valid derivation.
+
+    This helper does not replace ``validate_arena_derivation``.  Callers first
+    validate the content-addressed artifact, then use this result to avoid
+    confusing per-game ``eligible`` accounting candidates with authorization
+    to include them in training.
+    """
+
+    window = derivation.get("window")
+    summary = derivation.get("summary")
+    if not isinstance(window, Mapping) or not isinstance(summary, Mapping):
+        raise ProvenanceError("arena derivation must be structurally validated before usage classification")
+    role = window.get("role")
+    focus_failures = summary.get("focus_operational_failures")
+    eligible_games = summary.get("eligible_games")
+    if (
+        role not in {"training", "arena-validation", "final-holdout", "rollback-accounting"}
+        or isinstance(focus_failures, bool)
+        or not isinstance(focus_failures, int)
+        or focus_failures < 0
+        or isinstance(eligible_games, bool)
+        or not isinstance(eligible_games, int)
+        or eligible_games < 0
+    ):
+        raise ProvenanceError("arena derivation has no valid usage classification")
+    if focus_failures:
+        return {
+            "reason": "focus-operational-failure-rejects-entire-window",
+            "training_eligible": False,
+            "window_disposition": "rejected-entire-window",
+        }
+    if role == "training" and eligible_games:
+        return {
+            "reason": "clean-preassigned-training-window",
+            "training_eligible": True,
+            "window_disposition": "training-candidate",
+        }
+    disposition = {
+        "training": "no-eligible-training-games",
+        "arena-validation": "arena-validation-only",
+        "final-holdout": "untouched-live-final-holdout-only",
+        "rollback-accounting": "rollback-accounting-only",
+    }[role]
+    return {
+        "reason": "window-role-or-empty-window-forbids-training",
+        "training_eligible": False,
+        "window_disposition": disposition,
+    }
 
 
 def validate_campaign_sequence(
@@ -1448,7 +1506,12 @@ def _main_validate_derivation(arguments: argparse.Namespace) -> dict[str, Any]:
         repository=arguments.repository,
         expected_sha256=arguments.derivation_sha256,
     )
-    return {"sha256": sha256_file(arguments.derivation), "status": "valid", "summary": payload["summary"]}
+    return {
+        "sha256": sha256_file(arguments.derivation),
+        "status": "structurally-valid",
+        "summary": payload["summary"],
+        "usage": arena_derivation_usage(payload),
+    }
 
 
 def _main_validate_sequence(arguments: argparse.Namespace) -> dict[str, Any]:

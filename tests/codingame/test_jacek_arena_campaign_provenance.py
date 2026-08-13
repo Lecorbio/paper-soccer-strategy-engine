@@ -148,6 +148,29 @@ class CampaignProvenanceTest(unittest.TestCase):
             with self.assertRaisesRegex(provenance.ProvenanceError, "role assignment"):
                 provenance.validate_window_plan(forged)
 
+    def test_derivation_usage_distinguishes_structure_from_training_permission(self):
+        rejected = {
+            "summary": {"eligible_games": 74, "focus_operational_failures": 3},
+            "window": {"role": "training"},
+        }
+        self.assertEqual(
+            provenance.arena_derivation_usage(rejected),
+            {
+                "reason": "focus-operational-failure-rejects-entire-window",
+                "training_eligible": False,
+                "window_disposition": "rejected-entire-window",
+            },
+        )
+        rollback = {
+            "summary": {"eligible_games": 76, "focus_operational_failures": 0},
+            "window": {"role": "rollback-accounting"},
+        }
+        self.assertEqual(
+            provenance.arena_derivation_usage(rollback)["window_disposition"],
+            "rollback-accounting-only",
+        )
+        self.assertFalse(provenance.arena_derivation_usage(rollback)["training_eligible"])
+
     def make_attestation(self, root, plan_hash, plan_path, *, initialize_sources=True):
         source = root / "candidate.cpp"
         copied = root / "editor-copyback.cpp"

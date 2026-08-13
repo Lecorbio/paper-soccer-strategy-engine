@@ -43,7 +43,10 @@ bool parse_action(const std::string &text, Action &action) {
     if (state.terminal()) break;
     if (state.to_move != my_id) return 5;
     const auto started = std::chrono::steady_clock::now();
-    const int milliseconds = first_decision ? 800 : 155;
+    // Leave substantial wall-clock headroom for the CodinGame protocol and
+    // slower shared runners. Search additionally reserves its own finalization
+    // time and can interrupt complete-turn generation at the deadline.
+    const int milliseconds = first_decision ? 780 : 128;
     const auto deadline = started + std::chrono::milliseconds(milliseconds);
     const SearchResult result = search(state, deadline);
     if (result.action.length == 0 || !apply_action(state, result.action)) return 6;
@@ -52,6 +55,11 @@ bool parse_action(const std::string &text, Action &action) {
         std::chrono::steady_clock::now() - started).count();
     std::cerr << "jacek_arena_bfm nodes=" << result.nodes
               << " root_actions=" << result.root_actions
+              << " generator_us=" << result.generator_microseconds
+              << " generator_max_us=" << result.maximum_generator_microseconds
+              << " generator_deadline_stops="
+              << result.generator_deadline_stops
+              << " deadline_reached=" << result.deadline_reached
               << " ms=" << elapsed << " value=" << result.root_value
               << " model=" << model::kIdentity << '\n';
     first_decision = false;

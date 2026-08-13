@@ -484,10 +484,49 @@ std::uint64_t state_hash(const State &state) noexcept {
   return hash;
 }
 
+Action emergency_complete_action(const State &source) {
+  Action action;
+  if (source.terminal()) return action;
+  State state = source;
+  const std::uint8_t mover = state.to_move;
+  while (!state.terminal() && state.to_move == mover &&
+         action.length < kMaximumActionLength) {
+    const auto arcs = legal_arcs(state);
+    if (arcs.empty()) break;
+    bool found = false;
+    int best_score = std::numeric_limits<int>::min();
+    std::uint8_t best_direction = 0;
+    for (const auto arc : arcs) {
+      State successor = state;
+      if (!apply_edge(successor, arc.direction)) continue;
+      Action candidate = action;
+      if (!append_direction(candidate, arc.direction)) continue;
+      const int score = tactical_score(successor, candidate, mover);
+      if (!found || score > best_score ||
+          (score == best_score && arc.direction < best_direction)) {
+        found = true;
+        best_score = score;
+        best_direction = arc.direction;
+      }
+    }
+    if (!found || !append_direction(action, best_direction) ||
+        !apply_edge(state, best_direction)) {
+      return {};
+    }
+  }
+  if (action.length == 0 ||
+      (!state.terminal() && state.to_move == mover)) {
+    return {};
+  }
+  return action;
+}
+
 std::vector<Action> generate_actions(const State &state,
                                      GeneratorStrategy strategy, bool root,
-                                     GeneratorStats *stats) {
+                                     GeneratorStats *stats,
+                                     std::chrono::steady_clock::time_point deadline) {
   GeneratorStats local;
+  const bool timed = deadline != std::chrono::steady_clock::time_point::max();
   const std::size_t limit = action_limit(strategy, root);
   const std::size_t partial_limit = limit *
       (strategy == GeneratorStrategy::HighCapRecall ? 64 : 32);
@@ -499,6 +538,12 @@ std::vector<Action> generate_actions(const State &state,
     if (stats) *stats = local;
     return completed;
   }
+  const Action emergency = timed ? emergency_complete_action(state) : Action{};
+  auto out_of_time = [&]() {
+    if (!timed || std::chrono::steady_clock::now() < deadline) return false;
+    local.deadline_reached = true;
+    return true;
+  };
   const std::uint8_t mover = state.to_move;
   std::uint64_t serial = 0;
   std::deque<Partial> deque;
@@ -530,7 +575,7 @@ std::vector<Action> generate_actions(const State &state,
     return value;
   };
   while (has_partial() && completed.size() < limit &&
-         local.partials < partial_limit) {
+         local.partials < partial_limit && !out_of_time()) {
     Partial current = pop_partial();
     ++local.partials;
     auto arcs = legal_arcs(current.state);
@@ -548,6 +593,7 @@ std::vector<Action> generate_actions(const State &state,
       return mix64(order_seed ^ left.edge) < mix64(order_seed ^ right.edge);
     });
     for (const auto arc : arcs) {
+      if ((serial & 7U) == 0U && out_of_time()) break;
       Partial next = current;
       next.serial = serial++;
       if (!append_direction(next.action, arc.direction) ||
@@ -589,19 +635,30 @@ std::vector<Action> generate_actions(const State &state,
       }
     }
   }
+  if (completed.empty() && emergency.length != 0) {
+    completed.push_back(emergency);
+  }
   local.completed = completed.size();
-  local.truncated = has_partial() || local.partials >= partial_limit;
+  local.truncated = has_partial() || local.partials >= partial_limit ||
+                    local.deadline_reached;
   // Tactical terminals are never displaced by queue order or beam diversity.
-  std::stable_sort(completed.begin(), completed.end(), [&](const Action &left,
-                                                           const Action &right) {
-    State a = state;
-    State b = state;
-    apply_action(a, left);
-    apply_action(b, right);
-    const int sa = tactical_score(a, left, mover);
-    const int sb = tactical_score(b, right, mover);
-    return sa != sb ? sa > sb : left.text() < right.text();
-  });
+  const bool have_sort_reserve = !timed ||
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(2) < deadline;
+  if (have_sort_reserve) {
+    std::stable_sort(completed.begin(), completed.end(), [&](const Action &left,
+                                                             const Action &right) {
+      State a = state;
+      State b = state;
+      apply_action(a, left);
+      apply_action(b, right);
+      const int sa = tactical_score(a, left, mover);
+      const int sb = tactical_score(b, right, mover);
+      return sa != sb ? sa > sb : left.text() < right.text();
+    });
+  } else {
+    local.deadline_reached = true;
+    local.truncated = true;
+  }
   if (stats) *stats = local;
   return completed;
 }
@@ -658,24 +715,50 @@ SearchResult search(const State &state,
                     const SearchConfig &config) {
   SearchResult result;
   if (state.terminal()) return result;
+  const bool timed = deadline != std::chrono::steady_clock::time_point::max();
+  auto work_deadline = deadline;
+  if (timed) {
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kFinalizationReserve = std::chrono::milliseconds(6);
+    work_deadline = deadline > now + kFinalizationReserve
+        ? deadline - kFinalizationReserve : now;
+  }
   const std::uint8_t root_player = state.to_move;
   std::vector<TreeNode> nodes;
   nodes.reserve(config.maximum_nodes);
   nodes.push_back(TreeNode{state});
   std::size_t iterations = 0;
+  bool stop = false;
+  auto generate_node = [&](TreeNode &node, bool root) {
+    GeneratorStats stats;
+    const auto started = std::chrono::steady_clock::now();
+    node.actions = generate_actions(node.state, config.generator, root,
+                                    &stats, work_deadline);
+    const auto elapsed = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started).count());
+    result.generator_microseconds += elapsed;
+    result.maximum_generator_microseconds =
+        std::max(result.maximum_generator_microseconds, elapsed);
+    if (stats.deadline_reached) {
+      ++result.generator_deadline_stops;
+      result.deadline_reached = true;
+      stop = true;
+    }
+  };
   while (nodes.size() < config.maximum_nodes &&
-         std::chrono::steady_clock::now() < deadline) {
+         std::chrono::steady_clock::now() < work_deadline && !stop) {
     int node_index = 0;
     std::vector<int> path{0};
     while (true) {
       TreeNode &node = nodes[node_index];
       if (node.state.terminal()) break;
       if (!node.generated) {
-        node.actions = generate_actions(node.state, config.generator,
-                                        node_index == 0);
+        generate_node(node, node_index == 0);
         node.children.assign(node.actions.size(), -1);
         node.generated = true;
         if (node_index == 0) result.root_actions = node.actions.size();
+        if (stop) break;
       }
       if (node.actions.empty()) break;
       const std::size_t allowed = std::min<std::size_t>(
@@ -722,11 +805,14 @@ SearchResult search(const State &state,
     }
     ++iterations;
     if ((iterations & 31U) == 0 &&
-        std::chrono::steady_clock::now() >= deadline) break;
+        std::chrono::steady_clock::now() >= work_deadline) {
+      result.deadline_reached = true;
+      break;
+    }
   }
   result.nodes = nodes.size();
   if (!nodes[0].generated) {
-    nodes[0].actions = generate_actions(state, config.generator, true);
+    generate_node(nodes[0], true);
     nodes[0].children.assign(nodes[0].actions.size(), -1);
     nodes[0].generated = true;
     result.root_actions = nodes[0].actions.size();
@@ -736,6 +822,12 @@ SearchResult search(const State &state,
   std::uint32_t best_visits = 0;
   double best_mean = -std::numeric_limits<double>::infinity();
   for (std::size_t index = 0; index < nodes[0].actions.size(); ++index) {
+    if (timed && index != 0 &&
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1) >=
+            deadline) {
+      result.deadline_reached = true;
+      break;
+    }
     State successor = state;
     apply_action(successor, nodes[0].actions[index]);
     if (terminal_for_mover(successor, root_player)) {

@@ -44,6 +44,7 @@ struct GeneratorStats {
   std::size_t completed{0};
   std::size_t duplicates{0};
   bool truncated{false};
+  bool deadline_reached{false};
 };
 
 struct SearchConfig {
@@ -56,7 +57,11 @@ struct SearchResult {
   Action action{};
   std::size_t nodes{0};
   std::size_t root_actions{0};
+  std::size_t generator_deadline_stops{0};
+  std::uint64_t generator_microseconds{0};
+  std::uint64_t maximum_generator_microseconds{0};
   double root_value{0.0};
+  bool deadline_reached{false};
 };
 
 class Topology {
@@ -98,7 +103,9 @@ bool apply_edge(State &state, std::uint8_t direction);
 bool apply_action(State &state, const Action &action, bool require_complete = true);
 std::vector<Action> generate_actions(
     const State &state, GeneratorStrategy strategy, bool root,
-    GeneratorStats *stats = nullptr);
+    GeneratorStats *stats = nullptr,
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max());
 std::array<std::uint16_t, 421> active_features(const State &state,
                                                 std::size_t &count);
 float evaluate(const State &state);

@@ -49,11 +49,18 @@ Run `python3 campaign_provenance.py COMMAND --help` for complete arguments.
   transcript, operational signal from either player, or ambiguous terminal
   state rejects the entire game. Training roles expose only raw terminal-value
   candidates and opponent-action **reanalysis candidates**; validation and
-  final-holdout roles can never produce training uses.
+  final-holdout roles can never produce training uses. The corpus-side binding
+  gate is stricter for failures attributable to the collection bot: any focus
+  operational failure rejects the complete 90-game derivation from training,
+  so no apparently clean subset of that window can enter a corpus.
 - `validate-derivation` is the corpus-side trust gate. It rechecks the
   content-addressed upstream plan, attestation, arena manifest, and exclusion
   registry; exact role-derived uses; sorted fresh IDs; all payload/record
-  hashes; and summary counts before returning `status: valid`.
+  hashes; and summary counts. Its result deliberately says
+  `status: structurally-valid` and separately reports `usage.training_eligible`
+  plus a whole-window disposition. Thus an audit derivation with per-game
+  `eligible` candidates but any focus operational failure is visibly
+  `rejected-entire-window`, never merely “valid.”
 - `validate-sequence` accepts repeated derivations and rejects a skipped or
   reordered collection slot, repeated/non-distinct submission source, upload
   before the preceding exact window completed, experimental upload after the

@@ -20,6 +20,16 @@ build/
 !/results/jacek_arena_bfm/selection/**
 !/results/jacek_arena_bfm/reports/
 !/results/jacek_arena_bfm/reports/**
+!/results/jacek_arena_bfm/comparisons/
+!/results/jacek_arena_bfm/comparisons/**
+!/results/jacek_arena_bfm/arena/
+!/results/jacek_arena_bfm/arena/**
+!/results/jacek_arena_bfm/scratch/
+/results/jacek_arena_bfm/scratch/*
+!/results/jacek_arena_bfm/scratch/manifests/
+!/results/jacek_arena_bfm/scratch/manifests/**
+!/results/jacek_arena_bfm/scratch/producers/
+!/results/jacek_arena_bfm/scratch/producers/**
 /.venv/
 __pycache__/
 *.pyc
