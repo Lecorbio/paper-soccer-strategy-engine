@@ -56,7 +56,10 @@ void profiles_are_independent_and_legacy_clocks_are_shared() {
           "legacy shared clocks must remain byte-for-byte compatible");
   require(arguments.candidate.tree_nodes == 120000 &&
               arguments.baseline.tree_nodes == 80000 &&
+              arguments.candidate.opening_exploration == 1.25 &&
               arguments.candidate.exploration == 1.25 &&
+              arguments.candidate.exploration_opening_own_decisions == 0 &&
+              arguments.baseline.opening_exploration == 0.95 &&
               arguments.baseline.exploration == 0.95 &&
               arguments.candidate.fpu == 0.25 &&
               arguments.baseline.fpu == 0.5 &&
@@ -67,6 +70,40 @@ void profiles_are_independent_and_legacy_clocks_are_shared() {
               arguments.baseline.final_formula ==
                   gate::FinalFormula::Production,
           "candidate and baseline search profiles must remain independent");
+}
+
+void phase_exploration_is_complete_and_uses_an_independent_cutoff() {
+  const gate::Arguments arguments = parse({
+      "--checkpoint", "one.runtime", "--candidate-opening-tree-nodes",
+      "20000", "--candidate-later-tree-nodes", "80000",
+      "--candidate-opening-own-decisions", "4", "--candidate-opening-c",
+      "0.65", "--candidate-later-c", "0.80",
+      "--candidate-exploration-opening-own-decisions", "12"});
+  require(gate::tree_nodes_for_own_decision(arguments.candidate, 11) ==
+                  80000 &&
+              gate::exploration_for_own_decision(arguments.candidate, 11) ==
+                  0.65 &&
+              gate::exploration_for_own_decision(arguments.candidate, 12) ==
+                  0.80,
+          "exploration ordinals 11/12 must be independent of the tree cutoff");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime", "--candidate-c",
+                        "0.95", "--candidate-opening-c", "0.65",
+                        "--candidate-later-c", "0.80",
+                        "--candidate-exploration-opening-own-decisions",
+                        "12"}); },
+      "legacy and phase exploration must not mix");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime",
+                        "--candidate-opening-c", "0.65"}); },
+      "partial phase exploration must fail closed");
+  require_invalid(
+      [] { (void)parse({"--checkpoint", "one.runtime",
+                        "--candidate-opening-c", "0.65",
+                        "--candidate-later-c", "0.80",
+                        "--candidate-exploration-opening-own-decisions",
+                        "0"}); },
+      "a zero exploration cutoff must fail closed");
 }
 
 void side_clocks_are_complete_independent_and_bounded() {
@@ -265,8 +302,8 @@ void construction_inclusive_clock_buckets_are_complete() {
   search.root_actions = {
       {"0", 0.0F, 0.0F, 1, 0, native::TacticalClass::SafeHandoff}};
   search.root_actions.front().penalty_applied = 0.11;
-  totals.observe(search, "0", 989.0, 0, 4, true, 0);
-  totals.observe(search, "0", 197.0, 1, 4, true, 1);
+  totals.observe(search, "0", 989.0, 0, 4, 12, true, 0);
+  totals.observe(search, "0", 197.0, 12, 4, 12, true, 1);
   require(totals.decisions == 2 && totals.first_clock_decisions == 1 &&
               totals.later_clock_decisions == 1 &&
               totals.first_clock_milliseconds == 989.0 &&
@@ -279,10 +316,14 @@ void construction_inclusive_clock_buckets_are_complete() {
               totals.supported_advance_selected_actions == 2 &&
               totals.supported_advance_selection_overrides == 2 &&
               totals.supported_advance_selection_overrides_by_player ==
-                  std::array<std::uint64_t, 2>{1, 1},
+                  std::array<std::uint64_t, 2>{1, 1} &&
+              totals.exploration_opening_decisions_by_player ==
+                  std::array<std::uint64_t, 2>{1, 0} &&
+              totals.exploration_later_decisions_by_player ==
+                  std::array<std::uint64_t, 2>{0, 1},
           "per-side clock buckets must expose 950/170/175/180 selection data");
-  totals.observe(search, "0", 990.0, 0, 4, false, 0);
-  totals.observe(search, "0", 198.0, 1, 4, false, 1);
+  totals.observe(search, "0", 990.0, 0, 4, 12, false, 0);
+  totals.observe(search, "0", 198.0, 12, 4, 12, false, 1);
   require(totals.headroom_failures == 2 &&
               totals.operational_timeouts == 0,
           "construction-inclusive headroom must be strict below 990/198");
@@ -295,6 +336,7 @@ int main() {
     profiles_are_independent_and_legacy_clocks_are_shared();
     side_clocks_are_complete_independent_and_bounded();
     phase_caps_are_complete_and_use_the_own_decision_ordinal();
+    phase_exploration_is_complete_and_uses_an_independent_cutoff();
     final_formulas_use_the_declared_counters();
     invalid_or_asymmetric_interfaces_fail_closed();
     procedural_openings_are_reproducible();

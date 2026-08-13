@@ -19,7 +19,7 @@ from typing import Any, Iterator, Sequence
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v6"
+REPORT_SCHEMA = "papersoccer.jacek-native-search-ab-report/v7"
 SOURCE_PATHS = (
     "tools/jacek_native_search_ab_gate.cpp",
     "submissions/codingame/bots/jacek_native_bfm/bot.cpp",
@@ -67,6 +67,10 @@ SUMMARY_FIELDS = {
     "candidate_supported_advance_selection_overrides",
     "candidate_supported_advance_player_one_selection_overrides",
     "candidate_supported_advance_player_two_selection_overrides",
+    "candidate_exploration_opening_player_one_decisions",
+    "candidate_exploration_opening_player_two_decisions",
+    "candidate_exploration_later_player_one_decisions",
+    "candidate_exploration_later_player_two_decisions",
     "candidate_ms",
     "candidate_first_clock_decisions", "candidate_later_clock_decisions",
     "candidate_first_clock_ms", "candidate_later_clock_ms",
@@ -95,6 +99,10 @@ SUMMARY_FIELDS = {
     "baseline_supported_advance_selection_overrides",
     "baseline_supported_advance_player_one_selection_overrides",
     "baseline_supported_advance_player_two_selection_overrides",
+    "baseline_exploration_opening_player_one_decisions",
+    "baseline_exploration_opening_player_two_decisions",
+    "baseline_exploration_later_player_one_decisions",
+    "baseline_exploration_later_player_two_decisions",
     "baseline_ms",
     "baseline_first_clock_decisions", "baseline_later_clock_decisions",
     "baseline_first_clock_ms", "baseline_later_clock_ms",
@@ -121,13 +129,15 @@ SUMMARY_FIELDS = {
     "candidate_opening_own_decisions", "candidate_root_reply_width",
     "candidate_supported_advance_penalty",
     "candidate_first_budget_ms", "candidate_later_budget_ms",
-    "candidate_c", "candidate_fpu",
+    "candidate_opening_c", "candidate_later_c",
+    "candidate_exploration_opening_own_decisions", "candidate_fpu",
     "candidate_final", "baseline_opening_tree_nodes",
     "baseline_later_tree_nodes", "baseline_opening_own_decisions",
     "baseline_root_reply_width", "baseline_first_budget_ms",
     "baseline_supported_advance_penalty",
     "baseline_later_budget_ms",
-    "baseline_c", "baseline_fpu",
+    "baseline_opening_c", "baseline_later_c",
+    "baseline_exploration_opening_own_decisions", "baseline_fpu",
     "baseline_final", "required_total", "required_per_color", "passed",
 }
 COUNT_SUFFIXES = (
@@ -255,6 +265,34 @@ def _profile(arguments: argparse.Namespace, side: str) -> dict[str, Any]:
             raise RecordError(f"{side} phase profile is incomplete")
     else:
         opening, later, cutoff = 80000, 80000, 0
+    legacy_c = getattr(arguments, f"{side}_c")
+    opening_c = getattr(arguments, f"{side}_opening_c")
+    later_c = getattr(arguments, f"{side}_later_c")
+    exploration_cutoff = getattr(
+        arguments, f"{side}_exploration_opening_own_decisions"
+    )
+    exploration_split = (opening_c, later_c, exploration_cutoff)
+    if legacy_c is not None and any(
+        value is not None for value in exploration_split
+    ):
+        raise RecordError(
+            f"{side} profile mixes legacy and phase exploration"
+        )
+    if legacy_c is not None:
+        opening_c, later_c, exploration_cutoff = legacy_c, legacy_c, 0
+    elif any(value is not None for value in exploration_split):
+        if (
+            any(value is None for value in exploration_split)
+            or exploration_cutoff <= 0
+        ):
+            raise RecordError(f"{side} exploration phase profile is incomplete")
+    else:
+        opening_c, later_c, exploration_cutoff = 0.95, 0.95, 0
+    if any(
+        not math.isfinite(value) or value < 0.0
+        for value in (opening_c, later_c)
+    ):
+        raise RecordError(f"{side} exploration profile is outside bounds")
     penalty = getattr(arguments, f"{side}_supported_advance_penalty")
     if not math.isfinite(penalty) or penalty < 0.0 or penalty > 0.20:
         raise RecordError(f"{side} supported advance penalty is outside bounds")
@@ -265,7 +303,9 @@ def _profile(arguments: argparse.Namespace, side: str) -> dict[str, Any]:
         "root_reply_width": getattr(arguments, f"{side}_root_reply_width"),
         "supported_advance_penalty": penalty,
         **_clocks(arguments)[side],
-        "c": getattr(arguments, f"{side}_c"),
+        "opening_c": opening_c,
+        "later_c": later_c,
+        "exploration_opening_own_decisions": exploration_cutoff,
         "fpu": getattr(arguments, f"{side}_fpu"),
         "final": getattr(arguments, f"{side}_final"),
     }
@@ -369,7 +409,8 @@ def parse_gate_stdout(
     expected_profile_fields = {
         "opening_tree_nodes", "later_tree_nodes", "opening_own_decisions",
         "root_reply_width", "supported_advance_penalty", "first_ms",
-        "later_ms", "c", "fpu", "final",
+        "later_ms", "opening_c", "later_c",
+        "exploration_opening_own_decisions", "fpu", "final",
     }
     if set(candidate) != expected_profile_fields or set(baseline) != expected_profile_fields:
         raise RecordError("gate profile fields are incomplete")
@@ -467,7 +508,10 @@ def parse_gate_stdout(
             requested_candidate["supported_advance_penalty"],
         "candidate_first_budget_ms": requested_candidate["first_ms"],
         "candidate_later_budget_ms": requested_candidate["later_ms"],
-        "candidate_c": arguments.candidate_c,
+        "candidate_opening_c": requested_candidate["opening_c"],
+        "candidate_later_c": requested_candidate["later_c"],
+        "candidate_exploration_opening_own_decisions":
+            requested_candidate["exploration_opening_own_decisions"],
         "candidate_fpu": arguments.candidate_fpu,
         "candidate_final": arguments.candidate_final,
         "baseline_opening_tree_nodes": requested_baseline["opening_tree_nodes"],
@@ -479,7 +523,10 @@ def parse_gate_stdout(
             requested_baseline["supported_advance_penalty"],
         "baseline_first_budget_ms": requested_baseline["first_ms"],
         "baseline_later_budget_ms": requested_baseline["later_ms"],
-        "baseline_c": arguments.baseline_c,
+        "baseline_opening_c": requested_baseline["opening_c"],
+        "baseline_later_c": requested_baseline["later_c"],
+        "baseline_exploration_opening_own_decisions":
+            requested_baseline["exploration_opening_own_decisions"],
         "baseline_fpu": arguments.baseline_fpu,
         "baseline_final": arguments.baseline_final,
         "required_total": arguments.minimum_candidate_wins,
@@ -566,6 +613,32 @@ def parse_gate_stdout(
         ]
         if sum(override_colors) != counts["supported_advance_selection_overrides"]:
             raise RecordError(f"gate {side} override colors do not sum")
+        exploration_phase_colors = {
+            phase: [
+                _require_unsigned(
+                    summary[
+                        f"{side}_exploration_{phase}_player_{color}_decisions"
+                    ],
+                    f"{side} exploration {phase} {color} decisions",
+                )
+                for color in ("one", "two")
+            ]
+            for phase in ("opening", "later")
+        }
+        if sum(
+            sum(values) for values in exploration_phase_colors.values()
+        ) != counts["decisions"]:
+            raise RecordError(
+                f"gate {side} exploration phase colors do not sum"
+            )
+        if (
+            profile["exploration_opening_own_decisions"] == 0
+            and any(exploration_phase_colors["opening"])
+        ):
+            raise RecordError(
+                f"gate {side} cutoff-zero exploration profile reports "
+                "opening decisions"
+            )
         phase = {}
         for name in ("opening", "later"):
             phase[name] = {
@@ -701,9 +774,16 @@ def command(arguments: argparse.Namespace) -> list[str]:
             f"--{side}-supported-advance-penalty",
             str(profile["supported_advance_penalty"]),
         ])
+        if profile["exploration_opening_own_decisions"] == 0:
+            result.extend([f"--{side}-c", str(profile["later_c"])])
+        else:
+            result.extend([
+                f"--{side}-opening-c", str(profile["opening_c"]),
+                f"--{side}-later-c", str(profile["later_c"]),
+                f"--{side}-exploration-opening-own-decisions",
+                str(profile["exploration_opening_own_decisions"]),
+            ])
     result.extend([
-        "--candidate-c", str(arguments.candidate_c),
-        "--baseline-c", str(arguments.baseline_c),
         "--candidate-fpu", str(arguments.candidate_fpu),
         "--baseline-fpu", str(arguments.baseline_fpu),
         "--candidate-final", arguments.candidate_final,
@@ -818,8 +898,18 @@ def parser() -> argparse.ArgumentParser:
                         default=0.0)
     result.add_argument("--baseline-supported-advance-penalty", type=float,
                         default=0.0)
-    result.add_argument("--candidate-c", type=float, default=0.95)
-    result.add_argument("--baseline-c", type=float, default=0.95)
+    result.add_argument("--candidate-c", type=float)
+    result.add_argument("--baseline-c", type=float)
+    result.add_argument("--candidate-opening-c", type=float)
+    result.add_argument("--candidate-later-c", type=float)
+    result.add_argument(
+        "--candidate-exploration-opening-own-decisions", type=int
+    )
+    result.add_argument("--baseline-opening-c", type=float)
+    result.add_argument("--baseline-later-c", type=float)
+    result.add_argument(
+        "--baseline-exploration-opening-own-decisions", type=int
+    )
     result.add_argument("--candidate-fpu", type=float, default=0.5)
     result.add_argument("--baseline-fpu", type=float, default=0.5)
     result.add_argument("--candidate-final", choices=FINAL_FORMULAS,

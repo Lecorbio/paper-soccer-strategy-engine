@@ -60,6 +60,10 @@ class SearchAbRecordTest(unittest.TestCase):
                 "supported_advance_selection_overrides": 0,
                 "supported_advance_player_one_selection_overrides": 0,
                 "supported_advance_player_two_selection_overrides": 0,
+                "exploration_opening_player_one_decisions": 0,
+                "exploration_opening_player_two_decisions": 0,
+                "exploration_later_player_one_decisions": 2,
+                "exploration_later_player_two_decisions": 2,
                 "ms": 4.0,
                 "first_clock_decisions": 2,
                 "later_clock_decisions": 2,
@@ -118,7 +122,9 @@ class SearchAbRecordTest(unittest.TestCase):
             "candidate_supported_advance_penalty": 0,
             "candidate_first_budget_ms": 10,
             "candidate_later_budget_ms": 2,
-            "candidate_c": 0.95,
+            "candidate_opening_c": 0.95,
+            "candidate_later_c": 0.95,
+            "candidate_exploration_opening_own_decisions": 0,
             "candidate_fpu": 0.5,
             "candidate_final": "value-log-visits",
             "baseline_opening_tree_nodes": 80000,
@@ -128,7 +134,9 @@ class SearchAbRecordTest(unittest.TestCase):
             "baseline_supported_advance_penalty": 0,
             "baseline_first_budget_ms": 10,
             "baseline_later_budget_ms": 2,
-            "baseline_c": 0.95,
+            "baseline_opening_c": 0.95,
+            "baseline_later_c": 0.95,
+            "baseline_exploration_opening_own_decisions": 0,
             "baseline_fpu": 0.5,
             "baseline_final": "value-log-visits",
             "required_total": 2,
@@ -156,13 +164,17 @@ class SearchAbRecordTest(unittest.TestCase):
             "candidate_later_tree_nodes=120000 "
             "candidate_opening_own_decisions=4 candidate_root_reply_width=0 "
             "candidate_supported_advance_penalty=0 "
-            "candidate_first_ms=10 candidate_later_ms=2 candidate_c=0.95 "
+            "candidate_first_ms=10 candidate_later_ms=2 "
+            "candidate_opening_c=0.95 candidate_later_c=0.95 "
+            "candidate_exploration_opening_own_decisions=0 "
             "candidate_fpu=0.5 candidate_final=value-log-visits",
             "baseline_opening_tree_nodes=80000 "
             "baseline_later_tree_nodes=80000 "
             "baseline_opening_own_decisions=4 baseline_root_reply_width=0 "
             "baseline_supported_advance_penalty=0 "
-            "baseline_first_ms=10 baseline_later_ms=2 baseline_c=0.95 "
+            "baseline_first_ms=10 baseline_later_ms=2 "
+            "baseline_opening_c=0.95 baseline_later_c=0.95 "
+            "baseline_exploration_opening_own_decisions=0 "
             "baseline_fpu=0.5 baseline_final=value-log-visits",
             *pair_lines,
             f"summary {summary}",
@@ -239,7 +251,9 @@ class SearchAbRecordTest(unittest.TestCase):
 
     def test_rejects_profile_or_command_tamper(self):
         lines = self.transcript().decode().splitlines()
-        lines[1] = lines[1].replace("candidate_c=0.95", "candidate_c=1.25")
+        lines[1] = lines[1].replace(
+            "candidate_later_c=0.95", "candidate_later_c=1.25"
+        )
         with self.assertRaisesRegex(record.RecordError, "invoked command"):
             record.parse_gate_stdout(
                 ("\n".join(lines) + "\n").encode(), self.arguments()
@@ -284,6 +298,84 @@ class SearchAbRecordTest(unittest.TestCase):
             ],
             "0.0",
         )
+        self.assertEqual(
+            command[command.index("--candidate-c") + 1], "0.95"
+        )
+
+    def test_phase_exploration_is_bound_and_emitted_without_legacy_c(self):
+        arguments = self.arguments()
+        arguments.candidate_opening_c = 0.65
+        arguments.candidate_later_c = 0.80
+        arguments.candidate_exploration_opening_own_decisions = 12
+        raw = self.transcript().decode().replace(
+            "candidate_opening_c=0.95 candidate_later_c=0.95 "
+            "candidate_exploration_opening_own_decisions=0",
+            "candidate_opening_c=0.65 candidate_later_c=0.8 "
+            "candidate_exploration_opening_own_decisions=12",
+        ).replace(
+            "candidate_exploration_opening_player_one_decisions=0",
+            "candidate_exploration_opening_player_one_decisions=2",
+        ).replace(
+            "candidate_exploration_opening_player_two_decisions=0",
+            "candidate_exploration_opening_player_two_decisions=2",
+        ).replace(
+            "candidate_exploration_later_player_one_decisions=2",
+            "candidate_exploration_later_player_one_decisions=0",
+        ).replace(
+            "candidate_exploration_later_player_two_decisions=2",
+            "candidate_exploration_later_player_two_decisions=0",
+        )
+        parsed = record.parse_gate_stdout(raw.encode(), arguments)
+        self.assertEqual(parsed["candidate_profile"]["opening_c"], 0.65)
+        self.assertEqual(parsed["candidate_profile"]["later_c"], 0.8)
+        self.assertEqual(
+            parsed["candidate_profile"][
+                "exploration_opening_own_decisions"
+            ],
+            12,
+        )
+        command = record.command(arguments)
+        self.assertNotIn("--candidate-c", command)
+        self.assertEqual(
+            command[command.index("--candidate-opening-c") + 1], "0.65"
+        )
+        self.assertEqual(
+            command[
+                command.index(
+                    "--candidate-exploration-opening-own-decisions"
+                ) + 1
+            ],
+            "12",
+        )
+
+    def test_exploration_resolution_rejects_mixed_partial_and_zero_profiles(self):
+        mixed = self.arguments()
+        mixed.candidate_c = 0.95
+        mixed.candidate_opening_c = 0.65
+        mixed.candidate_later_c = 0.80
+        mixed.candidate_exploration_opening_own_decisions = 12
+        with self.assertRaisesRegex(record.RecordError, "mixes"):
+            record.command(mixed)
+        partial = self.arguments()
+        partial.candidate_opening_c = 0.65
+        with self.assertRaisesRegex(record.RecordError, "incomplete"):
+            record.command(partial)
+        zero = self.arguments()
+        zero.candidate_opening_c = 0.65
+        zero.candidate_later_c = 0.80
+        zero.candidate_exploration_opening_own_decisions = 0
+        with self.assertRaisesRegex(record.RecordError, "incomplete"):
+            record.command(zero)
+
+    def test_cutoff_zero_rejects_reported_opening_exploration_decisions(self):
+        with self.assertRaisesRegex(record.RecordError, "cutoff-zero"):
+            record.parse_gate_stdout(
+                self.transcript(summary_updates={
+                    "candidate_exploration_opening_player_one_decisions": 1,
+                    "candidate_exploration_later_player_one_decisions": 1,
+                }),
+                self.arguments(),
+            )
 
     def test_supported_advance_profiles_are_bound_and_bounded(self):
         arguments = self.arguments()

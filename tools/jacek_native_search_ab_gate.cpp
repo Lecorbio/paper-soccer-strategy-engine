@@ -44,10 +44,12 @@ struct SearchProfile {
   std::size_t tree_nodes{native::kProductionTreeNodes};
   std::size_t opening_tree_nodes{native::kProductionTreeNodes};
   std::size_t opening_own_decisions{};
+  std::size_t exploration_opening_own_decisions{};
   std::size_t root_reply_width{};
   double supported_advance_penalty{};
   std::uint32_t first_ms{50};
   std::uint32_t later_ms{10};
+  double opening_exploration{native::kExplorationConstant};
   double exploration{native::kExplorationConstant};
   double fpu{native::kFirstPlayUrgency};
   FinalFormula final_formula{FinalFormula::Production};
@@ -58,6 +60,13 @@ std::size_t tree_nodes_for_own_decision(const SearchProfile &profile,
   return prior_turns < profile.opening_own_decisions
              ? profile.opening_tree_nodes
              : profile.tree_nodes;
+}
+
+double exploration_for_own_decision(const SearchProfile &profile,
+                                    std::uint32_t prior_turns) noexcept {
+  return prior_turns < profile.exploration_opening_own_decisions
+             ? profile.opening_exploration
+             : profile.exploration;
 }
 
 struct Arguments {
@@ -81,6 +90,10 @@ struct ProfileOptions {
   bool opening_tree_nodes{};
   bool later_tree_nodes{};
   bool opening_own_decisions{};
+  bool legacy_exploration{};
+  bool opening_exploration{};
+  bool later_exploration{};
+  bool exploration_opening_own_decisions{};
 };
 
 struct ClockOptions {
@@ -156,10 +169,13 @@ struct SearchTotals {
   double maximum_later_milliseconds{};
   PhaseTotals opening;
   PhaseTotals later;
+  std::array<std::uint64_t, 2> exploration_opening_decisions_by_player{};
+  std::array<std::uint64_t, 2> exploration_later_decisions_by_player{};
 
   void observe(const native::SearchResult &search, std::string_view selected,
                double elapsed, std::uint32_t prior_turns,
                std::size_t opening_own_decisions,
+               std::size_t exploration_opening_own_decisions,
                bool supported_advance_override, int mover) noexcept {
     const native::SearchStats &stats = search.stats;
     ++decisions;
@@ -210,6 +226,10 @@ struct SearchTotals {
     operational_timeouts += elapsed >= operational_limit ? 1U : 0U;
     (prior_turns < opening_own_decisions ? opening : later)
         .observe(search, elapsed);
+    ++(prior_turns < exploration_opening_own_decisions
+           ? exploration_opening_decisions_by_player
+           : exploration_later_decisions_by_player)[
+        static_cast<std::size_t>(mover)];
   }
 };
 
@@ -455,7 +475,8 @@ std::string choose_turn(GameState &state, const native::QuantizedModel &model,
   config.supported_advance_penalty = profile.supported_advance_penalty;
   config.max_expansions = native::kMaximumExpansions;
   config.shuffle_seed = native::SearchConfig{}.shuffle_seed;
-  config.exploration_constant = profile.exploration;
+  config.exploration_constant =
+      exploration_for_own_decision(profile, prior_turns);
   config.first_play_urgency = profile.fpu;
   config.model = &model;
   const std::uint32_t budget =
@@ -472,7 +493,9 @@ std::string choose_turn(GameState &state, const native::QuantizedModel &model,
   const double elapsed =
       std::chrono::duration<double, std::milli>(finished - started).count();
   totals.observe(search, selected, elapsed, prior_turns,
-                 profile.opening_own_decisions, selected != unpenalized,
+                 profile.opening_own_decisions,
+                 profile.exploration_opening_own_decisions,
+                 selected != unpenalized,
                  player_id(state.to_move));
   state = std::move(next);
   return selected;
@@ -565,6 +588,8 @@ void validate_profile(const SearchProfile &profile, std::string_view name) {
       profile.first_ms == 0 || profile.later_ms == 0 ||
       profile.first_ms > kFirstOperationalLimitMs ||
       profile.later_ms > kLaterOperationalLimitMs ||
+      !std::isfinite(profile.opening_exploration) ||
+      profile.opening_exploration < 0.0 ||
       !std::isfinite(profile.exploration) || profile.exploration < 0.0 ||
       !std::isfinite(profile.fpu)) {
     throw std::invalid_argument(std::string(name) +
@@ -589,6 +614,9 @@ void print_help() {
       << "     --SIDE-opening-tree-nodes N --SIDE-later-tree-nodes N\n"
       << "     --SIDE-opening-own-decisions N\n"
       << "  --candidate-c X --baseline-c X\n"
+      << "  or, per side, all of:\n"
+      << "     --SIDE-opening-c X --SIDE-later-c X\n"
+      << "     --SIDE-exploration-opening-own-decisions N\n"
       << "  --candidate-fpu X --baseline-fpu X\n"
       << "  --candidate-root-reply-width K --baseline-root-reply-width K\n"
       << "  --candidate-supported-advance-penalty X\n"
@@ -714,10 +742,38 @@ Arguments parse_arguments(int argc, char **argv) {
       result.baseline.opening_own_decisions = parse_integer<std::size_t>(
           value, "baseline opening own decisions");
       baseline_options.opening_own_decisions = true;
+    } else if (option == "--candidate-opening-c") {
+      result.candidate.opening_exploration =
+          parse_double(value, "candidate opening C");
+      candidate_options.opening_exploration = true;
+    } else if (option == "--candidate-later-c") {
+      result.candidate.exploration = parse_double(value, "candidate later C");
+      candidate_options.later_exploration = true;
+    } else if (option ==
+               "--candidate-exploration-opening-own-decisions") {
+      result.candidate.exploration_opening_own_decisions =
+          parse_integer<std::size_t>(
+              value, "candidate exploration opening own decisions");
+      candidate_options.exploration_opening_own_decisions = true;
+    } else if (option == "--baseline-opening-c") {
+      result.baseline.opening_exploration =
+          parse_double(value, "baseline opening C");
+      baseline_options.opening_exploration = true;
+    } else if (option == "--baseline-later-c") {
+      result.baseline.exploration = parse_double(value, "baseline later C");
+      baseline_options.later_exploration = true;
+    } else if (option ==
+               "--baseline-exploration-opening-own-decisions") {
+      result.baseline.exploration_opening_own_decisions =
+          parse_integer<std::size_t>(
+              value, "baseline exploration opening own decisions");
+      baseline_options.exploration_opening_own_decisions = true;
     } else if (option == "--candidate-c") {
       result.candidate.exploration = parse_double(value, "candidate C");
+      candidate_options.legacy_exploration = true;
     } else if (option == "--baseline-c") {
       result.baseline.exploration = parse_double(value, "baseline C");
+      baseline_options.legacy_exploration = true;
     } else if (option == "--candidate-fpu") {
       result.candidate.fpu = parse_double(value, "candidate FPU");
     } else if (option == "--baseline-fpu") {
@@ -797,6 +853,31 @@ Arguments parse_arguments(int argc, char **argv) {
       profile.opening_tree_nodes = profile.tree_nodes;
       profile.opening_own_decisions = 0;
     }
+    const bool any_exploration_split = options.opening_exploration ||
+                                       options.later_exploration ||
+                                       options.exploration_opening_own_decisions;
+    const bool all_exploration_split = options.opening_exploration &&
+                                       options.later_exploration &&
+                                       options.exploration_opening_own_decisions;
+    if (options.legacy_exploration && any_exploration_split) {
+      throw std::invalid_argument(
+          std::string(name) +
+          " profile mixes legacy and phase exploration");
+    }
+    if (any_exploration_split != all_exploration_split) {
+      throw std::invalid_argument(
+          std::string(name) +
+          " exploration phase profile must specify all fields");
+    }
+    if (all_exploration_split &&
+        profile.exploration_opening_own_decisions == 0) {
+      throw std::invalid_argument(
+          std::string(name) + " exploration phase cutoff must be positive");
+    }
+    if (!all_exploration_split) {
+      profile.opening_exploration = profile.exploration;
+      profile.exploration_opening_own_decisions = 0;
+    }
   };
   finalize_profile(result.candidate, candidate_options, "candidate");
   finalize_profile(result.baseline, baseline_options, "baseline");
@@ -804,6 +885,10 @@ Arguments parse_arguments(int argc, char **argv) {
       result.maximum_turns == 0 || result.opening_turns.empty() ||
       result.candidate.opening_own_decisions > result.maximum_turns ||
       result.baseline.opening_own_decisions > result.maximum_turns ||
+      result.candidate.exploration_opening_own_decisions >
+          result.maximum_turns ||
+      result.baseline.exploration_opening_own_decisions >
+          result.maximum_turns ||
       result.minimum_candidate_wins > result.pairs * 2U ||
       result.minimum_wins_per_color > result.pairs) {
     throw std::invalid_argument("search A/B limits are outside supported ranges");
@@ -830,7 +915,10 @@ void print_profile(std::string_view name, const SearchProfile &profile) {
             << profile.supported_advance_penalty << ' '
             << name << "_first_ms=" << profile.first_ms << ' '
             << name << "_later_ms=" << profile.later_ms << ' '
-            << name << "_c=" << profile.exploration << ' '
+            << name << "_opening_c=" << profile.opening_exploration << ' '
+            << name << "_later_c=" << profile.exploration << ' '
+            << name << "_exploration_opening_own_decisions="
+            << profile.exploration_opening_own_decisions << ' '
             << name << "_fpu=" << profile.fpu << ' '
             << name << "_final=" << final_formula_name(profile.final_formula)
             << '\n';
@@ -930,6 +1018,14 @@ int main_impl(int argc, char **argv) {
       << summary.candidate.supported_advance_selection_overrides_by_player[0]
       << " candidate_supported_advance_player_two_selection_overrides="
       << summary.candidate.supported_advance_selection_overrides_by_player[1]
+      << " candidate_exploration_opening_player_one_decisions="
+      << summary.candidate.exploration_opening_decisions_by_player[0]
+      << " candidate_exploration_opening_player_two_decisions="
+      << summary.candidate.exploration_opening_decisions_by_player[1]
+      << " candidate_exploration_later_player_one_decisions="
+      << summary.candidate.exploration_later_decisions_by_player[0]
+      << " candidate_exploration_later_player_two_decisions="
+      << summary.candidate.exploration_later_decisions_by_player[1]
       << " candidate_ms=" << summary.candidate.milliseconds
       << " candidate_first_clock_decisions="
       << summary.candidate.first_clock_decisions
@@ -1002,6 +1098,14 @@ int main_impl(int argc, char **argv) {
       << summary.baseline.supported_advance_selection_overrides_by_player[0]
       << " baseline_supported_advance_player_two_selection_overrides="
       << summary.baseline.supported_advance_selection_overrides_by_player[1]
+      << " baseline_exploration_opening_player_one_decisions="
+      << summary.baseline.exploration_opening_decisions_by_player[0]
+      << " baseline_exploration_opening_player_two_decisions="
+      << summary.baseline.exploration_opening_decisions_by_player[1]
+      << " baseline_exploration_later_player_one_decisions="
+      << summary.baseline.exploration_later_decisions_by_player[0]
+      << " baseline_exploration_later_player_two_decisions="
+      << summary.baseline.exploration_later_decisions_by_player[1]
       << " baseline_ms=" << summary.baseline.milliseconds
       << " baseline_first_clock_decisions="
       << summary.baseline.first_clock_decisions
@@ -1080,7 +1184,11 @@ int main_impl(int argc, char **argv) {
       << arguments.candidate.supported_advance_penalty
       << " candidate_first_budget_ms=" << arguments.candidate.first_ms
       << " candidate_later_budget_ms=" << arguments.candidate.later_ms
-      << " candidate_c=" << arguments.candidate.exploration
+      << " candidate_opening_c="
+      << arguments.candidate.opening_exploration
+      << " candidate_later_c=" << arguments.candidate.exploration
+      << " candidate_exploration_opening_own_decisions="
+      << arguments.candidate.exploration_opening_own_decisions
       << " candidate_fpu=" << arguments.candidate.fpu
       << " candidate_final="
       << final_formula_name(arguments.candidate.final_formula)
@@ -1095,7 +1203,11 @@ int main_impl(int argc, char **argv) {
       << arguments.baseline.supported_advance_penalty
       << " baseline_first_budget_ms=" << arguments.baseline.first_ms
       << " baseline_later_budget_ms=" << arguments.baseline.later_ms
-      << " baseline_c=" << arguments.baseline.exploration
+      << " baseline_opening_c="
+      << arguments.baseline.opening_exploration
+      << " baseline_later_c=" << arguments.baseline.exploration
+      << " baseline_exploration_opening_own_decisions="
+      << arguments.baseline.exploration_opening_own_decisions
       << " baseline_fpu=" << arguments.baseline.fpu
       << " baseline_final="
       << final_formula_name(arguments.baseline.final_formula)
