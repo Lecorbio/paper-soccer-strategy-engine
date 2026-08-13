@@ -1,9 +1,9 @@
-# Campaign evidence report (working snapshot)
+# Final campaign evidence report
 
-This report freezes the collection decision, immediate safety action, and
-rollback audit for the five-hour `jacek_arena_bfm` campaign. It remains a
-working snapshot until the final repository commit, CI run, and campaign-end
-live rank are recorded.
+This report freezes the collection decision, immediate safety action, rollback
+audit, fresh scratch/model expansion, offline source rejections, first CI
+result, and measured live conclusion for the five-hour
+`jacek_arena_bfm` campaign.
 
 ## Fresh construction and scratch evidence
 
@@ -12,8 +12,11 @@ live rank are recorded.
   `72eb091180fc0191e679b97d1b789a05a13420bc8f661123f11069728344b60c`.
 - Interim scratch continuation: 2,000 games, 76,562 value rows, manifest
   `3b77cdb7adf5936fe7358f92555475fc4a5fb624886f8a3ad177c275ce9fcab4`.
-- Cumulative valid fresh scratch corpus: 4,000 games and 107,221 value rows,
-  balanced at 1,000 games for each opening depth `0,4,8,12`.
+- Final pre-cutoff continuation: 4,000 games, 169,096 value rows, manifest
+  `07aae233762fdbc86a8ef958c45dfc7200002102a6415779403d0d31a8164b50`.
+- Cumulative valid fresh scratch corpus: 8,000 games and 276,317 value rows,
+  balanced at 2,000 games for each opening depth `0,4,8,12`.  Its nine local
+  dense row payloads total 853,559,862 bytes.
 - Historical model weights, corpora, actions, labels, and replay content used:
   none.  Arena games used by the scratch continuation: none.
 
@@ -99,13 +102,59 @@ Scratch-only retrains may be evaluated separately, but they must not be named
 or selected as arena mixtures.
 
 Two otherwise identical one-epoch, random-initialized scratch-only retrains
-were run on the frozen cumulative 4,000-game corpus. Seed 101
-(`fresh-32x32-s101-ad87209e4c6c`) was selected for the offline namespace
-artifact over seed 1701 on frozen validation MSE (`0.883150` versus
+were run on the then-cumulative 4,000-game corpus. Seed 101
+(`fresh-32x32-s101-ad87209e4c6c`) was the interim offline selection over seed
+1701 on frozen validation MSE (`0.883150` versus
 `0.891634`) and sign accuracy (`0.627034` versus `0.618694`). The
 content-addressed decision is
 `4617ca6c044709110be852ae02e09aa76ee40091ebc0f6682cf439c9e40c9d5a`.
-It remains offline and does not supersede the live H62 rollback.
+It remained offline and did not supersede the live H62 rollback.
+
+The first checked-in cumulative namespace source combined that exact selected
+model with the deadline-hardened engine:
+
+| Field | Exact value |
+| --- | --- |
+| Model identity | `fresh-32x32-s101-ad87209e4c6c` |
+| Model-header SHA-256 | `d3260f825e9bdfce5c56d579f1a693e9de4ae41a4fe1786f3ea8001ae91e67f8` |
+| Training lineage | 4,000 fresh scratch games; 107,221 value rows |
+| Arena value/ranking rows | 0 / 0 |
+| Effective arena exposure | 0.0 |
+| Generated-source SHA-256 | `88683044c0600d363d1d584e78af1edf59fa87e764f7a2d3889df0d7e503046b` |
+| Generated-source size | 92,686 ASCII bytes |
+| Exact source commit | `46a36220f9d1a00081f7b697f42b7692043620c4` |
+| CodinGame deployment | Offline only; never uploaded |
+| Frozen-H62 fast screen | 291-709; 1,000/1,000 clean; 500/500 colors; zero failures; fail |
+| Actual-clock 212-game gate | Not run; mandatory beats-H62 gate failed |
+| First repository CI | [Run 31697888489](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31697888489): GCC, Clang, ASan/UBSan pass |
+
+That source failed the mandatory strength gate and did not replace the
+deployed H62 rollback.  The immutable earlier pending-source snapshot remains at
+`results/jacek_arena_bfm/reports/e82aeb1fc5a80987764be9243721ccd6ebc726a0463831aa954c7dec9ec6b5c3.json`;
+its completed source report is
+`results/jacek_arena_bfm/reports/a56c89b5de57bc0af4193e4b6621b5e435ed9413f92d10f81e24f34aa40973dd.json`.
+
+The canonical 4,000-game search baseline kept the same evaluator and added
+mover-relative ordering for generator hashes, edge/action
+tie-breaks, beam classes, and sparse-feature accumulation.  It is 94,195
+ASCII bytes with SHA-256
+`1e4961e1347a3e12a9a7d5af500d22fbd44e4a851630461d8893e74e8f788591`
+at `C=0.95`.  New exact tests require bit-equal color-swapped evaluation,
+ordered generator equality under rotation, and equal fixed-node search
+boundaries.  This canonical baseline remains an offline comparison and has
+never replaced H62.
+
+The predecessor's local exact-source generator gates retained every exact
+goal, own-goal, block,
+and forced witness with unique-boundary recall 1.000, zero illegal actions,
+and zero rotational inconsistencies. Fixed-250, tactical-progressive, and
+priority-beam p99 latency was 254/223/220 us under GCC and 705/497/494 us under
+Clang. Dedicated uncontended construction-inclusive first/later maxima were
+795.511/147.511 ms under GCC and 794.368/147.247 ms under Clang, below both
+900/180 ms decision targets and 990/198 ms same-runtime maxima. Source
+ASCII/size/purity, protocol, legality, GCC, and Clang gates passed; the linked
+CI run also passed ASan/UBSan for that exact predecessor commit.  A final CI
+identity for the canonical source awaits the final evidence commit.
 
 Postmortem replay of the three exact pre-timeout states isolated unbounded
 complete-turn generation across the deadline. The exact uploaded source
@@ -117,14 +166,146 @@ and uses a 128 ms later budget; its corresponding maxima were `124.844`,
 nontraining and is bound by report SHA
 `acb532751a214ffcdfaa02f55bb57df7d38be29d8615e8d6bd00d909f447c78b`.
 
-The offline-hardened source then ran the exact 1,000-game fast screen against
-frozen H62, balanced 500/500 colors. All 1,000 games were operationally clean,
-but the source lost `57-943`. It therefore fails the mandatory strength gate;
-the 212-game actual-clock qualification was not run. The isolated aggregate
-report has SHA
+The earlier offline-hardened source carrying the 2,000-game collection model
+ran a separate exact 1,000-game fast screen against frozen H62, balanced
+500/500 colors. All 1,000 games were operationally clean, but that source lost
+`57-943`. Its isolated aggregate report has SHA
 `ea8882f89199a09859c951d4da240e8b4f65d768909d42a606866470951587df`.
 
-The fresh source did not qualify as a finalist because it had three own
-operational failures.  Rank 4 was not achieved by that candidate.  The live
-campaign conclusion remains the exact safe rollback unless later accounting
-uncovers a fact that must be added to this report.
+The cumulative 4,000-game source's distinct eight-worker screen completed
+1,000 clean games and lost 291-709. Candidate first-decision p99 was 782.905 ms
+and maximum was 1275.943 ms; later-decision p99 was 123.536 ms and maximum was
+133.390 ms. These concurrent-screen values satisfy that harness's 1500/300 ms
+hard limits but are not the dedicated uncontended 990/198 ms qualification
+gate above. Strength failure blocks qualification, so the 212-game
+actual-clock gate was not run. The exact aggregate report is
+`results/jacek_arena_bfm/comparisons/final-cumulative-scratch-fast-1000.json`;
+its SHA-256 is
+`1785c1a7a53bd14a32b98f0c0d83c964d1a2eccb08e91a0c9f292290a67ba2cc`.
+
+## 8,000-game random-init retrain and rejection
+
+The full 8,000-game corpus was trained from random initialization only.  The
+primary one-epoch 32-wide candidates were:
+
+| Seed | Identity | Validation MSE | Sign accuracy | Small H62 screen |
+| ---: | --- | ---: | ---: | ---: |
+| 101 | `fresh-32x32-s101-778156217cbd` | 0.908276 | 0.601280 | 0-20 at `C=0.95`; advanced after search sweep |
+| 314159 | `fresh-32x32-s314159-b7182ce143a7` | 0.908306 | 0.601400 | 2-18 at `C=0.95`; rejected |
+| 1701 | `fresh-32x32-s1701-d31a201fc773` | 0.913370 | 0.597900 | 0-20 at `C=0.95`; rejected |
+
+Seed-101 two- and three-epoch runs worsened validation to MSE
+`0.915605` and `0.924737`; learning rates `.0001` and `.0003` also worsened
+validation.  The seed-1701 `.0003` run was likewise worse.  The primary exact
+model audit is
+`5272ab83cf1a9e1324e6791e817f777a915947f597b9fbf9159c163a1a6344de`;
+all lineage checks pass, with zero checkpoint, arena, historical, or H62
+training inputs.
+
+The 48-wide random-init run had validation MSE `0.914324` and sign accuracy
+`0.599451`, and its 82,393-byte packed header yields a 121,383-byte canonical
+source.  A 64-wide run was not repeated because the existing fresh-shape
+packed header is already 109,589 bytes before the non-model body; with the
+canonical body it would be 148,579 bytes.  Both widths are rejected by the
+99,999-character contract independently of their metrics.
+
+The 8k seed-101 evaluator advanced with the canonical engine and `C=0.25` in
+a 94,194-byte source, SHA-256
+`9373f392ffc426c8e6d61843277d7612fe3536cc0abd59baf88f68972ab2b019`.
+Its exact balanced 1,000-game screen was operationally clean but lost
+238-762: 1-499 as player 0 and 237-263 as player 1.  Candidate first-decision
+p99/max was 785.432/1118.505 ms and later p99/max was 124.387/168.502 ms in
+the eight-worker harness.  It fails the mandatory beats-H62 and both-color
+gates and is rejected for live promotion.  It is nevertheless the final
+offline namespace selection because it is the strongest completed canonical
+source, is trained from random initialization on the final cumulative
+8,000-game corpus, and preserves the new invariants.  The exact screen SHA-256 is
+`4ef405eab085d1d0e0f9d6eb48c66254304041a68e0035bad05e841819a753ef`.
+
+## Search sweep and final offline selection
+
+Every exact-binary H62 game must begin from the public protocol's fixed
+initial state.  Neither opaque process can be loaded at an arbitrary shared
+opening prefix without modification, so no opening-diverse result was
+fabricated; the infeasibility record is
+`35a4bf5fffbfce00f70b150df837a18e9f520fa996b38007d1f304cd5dee65b0`.
+The following repeated-initial screens are therefore exploratory and
+clock-contingent.
+
+On the canonical 4k evaluator, 20-game screens scored `1-19` at `C=0.95`,
+`5-15` at `C=0.25`, `1-19` at `C=0.50`, and `2-18` at `C=1.50`.  The
+100-game follow-up scored `0-100` at `C=0.95` and `33-67` at `C=0.25`,
+with all 33 wins as player 0.  A fixed player-0 direction signal failed to
+replicate at 1-99, while the pre-equivariance `C=0.25` source was only 8-92.
+The 8k evaluator's `C=0.05` probe scored 2-18.  Every listed screen had zero
+candidate operational failures.
+
+The canonical 4k-model `C=0.25` source, SHA-256
+`54430ac5c1b553087d51675d0be11338a56de46176673a3c6a473487d66f1794`,
+is 94,195 ASCII bytes.  Its exact 1,000-game follow-up completed cleanly with
+zero failures and lost `113-887`: `110-390` as player 0 and `3-497` as player
+1.  Candidate first-decision p99/max was `779.797/1269.067` ms and later
+p99/max was `125.861/139.865` ms under the eight-worker screen's 1500/300 ms
+limits.  The exact report is
+`results/jacek_arena_bfm/comparisons/final-4k-canonical-c025-fast-1000.json`,
+SHA-256
+`2b19e2a6382fbefaa14393b569f8d3b5424cafcd2b85c3d20df470af2541c527`.
+
+This 4k source is rejected as weaker overall and because it is not trained on
+the final cumulative corpus.  The selected offline `jacek_arena_bfm`
+deliverable is the canonical 8k source
+`9373f392ffc426c8e6d61843277d7612fe3536cc0abd59baf88f68972ab2b019`.
+It is explicitly unqualified for live deployment: it fails mandatory
+beats-H62 and both-color strength, so the 212-game actual-clock gate was not
+run and no new source was uploaded after the safety rollback.  “Selected
+offline” is not a qualification claim; live deployment continues to use exact
+H62.
+
+The exact selected source passes fresh GCC 15.2 and Apple Clang 21 Release
+builds and all five focused tests under each compiler.  The 128-state generator
+panel retains tactical-progressive and priority-beam unique-boundary, goal,
+own-goal, block, and forced-witness recall 1.000 with zero illegal or
+rotationally inconsistent action.  Tactical/beam p99 is 1095/1087 us under
+GCC and 1853/1851 us under Clang.  Construction-inclusive player-0/player-1
+first-decision maxima are 793.043/793.511 ms under GCC and
+792.920/793.677 ms under Clang; later maxima are 147.405/147.185 and
+147.513/147.282 ms.  All pass the 900/180 ms target.  Focused Clang
+ASan/UBSan passes five tests and the generator with no findings.  macOS
+`detect_leaks=1` is unsupported before `main`; the valid run uses
+`detect_leaks=0`.  Purity, current generation, both-color protocol,
+ASCII/size, and exact archive byte equality pass.
+
+The immutable final offline selection is
+`results/jacek_arena_bfm/selection/c5e93f516fe6c754210a7a678af8c9f77c87879688afe8c4c836706664c8d6fe.json`.
+Final CI status, exact final commit, and workflow URL are pending.  The
+content-addressed campaign-close report will be created only after those facts
+are frozen; this Markdown placeholder is not that immutable close report.
+
+## Protection and sequence audit
+
+The four protected snapshot manifests remain verified unchanged:
+`aa4463002ea8b0a9dd1a34073a81ac3a123c9b094d6035eeb8395ce9130b9219`
+for `jacek_native_bfm`,
+`e96827e892a89b280da36648123baf6fa0006a44d8132627498984ef15128d54`
+for the Rank-4 bot,
+`13a829c0be5d61ed8ccc70333f3eb063f9c667068cb861f9157d08f045a740f8`
+for promotion/protected banks, and
+`d841a7b72772620b290249ffd452b8e95aee193d872a7d2e1be599db3d31bb41`
+for external `matches.json`.  The collection and rollback windows are
+sequential and complete under report
+`595e759d72eb6ee9ca75a4dc17a54a94cff3f1ab3affd03bad34ed55cb7edaa0`.
+
+During black-box protocol diagnosis, one failed repository-wide exclusion
+glob exposed only H62 parser line numbers and the identifier snippets
+`opponent_length` and `move`. No H62 model, search, action content, source
+bytes, weights, labels, or replay content entered the candidate or its
+lineage; the completed gate compiles H62 separately and treats it as opaque.
+
+Fresh arena use is exactly zero games for value, action ranking, validation,
+and final holdout, and the 25%, 40%, and 55% arena mixtures were not trained.
+The uploaded fresh source was disqualified by three own failures, while every
+completed operationally hardened candidate failed the offline strength gate.
+Rank 4 was not achieved.  The final operationally safe live conclusion remains
+the exact H62 rollback at rank 9 of 208, with clean result 49-27, top-five
+result 4-17, Jacek result 0-5, and zero own failures: agent `6615714`,
+submission `41130866`.

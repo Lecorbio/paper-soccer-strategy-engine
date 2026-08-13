@@ -169,6 +169,31 @@ bool terminal_for_mover(const State &state, std::uint8_t mover) {
   return state.terminal() && state.winner == static_cast<int>(mover);
 }
 
+std::uint8_t mover_relative_direction(std::uint8_t direction,
+                                      std::uint8_t mover) noexcept {
+  return mover == 0 ? direction
+                    : static_cast<std::uint8_t>((direction + 4U) & 7U);
+}
+
+int mover_relative_edge(int edge, std::uint8_t mover) noexcept {
+  return mover == 0 ? edge : Topology::get().rotated_edge(edge);
+}
+
+std::uint64_t mover_relative_hash(const State &state, std::uint8_t mover) {
+  return state_hash(mover == 0 ? state : rotate_and_swap(state));
+}
+
+std::string mover_relative_action_key(const Action &action,
+                                      std::uint8_t mover) {
+  std::string result;
+  result.reserve(action.length);
+  for (std::size_t index = 0; index < action.length; ++index) {
+    result.push_back(static_cast<char>(
+        '0' + mover_relative_direction(action.directions[index], mover)));
+  }
+  return result;
+}
+
 std::vector<std::int8_t> decode_base64(const char *text,
                                         std::size_t expected) {
   std::vector<std::int8_t> result;
@@ -503,7 +528,9 @@ Action emergency_complete_action(const State &source) {
       if (!append_direction(candidate, arc.direction)) continue;
       const int score = tactical_score(successor, candidate, mover);
       if (!found || score > best_score ||
-          (score == best_score && arc.direction < best_direction)) {
+          (score == best_score &&
+           mover_relative_direction(arc.direction, mover) <
+               mover_relative_direction(best_direction, mover))) {
         found = true;
         best_score = score;
         best_direction = arc.direction;
@@ -579,7 +606,7 @@ std::vector<Action> generate_actions(const State &state,
     Partial current = pop_partial();
     ++local.partials;
     auto arcs = legal_arcs(current.state);
-    const std::uint64_t order_seed = state_hash(current.state) ^
+    const std::uint64_t order_seed = mover_relative_hash(current.state, mover) ^
                                      (current.action.length * 0x9e3779b9U);
     std::stable_sort(arcs.begin(), arcs.end(), [&](const auto &left,
                                                    const auto &right) {
@@ -590,7 +617,8 @@ std::vector<Action> generate_actions(const State &state,
       int sa = tactical_score(a, current.action, mover);
       int sb = tactical_score(b, current.action, mover);
       if (sa != sb) return sa > sb;
-      return mix64(order_seed ^ left.edge) < mix64(order_seed ^ right.edge);
+      return mix64(order_seed ^ mover_relative_edge(left.edge, mover)) <
+             mix64(order_seed ^ mover_relative_edge(right.edge, mover));
     });
     for (const auto arc : arcs) {
       if ((serial & 7U) == 0U && out_of_time()) break;
@@ -615,8 +643,12 @@ std::vector<Action> generate_actions(const State &state,
         next.priority = tactical_score(next.state, next.action, mover);
         if (strategy == GeneratorStrategy::PriorityBeam &&
             !next.state.terminal()) {
-          const int klass = (Topology::get().x(next.state.ball) / 3) +
-                            3 * (Topology::get().y(next.state.ball) / 5);
+          const auto &topology = Topology::get();
+          const int relative_x = mover == 0 ? topology.x(next.state.ball)
+                                            : 8 - topology.x(next.state.ball);
+          const int relative_y = mover == 0 ? topology.y(next.state.ball)
+                                            : 12 - topology.y(next.state.ball);
+          const int klass = (relative_x / 3) + 3 * (relative_y / 5);
           const std::size_t safe_class = static_cast<std::size_t>(
               std::clamp(klass, 0, 7));
           next.priority -= static_cast<int>(boundary_classes[safe_class] * 8);
@@ -653,7 +685,9 @@ std::vector<Action> generate_actions(const State &state,
       apply_action(b, right);
       const int sa = tactical_score(a, left, mover);
       const int sb = tactical_score(b, right, mover);
-      return sa != sb ? sa > sb : left.text() < right.text();
+      return sa != sb ? sa > sb
+                      : mover_relative_action_key(left, mover) <
+                            mover_relative_action_key(right, mover);
     });
   } else {
     local.deadline_reached = true;
@@ -702,6 +736,10 @@ std::array<std::uint16_t, 421> active_features(const State &state,
     result[count++] = static_cast<std::uint16_t>(
         kEdgeCount + relative_vertex * 8 + bucket);
   }
+  // Sparse inference must accumulate in the same order for color-swapped
+  // positions.  The representation is a set, so canonical sorting changes no
+  // feature while making mirrored evaluation bit-for-bit reproducible.
+  std::sort(result.begin(), result.begin() + count);
   return result;
 }
 

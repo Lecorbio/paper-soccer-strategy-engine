@@ -50,7 +50,7 @@ struct GeneratorStats {
 struct SearchConfig {
   GeneratorStrategy generator{GeneratorStrategy::TacticalProgressive};
   std::size_t maximum_nodes{80000};
-  double exploration{0.95};
+  double exploration{0.25};
 };
 
 struct SearchResult {

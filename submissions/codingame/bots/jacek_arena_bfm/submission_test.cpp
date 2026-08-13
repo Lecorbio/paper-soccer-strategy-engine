@@ -12,6 +12,20 @@ void require(bool condition, const char *message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+bool same_boundary(const jab::State &left, const jab::State &right) {
+  return left.used == right.used && left.ball == right.ball &&
+         left.to_move == right.to_move && left.winner == right.winner;
+}
+
+jab::Action rotated_action(const jab::Action &action) {
+  jab::Action result = action;
+  for (std::size_t index = 0; index < result.length; ++index) {
+    result.directions[index] =
+        static_cast<std::uint8_t>((result.directions[index] + 4U) & 7U);
+  }
+  return result;
+}
+
 void test_topology() {
   const auto &topology = jab::Topology::get();
   require(topology.vertex_at(4, 6) >= 0, "missing center");
@@ -92,6 +106,75 @@ void test_features_and_symmetry() {
   std::sort(right.begin(), right.begin() + right_count);
   require(std::equal(left.begin(), left.begin() + left_count, right.begin()),
           "mover-relative features violate color symmetry");
+  require(jab::evaluate(state) == jab::evaluate(rotated),
+          "mover-relative evaluation is not bit-exact under color swap");
+}
+
+void test_generator_order_equivariance() {
+  jab::State state = jab::initial_state();
+  for (int sample = 0; sample < 12; ++sample) {
+    if (state.terminal() || sample == 7) state = jab::initial_state();
+    const jab::State rotated = jab::rotate_and_swap(state);
+    for (const auto strategy : {
+             jab::GeneratorStrategy::Fixed250NineOne,
+             jab::GeneratorStrategy::TacticalProgressive,
+             jab::GeneratorStrategy::PriorityBeam,
+             jab::GeneratorStrategy::HighCapRecall}) {
+      const auto actions = jab::generate_actions(state, strategy, true);
+      const auto rotated_actions = jab::generate_actions(rotated, strategy, true);
+      require(actions.size() == rotated_actions.size(),
+              "color-swapped generator action count differs");
+      for (std::size_t index = 0; index < actions.size(); ++index) {
+        require(rotated_action(actions[index]) == rotated_actions[index],
+                "color-swapped generator order differs");
+      }
+    }
+    const auto advance = jab::generate_actions(
+        state, jab::GeneratorStrategy::TacticalProgressive, true);
+    require(!advance.empty(), "equivariance setup generator is empty");
+    require(jab::apply_action(
+                state, advance[(jab::state_hash(state) + sample * 17U) %
+                               advance.size()]),
+            "equivariance setup action failed");
+  }
+}
+
+void test_fixed_node_search_equivariance() {
+  jab::State state = jab::initial_state();
+  // Keep the repository smoke bounded: the campaign's archived formal probe
+  // covers 32 paired states through 512 nodes, while this CI guard exercises
+  // two fixed-work thresholds across several distinct legal positions.
+  for (int sample = 0; sample < 4; ++sample) {
+    if (state.terminal()) state = jab::initial_state();
+    const jab::State rotated = jab::rotate_and_swap(state);
+    require(jab::evaluate(state) == jab::evaluate(rotated),
+            "paired search inputs do not evaluate identically");
+    for (const std::size_t nodes : {std::size_t{1}, std::size_t{64}}) {
+      const auto result = jab::search(
+          state, std::chrono::steady_clock::time_point::max(),
+          jab::SearchConfig{jab::GeneratorStrategy::TacticalProgressive,
+                            nodes, 0.95});
+      const auto rotated_result = jab::search(
+          rotated, std::chrono::steady_clock::time_point::max(),
+          jab::SearchConfig{jab::GeneratorStrategy::TacticalProgressive,
+                            nodes, 0.95});
+      jab::State successor = state;
+      jab::State rotated_successor = rotated;
+      require(jab::apply_action(successor, result.action) &&
+                  jab::apply_action(rotated_successor, rotated_result.action),
+              "paired search returned an illegal action");
+      require(same_boundary(jab::rotate_and_swap(successor),
+                            rotated_successor),
+              "fixed-node search is not color-swap equivariant");
+    }
+    const auto advance = jab::generate_actions(
+        state, jab::GeneratorStrategy::TacticalProgressive, true);
+    require(!advance.empty(), "paired search setup generator is empty");
+    require(jab::apply_action(
+                state, advance[(jab::state_hash(state) + sample * 29U) %
+                               advance.size()]),
+            "paired search setup action failed");
+  }
 }
 
 void mark_used(jab::State &state, int edge) {
@@ -191,6 +274,8 @@ int main() {
     test_initial_actions();
     test_rebound_completion_and_deduplication();
     test_features_and_symmetry();
+    test_generator_order_equivariance();
+    test_fixed_node_search_equivariance();
     test_goal_own_goal_and_forced_block();
     test_packed_model_decoder();
     test_search_legality();
