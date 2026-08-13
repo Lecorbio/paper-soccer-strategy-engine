@@ -153,8 +153,9 @@ Clang. Dedicated uncontended construction-inclusive first/later maxima were
 795.511/147.511 ms under GCC and 794.368/147.247 ms under Clang, below both
 900/180 ms decision targets and 990/198 ms same-runtime maxima. Source
 ASCII/size/purity, protocol, legality, GCC, and Clang gates passed; the linked
-CI run also passed ASan/UBSan for that exact predecessor commit.  A final CI
-identity for the canonical source awaits the final evidence commit.
+CI run also passed ASan/UBSan for that exact predecessor commit.  The later
+canonical-source CI completed successfully at commit `da85dd64bb8a4f0abdd50485477671f566e99e03`
+in run `31707653691`, as frozen in the close report below.
 
 Postmortem replay of the three exact pre-timeout states isolated unbounded
 complete-turn generation across the deadline. The exact uploaded source
