@@ -168,7 +168,9 @@ def require_repository_inputs_tracked(paths: tuple[Path, ...]) -> None:
 
 
 def validate_summary(fields: dict[str, str], expected_bank: str,
-                     candidate_mask: int, reference_mask: int) -> dict[str, Any]:
+                     candidate_mask: int, reference_mask: int,
+                     expected_games: int = 76,
+                     expected_color_games: int = 38) -> dict[str, Any]:
     if fields.get("bank") != expected_bank:
         raise ValueError("summary bank label mismatch")
     games = exact_int(fields, "games")
@@ -176,13 +178,14 @@ def validate_summary(fields: dict[str, str], expected_bank: str,
     reference_wins = exact_int(fields, "reference_wins")
     unfinished = exact_int(fields, "unfinished")
     failed = exact_int(fields, "failed")
-    if games != 76 or candidate_wins + reference_wins + unfinished + failed != games:
+    if (games != expected_games or
+            candidate_wins + reference_wins + unfinished + failed != games):
         raise ValueError("aggregate game accounting mismatch")
     if unfinished != 0 or failed != 0:
         raise ValueError("unfinished or failed games are not acceptable")
     colors = [parse_color(fields, f"candidate_p{color}") for color in range(2)]
     for color in colors:
-        if sum(color[:4]) != color[4] or color[4] != 38:
+        if sum(color[:4]) != color[4] or color[4] != expected_color_games:
             raise ValueError("per-color accounting mismatch")
     if (sum(color[0] for color in colors) != candidate_wins or
             sum(color[1] for color in colors) != reference_wins or
