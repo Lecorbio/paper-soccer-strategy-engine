@@ -1,0 +1,4 @@
+submissions/codingame/bots/jacek_arena_bfm/model.hpp
+submissions/codingame/bots/jacek_arena_bfm/engine.hpp
+submissions/codingame/bots/jacek_arena_bfm/engine.cpp
+submissions/codingame/bots/jacek_arena_bfm/bot.cpp

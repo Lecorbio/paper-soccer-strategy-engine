@@ -1,0 +1,12 @@
+{
+  "schema": "papersoccer.codingame-submission.v1",
+  "sources": "sources.txt",
+  "output": "submission.cpp",
+  "source_limit": 99999,
+  "strip_leading_whitespace": false,
+  "allowed_local_includes": [
+    "engine.hpp",
+    "model.hpp"
+  ],
+  "generators": []
+}

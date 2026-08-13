@@ -321,7 +321,7 @@ endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
   alpha_beta rank_5 rank_4 rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
-  jacek_native_bfm
+  jacek_native_bfm jacek_arena_bfm
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
@@ -442,7 +442,8 @@ if(NOT EMSCRIPTEN)
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
-      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm")
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe 0)
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
