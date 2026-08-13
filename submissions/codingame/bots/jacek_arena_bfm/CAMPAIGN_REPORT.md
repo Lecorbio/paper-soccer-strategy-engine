@@ -277,9 +277,12 @@ ASCII/size, and exact archive byte equality pass.
 
 The immutable final offline selection is
 `results/jacek_arena_bfm/selection/c5e93f516fe6c754210a7a678af8c9f77c87879688afe8c4c836706664c8d6fe.json`.
-Final CI status, exact final commit, and workflow URL are pending.  The
-content-addressed campaign-close report will be created only after those facts
-are frozen; this Markdown placeholder is not that immutable close report.
+Final source commit `da85dd64bb8a4f0abdd50485477671f566e99e03`
+passed [CI run 31707653691](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/runs/31707653691):
+Clang, GCC, and ASan/UBSan all completed successfully; deploy was skipped for
+the branch workflow dispatch.
+The canonical content-addressed campaign-close report is
+`results/jacek_arena_bfm/reports/3ee9235aab518eb209f0a48884e709e461a15e5a1ac756234de3aa2a86da9a6f.json`.
 
 ## Protection and sequence audit
 
