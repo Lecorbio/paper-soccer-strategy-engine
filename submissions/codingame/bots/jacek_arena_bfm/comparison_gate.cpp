@@ -52,14 +52,14 @@ int main() {
         throw std::runtime_error(message.str());
       }
       if (exact_win) ++exact_winning_positions;
-      // This is a tactical-retention invariant, not a wall-clock benchmark.
-      // A 3 ms deadline became vacuous once search reserved 6 ms for safe
-      // finalization.  An unbounded deadline plus a fixed 512-node cap makes
-      // the evidence deterministic while retaining finite work.
+      // This is a root tactical-retention invariant, not a search-strength or
+      // wall-clock benchmark.  One node deterministically generates the full
+      // root action boundary and exercises final selection, including its
+      // exact-win override, without spending CI time on unrelated tree work.
       const auto result = jab::search(
           state, std::chrono::steady_clock::time_point::max(),
           jab::SearchConfig{jab::GeneratorStrategy::TacticalProgressive,
-                            512, 0.95});
+                            1, 0.95});
       jab::State selected = state;
       if (result.action.length == 0 ||
           !jab::apply_action(selected, result.action)) {
@@ -83,6 +83,9 @@ int main() {
       if (!jab::apply_action(state, reference[advance])) {
         throw std::runtime_error("procedural advance failed");
       }
+    }
+    if (exact_winning_positions == 0) {
+      throw std::runtime_error("comparison gate has no exact winning witness");
     }
     std::cout << "jacek_arena_bfm comparison gate passed positions="
               << checked
