@@ -71,6 +71,8 @@ constexpr std::uint8_t kExactProofPlyTwo = 1U << 3U;
 constexpr std::uint8_t kAllExactProofs =
     kExactProofRootGoal | kExactProofLeafBoundary | kExactProofPlyOne |
     kExactProofPlyTwo;
+constexpr std::uint8_t kOperationalExactProofs =
+    kExactProofRootGoal | kExactProofLeafBoundary | kExactProofPlyOne;
 
 struct SearchConfig {
   std::uint32_t max_turn_depth{kMaximumTurnDepth};
@@ -346,7 +348,8 @@ class CompleteTurnSearch {
     if (exact_proof_enabled(kExactProofRootGoal)) {
       std::vector<Move> rebound_goal;
       ++stats_.root_rebound_probes;
-      const ReboundOutcome rebound = analyze_rebound_component(&rebound_goal);
+      const ReboundOutcome rebound =
+          analyze_rebound_component<true>(&rebound_goal);
       if (rebound == ReboundOutcome::Win) {
         ++stats_.root_rebound_win_hits;
         stats_.completed_actions = 1;
@@ -398,6 +401,13 @@ class CompleteTurnSearch {
     stats_.completed_turn_depth = depth;
     stats_.root_score = result.score;
     return result;
+  }
+
+  ReboundOutcome analyze_rebound_component_for_test(
+      bool reconstruct, std::vector<Move> &action) {
+    action.clear();
+    return reconstruct ? analyze_rebound_component<true>(&action)
+                       : analyze_rebound_component<false>(nullptr);
   }
 #endif
 
@@ -543,9 +553,10 @@ class CompleteTurnSearch {
     return static_cast<int>(topology_->vertex_count()) + 8;
   }
 
+  template <bool reconstruct>
   ReboundOutcome analyze_rebound_component(std::vector<Move> *action) {
     ++stats_.rebound_goal_probes;
-    if (action != nullptr) {
+    if constexpr (reconstruct) {
       action->clear();
     }
     if (++rebound_generation_ == 0) {
@@ -554,7 +565,9 @@ class CompleteTurnSearch {
     }
     const auto start = position_.ball_vertex();
     rebound_seen_[start] = rebound_generation_;
-    distances_[start] = static_cast<int>(start);
+    if constexpr (reconstruct) {
+      distances_[start] = static_cast<int>(start);
+    }
     std::size_t head = 0;
     std::size_t tail = 0;
     queue_[tail++] = start;
@@ -565,45 +578,53 @@ class CompleteTurnSearch {
     while (head < tail) {
       const auto vertex = queue_[head++];
       const auto &adjacency = topology_->adjacency(vertex, mover);
-      std::array<std::uint8_t, detail::kMaximumMoves> order{};
-      std::array<std::uint8_t, detail::kMaximumMoves> keys{};
-      for (std::uint8_t index = 0; index < adjacency.count; ++index) {
-        order[index] = index;
-        const Point destination = topology_->point(adjacency.arcs[index].destination);
-        const Point source = topology_->point(vertex);
-        int dx = destination.x - source.x;
-        int dy = destination.y - source.y;
-        if (mover == Player::Two) {
-          dx = -dx;
-          dy = -dy;
-        }
-        for (std::size_t direction = 0; direction < kDirectionDeltas.size();
-             ++direction) {
-          if (kDirectionDeltas[direction].x == dx &&
-              kDirectionDeltas[direction].y == dy) {
-            keys[index] = static_cast<std::uint8_t>(direction);
-            break;
+      std::array<std::uint8_t, detail::kMaximumMoves> order;
+      if constexpr (reconstruct) {
+        std::array<std::uint8_t, detail::kMaximumMoves> keys{};
+        for (std::uint8_t index = 0; index < adjacency.count; ++index) {
+          order[index] = index;
+          const Point destination =
+              topology_->point(adjacency.arcs[index].destination);
+          const Point source = topology_->point(vertex);
+          int dx = destination.x - source.x;
+          int dy = destination.y - source.y;
+          if (mover == Player::Two) {
+            dx = -dx;
+            dy = -dy;
+          }
+          for (std::size_t direction = 0; direction < kDirectionDeltas.size();
+               ++direction) {
+            if (kDirectionDeltas[direction].x == dx &&
+                kDirectionDeltas[direction].y == dy) {
+              keys[index] = static_cast<std::uint8_t>(direction);
+              break;
+            }
           }
         }
-      }
-      for (std::uint8_t index = 1; index < adjacency.count; ++index) {
-        const std::uint8_t value = order[index];
-        std::uint8_t insertion = index;
-        while (insertion > 0 && keys[value] < keys[order[insertion - 1U]]) {
-          order[insertion] = order[insertion - 1U];
-          --insertion;
+        for (std::uint8_t index = 1; index < adjacency.count; ++index) {
+          const std::uint8_t value = order[index];
+          std::uint8_t insertion = index;
+          while (insertion > 0 &&
+                 keys[value] < keys[order[insertion - 1U]]) {
+            order[insertion] = order[insertion - 1U];
+            --insertion;
+          }
+          order[insertion] = value;
         }
-        order[insertion] = value;
       }
       for (std::uint8_t ranked = 0; ranked < adjacency.count; ++ranked) {
-        const auto &arc = adjacency.arcs[order[ranked]];
+        std::uint8_t index = ranked;
+        if constexpr (reconstruct) {
+          index = order[ranked];
+        }
+        const auto &arc = adjacency.arcs[index];
         if (position_.edge_used(arc.edge)) {
           continue;
         }
         const Point destination = topology_->point(arc.destination);
         if (is_attacking_goal(rules, destination, mover)) {
           ++stats_.rebound_goal_hits;
-          if (action != nullptr) {
+          if constexpr (reconstruct) {
             distances_[arc.destination] = static_cast<int>(vertex);
             for (auto current = arc.destination; current != start;
                  current = static_cast<detail::SearchTopology::VertexIndex>(
@@ -632,7 +653,9 @@ class CompleteTurnSearch {
           continue;
         }
         rebound_seen_[arc.destination] = rebound_generation_;
-        distances_[arc.destination] = static_cast<int>(vertex);
+        if constexpr (reconstruct) {
+          distances_[arc.destination] = static_cast<int>(vertex);
+        }
         queue_[tail++] = arc.destination;
       }
     }
@@ -1408,7 +1431,8 @@ class CompleteTurnSearch {
         return *cached;
       }
       ++stats_.leaf_rebound_probes;
-      const ReboundOutcome rebound = analyze_rebound_component(nullptr);
+      const ReboundOutcome rebound =
+          analyze_rebound_component<false>(nullptr);
       if (rebound == ReboundOutcome::Win) {
         ++stats_.leaf_rebound_win_hits;
         return immediate_win_score(position_.to_move(), turn_ply);
@@ -1463,7 +1487,8 @@ class CompleteTurnSearch {
                                   ? stats_.exchange_ply1_cutoffs
                                   : stats_.exchange_ply2_cutoffs;
       ++probes;
-      const ReboundOutcome rebound = analyze_rebound_component(nullptr);
+      const ReboundOutcome rebound =
+          analyze_rebound_component<false>(nullptr);
       if (rebound == ReboundOutcome::Win) {
         ++win_hits;
         ++cutoffs;
@@ -1617,7 +1642,7 @@ bool try_replay_correction(GameState &state, int player_id,
 std::string choose_complete_turn(GameState &state,
                                  std::uint32_t search_time_ms) {
   SearchConfig config;
-  config.exact_proof_mask = kAllExactProofs;
+  config.exact_proof_mask = kOperationalExactProofs;
   config.replay_value_blend_percent = 15;
   config.teacher_residual_weight_percent = 100;
   // Include construction and table initialization in the response budget.
