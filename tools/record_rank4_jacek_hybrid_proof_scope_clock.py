@@ -26,6 +26,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 RECORDER = Path(__file__).resolve()
 GATE = ROOT / "build/papersoccer_codingame_rank_4_jacek_hybrid_comparison_gate"
+GATE_TARGET = "papersoccer_codingame_rank_4_jacek_hybrid_comparison_gate"
 BANK = ROOT / "results/rank_4_jacek_hybrid/openings/development_d20.tsv"
 OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/proof_scope_clock"
 LOCK = ROOT / "build/rank4-jacek-hybrid-proof-scope-clock.lock"
@@ -152,6 +153,20 @@ def git_text(*args: str) -> str:
     ).stdout.strip()
 
 
+def require_repository_inputs_tracked(paths: tuple[Path, ...]) -> None:
+    build_root = ROOT / "build"
+    for path in paths:
+        if path == GATE or path == BANK or path.is_relative_to(build_root):
+            continue
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", str(path.relative_to(ROOT))],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode != 0:
+            raise ValueError(f"recorder input is not tracked at HEAD: {path}")
+
+
 def validate_summary(fields: dict[str, str], expected_bank: str,
                      candidate_mask: int, reference_mask: int) -> dict[str, Any]:
     if fields.get("bank") != expected_bank:
@@ -230,6 +245,32 @@ def main() -> int:
             print("another proof-scope recorder owns the lock", file=sys.stderr)
             return 2
 
+        tracked_status_before = git_text(
+            "status", "--porcelain", "--untracked-files=no"
+        )
+        full_status_before = git_text("status", "--porcelain")
+        head_before = git_text("rev-parse", "HEAD")
+        if tracked_status_before:
+            print("tracked or staged files differ from HEAD", file=sys.stderr)
+            return 2
+        try:
+            require_repository_inputs_tracked(TRACKED_INPUTS)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
+
+        build = subprocess.run(
+            ["cmake", "--build", "build", "--parallel", "2", "--target",
+             GATE_TARGET],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if build.returncode != 0 or build.stderr:
+            print("fresh comparison-gate build failed", file=sys.stderr)
+            if build.stderr:
+                print(build.stderr, file=sys.stderr, end="")
+            return 2
+
         missing = [str(path) for path in TRACKED_INPUTS if not path.is_file()]
         if missing:
             print("missing inputs: " + ", ".join(missing), file=sys.stderr)
@@ -249,15 +290,6 @@ def main() -> int:
             return 2
         if before[str(BANK.relative_to(ROOT))]["sha256"] != EXPECTED_BANK_SHA256:
             print("frozen DEVELOPMENT d20 bank SHA-256 mismatch", file=sys.stderr)
-            return 2
-
-        tracked_status_before = git_text(
-            "status", "--porcelain", "--untracked-files=no"
-        )
-        full_status_before = git_text("status", "--porcelain")
-        head_before = git_text("rev-parse", "HEAD")
-        if tracked_status_before:
-            print("tracked or staged files differ from HEAD", file=sys.stderr)
             return 2
 
         generated_check = subprocess.run(
@@ -476,6 +508,12 @@ def main() -> int:
                 "returncode": generated_check.returncode,
                 "stdout": generated_check.stdout,
                 "stderr": generated_check.stderr,
+            },
+            "fresh_gate_build": {
+                "target": GATE_TARGET,
+                "returncode": build.returncode,
+                "stdout": build.stdout,
+                "stderr": build.stderr,
             },
             "inputs_before": before,
             "inputs_after": after,
