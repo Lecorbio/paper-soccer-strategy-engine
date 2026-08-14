@@ -3,9 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Paper Soccer</title>
+    <meta name="description"
+      content="An interactive Paper Soccer model for controlled bot sessions and replay analysis.">
+    <title>Interactive model · Paper Soccer</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="site.css">
     <script defer src="papersoccer-wasm.js"></script>
     <script defer src="game-review-gate.js"></script>
     <script defer src="game-engine.js"></script>
@@ -15,26 +18,36 @@
     <script defer src="app.js"></script>
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>Paper Soccer</h1>
-        <p id="replayTitle">Choose who takes the opening move</p>
-      </div>
-      <div class="topbar-actions">
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="site-identity" href="index.html">
+          <span>Paper Soccer</span>
+          <small>Strategy research engine</small>
+        </a>
         <nav class="site-nav" aria-label="Primary">
           <a class="topbar-link" href="index.html" aria-current="page">Game</a>
           <a class="topbar-link" href="leaderboard/index.html">Leaderboard</a>
           <a class="topbar-link benchmark-link" href="benchmarks/index.html">Benchmarks</a>
         </nav>
-        <div class="mode-switch" role="group" aria-label="Mode">
-          <button id="playModeButton" class="primary-control" type="button"
-            aria-pressed="true">Play vs bot</button>
-          <button id="replayModeButton" type="button" aria-pressed="false">Watch replay</button>
-        </div>
       </div>
     </header>
 
     <main class="app-shell">
+      <section class="workspace-header" aria-labelledby="replayTitle">
+        <div class="workspace-mode-bar">
+          <div class="mode-switch" role="group"
+            aria-label="Choose between playing and replay">
+            <button id="playModeButton" class="primary-control" type="button"
+              aria-pressed="true">Play vs bot</button>
+            <button id="replayModeButton" type="button" aria-pressed="false">Watch replay</button>
+          </div>
+        </div>
+        <div class="workspace-heading">
+          <p class="eyebrow">Interactive model</p>
+          <h1 id="replayTitle">Choose who takes the opening move</h1>
+        </div>
+      </section>
+
       <section class="board-panel" aria-labelledby="boardHeading">
         <h2 id="boardHeading" class="visually-hidden">Paper soccer board</h2>
         <p id="boardDescription" class="visually-hidden">

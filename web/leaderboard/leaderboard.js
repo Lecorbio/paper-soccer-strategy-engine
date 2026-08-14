@@ -202,6 +202,42 @@
     return wrapper;
   }
 
+  function renderStandingsHead(doc, table, includeForfeits) {
+    const head = createElement(doc, "thead");
+    const row = createElement(doc, "tr");
+    const labels = [
+      "Rank",
+      "Bot",
+      "Local CodinGame-style score",
+      ["TrueSkill mean", "μ"],
+      ["TrueSkill standard deviation", "σ"],
+      "W–L",
+      "Win rate",
+      "Side split"
+    ];
+    if (includeForfeits) {
+      labels.push("Forfeits");
+    }
+    for (const label of labels) {
+      const heading = createElement(doc, "th");
+      heading.scope = "col";
+      if (Array.isArray(label)) {
+        const abbreviation = createElement(doc, "abbr", "", label[1]);
+        abbreviation.title = label[0];
+        heading.append(abbreviation);
+      } else {
+        heading.textContent = label;
+      }
+      row.append(heading);
+    }
+    head.append(row);
+    if (table.tHead) {
+      table.tHead.replaceWith(head);
+    } else {
+      table.append(head);
+    }
+  }
+
   function renderStandings(doc, standings) {
     const table = doc.getElementById("standingsTable");
     if (!table) {
@@ -209,6 +245,13 @@
     }
     const ordered = [...standings].sort((left, right) =>
       Number(left.rank) - Number(right.rank));
+    const includeForfeits = ordered.some((entrant) => Number(entrant.forfeits) > 0);
+    renderStandingsHead(doc, table, includeForfeits);
+    const note = doc.getElementById("standingsNote");
+    if (note) {
+      note.textContent = "P1 attacks the top goal; P2 attacks the bottom goal." +
+        (includeForfeits ? " Forfeits count as ordinary losses." : "");
+    }
     const body = createElement(doc, "tbody");
     for (const entrant of ordered) {
       const row = createElement(doc, "tr", Number(entrant.rank) <= 3 ? "podium-row" : "");
@@ -234,13 +277,15 @@
           `${label} ${formatInteger(side.wins)}–${formatInteger(lossCount)}`
         ));
       }
-      const forfeits = createElement(
-        doc,
-        "td",
-        `numeric-cell${Number(entrant.forfeits) > 0 ? " has-forfeit" : ""}`,
-        formatInteger(entrant.forfeits)
-      );
-      row.append(rank, identity, score, mu, sigma, record, winRate, sideSplit, forfeits);
+      row.append(rank, identity, score, mu, sigma, record, winRate, sideSplit);
+      if (includeForfeits) {
+        row.append(createElement(
+          doc,
+          "td",
+          `numeric-cell${Number(entrant.forfeits) > 0 ? " has-forfeit" : ""}`,
+          formatInteger(entrant.forfeits)
+        ));
+      }
       body.append(row);
     }
     table.tBodies[0]?.replaceWith(body);

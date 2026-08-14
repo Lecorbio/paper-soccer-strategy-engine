@@ -50,28 +50,66 @@ function assertApproximately(actual, expected) {
   );
 }
 
-test("the game header keeps site navigation separate from game modes", () => {
+test("the game header stays global while modes live in the research workspace", () => {
   const modeGroup = gameHtml.match(
     /<div class="mode-switch"[^>]*>[\s\S]*?<\/div>/,
   )?.[0];
-  assert.ok(modeGroup, "the game header should contain its mode group");
+  assert.ok(modeGroup, "the game workspace should contain its mode group");
   assert.doesNotMatch(modeGroup, /Game|Leaderboard|Benchmarks/);
 
-  const benchmarkLink = gameHtml.match(
-    /<a\b(?=[^>]*\bclass="[^"]*\bbenchmark-link\b[^"]*")(?=[^>]*\bhref="benchmarks\/index\.html")[^>]*>Benchmarks\s*<\/a>/,
-  )?.[0];
-  assert.ok(benchmarkLink, "the game header should link to the benchmark overview");
-  assert.ok(
-    gameHtml.indexOf(benchmarkLink) < gameHtml.indexOf(modeGroup),
-    "the benchmark link should appear before the mode group",
-  );
   const header = gameHtml.match(/<header\b[^>]*>[\s\S]*?<\/header>/)?.[0];
   assert.ok(header, "the game page should have a header");
-  assert.doesNotMatch(header, /Open (?:existing|replay)|id="fileInput"/);
+  assert.match(header, /class="site-header"/);
+  assert.match(
+    header,
+    /class="site-identity"[\s\S]*?<span>Paper Soccer<\/span>[\s\S]*?<small>Strategy research engine<\/small>/,
+  );
+  assert.match(
+    header,
+    /<nav class="site-nav" aria-label="Primary">[\s\S]*?aria-current="page">Game<\/a>[\s\S]*?href="leaderboard\/index\.html">Leaderboard<\/a>[\s\S]*?href="benchmarks\/index\.html">Benchmarks<\/a>/,
+  );
+  assert.doesNotMatch(
+    header,
+    /id="(?:playModeButton|replayModeButton|fileInput)"|Open (?:existing|replay)/,
+  );
+  assert.ok(
+    gameHtml.indexOf(modeGroup) > gameHtml.indexOf("</header>"),
+    "workspace modes should follow the global header",
+  );
+  const workspaceHeader = gameHtml.match(
+    /<section class="workspace-header"[\s\S]*?<\/section>/,
+  )?.[0];
+  assert.ok(workspaceHeader, "the game page should expose a workspace heading");
+  assert.match(workspaceHeader, /<h1 id="replayTitle">/);
+  assert.doesNotMatch(workspaceHeader, /Workspace mode|workspaceModeLabel/);
+  assert.match(
+    workspaceHeader,
+    /class="mode-switch" role="group"\s+aria-label="Choose between playing and replay"/,
+  );
+  assert.doesNotMatch(workspaceHeader, /workspace-context/);
+  assert.match(gameHtml, /<link rel="stylesheet" href="styles\.css">\s*<link rel="stylesheet" href="site\.css">/);
   assert.match(
     gameCss,
-    /\.site-nav \.topbar-link\[aria-current="page"\]\s*\{[^}]*background:\s*#fff0b8[^}]*font-weight:\s*750/s,
+    /\.workspace-header\s*\{[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\)[^}]*grid-column:\s*1 \/ -1[^}]*border-top:\s*2px solid var\(--accent\)/s,
   );
+  assert.ok(
+    workspaceHeader.indexOf("workspace-mode-bar") <
+      workspaceHeader.indexOf("workspace-heading"),
+    "the mode controls should sit to the left of the compact model context",
+  );
+  assert.match(
+    gameCss,
+    /\.app-shell\s*\{[^}]*align-content:\s*start/s,
+  );
+  assert.match(
+    gameCss,
+    /\.workspace-heading h1\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s,
+  );
+  assert.match(
+    gameCss,
+    /\.mode-switch button\[aria-pressed="true"\][\s\S]*?font-weight:\s*680/s,
+  );
+  assert.doesNotMatch(gameCss, /\.site-nav\s+\.topbar-link\[aria-current="page"\]/);
 });
 
 test("the benchmark overview links to the other pages and stays independent of Wasm", () => {

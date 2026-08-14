@@ -10,6 +10,7 @@ const urls = {
   leaderboardCss: new URL("../../web/leaderboard/leaderboard.css", import.meta.url),
   leaderboardSource: new URL("../../web/leaderboard/leaderboard.js", import.meta.url),
   leaderboardResults: new URL("../../web/leaderboard/leaderboard-results.js", import.meta.url),
+  siteCss: new URL("../../web/site.css", import.meta.url),
 };
 
 const [
@@ -19,6 +20,7 @@ const [
   leaderboardCss,
   leaderboardSource,
   leaderboardResults,
+  siteCss,
 ] =
   await Promise.all(Object.values(urls).map((url) => readFile(url, "utf8")));
 
@@ -32,6 +34,7 @@ function standing({
   score,
   wins,
   aliases = [],
+  forfeits = 0,
 }) {
   return {
     rank,
@@ -45,7 +48,7 @@ function standing({
     wins,
     losses: 4 - wins,
     winRate: wins / 4,
-    forfeits: 0,
+    forfeits,
     playerOne: {games: 2, wins: Math.min(wins, 2)},
     playerTwo: {games: 2, wins: Math.max(0, wins - 2)},
     submissionSha256: id.repeat(64).slice(0, 64),
@@ -247,6 +250,7 @@ function createDirectFileDocument() {
 
   const standings = add("table", "standingsTable", overview);
   standings.append(document.createElement("tbody"));
+  add("p", "standingsNote", overview);
   const headToHead = add("table", "headToHeadTable", overview);
   headToHead.append(document.createElement("thead"), document.createElement("tbody"));
   add("div", "aliasContent", overview);
@@ -275,6 +279,25 @@ function navigation(html) {
   }));
 }
 
+function colorToken(css, name) {
+  const value = css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1];
+  assert.ok(value, `CSS should define --${name}`);
+  return value;
+}
+
+function relativeLuminance(hex) {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const [red, green, blue] = channels.map((value) =>
+    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(left, right) {
+  const [lighter, darker] = [relativeLuminance(left), relativeLuminance(right)]
+    .sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 test("all three pages expose consistent Game, Leaderboard, and Benchmarks navigation", () => {
   const menus = [gameHtml, leaderboardHtml, benchmarkHtml].map(navigation);
   for (const menu of menus) {
@@ -284,6 +307,39 @@ test("all three pages expose consistent Game, Leaderboard, and Benchmarks naviga
   assert.match(menus[0][1].attributes, /href="leaderboard\/index\.html"/);
   assert.match(menus[1][1].attributes, /aria-current="page"/);
   assert.match(menus[2][1].attributes, /href="\.\.\/leaderboard\/index\.html"/);
+});
+
+test("all pages use one stable research-site header", () => {
+  for (const [html, stylesheet] of [
+    [gameHtml, "site.css"],
+    [leaderboardHtml, "../site.css"],
+    [benchmarkHtml, "../site.css"],
+  ]) {
+    const header = html.match(/<header class="site-header">[\s\S]*?<\/header>/)?.[0];
+    assert.ok(header, "page should use the canonical site header");
+    assert.match(header, /<div class="site-header-inner">/);
+    assert.match(
+      header,
+      /class="site-identity"[\s\S]*?<span>Paper Soccer<\/span>[\s\S]*?<small>Strategy research engine<\/small>/,
+    );
+    assert.doesNotMatch(header, /<button\b|mode-switch|playModeButton|replayModeButton/);
+    assert.ok(
+      html.includes(`<link rel="stylesheet" href="${stylesheet}">`),
+      `page should load ${stylesheet}`,
+    );
+  }
+  assert.match(siteCss, /\.site-header-inner\s*\{[^}]*width:\s*min\(100%, 1180px\)/s);
+  assert.match(siteCss, /\.site-header-inner\s*\{[^}]*min-height:\s*70px/s);
+  assert.match(siteCss, /\.site-header \.site-nav a\[aria-current="page"\]::after/);
+  assert.match(
+    siteCss,
+    /\.site-header \.site-nav a\[aria-current="page"\]\s*\{[^}]*font-weight:\s*650/s,
+  );
+  assert.ok(
+    contrastRatio(colorToken(siteCss, "study-muted"), colorToken(siteCss, "study-page")) >= 4.5,
+    "small muted research copy should meet WCAG AA contrast against the page",
+  );
+  assert.doesNotMatch(siteCss, /#fff0b8|#806215/);
 });
 
 test("leaderboard page is a local classic-script view with accessible fallback states", () => {
@@ -359,6 +415,46 @@ test("head-to-head lookup derives the reverse row view without mutating the snap
   assert.equal(renderer.formatPercent(0.625), "62.5%");
 });
 
+test("standings omit an all-zero forfeits column", () => {
+  const {document, elements} = createDirectFileDocument();
+  assert.equal(renderer.render(fixture, document), true);
+
+  const header = elements.standingsTable.tHead.children[0];
+  assert.equal(header.children.length, 8);
+  assert.ok(header.children.every((heading) => heading.scope === "col"));
+  assert.doesNotMatch(header.textContent, /forfeits/i);
+  assert.doesNotMatch(elements.standingsNote.textContent, /forfeits/i);
+  assert.ok(elements.standingsTable.tBodies[0].children.every(
+    (row) => row.children.length === 8,
+  ));
+});
+
+test("standings restore the forfeits column when any entrant forfeits", () => {
+  const standings = fixture.standings.map((entrant, index) => ({
+    ...entrant,
+    forfeits: index === 1 ? 1 : 0,
+  }));
+  const results = {...fixture, standings};
+  const {document, elements} = createDirectFileDocument();
+  assert.equal(renderer.render(results, document), true);
+
+  const header = elements.standingsTable.tHead.children[0];
+  assert.equal(header.children.length, 9);
+  assert.ok(header.children.every((heading) => heading.scope === "col"));
+  assert.match(header.children[8].textContent, /^Forfeits$/);
+  assert.match(elements.standingsNote.textContent, /Forfeits count as ordinary losses/);
+  assert.ok(elements.standingsTable.tBodies[0].children.every(
+    (row) => row.children.length === 9,
+  ));
+  const forfeitCells = elements.standingsTable.tBodies[0].children.map(
+    (row) => row.children[8],
+  );
+  assert.equal(forfeitCells[1].textContent, "1");
+  assert.match(forfeitCells[1].className, /\bhas-forfeit\b/);
+  assert.equal(forfeitCells[0].textContent, "0");
+  assert.doesNotMatch(forfeitCells[0].className, /\bhas-forfeit\b/);
+});
+
 test("method and caveat copy distinguishes local ratings from live CodinGame scores", () => {
   const copy = `${leaderboardHtml}\n${leaderboardSource}`;
   assert.match(copy, /Local CodinGame-style score/);
@@ -412,6 +508,11 @@ test("checked-in classic scripts render the full direct-file leaderboard without
   assert.equal(results.standings.length, 20);
   assert.equal(context.PaperSoccerCodingameLeaderboard.EXPECTED_SCHEMA, results.schema);
   assert.equal(elements.standingsTable.tBodies[0].children.length, 20);
+  assert.equal(elements.standingsTable.tHead.children[0].children.length, 8);
+  assert.doesNotMatch(elements.standingsTable.tHead.textContent, /forfeits/i);
+  assert.ok(elements.standingsTable.tBodies[0].children.every(
+    (row) => row.children.length === 8,
+  ));
 
   const matrixRows = elements.headToHeadTable.tBodies[0].children;
   assert.equal(matrixRows.length, 20);
