@@ -363,3 +363,44 @@ and 94,312-character source SHA-256
 `2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
 Validation/final banks and the live arena remain unopened; final
 qualification is false.
+
+## Ablation 7: safe-handoff frontier width (Stage 0 passed; selection pending)
+
+The final registered semantic hypothesis reuses the exact leaf-boundary proof
+scan to count unique reachable fresh endpoints at which the opponent retains
+a legal reply after the incoming edge. Exact `Win` and `Loss` outcomes keep
+their mate scores. Only `Unknown` leaves receive
+`player_sign(to_move) * count * 10 * (100 - replay_blend) / 100`, after which
+the adjusted value is stored in the existing evaluation cache. Weight 10 is
+the only registered value.
+
+The first draft was refrozen before timing or games because unconditional
+endpoint marking also shortened duplicate scans in root and ply-one proof
+calls. The final candidate marks and counts only when the leaf caller requests
+the feature; null-output root/ply scans retain the rollback boolean path. A
+mask-1/mask-5 isolation panel covered 10,040 decisions with zero action,
+score, or `SearchStats` deltas.
+
+The exact Stage-0 candidate is:
+
+- `bot.cpp`: 64,521 bytes, SHA-256
+  `408adc5288674550cc08274aec74380074117e32ad8f6915c7e39badc8dfba98`;
+- `submission.cpp`: 95,272 ASCII characters, SHA-256
+  `08d0c0859ef8a197f8bfdd89afb048bec41c3a888228433b85991cd937882550`;
+- source headroom: 4,727 characters below the 99,999-character limit.
+
+The maintained submission, parity, current-source, both-color protocol,
+cheap replay, and full 511-prefix replay tests pass. The dedicated frontier
+suite passes 8/8 and covers an independent graph oracle, rotation, endpoint
+deduplication, literal weight registration, exact mate bypass, active teacher
+residual interaction, cache reuse, TT reuse, and fixed-work determinism. The
+submission, parity, and frontier suites also pass under fresh Apple-Clang
+ASan/UBSan with leak detection disabled on macOS.
+
+The immutable packet and sequential stop-on-failure thresholds are under
+`results/rank_4_jacek_hybrid/frontier_semantic_prototype/`. Stage 3 executes
+the depth-20 clock bank once; Stage 4 must reuse that immutable receipt while
+running only depths 4, 8, and 12. No timing benchmark or whole game had been
+run when the packet was frozen. This candidate is not selected, heldout-
+qualified, uploaded, or final; the rollback source remains its mandatory
+fallback.

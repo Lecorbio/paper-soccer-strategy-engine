@@ -41,6 +41,7 @@ constexpr int kMobilityWeight = 20;
 constexpr int kForwardMoveWeight = 10;
 constexpr int kCenterAlignmentWeight = 6;
 constexpr int kTempoWeight = 15;
+constexpr int kSafeHandoffFrontierWeight = 10;
 constexpr int kTeacherResidualTargetScale = 20'000;
 constexpr int kTeacherResidualHardCap = 6'000;
 constexpr int kTeacherResidualMinimumUsedEdges = 12;
@@ -403,9 +404,15 @@ class CompleteTurnSearch {
   }
 
   ReboundOutcome analyze_rebound_component_for_test(
-      bool reconstruct, std::vector<Move> &action) {
+      bool reconstruct, std::vector<Move> &action,
+      std::uint32_t *safe_handoff_endpoints = nullptr) {
     action.clear();
-    return analyze_rebound_component(reconstruct ? &action : nullptr);
+    return analyze_rebound_component(reconstruct ? &action : nullptr,
+                                     safe_handoff_endpoints);
+  }
+
+  int leaf_score_for_test(std::uint32_t turn_ply = 0) {
+    return search(0, turn_ply, -kInfinity, kInfinity);
   }
 #endif
 
@@ -551,10 +558,15 @@ class CompleteTurnSearch {
     return static_cast<int>(topology_->vertex_count()) + 8;
   }
 
-  ReboundOutcome analyze_rebound_component(std::vector<Move> *action) {
+  ReboundOutcome analyze_rebound_component(
+      std::vector<Move> *action,
+      std::uint32_t *safe_handoff_endpoints = nullptr) {
     ++stats_.rebound_goal_probes;
     if (action != nullptr) {
       action->clear();
+    }
+    if (safe_handoff_endpoints != nullptr) {
+      *safe_handoff_endpoints = 0;
     }
     if (++rebound_generation_ == 0) {
       std::fill(rebound_seen_.begin(), rebound_seen_.end(), 0);
@@ -569,6 +581,7 @@ class CompleteTurnSearch {
     const Player mover = position_.to_move();
     const RulesConfig &rules = topology_->config();
     bool safe_handoff = false;
+    std::uint32_t safe_handoff_count = 0;
 
     while (head < tail) {
       const auto vertex = queue_[head++];
@@ -628,12 +641,20 @@ class CompleteTurnSearch {
         }
         if (!is_boundary_point(rules, destination) &&
             !position_.vertex_visited(arc.destination)) {
+          // Counting is requested only at semantic leaf boundaries. Preserve
+          // the baseline root/exchange scan when no count is requested.
+          if (safe_handoff_endpoints != nullptr) {
+            rebound_seen_[arc.destination] = rebound_generation_;
+          }
           const auto &handoff =
               topology_->adjacency(arc.destination, opponent(mover));
           for (std::uint8_t child = 0; child < handoff.count; ++child) {
             const auto edge = handoff.arcs[child].edge;
             if (edge != arc.edge && !position_.edge_used(edge)) {
               safe_handoff = true;
+              if (safe_handoff_endpoints != nullptr) {
+                ++safe_handoff_count;
+              }
               break;
             }
           }
@@ -643,6 +664,9 @@ class CompleteTurnSearch {
         distances_[arc.destination] = static_cast<int>(vertex);
         queue_[tail++] = arc.destination;
       }
+    }
+    if (safe_handoff_endpoints != nullptr) {
+      *safe_handoff_endpoints = safe_handoff_count;
     }
     if (!safe_handoff && rules.blocked_rule == BlockedRule::MoverLoses) {
       ++stats_.rebound_loss_hits;
@@ -1416,7 +1440,9 @@ class CompleteTurnSearch {
         return *cached;
       }
       ++stats_.leaf_rebound_probes;
-      const ReboundOutcome rebound = analyze_rebound_component(nullptr);
+      std::uint32_t safe_handoff_endpoints = 0;
+      const ReboundOutcome rebound =
+          analyze_rebound_component(nullptr, &safe_handoff_endpoints);
       if (rebound == ReboundOutcome::Win) {
         ++stats_.leaf_rebound_win_hits;
         return immediate_win_score(position_.to_move(), turn_ply);
@@ -1425,7 +1451,14 @@ class CompleteTurnSearch {
         ++stats_.leaf_rebound_loss_hits;
         return immediate_win_score(opponent(position_.to_move()), turn_ply);
       }
-      const int score = evaluate();
+      const int frontier_score =
+          player_sign(position_.to_move()) *
+          static_cast<int>(safe_handoff_endpoints) *
+          kSafeHandoffFrontierWeight *
+          (100 - config_.replay_value_blend_percent) / 100;
+      const int score = std::clamp(evaluate() + frontier_score,
+                                   -kMaximumEvaluation,
+                                   kMaximumEvaluation);
       evaluations_.store(key, score);
       return score;
     }
