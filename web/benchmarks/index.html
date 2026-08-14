@@ -7,43 +7,42 @@
     <title>Bot benchmarks · Paper Soccer</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="benchmarks.css">
+    <link rel="stylesheet" href="../site.css">
     <script defer src="benchmark-results.js"></script>
     <script defer src="benchmarks.js"></script>
   </head>
   <body>
-    <header class="benchmark-topbar">
-      <a class="site-name" href="../index.html">
-        <span>Paper Soccer</span>
-        <small>Bot benchmarks</small>
-      </a>
-      <nav class="site-nav" aria-label="Primary">
-        <a href="../index.html">Game</a>
-        <a href="../leaderboard/index.html">Leaderboard</a>
-        <a href="index.html" aria-current="page">Benchmarks</a>
-      </nav>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="site-identity" href="../index.html">
+          <span>Paper Soccer</span>
+          <small>Strategy research engine</small>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a href="../index.html">Game</a>
+          <a href="../leaderboard/index.html">Leaderboard</a>
+          <a href="index.html" aria-current="page">Benchmarks</a>
+        </nav>
+      </div>
     </header>
 
     <main id="benchmarkOverview" class="benchmark-shell">
-      <section class="hero" aria-labelledby="pageTitle">
-        <div class="hero-copy">
-          <p class="eyebrow">Flagship bot study</p>
-          <h1 id="pageTitle">Which strategy plays strongest?</h1>
-          <p id="benchmarkHeadline" class="hero-lede">
+      <section class="report-header" aria-labelledby="pageTitle">
+        <div class="report-heading">
+          <p class="eyebrow">Study 01 · Strategy evaluation</p>
+          <h1 id="pageTitle">Strategy benchmark</h1>
+          <p id="benchmarkHeadline" class="report-abstract">
             Neural alpha-beta has the highest relative-strength estimate, but its direct
             matchup with Rank5Derived remains statistically unresolved.
           </p>
-          <div class="hero-links">
-            <span class="result-badge"><span aria-hidden="true">●</span> Frozen results</span>
-            <a id="heroReportLink"
-              href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">
-              Read the full report <span aria-hidden="true">↗</span>
-            </a>
-          </div>
         </div>
-        <div class="hero-mark" aria-hidden="true">
-          <span class="pitch-line pitch-line-one"></span>
-          <span class="pitch-line pitch-line-two"></span>
-          <span class="pitch-ball"></span>
+        <div class="report-meta" aria-label="Benchmark dataset status">
+          <p class="meta-label">Dataset status</p>
+          <p class="result-status"><span aria-hidden="true"></span> Frozen result</p>
+          <a id="heroReportLink" class="report-link"
+            href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">
+            Complete study report <span aria-hidden="true">↗</span>
+          </a>
         </div>
       </section>
 
@@ -207,8 +206,8 @@
 
       <section class="caveat-panel" aria-labelledby="caveatHeading">
         <div>
-          <p class="eyebrow">Important context</p>
-          <h2 id="caveatHeading">Read the numbers correctly</h2>
+          <p class="eyebrow">Interpretation notes</p>
+          <h2 id="caveatHeading">Scope and limitations</h2>
         </div>
         <ul id="caveatList">
           <li>Rank5Derived is an adaptation of the original submission to the demo rules.</li>
@@ -220,14 +219,14 @@
 
       <section class="report-cta" aria-labelledby="reportHeading">
         <div>
-          <p class="eyebrow">Want the full analysis?</p>
-          <h2 id="reportHeading">Read the flagship study report</h2>
+          <p class="eyebrow">Study report</p>
+          <h2 id="reportHeading">Methods, results, and calibration</h2>
           <p>The report contains the complete tables, intervals, protocol, and calibration analysis.</p>
         </div>
         <div class="report-actions">
           <a id="reportLink" class="primary-link"
             href="https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/benchmarks/flagship_study/REPORT.md">
-            Open full report <span aria-hidden="true">↗</span>
+            Read complete report <span aria-hidden="true">↗</span>
           </a>
         </div>
       </section>

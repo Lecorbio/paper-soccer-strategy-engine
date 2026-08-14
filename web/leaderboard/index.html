@@ -8,41 +8,39 @@
     <title>Bot leaderboard · Paper Soccer</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="leaderboard.css">
+    <link rel="stylesheet" href="../site.css">
     <script defer src="leaderboard-results.js"></script>
     <script defer src="leaderboard.js"></script>
   </head>
   <body>
-    <header class="leaderboard-topbar">
-      <a class="site-name" href="../index.html">
-        <span>Paper Soccer</span>
-        <small>Bot competition</small>
-      </a>
-      <nav class="site-nav" aria-label="Primary">
-        <a href="../index.html">Game</a>
-        <a href="index.html" aria-current="page">Leaderboard</a>
-        <a href="../benchmarks/index.html">Benchmarks</a>
-      </nav>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="site-identity" href="../index.html">
+          <span>Paper Soccer</span>
+          <small>Strategy research engine</small>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a href="../index.html">Game</a>
+          <a href="index.html" aria-current="page">Leaderboard</a>
+          <a href="../benchmarks/index.html">Benchmarks</a>
+        </nav>
+      </div>
     </header>
 
     <main id="leaderboardOverview" class="leaderboard-shell" aria-busy="true">
-      <section class="hero" aria-labelledby="pageTitle">
-        <div class="hero-copy">
-          <p class="eyebrow">Local CodinGame tournament</p>
-          <h1 id="pageTitle">Every submission. One level pitch.</h1>
-          <p class="hero-lede">
-            Checked-in bots play the Paper Soccer CodinGame protocol offline, with identical
-            rules, side balance, and decision limits. The browser only displays the frozen result.
+      <section class="report-header" aria-labelledby="pageTitle">
+        <div class="report-heading">
+          <p class="eyebrow">Study 02 · Local tournament</p>
+          <h1 id="pageTitle">CodinGame-rules bot tournament</h1>
+          <p class="report-abstract">
+            Checked-in submissions are evaluated offline under one referee, with identical
+            rules, side balance, and decision limits. This page presents the frozen dataset.
           </p>
-          <div class="hero-meta">
-            <span class="result-badge"><span aria-hidden="true">●</span> Frozen results</span>
-            <span id="tournamentLabel">Tournament details loading…</span>
-          </div>
         </div>
-        <div class="hero-mark" aria-hidden="true">
-          <span class="rank-line rank-line-one"></span>
-          <span class="rank-line rank-line-two"></span>
-          <span class="rank-line rank-line-three"></span>
-          <span class="pitch-ball"></span>
+        <div class="report-meta" aria-label="Tournament dataset status">
+          <p class="meta-label">Dataset status</p>
+          <p class="result-status"><span aria-hidden="true"></span> Frozen result</p>
+          <p id="tournamentLabel" class="run-identifier">Tournament details loading…</p>
         </div>
       </section>
 
@@ -94,20 +92,19 @@
                 <th scope="col">W–L</th>
                 <th scope="col">Win rate</th>
                 <th scope="col">Side split</th>
-                <th scope="col">Forfeits</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <th scope="row">—</th>
                 <td>Results loading…</td>
-                <td colspan="7">The standings require JavaScript.</td>
+                <td colspan="6">The standings require JavaScript.</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p class="table-note">
-          P1 attacks the top goal; P2 attacks the bottom goal. Forfeits count as ordinary losses.
+        <p id="standingsNote" class="table-note">
+          P1 attacks the top goal; P2 attacks the bottom goal.
         </p>
       </section>
 
@@ -168,8 +165,8 @@
 
       <section class="caveat-panel" aria-labelledby="caveatHeading">
         <div>
-          <p class="eyebrow">Scoring fidelity</p>
-          <h2 id="caveatHeading">Local score, honest label</h2>
+          <p class="eyebrow">Interpretation note</p>
+          <h2 id="caveatHeading">The ratings are tournament-specific</h2>
         </div>
         <div>
           <p>
