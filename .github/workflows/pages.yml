@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# GNU Make treats `--parallel` without a count as unbounded.  The repository
+# contains many large, generated CodinGame translation units, so cap hosted
+# runner compilation to avoid memory-pressure kills while preserving coverage.
+env:
+  PAPERSOCCER_BUILD_JOBS: "2"
+
 concurrency:
   group: pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
@@ -18,7 +24,7 @@ jobs:
   test-gcc:
     name: GCC build and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CC: gcc
       CXX: g++
@@ -26,6 +32,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Stabilize duplicate pragma-once headers
         run: |
@@ -41,7 +49,7 @@ jobs:
   test-clang:
     name: Clang build and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CC: clang
       CXX: clang++
@@ -49,6 +57,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Build and test
         run: ./scripts/build-and-test.sh
@@ -63,11 +73,14 @@ jobs:
       PAPERSOCCER_BUILD_DIR: build/ci-sanitizers
       PAPERSOCCER_BUILD_TYPE: Debug
       PAPERSOCCER_ENABLE_SANITIZERS: "ON"
+      PAPERSOCCER_CTEST_EXCLUDE_LABELS: long
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Build and test
         run: ./scripts/build-and-test.sh

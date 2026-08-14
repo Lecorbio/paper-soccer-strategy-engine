@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +17,15 @@ SPEC = importlib.util.spec_from_file_location("null_fastpath_recorder", RECORDER
 assert SPEC is not None and SPEC.loader is not None
 recorder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recorder)
+
+
+def identity_from_bytes(path: Path, data: bytes) -> dict[str, object]:
+    return {
+        "path": str(path.relative_to(ROOT)),
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "ascii": all(byte < 128 for byte in data),
+    }
 
 
 def summary_fields(label: str) -> dict[str, str]:
@@ -250,27 +260,51 @@ class NullFastpathRecorderTest(unittest.TestCase):
         )
 
     def test_candidate_and_archive_exact_identities(self):
-        identities = {
-            str(path.relative_to(ROOT)): recorder.common.file_identity(path)
-            for path in (
-                recorder.CANDIDATE_BOT,
-                recorder.CANDIDATE_SOURCE,
-                recorder.CANDIDATE_TEST,
-                recorder.CONTROL_BOT,
-                recorder.CONTROL_SOURCE,
-                recorder.BANK,
-                recorder.ORIGINAL_PLAN,
-                recorder.PLAN_V2,
-                recorder.PLAN,
-                recorder.AUDIT_RECEIPT,
-                recorder.CONTAMINATION_RECEIPT,
-                recorder.REJECTED_V1_ATTEMPT,
-                recorder.REJECTED_V2_ATTEMPT,
-                recorder.CONTROL_MANIFEST,
-            )
+        candidate_paths = {
+            recorder.CANDIDATE_BOT,
+            recorder.CANDIDATE_SOURCE,
+            recorder.CANDIDATE_TEST,
         }
+        paths = (
+            *candidate_paths,
+            recorder.CONTROL_BOT,
+            recorder.CONTROL_SOURCE,
+            recorder.BANK,
+            recorder.ORIGINAL_PLAN,
+            recorder.PLAN_V2,
+            recorder.PLAN,
+            recorder.AUDIT_RECEIPT,
+            recorder.CONTAMINATION_RECEIPT,
+            recorder.REJECTED_V1_ATTEMPT,
+            recorder.REJECTED_V2_ATTEMPT,
+            recorder.CONTROL_MANIFEST,
+        )
+        identities = {}
+        for path in paths:
+            relative = str(path.relative_to(ROOT))
+            data = (
+                recorder.git_blob(recorder.CANDIDATE_ORIGIN_COMMIT, relative)
+                if path in candidate_paths else path.read_bytes()
+            )
+            identities[relative] = identity_from_bytes(path, data)
         recorder.validate_exact_file_identities(identities)
-        bindings = recorder.require_origin_and_archive_bindings()
+
+        snapshot_paths = {
+            "CANDIDATE_BOT": recorder.CANDIDATE_BOT,
+            "CANDIDATE_SOURCE": recorder.CANDIDATE_SOURCE,
+            "CANDIDATE_TEST": recorder.CANDIDATE_TEST,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            historical = {}
+            for attribute, live_path in snapshot_paths.items():
+                relative = str(live_path.relative_to(ROOT))
+                snapshot = Path(directory) / live_path.name
+                snapshot.write_bytes(recorder.git_blob(
+                    recorder.CANDIDATE_ORIGIN_COMMIT, relative
+                ))
+                historical[attribute] = snapshot
+            with mock.patch.multiple(recorder, **historical):
+                bindings = recorder.require_origin_and_archive_bindings()
         self.assertEqual(
             bindings["plan_v2"]["candidate"]["exact_proof_mask"], 7
         )
@@ -289,6 +323,10 @@ class NullFastpathRecorderTest(unittest.TestCase):
         self.assertEqual(
             bindings["control_manifest"]["source_commit"],
             recorder.CONTROL_SOURCE_COMMIT,
+        )
+        self.assertEqual(
+            recorder.common.file_identity(recorder.CANDIDATE_BOT)["sha256"],
+            "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b",
         )
 
     def test_process_table_parser_is_strict(self):

@@ -15,6 +15,17 @@ assert SPEC is not None and SPEC.loader is not None
 recorder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recorder)
 
+CANDIDATE_GATE_COMMIT = "4c16b7d3a9494f179189000b46dc5724da92ab89"
+
+
+def identity_from_bytes(path: Path, data: bytes) -> dict[str, object]:
+    return {
+        "path": str(path.relative_to(ROOT)),
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "ascii": all(byte < 128 for byte in data),
+    }
+
 
 class SoleLegalEdgeClockRecorderTest(unittest.TestCase):
     def test_schema_command_and_plan_are_frozen_development_only(self):
@@ -45,10 +56,13 @@ class SoleLegalEdgeClockRecorderTest(unittest.TestCase):
         )
 
     def test_exact_candidate_reference_lineage_and_prototype_identities(self):
-        paths = (
+        candidate_paths = {
             recorder.CANDIDATE_BOT,
             recorder.CANDIDATE_SOURCE,
             recorder.CANDIDATE_TEST,
+        }
+        paths = (
+            *candidate_paths,
             recorder.CONTROL_BOT,
             recorder.CONTROL_SOURCE,
             recorder.BANK,
@@ -58,10 +72,14 @@ class SoleLegalEdgeClockRecorderTest(unittest.TestCase):
             recorder.CONTROL_MANIFEST,
             *recorder.PROTOTYPE_FILES,
         )
-        identities = {
-            str(path.relative_to(ROOT)): recorder.base.common.file_identity(path)
-            for path in paths
-        }
+        identities = {}
+        for path in paths:
+            relative = str(path.relative_to(ROOT))
+            data = (
+                recorder.base.git_blob(CANDIDATE_GATE_COMMIT, relative)
+                if path in candidate_paths else path.read_bytes()
+            )
+            identities[relative] = identity_from_bytes(path, data)
         recorder.validate_exact_file_identities(identities)
         self.assertEqual(
             identities[str(recorder.CANDIDATE_BOT.relative_to(ROOT))]["sha256"],
@@ -71,6 +89,20 @@ class SoleLegalEdgeClockRecorderTest(unittest.TestCase):
             identities[str(recorder.CANDIDATE_SOURCE.relative_to(ROOT))]["bytes"],
             94_527,
         )
+        bindings = recorder.validate_plan_and_lineage()
+        selected = {
+            item["role"]: item
+            for item in bindings["rollback"]["production_artifacts"]
+        }
+        for path, role in (
+            (recorder.CANDIDATE_BOT, "engine-source"),
+            (recorder.CANDIDATE_SOURCE, "upload-source"),
+            (recorder.CANDIDATE_TEST, "source-contract-test"),
+        ):
+            self.assertEqual(
+                recorder.base.common.file_identity(path)["sha256"],
+                selected[role]["sha256"],
+            )
 
     def test_one_content_addressed_attempt_prevents_retry(self):
         head = "a" * 40

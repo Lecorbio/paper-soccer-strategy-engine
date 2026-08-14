@@ -66,6 +66,36 @@ PROTECTED_ROOTS = (
     "submissions/codingame/bots/selfplay_nn_v2",
 )
 
+# The original recursive T0 snapshot of ``results/jacek_arena_bfm`` included
+# 13 intentionally gitignored scratch files that existed in the freezing
+# worktree.  They cannot exist in a clean checkout.  Preserve that original
+# identity as canonical while accepting exactly the complete Git-tracked
+# subset captured at the same commit.  This is deliberately an all-or-nothing
+# alternate tree identity: modified files, partial scratch trees, and any extra
+# file still fail closed.
+PROTECTED_TREE_EQUIVALENTS = (
+    (
+        {
+            "path": "results/jacek_arena_bfm",
+            "file_count": 1_103,
+            "total_bytes": 1_280_270_812,
+            "tree_sha256": (
+                "ef49c3272c3f1f23f2cfd11135d71412e87f590dc48c0231f276137a8601842b"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "results/jacek_arena_bfm",
+            "file_count": 1_090,
+            "total_bytes": 31_646_360,
+            "tree_sha256": (
+                "7ba2d7220717d867240e9a56cbb4f2aa0cd3a7362850bcb0eacdb48519ded657"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
+)
+
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
@@ -137,6 +167,17 @@ def tree_identity(path: pathlib.Path) -> dict[str, Any]:
         "tree_sha256": digest.hexdigest(),
         "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
     }
+
+
+def protected_tree_identity_matches(
+    current: dict[str, Any], frozen: dict[str, Any]
+) -> bool:
+    if current == frozen:
+        return True
+    return any(
+        frozen == original and current == clean_checkout
+        for original, clean_checkout in PROTECTED_TREE_EQUIVALENTS
+    )
 
 
 def write_once(path: pathlib.Path, content: bytes) -> None:
@@ -674,7 +715,8 @@ def verify_manifest() -> tuple[pathlib.Path, str]:
     if tree_identity(ROOT / "submissions/codingame/bots/rank_4") != payload["control"]["tree"]:
         raise FreezeError("Rank-4 control tree changed")
     for expected in payload["protected_boundary"]["roots"]:
-        if tree_identity(ROOT / expected["path"]) != expected:
+        current = tree_identity(ROOT / expected["path"])
+        if not protected_tree_identity_matches(current, expected):
             raise FreezeError(f"protected tree changed: {expected['path']}")
     if (ROOT / "matches.json").exists():
         raise FreezeError("root matches.json appeared after its absent-state freeze")

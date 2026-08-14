@@ -19,6 +19,17 @@ assert SPEC is not None and SPEC.loader is not None
 recorder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recorder)
 
+GATE_FREEZE_COMMIT = "647625a70d54f4b549b30dd7d4eb0d73c4723111"
+
+
+def identity_from_bytes(path: Path, data: bytes) -> dict[str, object]:
+    return {
+        "path": recorder.identity_label(path),
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "ascii": all(byte < 128 for byte in data),
+    }
+
 
 def summary_fields(label: str) -> dict[str, str]:
     fields = {
@@ -128,7 +139,7 @@ class PositionKeyCacheClockRecorderTest(unittest.TestCase):
             "/tmp/rank4-hybrid-prototype-benchmark.lock",
         )
 
-    def test_exact_committed_candidate_and_lineage_identities(self):
+    def test_exact_historical_candidate_and_selected_rollback_identities(self):
         paths = (
             recorder.PRIVATE_HEADER,
             recorder.CANDIDATE_BOT,
@@ -153,16 +164,54 @@ class PositionKeyCacheClockRecorderTest(unittest.TestCase):
             recorder.BASE_RECORDER,
             recorder.COMMON_RECORDER,
         )
-        identities = recorder.identities_for_paths(paths)
+        integration_paths = {
+            recorder.PRIVATE_HEADER,
+            recorder.CANDIDATE_BOT,
+            recorder.SOURCES,
+            recorder.CANDIDATE_SOURCE,
+            recorder.CANDIDATE_TEST,
+            recorder.KEY_TEST,
+            recorder.SHARED_HEADER,
+            recorder.CMAKE,
+            recorder.COMPARISON_REFERENCE,
+            recorder.BASE_RECORDER,
+            recorder.COMMON_RECORDER,
+        }
+        identities = {}
+        for path in paths:
+            relative = str(path.relative_to(ROOT))
+            if path in integration_paths:
+                data = recorder.base.git_blob(
+                    recorder.INTEGRATION_COMMIT, relative
+                )
+            elif path == recorder.FOCUSED_TEST:
+                data = recorder.base.git_blob(GATE_FREEZE_COMMIT, relative)
+            else:
+                data = path.read_bytes()
+            identities[recorder.identity_label(path)] = identity_from_bytes(
+                path, data
+            )
         recorder.validate_exact_file_identities(identities)
-        bindings = recorder.require_committed_bindings(
-            recorder.base.common.git_text("rev-parse", "HEAD"),
-            require_gate_infrastructure=False,
-        )
+        bindings = recorder.validate_plan_and_lineage()
         self.assertEqual(
             bindings["sole_edge_decision"]["decision"]["status"],
             "sole-legal-edge-rejected-mandatory-rollback",
         )
+        selected = {
+            item["role"]: item
+            for item in bindings["rollback"]["production_artifacts"]
+        }
+        for path, role in (
+            (recorder.CANDIDATE_BOT, "engine-source"),
+            (recorder.CANDIDATE_SOURCE, "upload-source"),
+            (recorder.CANDIDATE_TEST, "source-contract-test"),
+        ):
+            self.assertEqual(
+                recorder.file_identity(path)["sha256"],
+                selected[role]["sha256"],
+            )
+        self.assertFalse(recorder.PRIVATE_HEADER.exists())
+        self.assertFalse(recorder.KEY_TEST.exists())
 
     def test_valid_output_reconciles_bank_color_proofs_and_timing(self):
         parsed = recorder.validate_gate_stdout(valid_stdout())

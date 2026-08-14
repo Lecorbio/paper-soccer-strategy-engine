@@ -375,7 +375,7 @@ class HeldoutQualificationTest(unittest.TestCase):
                 "allowed_ancestor_pids": [1], "observed_process_count": 1,
                 "conflicts": [], "markers": list(recorder.PROCESS_MARKERS),
                 "checked_utc": claim["claimed_utc"],
-                "command": ["/bin/ps", "-axo", "pid=,ppid=,command="],
+                "command": recorder.preflight.process_table_command(),
             }
             command = recorder.command_for_stage(self.plan, "validation")
             report = {

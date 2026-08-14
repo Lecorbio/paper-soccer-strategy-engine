@@ -52,6 +52,24 @@ class HybridCampaignProvenanceTest(unittest.TestCase):
         report = json.loads(completed.stdout)
         self.assertEqual(report["sha256"], EXPECTED_MANIFEST_SHA256)
 
+    def test_clean_checkout_protected_tree_equivalent_is_exact(self) -> None:
+        original, clean_checkout = self.freezer.PROTECTED_TREE_EQUIVALENTS[0]
+        self.assertTrue(
+            self.freezer.protected_tree_identity_matches(
+                clean_checkout, original
+            )
+        )
+        changed = dict(clean_checkout)
+        changed["file_count"] += 1
+        self.assertFalse(
+            self.freezer.protected_tree_identity_matches(changed, original)
+        )
+        self.assertFalse(
+            self.freezer.protected_tree_identity_matches(
+                clean_checkout, changed
+            )
+        )
+
     def test_time_control_and_derivative_lineage_are_exact(self) -> None:
         self.assertEqual(
             self.manifest["time_boundary"]["goal_created_at_epoch"],
