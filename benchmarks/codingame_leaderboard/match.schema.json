@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "papersoccer.codingame-match.v1",
+  "title": "Paper Soccer native CodinGame-protocol match",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "participants", "rules", "timeouts", "actions", "outcome", "timings", "provenance"],
+  "properties": {
+    "schema": {"const": "papersoccer.codingame-match.v1"},
+    "participants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["playerOne", "playerTwo"],
+      "properties": {
+        "playerOne": {"$ref": "#/$defs/participantZero"},
+        "playerTwo": {"$ref": "#/$defs/participantOne"}
+      }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "goalRule", "blockedRule"],
+      "properties": {
+        "width": {"const": 8},
+        "height": {"const": 10},
+        "goalRule": {"const": "OwnGoalsAllowed"},
+        "blockedRule": {"const": "MoverLoses"}
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["firstMillis", "laterMillis"],
+      "properties": {
+        "firstMillis": {"const": 1000},
+        "laterMillis": {"const": 200}
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/action"}
+    },
+    "outcome": {"$ref": "#/$defs/outcome"},
+    "timings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["totalMicros", "playerOne", "playerTwo"],
+      "properties": {
+        "totalMicros": {"type": "integer", "minimum": 0},
+        "playerOne": {"$ref": "#/$defs/playerTimings"},
+        "playerTwo": {"$ref": "#/$defs/playerTimings"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refereeVersion"],
+      "properties": {"refereeVersion": {"type": "string", "minLength": 1}}
+    }
+  },
+  "$defs": {
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "player", "executable"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "player": {"type": "integer", "minimum": 0, "maximum": 1},
+        "executable": {"type": "string", "minLength": 1}
+      }
+    },
+    "participantZero": {"allOf": [{"$ref": "#/$defs/participant"}, {"properties": {"player": {"const": 0}}}]},
+    "participantOne": {"allOf": [{"$ref": "#/$defs/participant"}, {"properties": {"player": {"const": 1}}}]},
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}
+    },
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["direction", "from", "to", "extraTurn", "statusAfter"],
+      "properties": {
+        "direction": {"type": "integer", "minimum": 0, "maximum": 7},
+        "from": {"$ref": "#/$defs/point"},
+        "to": {"$ref": "#/$defs/point"},
+        "extraTurn": {"type": "boolean"},
+        "statusAfter": {"enum": ["ongoing", "player_0_wins", "player_1_wins"]}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn", "botId", "player", "opponentAction", "action", "accepted",
+        "durationMicros", "deadlineMillis", "failureClassification", "moves"
+      ],
+      "properties": {
+        "turn": {"type": "integer", "minimum": 0},
+        "botId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "player": {"type": "integer", "minimum": 0, "maximum": 1},
+        "opponentAction": {"type": "string"},
+        "action": {"type": ["string", "null"]},
+        "accepted": {"type": "boolean"},
+        "durationMicros": {"type": "integer", "minimum": 0},
+        "deadlineMillis": {"enum": [1000, 200]},
+        "failureClassification": {
+          "enum": [
+            null, "timeout", "crash", "stdout-overflow", "stderr-overflow",
+            "empty-output", "invalid-character", "illegal-action", "incomplete-rebound",
+            "output-after-handoff", "output-after-terminal"
+          ]
+        },
+        "moves": {"type": "array", "items": {"$ref": "#/$defs/move"}}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"accepted": {"const": true}},
+            "required": ["accepted"]
+          },
+          "then": {
+            "properties": {
+              "action": {"type": "string", "pattern": "^[0-7]+$"},
+              "failureClassification": {"type": "null"},
+              "moves": {"minItems": 1}
+            }
+          },
+          "else": {
+            "properties": {
+              "action": {"type": ["string", "null"]},
+              "failureClassification": {
+                "enum": [
+                  "timeout", "crash", "stdout-overflow", "stderr-overflow",
+                  "empty-output", "invalid-character", "illegal-action", "incomplete-rebound",
+                  "output-after-handoff", "output-after-terminal"
+                ]
+              },
+              "moves": {"maxItems": 0}
+            }
+          }
+        }
+      ]
+    },
+    "forfeit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["botId", "classification", "detail"],
+      "properties": {
+        "botId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "classification": {
+          "enum": [
+            "timeout", "crash", "stdout-overflow", "stderr-overflow",
+            "empty-output", "invalid-character", "illegal-action", "incomplete-rebound",
+            "output-after-handoff", "output-after-terminal"
+          ]
+        },
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["winnerId", "loserId", "reason", "forfeit"],
+      "properties": {
+        "winnerId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "loserId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "reason": {"enum": ["goal", "blocked_mover", "forfeit"]},
+        "forfeit": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/forfeit"}]}
+      }
+    },
+    "playerTimings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions", "totalMicros", "maxMicros"],
+      "properties": {
+        "decisions": {"type": "integer", "minimum": 0},
+        "totalMicros": {"type": "integer", "minimum": 0},
+        "maxMicros": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

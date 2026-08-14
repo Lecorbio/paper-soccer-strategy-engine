@@ -1,0 +1,107 @@
+name: Refresh CodinGame leaderboard artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkpoint_run_id:
+        description: Optional prior workflow run ID containing a compatible checkpoint artifact
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codingame-leaderboard-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tournament:
+    name: Serial 900-game tournament
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      BUILD_DIR: build/leaderboard
+      CHECKPOINT: build/leaderboard/leaderboard-checkpoint.json
+      RAW_RESULTS: build/leaderboard/artifacts/tournament.json
+      WEB_SNAPSHOT: build/leaderboard/artifacts/leaderboard-results.js
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate reviewed roster and schedule
+        run: |
+          for schema in benchmarks/codingame_leaderboard/*.schema.json; do
+            python3 -m json.tool "$schema" >/dev/null
+          done
+          python3 benchmarks/codingame_leaderboard/leaderboard.py validate
+
+      - name: Configure Release build
+        run: cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build referee and reviewed submission executables
+        run: |
+          targets=$(python3 - <<'PY'
+          import json
+          roster = json.load(open("benchmarks/codingame_leaderboard/roster.json", encoding="utf-8"))
+          print(" ".join(["papersoccer_codingame_referee", *[entry["executableTarget"] for entry in roster["entrants"]]]))
+          PY
+          )
+          cmake --build "$BUILD_DIR" --config Release --parallel 2 --target $targets
+
+      - name: Restore optional checkpoint
+        if: ${{ inputs.checkpoint_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: codingame-leaderboard-checkpoint
+          path: build/leaderboard
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.checkpoint_run_id }}
+
+      - name: Run tournament serially
+        run: |
+          mkdir -p "$(dirname "$RAW_RESULTS")"
+          resume=()
+          if [[ -f "$CHECKPOINT" ]]; then
+            resume+=(--resume)
+          fi
+          command=(python3 benchmarks/codingame_leaderboard/leaderboard.py run \
+            --referee "$BUILD_DIR/papersoccer_codingame_referee" \
+            --build-dir "$BUILD_DIR" \
+            --checkpoint "$CHECKPOINT" \
+            --output "$RAW_RESULTS")
+          command+=("${resume[@]}")
+          "${command[@]}"
+
+      - name: Validate and derive compact web snapshot
+        run: |
+          python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
+            --artifact "$RAW_RESULTS" \
+            --referee "$BUILD_DIR/papersoccer_codingame_referee"
+          python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
+            --input "$RAW_RESULTS" --output "$WEB_SNAPSHOT" \
+            --referee "$BUILD_DIR/papersoccer_codingame_referee"
+          python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
+            --input "$RAW_RESULTS" --output "$WEB_SNAPSHOT" \
+            --referee "$BUILD_DIR/papersoccer_codingame_referee" --check
+
+      - name: Upload complete review artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codingame-leaderboard-review
+          path: |
+            ${{ env.RAW_RESULTS }}
+            ${{ env.WEB_SNAPSHOT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload resumable checkpoint on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codingame-leaderboard-checkpoint
+          path: ${{ env.CHECKPOINT }}
+          if-no-files-found: ignore
+          retention-days: 30
