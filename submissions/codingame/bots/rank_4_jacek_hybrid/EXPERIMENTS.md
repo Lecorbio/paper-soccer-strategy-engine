@@ -94,9 +94,10 @@ Rank-4 selects `05`, while the hybrid selects canonical counterpart `03`, at
 the same one-node work and value semantics. Global Rank-4 action parity is no
 longer a valid requirement for this candidate.
 
-- Current generated source: 86,988 ASCII characters, SHA-256
+- Generated source at this historical ablation step: 86,988 ASCII characters,
+  SHA-256
   `a092d879a53092b0c5a9c24bf43194226faf38be2cb4b4babc0b4c2c7666f394`.
-- Current engine source SHA-256:
+- Engine source SHA-256 at that step:
   `1fafc0ed02bd2475723708c55701971ea0a0f4a324a36ace1c74ece8dd9c305c`.
 - Remaining source allowance: 13,011 characters.
 - Generator freshness and ASCII checks passed. The 14/14 submission suite,
@@ -112,7 +113,9 @@ longer a valid requirement for this candidate.
 The hybrid selectively adapts the exact, safe rebound-component analysis from
 `rank_4_exchange`. The later `SearchConfig::exact_proof_mask` supersedes the
 original Boolean toggle; mask zero preserves the proof-off control and the
-operational `choose_complete_turn` path explicitly enables every safe scope.
+historical implementation-step `choose_complete_turn` path enabled every safe
+scope. The later DEVELOPMENT selection below supersedes that temporary mask
+15 choice with operational mask 7.
 
 The enabled proof performs only these classifications:
 
@@ -158,8 +161,9 @@ comparison gate and must decide whether this proof is retained.
 The exact proof is split into four orthogonal `SearchConfig::exact_proof_mask`
 bits: root attacking-goal return (`1`), depth-zero boundary value (`2`), reply
 boundary at ply one (`4`), and counterturn boundary at ply two (`8`). Mask
-zero remains the tie-only control; the operational candidate uses mask `15`.
-Unknown mask bits are rejected at construction.
+zero remains the tie-only control. The initial candidate at this historical
+implementation step used mask `15`; the subsequent DEVELOPMENT matrix selected
+operational mask `7`. Unknown mask bits are rejected at construction.
 
 Root and leaf scans now have separate probe/Win/Loss counters. Ply-one and
 ply-two counters remain separate, and tests assert that their sum equals the
@@ -181,7 +185,8 @@ Local structural evidence:
 - Isolated root, leaf, ply-one Win/Loss, and ply-two Win/Loss fixtures pass for
   both movers. The submission suite passes 18/18 and the lightweight gate
   schema/SHA tests pass 2/2.
-- Generated source: 94,004 ASCII characters, SHA-256
+- Generated source at this historical ablation step: 94,004 ASCII characters,
+  SHA-256
   `6f3abb4bed53050937ee36789ec5cf1bfc22ad02f0ea13e7db6575a11ec06d6f`;
   remaining allowance under 99,999: 5,995 characters.
 
@@ -192,3 +197,73 @@ nested hybrid-control comparisons: masks `1 vs 0`, `3 vs 1`, `7 vs 3`, and
 `15 vs 7`. This measures each scope's conditional marginal in search order.
 A cheap fixed-node screen should exercise all 16 masks first; only the selected
 mask should advance against mask zero and Rank-4 on the full development bank.
+
+## DEVELOPMENT scope selection: mask 7
+
+The preregistered nested depth-20 clock matrix measured each scope's marginal
+in search order. The results were `1 vs 0: 38-38`, `3 vs 1: 40-36`, `7 vs 3:
+39-37`, and `15 vs 7: 38-38`. On that DEVELOPMENT evidence, mask `7` was
+selected: root attacking-goal return, exact depth-zero boundary value, and
+ply-one proof are enabled; ply-two proof is disabled.
+
+The selected mask then advanced through both complete DEVELOPMENT comparisons,
+covering all four preregistered development depths and 306 paired-color games:
+
+- Mask 7 beat the same-binary mask-zero control 166-140: 84-69 when the
+  candidate occupied physical color 0 and 82-71 as physical color 1.
+- Mask 7 beat canonical Rank-4 169-137: 83-70 as physical color 0 and 86-67
+  as physical color 1.
+- Both gates completed with zero failed games.
+
+The frozen selection receipt is
+`results/rank_4_jacek_hybrid/gates/full_development_clock/selection/1b6736186006b6820021dc0315faab50dcba97db719ea5bbfe6768a7e2a243d3.json`
+(SHA-256
+`1b6736186006b6820021dc0315faab50dcba97db719ea5bbfe6768a7e2a243d3`).
+These are DEVELOPMENT results, not heldout validation, final qualification, or
+live-arena evidence.
+
+## Ablation 4: null-action proof fast path (rejected)
+
+The null-action fast path specialized exact rebound-component analysis so
+non-root proof probes could avoid route reconstruction and ordering work. Its
+authoritative actual-clock gate compared mask-7 fast-path code with the
+archived pre-fast-path mask-7 algorithm over the 76-game depth-20 DEVELOPMENT
+bank, with equal 3,000,000-node caps and 800/165 ms clocks.
+
+The fast-path candidate lost 36-40. Its physical-color splits were 19-19 as
+color 0 and 17-21 as color 1. All 76 games finished with zero failures,
+illegal actions, exceptions, operational violations, or hard timeouts. Timing
+passed its frozen thresholds: candidate first/later p99 was 800.164/165.155 ms
+and first/later maximum was 800.164/165.190 ms. Search progress also passed:
+candidate average completed depth was 3.894 versus 3.865, and average nodes
+were 213,863.751 versus 200,862.635 for the control.
+
+The frozen noninferiority gate nevertheless required at least 38 total wins
+and at least 19 wins in each physical color. The candidate missed both the
+total-win threshold and the color-1 threshold, so the optimization is rejected
+and the same attempt identity may not be rerun. The authoritative report is
+`results/rank_4_jacek_hybrid/gates/null_fastpath_clock/fa4596213c69a782976a41fd362eb61cc0f484f2e51598a5838eeef8fbabfa59.json`
+(SHA-256
+`fa4596213c69a782976a41fd362eb61cc0f484f2e51598a5838eeef8fbabfa59`).
+The mandatory-revert decision receipt is
+`results/rank_4_jacek_hybrid/gates/null_fastpath_clock/selection/27de96bac5b2ea6c43613ee8b9f5c64f16a33505bfcfde1872d33e3b3c2268bb.json`
+(SHA-256
+`27de96bac5b2ea6c43613ee8b9f5c64f16a33505bfcfde1872d33e3b3c2268bb`).
+
+The targeted rollback removed the null-action fast path and restored the
+archived pre-fast-path proof algorithm. It retained the selected operational
+mask 7 and the test-only rebound-component audit hook. Regeneration assigned
+new production identities rather than reusing the archived control hashes:
+
+- `bot.cpp`: 63,107 bytes, SHA-256
+  `34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b`.
+- `submission.cpp`: 94,312 ASCII characters, SHA-256
+  `2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
+- `submission_test.cpp`: 39,137 bytes, SHA-256
+  `ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697`.
+
+The scaffold, tie-only, mask-15, archived pre-fast-path, and rejected
+null-fast-path identities above remain historical evidence; none identifies
+the current rollback bytes. No heldout or final bank has been opened for the
+rollback candidate, no live upload has occurred, and final qualification is
+false.

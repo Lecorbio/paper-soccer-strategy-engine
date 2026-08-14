@@ -1,0 +1,134 @@
+{
+  "campaign_id": "rank_4_jacek_hybrid-36h-20260813",
+  "campaign_t0_utc": "2026-08-13T19:15:07Z",
+  "classification": "development-rollback-byte-freeze-not-final-qualification",
+  "created_utc": "2026-08-14T01:02:37Z",
+  "decision_lineage": {
+    "authoritative_report": {
+      "candidate_wins": 36,
+      "classification": "development-only",
+      "failed": 0,
+      "path": "results/rank_4_jacek_hybrid/gates/null_fastpath_clock/fa4596213c69a782976a41fd362eb61cc0f484f2e51598a5838eeef8fbabfa59.json",
+      "reference_wins": 40,
+      "sha256": "fa4596213c69a782976a41fd362eb61cc0f484f2e51598a5838eeef8fbabfa59",
+      "unfinished": 0
+    },
+    "null_decision_receipt": {
+      "decision": "null-fastpath-rejected-mandatory-revert",
+      "path": "results/rank_4_jacek_hybrid/gates/null_fastpath_clock/selection/27de96bac5b2ea6c43613ee8b9f5c64f16a33505bfcfde1872d33e3b3c2268bb.json",
+      "sha256": "27de96bac5b2ea6c43613ee8b9f5c64f16a33505bfcfde1872d33e3b3c2268bb"
+    },
+    "operational_mask7_selection": {
+      "path": "results/rank_4_jacek_hybrid/gates/full_development_clock/selection/1b6736186006b6820021dc0315faab50dcba97db719ea5bbfe6768a7e2a243d3.json",
+      "selected_exact_proof_mask": 7,
+      "sha256": "1b6736186006b6820021dc0315faab50dcba97db719ea5bbfe6768a7e2a243d3"
+    }
+  },
+  "final_qualification": false,
+  "production_artifacts": [
+    {
+      "ascii": true,
+      "bytes": 63107,
+      "path": "submissions/codingame/bots/rank_4_jacek_hybrid/bot.cpp",
+      "role": "engine-source",
+      "sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b"
+    },
+    {
+      "ascii": true,
+      "bytes": 94312,
+      "path": "submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp",
+      "role": "upload-source",
+      "sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7"
+    },
+    {
+      "ascii": true,
+      "bytes": 39137,
+      "path": "submissions/codingame/bots/rank_4_jacek_hybrid/submission_test.cpp",
+      "role": "source-contract-test",
+      "sha256": "ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697"
+    }
+  ],
+  "qualification_state": {
+    "final_banks_read": false,
+    "final_gate_executed": false,
+    "heldout_validation_banks_read": false,
+    "heldout_validation_gate_executed": false,
+    "live_arena_games_started": false,
+    "live_source_uploaded": false,
+    "upload_authorized": false
+  },
+  "rollback_base": {
+    "algorithm": "archived-prefastpath-hybrid",
+    "archive_manifest": {
+      "path": "results/rank_4_jacek_hybrid/controls/null_fastpath_pre_2a37f20/manifest.json",
+      "sha256": "d94204c4d314332e439e38de774d0e110c73910b961bd0f0152252b7404ae772"
+    },
+    "bot": {
+      "ascii": true,
+      "bytes": 62777,
+      "path": "results/rank_4_jacek_hybrid/controls/null_fastpath_pre_2a37f20/bot.c8412600f0b90610660f24a02828e77f67cc7d78bdf775da11628b3355274215.cpp",
+      "sha256": "c8412600f0b90610660f24a02828e77f67cc7d78bdf775da11628b3355274215"
+    },
+    "operational_exact_proof_mask": 7,
+    "source_commit": "2a37f20727da0e90e71a5d0b71a44cd0ae87ffbd",
+    "submission": {
+      "ascii": true,
+      "bytes": 94004,
+      "path": "results/rank_4_jacek_hybrid/controls/null_fastpath_pre_2a37f20/submission.6f3abb4bed53050937ee36789ec5cf1bfc22ad02f0ea13e7db6575a11ec06d6f.cpp",
+      "sha256": "6f3abb4bed53050937ee36789ec5cf1bfc22ad02f0ea13e7db6575a11ec06d6f"
+    }
+  },
+  "schema": "rank4-jacek-hybrid-null-fastpath-rollback-v1",
+  "verification": {
+    "fixed_work_parity": {
+      "classification": "supplemental-nonqualification-nonretained",
+      "command": "/tmp/rank4-null-rollback.zEKK2l/fixed_work_parity",
+      "exact_proof_mask": 7,
+      "matched_decisions": 64,
+      "output": "exact fixed-work parity: 64/64 decisions at proof mask 7",
+      "qualification_evidence": false,
+      "repository_retained": false,
+      "source_bytes": 7156,
+      "source_path_at_execution": "/tmp/rank4-null-rollback.zEKK2l/fixed_work_parity.cpp",
+      "source_sha256": "a8506c4883d78146b82fef6b854c7aa0dfd1398eebeaf3dd0c5fadcedf00e572",
+      "status": "passed",
+      "total_decisions": 64
+    },
+    "focused_ctest": {
+      "command": "ctest --test-dir build --output-on-failure --timeout 180 -R '^papersoccer_codingame_rank_4_jacek_hybrid_(submission_test|parity_test|submission_current|protocol_smoke_test|replay_tactical_audit_cheap)$'",
+      "completed_utc": "2026-08-14T01:01:07Z",
+      "elapsed_seconds": 3.16,
+      "execution_source": "independent rollback-manifest worktree rerun",
+      "failed": 0,
+      "passed": 5,
+      "tests": [
+        "papersoccer_codingame_rank_4_jacek_hybrid_submission_test",
+        "papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_cheap",
+        "papersoccer_codingame_rank_4_jacek_hybrid_parity_test",
+        "papersoccer_codingame_rank_4_jacek_hybrid_submission_current",
+        "papersoccer_codingame_rank_4_jacek_hybrid_protocol_smoke_test"
+      ],
+      "total": 5
+    },
+    "generator_check": {
+      "command": "node submissions/codingame/tools/generate_submission.mjs rank_4_jacek_hybrid --check",
+      "passed": true,
+      "submission_characters": 94312
+    },
+    "replay_tactical_audit_full": {
+      "audit_command": "build/papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit --full --state-cap 2000000 --global-state-cap 100000000",
+      "capped": 0,
+      "ctest_command": "ctest --test-dir build --output-on-failure --timeout 120 -R '^papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full$'",
+      "ctest_passed": 1,
+      "ctest_total": 1,
+      "displaced": 0,
+      "evidence": {
+        "path": "results/rank_4_jacek_hybrid/REPLAY_TACTICAL_NONDISPLACEMENT.md",
+        "sha256": "97b0406920b0cb1b052cdb6eafa14bbae3649f5b025acb2439d8a0e4969bdbfc"
+      },
+      "exact_maxima": 511,
+      "unique_activations": 511,
+      "unresolved": 0
+    }
+  }
+}

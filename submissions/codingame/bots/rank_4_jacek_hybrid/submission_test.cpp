@@ -338,60 +338,6 @@ std::string rotate_action(std::string_view action) {
   return rotated;
 }
 
-void null_rebound_fast_path_preserves_exact_outcomes() {
-  const ps::Point root{4, 4};
-  const ps::Point rebound{4, 3};
-
-  ps::GameState win = make_clean_state_at({4, 2});
-  win.visit_count[{4, 1}] = 1;
-  block_edges_except(win, {4, 2}, {{4, 1}});
-
-  ps::GameState loss = make_clean_state_at(root);
-  loss.visit_count[rebound] = 1;
-  block_edges_except(loss, root, {rebound});
-  block_edges_except(loss, rebound, {root});
-
-  ps::GameState unknown = make_clean_state_at(root);
-  block_edges_except(unknown, root, {rebound});
-
-  const std::array<std::pair<ps::GameState, cg::ReboundOutcome>, 3> witnesses{{
-      {win, cg::ReboundOutcome::Win},
-      {loss, cg::ReboundOutcome::Loss},
-      {unknown, cg::ReboundOutcome::Unknown},
-  }};
-  for (const auto &[base, expected] : witnesses) {
-    for (const ps::GameState &state : {base, rotate_and_swap(base)}) {
-      cg::SearchConfig config;
-      config.max_nodes = 1;
-      config.max_time_ms = 0;
-      config.exact_proof_mask = cg::kAllExactProofs;
-      std::vector<ps::Move> canonical_action;
-      std::vector<ps::Move> ignored_action;
-      cg::CompleteTurnSearch canonical(state, config);
-      cg::CompleteTurnSearch natural(state, config);
-      const auto canonical_outcome =
-          canonical.analyze_rebound_component_for_test(true, canonical_action);
-      const auto natural_outcome =
-          natural.analyze_rebound_component_for_test(false, ignored_action);
-      require(canonical_outcome == expected && natural_outcome == expected,
-              "Natural-order null proof changed an exact outcome.");
-      require(ignored_action.empty(),
-              "Natural-order null proof unexpectedly reconstructed an action.");
-      if (expected == cg::ReboundOutcome::Win) {
-        ps::GameState replay = state;
-        for (const ps::Move move : canonical_action) {
-          replay = ps::apply_move(replay, move);
-        }
-        require(ps::winner(replay) == state.to_move,
-                "Canonical proof route did not win for the mover.");
-      } else {
-        require(canonical_action.empty(),
-                "A non-winning proof reconstructed an action.");
-      }
-    }
-  }
-}
-
 struct FixedNodeDecision {
   std::string action;
   cg::SearchStats stats;
@@ -956,8 +902,6 @@ int main() {
        exact_proof_disabled_is_strict_parity},
       {"exact_root_rebound_goal_is_safe_and_symmetric",
        exact_root_rebound_goal_is_safe_and_symmetric},
-      {"null_rebound_fast_path_preserves_exact_outcomes",
-       null_rebound_fast_path_preserves_exact_outcomes},
       {"exact_leaf_and_exchange_proofs_are_symmetric",
        exact_leaf_and_exchange_proofs_are_symmetric},
       {"every_exact_proof_mask_is_legal_and_symmetric",
