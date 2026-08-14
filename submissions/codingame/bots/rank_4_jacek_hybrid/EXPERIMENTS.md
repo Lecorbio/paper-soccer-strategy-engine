@@ -268,7 +268,7 @@ the current rollback bytes. No heldout or final bank has been opened for the
 rollback candidate, no live upload has occurred, and final qualification is
 false.
 
-## Ablation 5: sole-legal-edge ordering bypass (pending clock gate)
+## Ablation 5: sole-legal-edge ordering bypass (rejected)
 
 When `ordered_moves` sees exactly one legal primitive edge, no ordering
 decision exists. The candidate returns that edge immediately with a neutral
@@ -289,9 +289,9 @@ improved 1.424% at median and 0.596% at p99. The mixed panel changed +0.082%
 at median and improved 0.983% at p99. Result signatures were exact. The same
 panels with small tables also stayed inside the frozen 0.5% regression limit.
 
-A permanent both-color singleton witness now asserts exactly one legal move,
-neutral bypass score, and legal output. Focused submission, parity, generator,
-protocol, and cheap replay tests pass 5/5. The current artifacts are:
+A both-color singleton witness asserted exactly one legal move, neutral bypass
+score, and legal output. Focused submission, parity, generator, protocol, and
+cheap replay tests passed 5/5. The evaluated artifacts were:
 
 - `bot.cpp`: 63,350 bytes, SHA-256
   `16a4358680cfc69e830136d4e0c2e6e45371139a02ca09ecb9bf1f9e239d3b2b`.
@@ -300,7 +300,19 @@ protocol, and cheap replay tests pass 5/5. The current artifacts are:
 - `submission_test.cpp`: 40,103 bytes, SHA-256
   `0823299900cf0d31730c73ccb91a3a55c7a7ef351949e583a40a7c66a43f5e88`.
 
-No whole-game result is claimed at this stage. The preregistered next step is
-one DEVELOPMENT depth-20 actual-clock comparison against the exact
-pre-singleton rollback algorithm at mask 7. Heldout validation, final banks,
-and live upload remain unopened; final qualification is false.
+The sole preregistered DEVELOPMENT depth-20 clock comparison was valid and
+finished 38-38. The candidate went 20-18 as physical color 0 and 18-20 as
+physical color 1, with zero unfinished, failed, illegal, operational,
+exception, or hard-timeout results. It passed timing limits and the progress
+gate via 182,468.772 versus 181,258.376 average nodes, but failed the frozen
+minimum of 19 wins in each color by one color-1 win. The optimization is
+therefore rejected and its exact identity may not be rerun.
+
+The authoritative report is
+`results/rank_4_jacek_hybrid/gates/sole_legal_edge_clock/1d472a43a2f7ce0bc314e2c3619a912fb759b2a2eba489ca451e59a16094f315.json`.
+The rejection receipt is
+`results/rank_4_jacek_hybrid/gates/sole_legal_edge_clock/selection/e36314e33d9ca66f9c901c0e99dc613e10b43e1941668cc59ad5e6b3d8a0b5af.json`.
+Production was restored to the 94,312-character rollback source
+`2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
+Heldout validation and final banks remain unopened, no live upload occurred,
+and final qualification is false.

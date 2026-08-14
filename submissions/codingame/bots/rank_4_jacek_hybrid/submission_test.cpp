@@ -338,26 +338,6 @@ std::string rotate_action(std::string_view action) {
   return rotated;
 }
 
-void sole_legal_edge_bypasses_move_scoring() {
-  ps::GameState base = make_clean_state_at({4, 4});
-  block_edges_except(base, {4, 4}, {{4, 3}});
-  for (const ps::GameState &state : {base, rotate_and_swap(base)}) {
-    cg::SearchConfig config;
-    config.max_nodes = 1;
-    config.max_time_ms = 0;
-    cg::CompleteTurnSearch search(state, config);
-    const cg::OrderedMoveList moves = search.ordered_moves_for_test();
-    require(moves.count == 1,
-            "Sole-edge scoring witness does not have exactly one move.");
-    require(moves.values[0].score == 0,
-            "A sole legal edge unexpectedly ran heuristic move scoring.");
-    const std::vector<ps::Move> legal = ps::legal_moves(state);
-    require(std::find(legal.begin(), legal.end(), moves.values[0].move) !=
-                legal.end(),
-            "Sole-edge bypass returned an illegal move.");
-  }
-}
-
 struct FixedNodeDecision {
   std::string action;
   cg::SearchStats stats;
@@ -922,8 +902,6 @@ int main() {
        exact_proof_disabled_is_strict_parity},
       {"exact_root_rebound_goal_is_safe_and_symmetric",
        exact_root_rebound_goal_is_safe_and_symmetric},
-      {"sole_legal_edge_bypasses_move_scoring",
-       sole_legal_edge_bypasses_move_scoring},
       {"exact_leaf_and_exchange_proofs_are_symmetric",
        exact_leaf_and_exchange_proofs_are_symmetric},
       {"every_exact_proof_mask_is_legal_and_symmetric",
