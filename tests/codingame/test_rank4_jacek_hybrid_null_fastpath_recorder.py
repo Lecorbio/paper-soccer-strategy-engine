@@ -193,20 +193,36 @@ class NullFastpathRecorderTest(unittest.TestCase):
                 [output / f"{digest}.json"],
             )
 
-    def test_v1_rejection_does_not_count_as_the_one_v2_attempt(self):
-        head = "a" * 40
-        payload = {
-            "schema": "rank4-jacek-hybrid-null-fastpath-clock-v1",
-            "attempt_id": recorder.attempt_id(head),
-        }
-        raw = recorder.canonical_json(payload)
-        digest = hashlib.sha256(raw).hexdigest()
+    def test_content_addressed_persistence_reloads_exact_canonical_bytes(self):
+        payload = {"schema": "synthetic", "value": [3, 2, 1]}
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            (output / f"{digest}.json").write_bytes(raw)
+            path, digest = recorder.persist_content_addressed_report(
+                output, payload, 123
+            )
+            self.assertEqual(path.name, f"{digest}.json")
+            self.assertEqual(path.read_bytes(), recorder.canonical_json(payload))
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest)
+            self.assertFalse((output / f".{digest}.123.tmp").exists())
+
+    def test_v1_and_v2_rejections_do_not_count_as_the_one_v3_attempt(self):
+        head = "a" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            for schema in (
+                "rank4-jacek-hybrid-null-fastpath-clock-v1",
+                "rank4-jacek-hybrid-null-fastpath-clock-v2",
+            ):
+                payload = {
+                    "schema": schema,
+                    "attempt_id": recorder.attempt_id(head),
+                }
+                raw = recorder.canonical_json(payload)
+                digest = hashlib.sha256(raw).hexdigest()
+                (output / f"{digest}.json").write_bytes(raw)
             self.assertEqual(recorder.matching_attempts(head, output), [])
 
-    def test_v2_attempt_identity_binds_all_amendment_prerequisites(self):
+    def test_v3_attempt_identity_binds_all_amendment_prerequisites(self):
         key = recorder.attempt_key("a" * 40)
         self.assertEqual(key["schema"], recorder.SCHEMA)
         self.assertEqual(
@@ -218,8 +234,19 @@ class NullFastpathRecorderTest(unittest.TestCase):
             recorder.EXPECTED_AUDIT_RECEIPT_SHA256,
         )
         self.assertEqual(
-            key["rejected_attempt_sha256"],
-            recorder.EXPECTED_REJECTED_ATTEMPT_SHA256,
+            key["plan_v2_sha256"], recorder.EXPECTED_PLAN_V2_SHA256,
+        )
+        self.assertEqual(
+            key["contamination_receipt_sha256"],
+            recorder.EXPECTED_CONTAMINATION_RECEIPT_SHA256,
+        )
+        self.assertEqual(
+            key["rejected_v1_attempt_sha256"],
+            recorder.EXPECTED_REJECTED_V1_ATTEMPT_SHA256,
+        )
+        self.assertEqual(
+            key["rejected_v2_attempt_sha256"],
+            recorder.EXPECTED_REJECTED_V2_ATTEMPT_SHA256,
         )
 
     def test_candidate_and_archive_exact_identities(self):
@@ -233,9 +260,12 @@ class NullFastpathRecorderTest(unittest.TestCase):
                 recorder.CONTROL_SOURCE,
                 recorder.BANK,
                 recorder.ORIGINAL_PLAN,
+                recorder.PLAN_V2,
                 recorder.PLAN,
                 recorder.AUDIT_RECEIPT,
-                recorder.REJECTED_ATTEMPT,
+                recorder.CONTAMINATION_RECEIPT,
+                recorder.REJECTED_V1_ATTEMPT,
+                recorder.REJECTED_V2_ATTEMPT,
                 recorder.CONTROL_MANIFEST,
             )
         }
@@ -245,15 +275,59 @@ class NullFastpathRecorderTest(unittest.TestCase):
             bindings["plan_v2"]["candidate"]["exact_proof_mask"], 7
         )
         self.assertEqual(
+            bindings["plan_v3"]["candidate"]["exact_proof_mask"], 7
+        )
+        self.assertEqual(
             bindings["audit_receipt"]["technical_audit"]["status"], "pass"
         )
         self.assertFalse(
-            bindings["rejected_attempt"]["development_ablation_acceptable"]
+            bindings["rejected_v1_attempt"]["development_ablation_acceptable"]
+        )
+        self.assertFalse(
+            bindings["rejected_v2_attempt"]["development_ablation_acceptable"]
         )
         self.assertEqual(
             bindings["control_manifest"]["source_commit"],
             recorder.CONTROL_SOURCE_COMMIT,
         )
+
+    def test_process_table_parser_is_strict(self):
+        parsed = recorder.parse_process_table(
+            "  10  1 /bin/zsh\n  11  10 python recorder.py\n"
+        )
+        self.assertEqual([item["pid"] for item in parsed], [10, 11])
+        with self.assertRaisesRegex(ValueError, "malformed"):
+            recorder.parse_process_table("10 only-two-fields\n")
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            recorder.parse_process_table("10 1 a\n10 1 b\n")
+
+    def test_process_preflight_allows_self_and_ancestors_only(self):
+        clean = recorder.process_preflight_from_table([
+            {"pid": 1, "ppid": 0, "command": "/sbin/launchd"},
+            {"pid": 10, "ppid": 1,
+             "command": "zsh record_rank4_jacek_hybrid wrapper"},
+            {"pid": 11, "ppid": 10,
+             "command": "python record_rank4_jacek_hybrid_null_fastpath"},
+            {"pid": 12, "ppid": 1, "command": "unrelated build"},
+        ], 11)
+        self.assertTrue(clean["clean"])
+        self.assertEqual(clean["allowed_ancestor_pids"], [1, 10, 11])
+
+        conflict = recorder.process_preflight_from_table([
+            {"pid": 1, "ppid": 0, "command": "/sbin/launchd"},
+            {"pid": 11, "ppid": 1,
+             "command": "python record_rank4_jacek_hybrid_null_fastpath"},
+            {"pid": 99, "ppid": 1,
+             "command": "/tmp/rank4-proof-cache/gate_tt"},
+        ], 11)
+        self.assertFalse(conflict["clean"])
+        self.assertEqual([item["pid"] for item in conflict["conflicts"]], [99])
+
+    def test_process_preflight_rejects_missing_self(self):
+        with self.assertRaisesRegex(ValueError, "absent"):
+            recorder.process_preflight_from_table([
+                {"pid": 1, "ppid": 0, "command": "/sbin/launchd"},
+            ], 11)
 
     def test_default_gate_keeps_rank4_mask_rejection(self):
         generic = (recorder.BOT_DIRECTORY / "comparison_gate.cpp").read_text()

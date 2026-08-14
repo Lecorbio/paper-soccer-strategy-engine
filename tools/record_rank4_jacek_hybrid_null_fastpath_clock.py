@@ -30,10 +30,15 @@ ROOT = Path(__file__).resolve().parents[1]
 RECORDER = Path(__file__).resolve()
 OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/null_fastpath_clock"
 ORIGINAL_PLAN = OUTPUT / "plan.json"
-PLAN = OUTPUT / "plan_v2.json"
+PLAN_V2 = OUTPUT / "plan_v2.json"
+PLAN = OUTPUT / "plan_v3.json"
 AUDIT_RECEIPT = OUTPUT / "static_audit_receipt.json"
-REJECTED_ATTEMPT = OUTPUT / (
+CONTAMINATION_RECEIPT = OUTPUT / "contamination_receipt_v2.json"
+REJECTED_V1_ATTEMPT = OUTPUT / (
     "74576b4a30d48f4e596ea0f52ab9c5498e1b1da15b323f848dcc1d603dc710ab.json"
+)
+REJECTED_V2_ATTEMPT = OUTPUT / (
+    "402b6e8fa8b6439087a749ab11999a651eefccd2e2615276ef9f5ffce5e56a53.json"
 )
 LOCK = ROOT / "build/rank4-jacek-hybrid-null-fastpath-clock.lock"
 GATE_TARGET = (
@@ -44,7 +49,7 @@ GATE = ROOT / "build" / GATE_TARGET
 BANK = ROOT / "results/rank_4_jacek_hybrid/openings/development_d20.tsv"
 RUN_TIMEOUT_SECONDS = 1_800
 
-SCHEMA = "rank4-jacek-hybrid-null-fastpath-clock-v2"
+SCHEMA = "rank4-jacek-hybrid-null-fastpath-clock-v3"
 CLASSIFICATION = (
     "development-null-fastpath-clock-ablation-not-final-qualification"
 )
@@ -76,14 +81,23 @@ EXPECTED_BANK_SHA256 = (
 EXPECTED_ORIGINAL_PLAN_SHA256 = (
     "29d0a718747078a46f71e3f4466cfba96377fa7b9a19967fd4684933a29bdbf6"
 )
-EXPECTED_PLAN_SHA256 = (
+EXPECTED_PLAN_V2_SHA256 = (
     "0db7f944df34b857a3930896869abe7b9c16a2f1ccd9cd0b90e16650fa6b5a9b"
+)
+EXPECTED_PLAN_SHA256 = (
+    "25a2c6742105db09bfcff288066c860f71b9e81bb3ab9a68ed23c15449296c27"
 )
 EXPECTED_AUDIT_RECEIPT_SHA256 = (
     "4245451b27985365494a0fc69f2c562efda4fe5a1c720dafe71cf0807e0e8fe6"
 )
-EXPECTED_REJECTED_ATTEMPT_SHA256 = (
+EXPECTED_CONTAMINATION_RECEIPT_SHA256 = (
+    "71f766fe46f4fb4f1b2365a012fc2a59d8e786cb140cc96ce23c390ed9f9c796"
+)
+EXPECTED_REJECTED_V1_ATTEMPT_SHA256 = (
     "74576b4a30d48f4e596ea0f52ab9c5498e1b1da15b323f848dcc1d603dc710ab"
+)
+EXPECTED_REJECTED_V2_ATTEMPT_SHA256 = (
+    "402b6e8fa8b6439087a749ab11999a651eefccd2e2615276ef9f5ffce5e56a53"
 )
 EXPECTED_MANIFEST_SHA256 = (
     "d94204c4d314332e439e38de774d0e110c73910b961bd0f0152252b7404ae772"
@@ -116,9 +130,12 @@ TRACKED_INPUTS = (
     ROOT / "tools/record_rank4_jacek_hybrid_proof_scope_clock.py",
     ROOT / "CMakeLists.txt",
     ORIGINAL_PLAN,
+    PLAN_V2,
     PLAN,
     AUDIT_RECEIPT,
-    REJECTED_ATTEMPT,
+    CONTAMINATION_RECEIPT,
+    REJECTED_V1_ATTEMPT,
+    REJECTED_V2_ATTEMPT,
     CONTROL_MANIFEST,
     CONTROL_BOT,
     CONTROL_SOURCE,
@@ -157,6 +174,30 @@ def canonical_json(value: Any) -> bytes:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def persist_content_addressed_report(
+    output: Path, report: dict[str, Any], pid: int,
+) -> tuple[Path, str]:
+    raw = canonical_json(report)
+    digest = sha256_bytes(raw)
+    final_path = output / f"{digest}.json"
+    temporary = output / f".{digest}.{pid}.tmp"
+    with temporary.open("wb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, final_path)
+    persisted = final_path.read_bytes()
+    try:
+        decoded = json.loads(persisted)
+    except json.JSONDecodeError as error:
+        raise OSError("persisted report is not valid JSON") from error
+    if (final_path.stem != digest or persisted != raw or
+            sha256_bytes(persisted) != digest or
+            canonical_json(decoded) != persisted):
+        raise OSError("persisted content-addressed report verification failed")
+    return final_path, digest
 
 
 def utc_now() -> str:
@@ -330,9 +371,15 @@ def attempt_key(head: str) -> dict[str, str]:
         "head": head,
         "schema": SCHEMA,
         "original_plan_sha256": EXPECTED_ORIGINAL_PLAN_SHA256,
+        "plan_v2_sha256": EXPECTED_PLAN_V2_SHA256,
         "plan_sha256": EXPECTED_PLAN_SHA256,
         "audit_receipt_sha256": EXPECTED_AUDIT_RECEIPT_SHA256,
-        "rejected_attempt_sha256": EXPECTED_REJECTED_ATTEMPT_SHA256,
+        "contamination_receipt_sha256":
+            EXPECTED_CONTAMINATION_RECEIPT_SHA256,
+        "rejected_v1_attempt_sha256":
+            EXPECTED_REJECTED_V1_ATTEMPT_SHA256,
+        "rejected_v2_attempt_sha256":
+            EXPECTED_REJECTED_V2_ATTEMPT_SHA256,
         "candidate_bot_sha256": EXPECTED_CANDIDATE_BOT_SHA256,
         "candidate_source_sha256": EXPECTED_CANDIDATE_SOURCE_SHA256,
         "control_bot_sha256": EXPECTED_CONTROL_BOT_SHA256,
@@ -415,49 +462,106 @@ def require_origin_and_archive_bindings() -> dict[str, Any]:
     original_plan = validate_canonical_json_file(
         ORIGINAL_PLAN, EXPECTED_ORIGINAL_PLAN_SHA256
     )
+    plan_v2 = validate_canonical_json_file(PLAN_V2, EXPECTED_PLAN_V2_SHA256)
     plan = validate_canonical_json_file(PLAN, EXPECTED_PLAN_SHA256)
     audit_receipt = validate_canonical_json_file(
         AUDIT_RECEIPT, EXPECTED_AUDIT_RECEIPT_SHA256
     )
-    rejected_attempt = validate_canonical_json_file(
-        REJECTED_ATTEMPT, EXPECTED_REJECTED_ATTEMPT_SHA256
+    contamination_receipt = validate_canonical_json_file(
+        CONTAMINATION_RECEIPT, EXPECTED_CONTAMINATION_RECEIPT_SHA256
+    )
+    rejected_v1_attempt = validate_canonical_json_file(
+        REJECTED_V1_ATTEMPT, EXPECTED_REJECTED_V1_ATTEMPT_SHA256
+    )
+    rejected_v2_attempt = validate_canonical_json_file(
+        REJECTED_V2_ATTEMPT, EXPECTED_REJECTED_V2_ATTEMPT_SHA256
     )
     manifest = validate_canonical_json_file(
         CONTROL_MANIFEST, EXPECTED_MANIFEST_SHA256
     )
-    if plan.get("schema") != "rank4-jacek-hybrid-null-fastpath-plan-v2":
+    if plan_v2.get("schema") != "rank4-jacek-hybrid-null-fastpath-plan-v2":
+        raise ValueError("v2 amended plan schema mismatch")
+    if plan.get("schema") != "rank4-jacek-hybrid-null-fastpath-plan-v3":
         raise ValueError("amended plan schema mismatch")
     amendment = plan.get("amendment", {})
     if (amendment.get("previous_plan", {}).get("sha256") !=
-            EXPECTED_ORIGINAL_PLAN_SHA256 or
-            amendment.get("audit_receipt", {}).get("sha256") !=
-            EXPECTED_AUDIT_RECEIPT_SHA256 or
-            amendment.get("premature_attempt", {}).get("sha256") !=
-            EXPECTED_REJECTED_ATTEMPT_SHA256 or
+            EXPECTED_PLAN_V2_SHA256 or
+            amendment.get("contamination_receipt", {}).get("sha256") !=
+            EXPECTED_CONTAMINATION_RECEIPT_SHA256 or
             amendment.get("gameplay_semantics_changed") is not False or
             amendment.get("technical_gate_semantics_changed") is not False):
         raise ValueError("amended plan prerequisite binding mismatch")
+    expected_rejected = [
+        {
+            "sha256": EXPECTED_REJECTED_V1_ATTEMPT_SHA256,
+            "receipt_sha256": EXPECTED_AUDIT_RECEIPT_SHA256,
+            "schema": "rank4-jacek-hybrid-null-fastpath-clock-v1",
+        },
+        {
+            "sha256": EXPECTED_REJECTED_V2_ATTEMPT_SHA256,
+            "receipt_sha256": EXPECTED_CONTAMINATION_RECEIPT_SHA256,
+            "schema": "rank4-jacek-hybrid-null-fastpath-clock-v2",
+        },
+    ]
+    actual_rejected = amendment.get("rejected_attempts")
+    if not isinstance(actual_rejected, list) or len(actual_rejected) != 2:
+        raise ValueError("amended plan rejected-attempt list mismatch")
+    for actual, expected in zip(actual_rejected, expected_rejected):
+        if (not isinstance(actual, dict) or
+                actual.get("sha256") != expected["sha256"] or
+                actual.get("receipt_sha256") != expected["receipt_sha256"] or
+                actual.get("schema") != expected["schema"] or
+                actual.get("accepted_gameplay_result") is not False):
+            raise ValueError("amended plan rejected-attempt binding mismatch")
+    policy = plan.get("evidence_policy", {})
+    if (policy.get("attempts_per_exact_v3_head_and_inputs") != 1 or
+            policy.get("clean_process_preflight_required") is not True or
+            policy.get("rerun_only_after_v3_commit") is not True or
+            policy.get("validation_or_final_banks_forbidden") is not True):
+        raise ValueError("amended plan evidence policy mismatch")
     for key in ("bank", "candidate", "command", "reference", "thresholds"):
-        if plan.get(key) != original_plan.get(key):
+        if (plan_v2.get(key) != original_plan.get(key) or
+                plan.get(key) != plan_v2.get(key)):
             raise ValueError(f"amended plan changed frozen semantics: {key}")
     if (audit_receipt.get("technical_audit", {}).get("status") != "pass" or
             audit_receipt.get("premature_attempt", {}).get("sha256") !=
-            EXPECTED_REJECTED_ATTEMPT_SHA256 or
+            EXPECTED_REJECTED_V1_ATTEMPT_SHA256 or
             audit_receipt.get("premature_attempt", {}).get(
                 "gameplay_result_accepted") is not False):
         raise ValueError("static audit receipt prerequisite mismatch")
-    if (rejected_attempt.get("schema") !=
+    if (contamination_receipt.get("rejected_v2_attempt", {}).get("sha256") !=
+            EXPECTED_REJECTED_V2_ATTEMPT_SHA256 or
+            contamination_receipt.get("rejected_v2_attempt", {}).get(
+                "gameplay_result_accepted") is not False or
+            contamination_receipt.get("observed_contamination", {}).get(
+                "interfering_pid") != 18_744 or
+            contamination_receipt.get("observed_contamination", {}).get(
+                "overlap_seconds_approx") != 14):
+        raise ValueError("contamination receipt prerequisite mismatch")
+    rejected_specs = (
+        (rejected_v1_attempt, "rank4-jacek-hybrid-null-fastpath-clock-v1"),
+        (rejected_v2_attempt, "rank4-jacek-hybrid-null-fastpath-clock-v2"),
+    )
+    for rejected_attempt, expected_schema in rejected_specs:
+        if (rejected_attempt.get("schema") != expected_schema or
+                rejected_attempt.get("returncode") != -15 or
+                rejected_attempt.get("development_ablation_acceptable") is not False or
+                rejected_attempt.get("stdout") != "" or
+                rejected_attempt.get("stderr") != ""):
+            raise ValueError("rejected-attempt prerequisite mismatch")
+    if (rejected_v1_attempt.get("schema") !=
             "rank4-jacek-hybrid-null-fastpath-clock-v1" or
-            rejected_attempt.get("returncode") != -15 or
-            rejected_attempt.get("development_ablation_acceptable") is not False or
-            rejected_attempt.get("stdout") != "" or
-            rejected_attempt.get("stderr") != ""):
-        raise ValueError("premature rejected-attempt prerequisite mismatch")
+            rejected_v2_attempt.get("schema") !=
+            "rank4-jacek-hybrid-null-fastpath-clock-v2"):
+        raise ValueError("rejected-attempt schema lineage mismatch")
     return {
         "original_plan": original_plan,
-        "plan_v2": plan,
+        "plan_v2": plan_v2,
+        "plan_v3": plan,
         "audit_receipt": audit_receipt,
-        "rejected_attempt": rejected_attempt,
+        "contamination_receipt": contamination_receipt,
+        "rejected_v1_attempt": rejected_v1_attempt,
+        "rejected_v2_attempt": rejected_v2_attempt,
         "control_manifest": manifest,
     }
 
@@ -481,11 +585,17 @@ def validate_exact_file_identities(
         str(BANK.relative_to(ROOT)): (EXPECTED_BANK_SHA256, 13_150, True),
         str(ORIGINAL_PLAN.relative_to(ROOT)):
             (EXPECTED_ORIGINAL_PLAN_SHA256, None, True),
+        str(PLAN_V2.relative_to(ROOT)):
+            (EXPECTED_PLAN_V2_SHA256, None, True),
         str(PLAN.relative_to(ROOT)): (EXPECTED_PLAN_SHA256, None, True),
         str(AUDIT_RECEIPT.relative_to(ROOT)):
             (EXPECTED_AUDIT_RECEIPT_SHA256, None, True),
-        str(REJECTED_ATTEMPT.relative_to(ROOT)):
-            (EXPECTED_REJECTED_ATTEMPT_SHA256, None, True),
+        str(CONTAMINATION_RECEIPT.relative_to(ROOT)):
+            (EXPECTED_CONTAMINATION_RECEIPT_SHA256, None, True),
+        str(REJECTED_V1_ATTEMPT.relative_to(ROOT)):
+            (EXPECTED_REJECTED_V1_ATTEMPT_SHA256, None, True),
+        str(REJECTED_V2_ATTEMPT.relative_to(ROOT)):
+            (EXPECTED_REJECTED_V2_ATTEMPT_SHA256, None, True),
         str(CONTROL_MANIFEST.relative_to(ROOT)):
             (EXPECTED_MANIFEST_SHA256, None, True),
     }
@@ -500,6 +610,104 @@ def validate_exact_file_identities(
     source = identities[str(CANDIDATE_SOURCE.relative_to(ROOT))]
     if source["bytes"] > 99_999:
         raise ValueError("candidate exceeds CodinGame source limit")
+
+
+CAMPAIGN_PROCESS_MARKERS = (
+    "rank_4_jacek_hybrid",
+    "rank4-jacek-hybrid",
+    "rank4-proof-cache",
+    "papersoccer_codingame_rank_4",
+    "papersoccer_codingame_jacek",
+    "record_rank4_jacek_hybrid",
+    "development_d20.tsv",
+)
+
+
+def parse_process_table(stdout: str) -> list[dict[str, Any]]:
+    processes: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=2)
+        if (len(parts) != 3 or not parts[0].isdigit() or
+                not parts[1].isdigit() or not parts[2]):
+            raise ValueError("malformed ps process-table row")
+        pid = int(parts[0])
+        if pid <= 0 or pid in seen:
+            raise ValueError("invalid or duplicate ps PID")
+        seen.add(pid)
+        processes.append({
+            "pid": pid,
+            "ppid": int(parts[1]),
+            "command": parts[2],
+        })
+    if not processes:
+        raise ValueError("ps process table is empty")
+    return processes
+
+
+def process_preflight_from_table(
+    processes: list[dict[str, Any]], self_pid: int,
+) -> dict[str, Any]:
+    by_pid = {process["pid"]: process for process in processes}
+    if self_pid not in by_pid:
+        raise ValueError("recorder PID is absent from ps process table")
+    allowed = {self_pid}
+    parent = by_pid[self_pid]["ppid"]
+    while parent > 0 and parent in by_pid and parent not in allowed:
+        allowed.add(parent)
+        parent = by_pid[parent]["ppid"]
+
+    def is_campaign_process(command: str) -> bool:
+        lowered = command.lower()
+        return any(marker in lowered for marker in CAMPAIGN_PROCESS_MARKERS)
+
+    matching = [
+        process for process in processes
+        if is_campaign_process(process["command"])
+    ]
+    conflicts = [
+        process for process in matching if process["pid"] not in allowed
+    ]
+    return {
+        "clean": not conflicts,
+        "self_pid": self_pid,
+        "observed_process_count": len(processes),
+        "allowed_ancestor_pids": sorted(allowed),
+        "allowed_matching_processes": [
+            process for process in matching if process["pid"] in allowed
+        ],
+        "conflicts": conflicts,
+        "markers": list(CAMPAIGN_PROCESS_MARKERS),
+    }
+
+
+def require_clean_process_preflight() -> dict[str, Any]:
+    ps_command = ["/bin/ps", "-axo", "pid=,ppid=,command="]
+    completed = subprocess.run(
+        ps_command, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, check=False,
+    )
+    if completed.returncode != 0 or completed.stderr:
+        raise ValueError("clean-process preflight ps command failed")
+    evidence = process_preflight_from_table(
+        parse_process_table(completed.stdout), os.getpid()
+    )
+    evidence["checked_utc"] = utc_now()
+    evidence["ps_command"] = ps_command
+    if not evidence["clean"]:
+        descriptions = "; ".join(
+            f"pid={process['pid']} ppid={process['ppid']} "
+            f"command={process['command']}"
+            for process in evidence["conflicts"]
+        )
+        raise ValueError(
+            "unrelated campaign process is active before clock gate: " +
+            descriptions
+        )
+    return evidence
 
 
 def main() -> int:
@@ -570,6 +778,12 @@ def main() -> int:
                 "an attempt already exists for this exact HEAD and frozen "
                 "ablation; retries are forbidden", file=sys.stderr,
             )
+            return 2
+
+        try:
+            process_preflight = require_clean_process_preflight()
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
             return 2
 
         command = command_for_gate()
@@ -657,15 +871,31 @@ def main() -> int:
                     "path": str(ORIGINAL_PLAN.relative_to(ROOT)),
                     "sha256": EXPECTED_ORIGINAL_PLAN_SHA256,
                 },
+                "plan_v2": {
+                    "path": str(PLAN_V2.relative_to(ROOT)),
+                    "sha256": EXPECTED_PLAN_V2_SHA256,
+                },
                 "audit_receipt": {
                     "path": str(AUDIT_RECEIPT.relative_to(ROOT)),
                     "sha256": EXPECTED_AUDIT_RECEIPT_SHA256,
                 },
-                "rejected_attempt": {
-                    "path": str(REJECTED_ATTEMPT.relative_to(ROOT)),
-                    "sha256": EXPECTED_REJECTED_ATTEMPT_SHA256,
-                    "accepted_gameplay_result": False,
+                "contamination_receipt": {
+                    "path": str(CONTAMINATION_RECEIPT.relative_to(ROOT)),
+                    "sha256": EXPECTED_CONTAMINATION_RECEIPT_SHA256,
                 },
+                "rejected_attempts": [
+                    {
+                        "path": str(REJECTED_V1_ATTEMPT.relative_to(ROOT)),
+                        "sha256": EXPECTED_REJECTED_V1_ATTEMPT_SHA256,
+                        "accepted_gameplay_result": False,
+                    },
+                    {
+                        "path": str(REJECTED_V2_ATTEMPT.relative_to(ROOT)),
+                        "sha256": EXPECTED_REJECTED_V2_ATTEMPT_SHA256,
+                        "accepted_gameplay_result": False,
+                    },
+                ],
+                "clean_process_preflight": process_preflight,
             },
             "origin_bindings": bindings,
             "started_utc": started,
@@ -721,12 +951,9 @@ def main() -> int:
             "threshold_errors": threshold_errors,
             "development_ablation_acceptable": acceptable,
         }
-        raw = canonical_json(report)
-        digest = sha256_bytes(raw)
-        final_path = OUTPUT / f"{digest}.json"
-        temporary = OUTPUT / f".{digest}.{os.getpid()}.tmp"
-        temporary.write_bytes(raw)
-        os.replace(temporary, final_path)
+        final_path, digest = persist_content_addressed_report(
+            OUTPUT, report, os.getpid()
+        )
         print(final_path.relative_to(ROOT))
         print(f"sha256={digest}")
         print(f"development_ablation_acceptable={str(acceptable).lower()}")
