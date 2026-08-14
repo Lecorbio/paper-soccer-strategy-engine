@@ -364,7 +364,7 @@ and 94,312-character source SHA-256
 Validation/final banks and the live arena remain unopened; final
 qualification is false.
 
-## Ablation 7: safe-handoff frontier width (Stage 0 passed; selection pending)
+## Ablation 7: safe-handoff frontier width (rejected at Stage 1)
 
 The final registered semantic hypothesis reuses the exact leaf-boundary proof
 scan to count unique reachable fresh endpoints at which the opponent retains
@@ -401,6 +401,17 @@ The immutable packet and sequential stop-on-failure thresholds are under
 `results/rank_4_jacek_hybrid/frontier_semantic_prototype/`. Stage 3 executes
 the depth-20 clock bank once; Stage 4 must reuse that immutable receipt while
 running only depths 4, 8, and 12. No timing benchmark or whole game had been
-run when the packet was frozen. This candidate is not selected, heldout-
-qualified, uploaded, or final; the rollback source remains its mandatory
-fallback.
+run when the packet was frozen.
+
+The sole locked Stage-1 run used 512 public-rule/tactical leaf fixtures, seven
+warm-up pairs, and 31 measured alternating AB/BA pairs. Its control/candidate
+median times were 2,497,209/2,534,500 ns; paired median ratio 1.003703 passed
+the 1.010 ceiling. The paired p99 ratio was 1.106654, above the frozen 1.020
+ceiling, despite a lower standalone candidate p99. The conjunctive gate
+therefore failed and the sequential plan forbids any retry, optimization, or
+whole-game screen. The raw report is
+`results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/bb883a55fcc3ab0e1992d9135f683fcb8aa1aacde913e4fd22f06bce83c5d4bf.json`.
+The canonical rejection receipt is
+`results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/selection/f85a74985e56e3ad67d3602a44d712e5f511a4a491d313a160583bd764e9be89.json`.
+The candidate is rejected, not heldout-qualified, not uploaded, and not final;
+production is restored to the exact 94,312-character mask-7 rollback.

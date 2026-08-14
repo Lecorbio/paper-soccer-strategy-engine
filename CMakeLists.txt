@@ -629,16 +629,6 @@ if(NOT EMSCRIPTEN)
     papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
     PROPERTIES LABELS "qualification;long" RUN_SERIAL TRUE TIMEOUT 120)
 
-  add_executable(
-    papersoccer_codingame_rank_4_jacek_hybrid_frontier_semantic_test
-    results/rank_4_jacek_hybrid/frontier_semantic_prototype/frontier_semantic_test_archive.e50e90db.cpp)
-  add_test(
-    NAME papersoccer_codingame_rank_4_jacek_hybrid_frontier_semantic_test
-    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_frontier_semantic_test)
-  set_tests_properties(
-    papersoccer_codingame_rank_4_jacek_hybrid_frontier_semantic_test
-    PROPERTIES TIMEOUT 30)
-
   add_executable(papersoccer_codingame_rank_4_jacek_hybrid_parity_test
     submissions/codingame/bots/rank_4_jacek_hybrid/parity_test.cpp)
   target_include_directories(
