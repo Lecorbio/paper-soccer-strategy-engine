@@ -223,6 +223,16 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(
+    NAME papersoccer_codingame_leaderboard_unit_tests
+    COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame_leaderboard
+            -p test_*.py)
+  set_tests_properties(papersoccer_codingame_leaderboard_unit_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(
     NAME papersoccer_codingame_jacek_native_bfm_purity
     COMMAND ${CMAKE_COMMAND} -E env
             PYTHONDONTWRITEBYTECODE=1
@@ -336,6 +346,35 @@ function(papersoccer_codingame_target_prefix output_variable bot_name)
 endfunction()
 
 if(NOT EMSCRIPTEN)
+  add_library(papersoccer_codingame_referee_support
+    src/codingame/referee.cpp)
+  target_link_libraries(papersoccer_codingame_referee_support
+    PUBLIC papersoccer_core)
+  target_include_directories(papersoccer_codingame_referee_support
+    PUBLIC include)
+
+  add_executable(papersoccer_codingame_referee
+    src/codingame/main.cpp)
+  target_link_libraries(papersoccer_codingame_referee
+    PRIVATE papersoccer_codingame_referee_support)
+
+  add_executable(papersoccer_codingame_referee_fake_bot
+    tests/codingame/fake_bot.cpp)
+  target_link_libraries(papersoccer_codingame_referee_fake_bot
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_codingame_referee_test
+    tests/codingame/referee_test.cpp)
+  target_link_libraries(papersoccer_codingame_referee_test
+    PRIVATE papersoccer_codingame_referee_support)
+  target_compile_definitions(papersoccer_codingame_referee_test PRIVATE
+    PAPERSOCCER_CODINGAME_FAKE_BOT="$<TARGET_FILE:papersoccer_codingame_referee_fake_bot>")
+  add_dependencies(papersoccer_codingame_referee_test
+    papersoccer_codingame_referee_fake_bot)
+  add_test(NAME papersoccer_codingame_referee_test
+    COMMAND papersoccer_codingame_referee_test)
+  set_tests_properties(papersoccer_codingame_referee_test PROPERTIES TIMEOUT 30)
+
   add_library(papersoccer_opening_bank_support
     src/opening_bank/opening_bank.cpp)
   target_include_directories(papersoccer_opening_bank_support
@@ -885,6 +924,11 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       NAME papersoccer_web_benchmark_ui_tests
       COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_benchmark_ui_test.mjs
+    )
+    add_test(
+      NAME papersoccer_web_leaderboard_ui_tests
+      COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/web_leaderboard_ui_test.mjs
     )
     add_test(
       NAME papersoccer_web_replay_setup_tests

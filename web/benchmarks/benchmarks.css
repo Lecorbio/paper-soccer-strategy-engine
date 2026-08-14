@@ -105,6 +105,32 @@ summary:focus-visible,
   font-weight: 650;
 }
 
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-nav a {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.site-nav a:hover {
+  border-color: var(--line);
+  background: var(--panel-strong);
+}
+
+.site-nav a[aria-current="page"] {
+  border-color: #806215;
+  background: #fff0b8;
+  color: #4f3800;
+}
+
 .back-link,
 .primary-link,
 .secondary-link {
@@ -1161,7 +1187,18 @@ summary:focus-visible,
 
   .benchmark-topbar {
     min-height: 66px;
+    align-items: flex-start;
+    flex-direction: column;
     padding: 10px;
+  }
+
+  .site-nav {
+    width: 100%;
+  }
+
+  .site-nav a {
+    flex: 1;
+    text-align: center;
   }
 
   .benchmark-shell {

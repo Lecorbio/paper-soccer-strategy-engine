@@ -1,0 +1,196 @@
+{
+  "schema": "papersoccer.codingame-leaderboard-roster.v1",
+  "cmakeRegistry": {
+    "path": "CMakeLists.txt",
+    "variable": "PAPERSOCCER_CODINGAME_BOTS"
+  },
+  "entrants": [
+    {
+      "id": "alpha_beta",
+      "displayName": "Alpha Beta",
+      "submissionPath": "submissions/codingame/bots/alpha_beta/submission.cpp",
+      "submissionSha256": "9710f7ef0040f4fcd56f39d897795cc049971962137585c7c3bd9dd36ba7a98f",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/alpha_beta/README.md",
+      "executableTarget": "papersoccer_codingame_submission",
+      "aliases": []
+    },
+    {
+      "id": "rank_5",
+      "displayName": "Rank 5",
+      "submissionPath": "submissions/codingame/bots/rank_5/submission.cpp",
+      "submissionSha256": "f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_5/README.md",
+      "executableTarget": "papersoccer_codingame_rank_5_submission",
+      "aliases": []
+    },
+    {
+      "id": "rank_4",
+      "displayName": "Rank 4",
+      "submissionPath": "submissions/codingame/bots/rank_4/submission.cpp",
+      "submissionSha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_4/README.md",
+      "executableTarget": "papersoccer_codingame_rank_4_submission",
+      "aliases": [
+        {
+          "id": "selfplay_nn_v2",
+          "submissionPath": "submissions/codingame/bots/selfplay_nn_v2/submission.cpp",
+          "submissionSha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9",
+          "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/selfplay_nn_v2/README.md"
+        }
+      ]
+    },
+    {
+      "id": "rank_4_fullturn_bfm",
+      "displayName": "Rank 4 — Full-Turn BFM",
+      "submissionPath": "submissions/codingame/bots/rank_4_fullturn_bfm/submission.cpp",
+      "submissionSha256": "5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_4_fullturn_bfm/README.md",
+      "executableTarget": "papersoccer_codingame_rank_4_fullturn_bfm_submission",
+      "aliases": []
+    },
+    {
+      "id": "rank_4_exchange",
+      "displayName": "Rank 4 — Exchange",
+      "submissionPath": "submissions/codingame/bots/rank_4_exchange/submission.cpp",
+      "submissionSha256": "e72bb4bdc3377d0a4602fd807a31083683677c4516f318d75352b60d63355f20",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_4_exchange/README.md",
+      "executableTarget": "papersoccer_codingame_rank_4_exchange_submission",
+      "aliases": []
+    },
+    {
+      "id": "challenger",
+      "displayName": "Challenger",
+      "submissionPath": "submissions/codingame/bots/challenger/submission.cpp",
+      "submissionSha256": "7ac49501930daa14a938543cd251c6772913b098270653d8ff3faf990fd8794f",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/challenger/README.md",
+      "executableTarget": "papersoccer_codingame_challenger_submission",
+      "aliases": []
+    },
+    {
+      "id": "selfplay_nn",
+      "displayName": "Self-Play NN",
+      "submissionPath": "submissions/codingame/bots/selfplay_nn/submission.cpp",
+      "submissionSha256": "1f980ece41a8ec86347deb77ec4625b1a402f15e1d82456ab04fe1bac40a6389",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/selfplay_nn/README.md",
+      "executableTarget": "papersoccer_codingame_selfplay_nn_submission",
+      "aliases": []
+    },
+    {
+      "id": "jacek_nn",
+      "displayName": "Jacek NN",
+      "submissionPath": "submissions/codingame/bots/jacek_nn/submission.cpp",
+      "submissionSha256": "fb570f7d60157ad1681569011b4249a5db415c1aeca6f665936b26ba5cc52102",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_nn/README.md",
+      "executableTarget": "papersoccer_codingame_jacek_nn_submission",
+      "aliases": []
+    },
+    {
+      "id": "jacek_native_bfm",
+      "displayName": "Jacek Native BFM",
+      "submissionPath": "submissions/codingame/bots/jacek_native_bfm/submission.cpp",
+      "submissionSha256": "d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/README.md",
+      "executableTarget": "papersoccer_codingame_jacek_native_bfm_submission",
+      "aliases": []
+    },
+    {
+      "id": "neural_puct",
+      "displayName": "Neural PUCT",
+      "submissionPath": "submissions/codingame/bots/neural_puct/submission.cpp",
+      "submissionSha256": "11e33be069b6e01d8435ec81e93d95663170466ffde50c4ab2fcdccc60e3325c",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/neural_puct/README.md",
+      "executableTarget": "papersoccer_codingame_neural_puct_submission",
+      "aliases": []
+    },
+    {
+      "id": "topology",
+      "displayName": "Topology",
+      "submissionPath": "submissions/codingame/bots/topology/submission.cpp",
+      "submissionSha256": "8a4ff025ec9074dbe72533eb779ce3bf84987a11d2efe5dde765d4abbad5e6dc",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/topology/README.md",
+      "executableTarget": "papersoccer_codingame_topology_submission",
+      "aliases": []
+    },
+    {
+      "id": "safe_inward",
+      "displayName": "Safe Inward",
+      "submissionPath": "submissions/codingame/bots/safe_inward/submission.cpp",
+      "submissionSha256": "a95d66673d46b33f5d25b5175818f78240bed8da8504c1a7bb1cc38a2b052575",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/safe_inward/README.md",
+      "executableTarget": "papersoccer_codingame_safe_inward_submission",
+      "aliases": []
+    },
+    {
+      "id": "rebound_proof",
+      "displayName": "Rebound Proof",
+      "submissionPath": "submissions/codingame/bots/rebound_proof/submission.cpp",
+      "submissionSha256": "e58fce3bf1314f480f76160471f7f7140fedfff39f71ffbe45c04c4ba4f0595f",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rebound_proof/README.md",
+      "executableTarget": "papersoccer_codingame_rebound_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "defensive_proof",
+      "displayName": "Defensive Proof",
+      "submissionPath": "submissions/codingame/bots/defensive_proof/submission.cpp",
+      "submissionSha256": "d1db4918c916154b6b546840308bac2efc59096b2fc3f4c9a563278146b268c0",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/tree/main/submissions/codingame/bots/defensive_proof",
+      "executableTarget": "papersoccer_codingame_defensive_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "shell_proof",
+      "displayName": "Shell Proof",
+      "submissionPath": "submissions/codingame/bots/shell_proof/submission.cpp",
+      "submissionSha256": "857f27ceeb5bb9cb514622eddb0b326b6fd2b1d55b6ed54e20869879f45fcce6",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/tree/main/submissions/codingame/bots/shell_proof",
+      "executableTarget": "papersoccer_codingame_shell_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "all_depth_proof",
+      "displayName": "All-Depth Proof",
+      "submissionPath": "submissions/codingame/bots/all_depth_proof/submission.cpp",
+      "submissionSha256": "c9895b18b3117c5a93909da28aaff11977afaf76c584ce310c7f153694fd6376",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/all_depth_proof/README.md",
+      "executableTarget": "papersoccer_codingame_all_depth_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "reply_proof",
+      "displayName": "Reply Proof",
+      "submissionPath": "submissions/codingame/bots/reply_proof/submission.cpp",
+      "submissionSha256": "de2cdd18ae37b93bb0a443cdcfe13e52f6992aa0ac1c7fb43a544a874cb59789",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/reply_proof/README.md",
+      "executableTarget": "papersoccer_codingame_reply_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "exchange_proof",
+      "displayName": "Exchange Proof",
+      "submissionPath": "submissions/codingame/bots/exchange_proof/submission.cpp",
+      "submissionSha256": "7d7b1a16d173bce56af021f6cb723587ae59006696c55436bd08320f4b2fe800",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/exchange_proof/README.md",
+      "executableTarget": "papersoccer_codingame_exchange_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "frontier_proof",
+      "displayName": "Frontier Proof",
+      "submissionPath": "submissions/codingame/bots/frontier_proof/submission.cpp",
+      "submissionSha256": "35ffa4c9b30327750c1ca5fa50f6d41a282252f98d187c372a74131b148cafe1",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/frontier_proof/README.md",
+      "executableTarget": "papersoccer_codingame_frontier_proof_submission",
+      "aliases": []
+    },
+    {
+      "id": "conservative_frontier_proof",
+      "displayName": "Conservative Frontier Proof",
+      "submissionPath": "submissions/codingame/bots/conservative_frontier_proof/submission.cpp",
+      "submissionSha256": "b13e1418b4fdd6f719208bd5ab6dd84f67fa55a7cc66f1c988d2ab8dcc9f6c69",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/conservative_frontier_proof/README.md",
+      "executableTarget": "papersoccer_codingame_conservative_frontier_proof_submission",
+      "aliases": []
+    }
+  ]
+}
