@@ -50,6 +50,14 @@ has not been uploaded to the live arena. Final qualification remains false.
 See `EXPERIMENTS.md` for exact, disabled-parity, all-mask symmetry, frozen
 DEVELOPMENT results, and the null-fast-path rejection lineage.
 
+The current DEVELOPMENT candidate adds one behavior-neutral forced-edge
+optimization to that rollback: when exactly one primitive edge is legal,
+`ordered_moves` returns it without computing a score that cannot affect its
+order. Its generated source is 94,527 ASCII characters with SHA-256
+`d18c49c7cc149d8b48a69a03ebb13dd4fc49ae8927c1324515ba1ae197822b15`.
+This candidate is not heldout-qualified or upload-authorized; its one-shot
+DEVELOPMENT clock ablation remains pending.
+
 Generate and run the scaffold gates from the repository root:
 
 ```sh

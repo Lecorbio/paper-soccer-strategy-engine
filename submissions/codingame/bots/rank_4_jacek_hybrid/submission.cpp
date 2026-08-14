@@ -1290,6 +1290,8 @@ bool reconstruct, std::vector<Move> &action) {
 action.clear();
 return analyze_rebound_component(reconstruct ? &action : nullptr);
 }
+
+OrderedMoveList ordered_moves_for_test() { return ordered_moves(); }
 #endif
 
 private:
@@ -1861,6 +1863,11 @@ std::array<std::uint8_t, detail::kMaximumMoves> slots{};
 const std::uint8_t count = position_.legal_slots(slots);
 OrderedMoveList ordered;
 ordered.count = count;
+if (count == 1) {
+const std::uint8_t slot = slots[0];
+ordered.values[0] = OrderedMove{slot, position_.move_for_slot(slot), 0};
+return ordered;
+}
 const Player mover = position_.to_move();
 const Point ball = position_.ball();
 const auto source = position_.ball_vertex();

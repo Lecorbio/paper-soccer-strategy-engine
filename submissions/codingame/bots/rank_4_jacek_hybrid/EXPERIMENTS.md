@@ -267,3 +267,40 @@ null-fast-path identities above remain historical evidence; none identifies
 the current rollback bytes. No heldout or final bank has been opened for the
 rollback candidate, no live upload has occurred, and final qualification is
 false.
+
+## Ablation 5: sole-legal-edge ordering bypass (pending clock gate)
+
+When `ordered_moves` sees exactly one legal primitive edge, no ordering
+decision exists. The candidate returns that edge immediately with a neutral
+score instead of computing progress, center, goal, block, and mobility terms
+that every caller then ignores. Search values, legal actions, proof logic,
+tables, and pruning are unchanged.
+
+The isolated rollback-based prototype used 1,000 deterministic procedural
+states plus four tactical states, both exact-proof masks 0 and 7, and node
+budgets 1, 16, 64, 256, and 1,024. All 10,040 paired decisions matched in
+encoded action, root score, and every emitted `SearchStats` field. Eighteen
+roots had one legal edge; their control heuristic scores were nonzero while
+the candidate scores were zero, proving the branch executed.
+
+Alternating construction-plus-50,000-node microbenchmarks used 30 warm-up and
+300 measured pairs. With production table sizes, the forced-heavy panel
+improved 1.424% at median and 0.596% at p99. The mixed panel changed +0.082%
+at median and improved 0.983% at p99. Result signatures were exact. The same
+panels with small tables also stayed inside the frozen 0.5% regression limit.
+
+A permanent both-color singleton witness now asserts exactly one legal move,
+neutral bypass score, and legal output. Focused submission, parity, generator,
+protocol, and cheap replay tests pass 5/5. The current artifacts are:
+
+- `bot.cpp`: 63,350 bytes, SHA-256
+  `16a4358680cfc69e830136d4e0c2e6e45371139a02ca09ecb9bf1f9e239d3b2b`.
+- `submission.cpp`: 94,527 ASCII characters, SHA-256
+  `d18c49c7cc149d8b48a69a03ebb13dd4fc49ae8927c1324515ba1ae197822b15`.
+- `submission_test.cpp`: 40,103 bytes, SHA-256
+  `0823299900cf0d31730c73ccb91a3a55c7a7ef351949e583a40a7c66a43f5e88`.
+
+No whole-game result is claimed at this stage. The preregistered next step is
+one DEVELOPMENT depth-20 actual-clock comparison against the exact
+pre-singleton rollback algorithm at mask 7. Heldout validation, final banks,
+and live upload remain unopened; final qualification is false.
