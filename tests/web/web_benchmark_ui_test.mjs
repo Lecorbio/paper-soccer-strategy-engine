@@ -50,15 +50,15 @@ function assertApproximately(actual, expected) {
   );
 }
 
-test("benchmark results is the first game-header action", () => {
+test("the game header keeps site navigation separate from game modes", () => {
   const modeGroup = gameHtml.match(
     /<div class="mode-switch"[^>]*>[\s\S]*?<\/div>/,
   )?.[0];
   assert.ok(modeGroup, "the game header should contain its mode group");
-  assert.doesNotMatch(modeGroup, /Benchmark results/);
+  assert.doesNotMatch(modeGroup, /Game|Leaderboard|Benchmarks/);
 
   const benchmarkLink = gameHtml.match(
-    /<a\b(?=[^>]*\bclass="[^"]*\bbenchmark-link\b[^"]*")(?=[^>]*\bhref="benchmarks\/index\.html")[^>]*>[\s\S]*?Benchmark results\s*<\/a>/,
+    /<a\b(?=[^>]*\bclass="[^"]*\bbenchmark-link\b[^"]*")(?=[^>]*\bhref="benchmarks\/index\.html")[^>]*>Benchmarks\s*<\/a>/,
   )?.[0];
   assert.ok(benchmarkLink, "the game header should link to the benchmark overview");
   assert.ok(
@@ -68,24 +68,23 @@ test("benchmark results is the first game-header action", () => {
   const header = gameHtml.match(/<header\b[^>]*>[\s\S]*?<\/header>/)?.[0];
   assert.ok(header, "the game page should have a header");
   assert.doesNotMatch(header, /Open (?:existing|replay)|id="fileInput"/);
-  assert.match(benchmarkLink, /aria-hidden="true"/);
   assert.match(
     gameCss,
-    /\.benchmark-link\s*\{[^}]*background:\s*#fff0b8[^}]*font-weight:\s*750/s,
+    /\.site-nav \.topbar-link\[aria-current="page"\]\s*\{[^}]*background:\s*#fff0b8[^}]*font-weight:\s*750/s,
   );
 });
 
-test("the benchmark overview returns to the game and stays independent of Wasm", () => {
+test("the benchmark overview links to the other pages and stays independent of Wasm", () => {
   assert.match(
     benchmarkHtml,
-    /<a\b(?=[^>]*\bclass="[^"]*\bback-link\b[^"]*")(?=[^>]*\bhref="\.\.\/index\.html")[^>]*>[\s\S]*?Back to game\s*<\/a>/,
+    /<nav class="site-nav" aria-label="Primary">[\s\S]*?href="\.\.\/index\.html">Game<\/a>[\s\S]*?href="\.\.\/leaderboard\/index\.html">Leaderboard<\/a>[\s\S]*?aria-current="page">Benchmarks<\/a>/,
   );
-  const localBackTargets = Array.from(
+  const localTargets = Array.from(
     benchmarkHtml.matchAll(/<a\b[^>]*\bhref="(\.\.[^"]*)"[^>]*>/g),
     (match) => match[1],
   );
-  assert.ok(localBackTargets.length >= 2);
-  assert.ok(localBackTargets.every((target) => target === "../index.html"));
+  assert.ok(localTargets.filter((target) => target === "../index.html").length >= 2);
+  assert.ok(localTargets.includes("../leaderboard/index.html"));
 
   const scriptSources = Array.from(
     benchmarkHtml.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g),

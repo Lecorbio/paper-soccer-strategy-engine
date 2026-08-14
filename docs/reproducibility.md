@@ -123,6 +123,96 @@ protocol smokes, and invokes every generator in `--check` mode. Shared tooling
 and the directory contract are documented in the
 [CodinGame archive](../submissions/codingame/README.md).
 
+## CodinGame-rules bot leaderboard
+
+The leaderboard is an offline, reviewed benchmark rather than a browser arena.
+Its explicit roster is
+`benchmarks/codingame_leaderboard/roster.json`. The manifest covers every
+CMake-registered bot directory, binds each generated submission by SHA-256,
+and treats `selfplay_nn_v2` as an alias of byte-identical `rank_4`. This leaves
+20 unique executable entrants. The website accepts no uploads and cannot run a
+bot; it only renders the checked-in summary.
+
+First configure a Release build and compile the native referee and submission
+executables:
+
+```bash
+cmake -S . -B build/leaderboard -DCMAKE_BUILD_TYPE=Release
+cmake --build build/leaderboard
+```
+
+Run the fast contract validation independently of a full tournament:
+
+```bash
+python3 benchmarks/codingame_leaderboard/leaderboard.py validate
+```
+
+An intentional full refresh runs all 900 games serially. It starts fresh
+persistent bot processes for each match, uses the standard player-ID and
+complete-turn protocol, and enforces 1,000 ms for each bot's first response and
+200 ms thereafter:
+
+```bash
+python3 benchmarks/codingame_leaderboard/leaderboard.py run \
+  --referee build/leaderboard/papersoccer_codingame_referee \
+  --build-dir build/leaderboard \
+  --checkpoint build/leaderboard/leaderboard-checkpoint.json \
+  --output benchmarks/codingame_leaderboard/tournament.json
+```
+
+If a run is interrupted, repeat the same command with `--resume`. Resume is
+fail-closed: it refuses a checkpoint whose roster, tournament contract, or
+runtime fingerprint differs from the current invocation. Referee and
+process-launch failures abort the run. Bot timeouts, crashes, malformed output,
+illegal actions, incomplete rebounds, and output after a terminal edge remain
+visible in the artifact as ordinary scored forfeits.
+
+The schedule is fixed by SplitMix64 seed `20260813`: two complete
+color-swapped round robins plus seven seeded color-swapped perfect-matching
+rounds. Each entrant plays 90 games, 45 as each player, and four or six games
+against every opponent. Rating follows decisive 1v1 TrueSkill with `mu=25`,
+`sigma=25/3`, `beta=25/6`, `tau=25/300`, and zero draw probability. The
+conservative leaderboard value is the full-precision `mu - 3 sigma`; forfeits
+update it as ordinary losses. The UI calls this **Local CodinGame-style score**
+because CodinGame does not publish the full ranking parameters or matchmaking
+contract.
+
+Validate a completed raw artifact, then derive the compact static snapshot:
+
+```bash
+python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
+  --artifact benchmarks/codingame_leaderboard/tournament.json \
+  --referee build/leaderboard/papersoccer_codingame_referee
+
+python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
+  --input benchmarks/codingame_leaderboard/tournament.json \
+  --output web/leaderboard/leaderboard-results.js \
+  --referee build/leaderboard/papersoccer_codingame_referee
+```
+
+The raw `papersoccer.codingame-leaderboard-tournament.v1` artifact retains the
+complete action transcripts, outcomes, timings, hashes, schedule and rating
+contract, source-tree identity, and compiler/OS/CPU provenance. The derived
+`papersoccer.codingame-leaderboard-summary.v1` classic-script snapshot contains
+only standings and pairwise summaries. Check byte-for-byte publication
+freshness without rewriting either file:
+
+```bash
+python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
+  --input benchmarks/codingame_leaderboard/tournament.json \
+  --output web/leaderboard/leaderboard-results.js \
+  --referee build/leaderboard/papersoccer_codingame_referee \
+  --check
+```
+
+The manual tournament workflow uploads both generated artifacts for maintainer
+review. They become site evidence only through a normal pull request. Regular
+pull-request CI runs contract, unit, smoke, and snapshot-freshness checks; it
+does not spend 900 wall-clock-limited games on every change. Changes to the
+roster, generated submissions, referee, rules, schedule, or rating contract
+therefore make the checked-in publication stale instead of silently rerating
+old games.
+
 ## WebAssembly artifacts
 
 `web/papersoccer-wasm.js` embeds the live-game Wasm bytes, allowing direct-file
@@ -372,15 +462,20 @@ match:
 - possession partitioning, exact endgame proofs, Game Review grades, and
   complete-action diagnostics for a locked profile and calibration;
 - paired opening banks and bootstrap resampling from recorded seeds;
+- leaderboard scheduling, rating from recorded decisive games, canonical raw
+  serialization, and compact snapshot publication;
 - generated submission/model headers; and
 - checked-in Wasm bytes when using the pinned toolchain.
 
-Wall-clock timings are machine-specific. Arena win records are meaningful only
-with the recorded rules, opponents, color swaps, seeds, budgets, and stopping
-criteria. A confidence interval that crosses the promotion threshold is not a
-positive gate. Rank5Derived uses different rules and work limits from the
-CodinGame entrant, so its deterministic demo results never inherit the original
-rank.
+Wall-clock timings and fresh time-limited bot decisions are machine-specific.
+Leaderboard results are therefore frozen with their executable hashes and
+runtime provenance; the schedule and rating are reproducible exactly from the
+recorded games even when another machine's live rematch differs. Arena win
+records are meaningful only with the recorded rules, opponents, color swaps,
+seeds, budgets, and stopping criteria. A confidence interval that crosses the
+promotion threshold is not a positive gate. Rank5Derived uses different rules
+and work limits from the CodinGame entrant, so its deterministic demo results
+never inherit the original rank.
 
 ## Pre-release checklist
 
@@ -391,13 +486,15 @@ Before publishing documentation or code that changes evidence paths:
 3. With Emscripten 6.0.2, run `check_papersoccer_web` and
    `check_papersoccer_analysis_wasm` if shared or browser C++ changed.
 4. Run `web_summary.py --check` if benchmark inputs or presentation changed.
-5. Run the Python import validation and model generator check if research code
+5. Run the leaderboard `validate` and `publish --check` commands if its roster,
+   referee, rules, submissions, tournament contract, artifact, or page changed.
+6. Run the Python import validation and model generator check if research code
    or dependencies changed.
-6. Confirm raw outputs remain under ignored `results/` and curated reports
+7. Confirm raw outputs remain under ignored `results/` and curated reports
    remain tracked under `benchmarks/`.
-7. Recheck Markdown links from their containing file; paths inside `docs/`
+8. Recheck Markdown links from their containing file; paths inside `docs/`
    require `../` to reach repository-root artifacts.
-8. Review claims against [Experiments](experiments.md) and the specialized
+9. Review claims against [Experiments](experiments.md) and the specialized
    source records, preserving limitations and bot provenance.
-9. Validate the Game Review manifest and lock; require the complete gate only
+10. Validate the Game Review manifest and lock; require the complete gate only
    after its one-shot test has actually finished.
