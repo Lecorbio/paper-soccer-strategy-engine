@@ -139,6 +139,14 @@ class HeldoutQualificationTest(unittest.TestCase):
         cls.plan = recorder.validate_plan()
 
     def test_plan_registry_and_thresholds_are_exact(self):
+        self.assertEqual(
+            self.plan["schema"],
+            "rank4-jacek-hybrid-heldout-qualification-plan-v3",
+        )
+        self.assertEqual(
+            recorder.BINDING_SCHEMA,
+            "rank4-jacek-hybrid-heldout-binding-v3",
+        )
         self.assertEqual(sum(item["games"] for item in self.plan["banks"]["validation"]), 106)
         self.assertEqual(sum(item["games"] for item in self.plan["banks"]["final"]), 212)
         self.assertEqual(self.plan["paired_sweep_test"]["equivalent_rational_max_inclusive"], "1/40")
@@ -153,6 +161,25 @@ class HeldoutQualificationTest(unittest.TestCase):
             "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
             dependency_labels,
         )
+        self.assertIn(
+            str(recorder.preflight.PREDECESSOR_CLAIM.relative_to(ROOT)),
+            dependency_labels,
+        )
+        self.assertIn(
+            str(recorder.preflight.PREDECESSOR_FAILURE.relative_to(ROOT)),
+            dependency_labels,
+        )
+        amendment = self.plan["technical_successor_amendment"]
+        self.assertEqual(
+            amendment["predecessor_failure_receipt"]["sha256"],
+            recorder.preflight.PREDECESSOR_FAILURE_SHA256,
+        )
+        self.assertEqual(amendment["successor_constraints"]["authorized_attempts"], 1)
+        self.assertFalse(
+            amendment["successor_constraints"]
+            ["validation_or_final_bank_access_authorized_by_amendment"]
+        )
+        self.assertIn("preflight-successor", str(recorder.BUILD_ROOT))
         for item in (
             *self.plan["banks"]["validation"], *self.plan["banks"]["final"],
         ):

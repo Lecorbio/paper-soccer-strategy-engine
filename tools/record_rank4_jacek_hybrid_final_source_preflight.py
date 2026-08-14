@@ -52,18 +52,43 @@ PLAN = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json
 OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight"
 RECEIPTS = OUTPUT / "receipts"
 CLAIMS = OUTPUT / "claims"
-LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-preflight.lock"
+PREDECESSOR_FAILURES = OUTPUT / "predecessor_failures"
+LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-successor.lock"
 BENCHMARK_LOCK = Path("/tmp/rank4-hybrid-prototype-benchmark.lock")
-BUILD_ROOT = ROOT / "build/rank4-jacek-hybrid-heldout-preflight"
+BUILD_ROOT = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-successor"
 CLANG_BUILD = BUILD_ROOT / "clang-release"
 GNU_BUILD = BUILD_ROOT / "gnu-release"
 SANITIZER_BUILD = BUILD_ROOT / "clang-sanitized"
 TEMPORARY_DIRECTORY = BUILD_ROOT / "tmp"
+ISOLATED_HOME = TEMPORARY_DIRECTORY / "home"
 
-SCHEMA = "rank4-jacek-hybrid-final-source-preflight-v2"
+SCHEMA = "rank4-jacek-hybrid-final-source-preflight-v3"
 CLAIM_SCHEMA = "rank4-jacek-hybrid-final-source-preflight-claim-v1"
+PREDECESSOR_FAILURE_SCHEMA = (
+    "rank4-jacek-hybrid-final-source-preflight-predecessor-failure-v1"
+)
 CAMPAIGN_ID = "rank_4_jacek_hybrid-36h-20260813"
 CAMPAIGN_T0_UTC = "2026-08-13T19:15:07Z"
+SUCCESSOR_PLAN_SHA256 = (
+    "3b463b8bc4f9c34d7a9c320b07165a6563c167e14e004f3d970a9b77497408c5"
+)
+PREDECESSOR_HEAD = "9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299"
+PREDECESSOR_PLAN_SHA256 = (
+    "fc397ce54dbed8cc6335e7eadd65e3ad6044f56d077eb5d296d9acd6f8611a2b"
+)
+PREDECESSOR_PRODUCER_SHA256 = (
+    "22f90088d56efd73c9c151b57c4be855f82fbb0fbee296fb4a6dee3599a105dd"
+)
+PREDECESSOR_CLAIM_SHA256 = (
+    "cf285fc2ca072675e09c4ebec35e31630e136cbbac3815bdeb86767d3ef2a842"
+)
+PREDECESSOR_FAILURE_SHA256 = (
+    "564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056"
+)
+PREDECESSOR_CLAIM = CLAIMS / f"{PREDECESSOR_HEAD}.json"
+PREDECESSOR_FAILURE = (
+    PREDECESSOR_FAILURES / f"{PREDECESSOR_FAILURE_SHA256}.json"
+)
 ORDINARY_GATE_TARGET = (
     "papersoccer_codingame_rank_4_jacek_hybrid_comparison_gate"
 )
@@ -78,6 +103,31 @@ SOURCE_TEST = BOT / "submission_test.cpp"
 POSITION_KEY_TEST = BOT / "position_key_cache_test.cpp"
 ORDINARY_GATE_SOURCE = BOT / "comparison_gate.cpp"
 HELDOUT_GATE_WRAPPER = BOT / "comparison_gate_heldout.cpp"
+TECHNICAL_SUCCESSOR_ALLOWED_PATHS = (
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json",
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/"
+    f"{PREDECESSOR_HEAD}.json",
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/"
+    "predecessor_failures/" + f"{PREDECESSOR_FAILURE_SHA256}.json",
+    "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
+    "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
+    "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
+    "tools/record_rank4_jacek_hybrid_heldout_qualification.py",
+)
+UNCHANGED_FINALIST_FILES = (
+    (BOT / "bot.cpp", 63_107,
+     "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b"),
+    (SOURCE, 94_312,
+     "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7"),
+    (SOURCE_TEST, 39_137,
+     "ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697"),
+    (ROOT / "CMakeLists.txt", 54_279,
+     "9eaa60318fff56ea6cad8791c9388069e2a73ec316aa8e61ec7fea156faefbda"),
+    (ORDINARY_GATE_SOURCE, 44_793,
+     "f15254b2e4469e6d2adcc5f68e5a66920c61433ddbb742f712da346f2f9f91ed"),
+    (HELDOUT_GATE_WRAPPER, 78,
+     "333d875eb7b55644980624c5cfec1aaf44169ca63110126805535d0cdcb86fde"),
+)
 ORDINARY_GATE_BASELINE_SHA256 = (
     "3d50c0f1e4b6a96d95f24774ce1fc664c2d27b9dd3d93601d6c8547a111230d8"
 )
@@ -184,6 +234,8 @@ TRACKED_INPUTS = (
     PRODUCER_TEST,
     QUALIFICATION_TEST,
     PLAN,
+    PREDECESSOR_CLAIM,
+    PREDECESSOR_FAILURE,
     ROOT / "CMakeLists.txt",
     ROOT / "submissions/codingame/tools/generate_submission.mjs",
     ROOT / "submissions/codingame/tools/protocol_smoke_test.mjs",
@@ -423,6 +475,7 @@ def sanitized_environment() -> dict[str, str]:
         "ASAN_OPTIONS": (
             f"abort_on_error=1:detect_leaks={detect_leaks}:halt_on_error=1"
         ),
+        "HOME": str(ISOLATED_HOME),
         "LANG": "C",
         "LC_ALL": "C",
         "OMP_NUM_THREADS": "1",
@@ -500,6 +553,238 @@ def git_blob(head: str, path: Path) -> bytes:
     if completed.returncode != 0:
         raise ValueError(f"tracked preflight input is absent at HEAD: {relative}")
     return completed.stdout
+
+
+def mode_neutral_file_reference(path: Path) -> dict[str, Any]:
+    """Bind committed evidence without relying on Git-unstable chmod bits."""
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"technical-successor evidence is not a file: {path}")
+    raw = path.read_bytes()
+    return {
+        "path": identity_label(path),
+        "bytes": len(raw),
+        "sha256": sha256_bytes(raw),
+    }
+
+
+def validate_predecessor_evidence(head: str) -> dict[str, Any]:
+    failure_files = fixed_registry_files(
+        PREDECESSOR_FAILURES, r"[0-9a-f]{64}\.json"
+    )
+    if failure_files != [PREDECESSOR_FAILURE]:
+        raise ValueError("predecessor failure receipt registry is not exact")
+    for path in (PREDECESSOR_CLAIM, PREDECESSOR_FAILURE):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("predecessor evidence is not a regular file")
+    claim_raw = PREDECESSOR_CLAIM.read_bytes()
+    claim = json.loads(claim_raw)
+    expected_claim = {
+        "candidate_commit": PREDECESSOR_HEAD,
+        "claim_precedes_first_build_or_test_command": True,
+        "claimed_utc": "2026-08-14T06:21:37.499970+00:00",
+        "environment_sha256": (
+            "7ca9450673ee2864acc52c56d01385161da6d591408f94fb58dad413075404ac"
+        ),
+        "host_sha256": (
+            "1a7f59560af8acc4bc4533679ffc1fe83a835bf979928bb47909c7cbffbed30c"
+        ),
+        "one_shot": True,
+        "plan_sha256": PREDECESSOR_PLAN_SHA256,
+        "producer_sha256": PREDECESSOR_PRODUCER_SHA256,
+        "schema": CLAIM_SCHEMA,
+    }
+    if (sha256_bytes(claim_raw) != PREDECESSOR_CLAIM_SHA256 or
+            canonical_json(claim) != claim_raw or
+            not exact_json_equal(claim, expected_claim)):
+        raise ValueError("predecessor preflight claim identity changed")
+
+    failure_raw = PREDECESSOR_FAILURE.read_bytes()
+    failure = json.loads(failure_raw)
+    boundary = failure.get("failure_boundary", {})
+    outcome = failure.get("outer_producer_outcome", {})
+    diagnosis = failure.get("independent_post_failure_diagnosis", {})
+    predecessor = failure.get("predecessor", {})
+    authorization = failure.get("successor_authorization", {})
+    if (PREDECESSOR_FAILURE.stem != PREDECESSOR_FAILURE_SHA256 or
+            sha256_bytes(failure_raw) != PREDECESSOR_FAILURE_SHA256 or
+            canonical_json(failure) != failure_raw or
+            failure.get("schema") != PREDECESSOR_FAILURE_SCHEMA or
+            failure.get("status") != "failed-technical-preflight-pre-compile" or
+            failure.get("campaign_id") != CAMPAIGN_ID or
+            failure.get("campaign_t0_utc") != CAMPAIGN_T0_UTC or
+            predecessor.get("candidate_commit") != PREDECESSOR_HEAD or
+            predecessor.get("claim", {}).get("sha256") !=
+            PREDECESSOR_CLAIM_SHA256 or
+            predecessor.get("plan", {}).get("sha256") !=
+            PREDECESSOR_PLAN_SHA256 or
+            predecessor.get("producer", {}).get("sha256") !=
+            PREDECESSOR_PRODUCER_SHA256 or
+            not is_exact_int(outcome.get("returncode"), minimum=0) or
+            outcome.get("returncode") != 2 or
+            outcome.get("stdout") != {
+                "bytes": 0, "empty": True,
+                "sha256": sha256_bytes(b""),
+                "semantic_code": "empty-outer-stdout",
+            } or outcome.get("stderr") != {
+                "bytes": 31, "empty": False,
+                "sha256": sha256_bytes(b"clang_release configure failed\n"),
+                "semantic_code": "clang-release-configure-rejected",
+            } or outcome.get("original_configure_command_record_persisted")
+            is not False or
+            outcome.get("original_configure_raw_stdout_persisted") is not False or
+            outcome.get("original_configure_raw_stderr_persisted") is not False or
+            diagnosis.get("classification") !=
+            "independent-reproduction-not-original-command-record" or
+            diagnosis.get("original_environment_home_present") is not False or
+            not is_exact_int(
+                diagnosis.get("reproduction_cmake_returncode"), minimum=0
+            ) or diagnosis.get("reproduction_cmake_returncode") != 0 or
+            not is_exact_int(
+                diagnosis.get("reproduction_stderr", {}).get("occurrences"),
+                minimum=0,
+            ) or diagnosis.get("reproduction_stderr", {}).get("occurrences") != 2 or
+            diagnosis.get("reproduction_stderr", {}).get("semantic_code") !=
+            "home-required-by-homebrew" or
+            boundary.get("project_compile_started") is not False or
+            boundary.get("tests_started") is not False or
+            boundary.get("development_contract_game_run") is not False or
+            boundary.get("preflight_success_receipt_created") is not False or
+            boundary.get("binding_claim_created") is not False or
+            boundary.get("binding_created") is not False or
+            boundary.get("stage_claims_created") is not False or
+            boundary.get("stage_reports_created") is not False or
+            boundary.get("decisions_created") is not False or
+            boundary.get("validation_bank_accessed") is not False or
+            boundary.get("final_bank_accessed") is not False or
+            not exact_json_equal(boundary.get("heldout_bank_files_accessed"), []) or
+            not is_exact_int(authorization.get("authorized_attempts"), minimum=1) or
+            authorization.get("authorized_attempts") != 1 or
+            authorization.get("requires_direct_child_commit") is not True or
+            authorization.get("requires_exact_amendment_path_allowlist") is not True or
+            authorization.get("requires_fresh_build_root") is not True or
+            authorization.get("requires_isolated_task_home") is not True or
+            authorization.get("heldout_data_access_authorized_by_this_receipt")
+            is not False):
+        raise ValueError("predecessor failure receipt binding mismatch")
+    require_after_t0(failure["recorded_utc"], "predecessor failure receipt")
+
+    for path, raw in (
+        (PREDECESSOR_CLAIM, claim_raw),
+        (PREDECESSOR_FAILURE, failure_raw),
+    ):
+        if git_blob(head, path) != raw:
+            raise ValueError("predecessor evidence is not exact at successor HEAD")
+    old_plan = git_blob(PREDECESSOR_HEAD, PLAN)
+    old_producer = git_blob(PREDECESSOR_HEAD, PRODUCER)
+    if (len(old_plan) != 13_552 or
+            sha256_bytes(old_plan) != PREDECESSOR_PLAN_SHA256 or
+            len(old_producer) != 77_308 or
+            sha256_bytes(old_producer) != PREDECESSOR_PRODUCER_SHA256):
+        raise ValueError("predecessor committed plan/producer identity changed")
+    return {
+        "claim": mode_neutral_file_reference(PREDECESSOR_CLAIM),
+        "failure_receipt": mode_neutral_file_reference(PREDECESSOR_FAILURE),
+    }
+
+
+def predecessor_plan_projection(plan: dict[str, Any]) -> dict[str, Any]:
+    projected = json.loads(json.dumps(plan))
+    projected["schema"] = "rank4-jacek-hybrid-heldout-qualification-plan-v2"
+    projected.pop("technical_successor_amendment", None)
+    preflight_plan = projected.get("final_source_preflight", {})
+    preflight_plan["fresh_fixed_build_directories"] = [
+        "build/rank4-jacek-hybrid-heldout-preflight/clang-release",
+        "build/rank4-jacek-hybrid-heldout-preflight/gnu-release",
+        "build/rank4-jacek-hybrid-heldout-preflight/clang-sanitized",
+    ]
+    preflight_plan.pop("isolated_task_home", None)
+    return projected
+
+
+def validate_successor_plan() -> dict[str, Any]:
+    raw = PLAN.read_bytes()
+    if sha256_bytes(raw) != SUCCESSOR_PLAN_SHA256:
+        raise ValueError("technical-successor plan hash mismatch")
+    plan = json.loads(raw)
+    amendment = plan.get("technical_successor_amendment", {})
+    shape = amendment.get("authorized_commit_shape", {})
+    constraints = amendment.get("successor_constraints", {})
+    if (plan.get("schema") !=
+            "rank4-jacek-hybrid-heldout-qualification-plan-v3" or
+            amendment.get("status") !=
+            "one-technical-successor-authorized-unbound" or
+            amendment.get("predecessor_candidate_commit") != PREDECESSOR_HEAD or
+            amendment.get("predecessor_plan_sha256") !=
+            PREDECESSOR_PLAN_SHA256 or
+            amendment.get("predecessor_claim", {}).get("sha256") !=
+            PREDECESSOR_CLAIM_SHA256 or
+            amendment.get("predecessor_failure_receipt", {}).get("sha256") !=
+            PREDECESSOR_FAILURE_SHA256 or
+            shape.get("successor_must_have_exactly_one_parent") is not True or
+            shape.get("sole_parent_must_equal_predecessor") is not True or
+            not exact_json_equal(
+                shape.get("allowed_changed_paths"),
+                list(TECHNICAL_SUCCESSOR_ALLOWED_PATHS),
+            ) or not is_exact_int(
+                constraints.get("authorized_attempts"), minimum=1
+            ) or constraints.get("authorized_attempts") != 1 or
+            constraints.get("predecessor_claim_must_remain_present_and_unchanged")
+            is not True or
+            constraints.get("all_foreign_predecessor_or_successor_claims_fail_closed")
+            is not True or constraints.get("fresh_build_root_required") is not True or
+            constraints.get("isolated_empty_task_home_required_before_successor_claim")
+            is not True or constraints.get("candidate_gameplay_changed") is not False or
+            constraints.get("qualification_configuration_changed") is not False or
+            constraints.get("validation_or_final_bank_access_authorized_by_amendment")
+            is not False):
+        raise ValueError("technical-successor plan amendment mismatch")
+    predecessor_plan = json.loads(git_blob(PREDECESSOR_HEAD, PLAN))
+    if not exact_json_equal(
+            predecessor_plan_projection(plan), predecessor_plan):
+        raise ValueError("technical successor changed qualification semantics")
+    return plan
+
+
+def technical_successor_record(head: str) -> dict[str, Any]:
+    if head == PREDECESSOR_HEAD or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ValueError("preflight must run at the authorized successor commit")
+    parents = git_text("rev-list", "--parents", "-n", "1", head).split()
+    if parents != [head, PREDECESSOR_HEAD]:
+        raise ValueError("technical successor is not the sole direct child of predecessor")
+    changed = tuple(sorted(filter(None, git_text(
+        "diff", "--name-only", PREDECESSOR_HEAD, head
+    ).splitlines())))
+    if changed != tuple(sorted(TECHNICAL_SUCCESSOR_ALLOWED_PATHS)):
+        raise ValueError("technical-successor commit path allowlist mismatch")
+    validate_successor_plan()
+    predecessor_evidence = validate_predecessor_evidence(head)
+    unchanged: dict[str, dict[str, Any]] = {}
+    for path, expected_bytes, expected_sha256 in UNCHANGED_FINALIST_FILES:
+        live = path.read_bytes()
+        committed = git_blob(head, path)
+        previous = git_blob(PREDECESSOR_HEAD, path)
+        if (live != committed or committed != previous or
+                len(live) != expected_bytes or
+                sha256_bytes(live) != expected_sha256):
+            raise ValueError(f"technical successor changed finalist input: {path}")
+        unchanged[identity_label(path)] = {
+            "path": identity_label(path),
+            "bytes": expected_bytes,
+            "sha256": expected_sha256,
+        }
+    return {
+        "authorized": True,
+        "attempt_ordinal": 2,
+        "predecessor_candidate_commit": PREDECESSOR_HEAD,
+        "successor_candidate_commit": head,
+        "direct_parent_verified": True,
+        "changed_paths": list(changed),
+        "predecessor_evidence": predecessor_evidence,
+        "unchanged_finalist_identities": unchanged,
+        "fresh_build_root": str(BUILD_ROOT.relative_to(ROOT)),
+        "isolated_home": str(ISOLATED_HOME.relative_to(ROOT)),
+        "heldout_bank_files_accessed_by_amendment": [],
+    }
 
 
 def require_clean_tracked_head() -> dict[str, Any]:
@@ -1382,7 +1667,7 @@ def validate_passed_receipt(
         "tool_identities_after",
         "tracked_inputs_before", "tracked_inputs_after", "source_checks",
         "generator_check", "compilers", "builds", "comparison_gate",
-        "checks", "heldout_bank_files_accessed",
+        "checks", "technical_successor", "heldout_bank_files_accessed",
     }
     if not isinstance(receipt, dict) or set(receipt) != expected_keys:
         raise ValueError("preflight receipt schema fields mismatch")
@@ -1399,6 +1684,10 @@ def validate_passed_receipt(
             not exact_json_equal(receipt["plan"], plan_identity) or
             not exact_json_equal(receipt["environment"], environment_record()) or
             not exact_json_equal(receipt["host"], host_identity()) or
+            not exact_json_equal(
+                receipt["technical_successor"],
+                technical_successor_record(expected_head),
+            ) or
             not exact_json_equal(receipt["heldout_bank_files_accessed"], [])):
         raise ValueError("preflight receipt top-level binding mismatch")
     if not exact_json_equal(receipt["producer"], file_identity(PRODUCER)):
@@ -1674,11 +1963,47 @@ def existing_receipts_for_head(head: str) -> list[Path]:
     return matches
 
 
+def validate_successor_claim_registry(head: str) -> list[Path]:
+    files = fixed_registry_files(CLAIMS, r"[0-9a-f]{40,64}\.json")
+    allowed = {PREDECESSOR_CLAIM, preflight_claim_path(head)}
+    if any(path not in allowed for path in files):
+        raise ValueError("foreign preflight claim violates successor policy")
+    if PREDECESSOR_CLAIM not in files:
+        raise ValueError("spent predecessor preflight claim is absent")
+    validate_predecessor_evidence(head)
+    return files
+
+
+def prepare_fresh_successor_workspace() -> None:
+    """Create only an empty task HOME; never clean a possibly spent attempt."""
+    allowed_directories = {
+        BUILD_ROOT.resolve(strict=False),
+        TEMPORARY_DIRECTORY.resolve(strict=False),
+        ISOLATED_HOME.resolve(strict=False),
+    }
+    if os.path.lexists(BUILD_ROOT):
+        if BUILD_ROOT.is_symlink() or not BUILD_ROOT.is_dir():
+            raise ValueError("fresh successor build root is not a real directory")
+        observed = {BUILD_ROOT.resolve(strict=True)}
+        for entry in BUILD_ROOT.rglob("*"):
+            if entry.is_symlink() or not entry.is_dir():
+                raise ValueError("successor workspace is not a fresh empty scaffold")
+            observed.add(entry.resolve(strict=True))
+        if not observed.issubset(allowed_directories):
+            raise ValueError("successor workspace contains an unexpected directory")
+    ensure_directory_durable(ISOLATED_HOME)
+    require_isolated_home_empty()
+
+
+def require_isolated_home_empty() -> None:
+    if (ISOLATED_HOME.is_symlink() or not ISOLATED_HOME.is_dir() or
+            any(ISOLATED_HOME.iterdir())):
+        raise ValueError("isolated successor HOME is not an empty real directory")
+
+
 def main() -> int:
     parser = __import__("argparse").ArgumentParser()
     parser.parse_args()
-    ensure_directory_durable(BUILD_ROOT)
-    ensure_directory_durable(TEMPORARY_DIRECTORY)
     ensure_directory_durable(LOCK.parent)
     with open_lock(LOCK) as private_handle, open_lock(
             BENCHMARK_LOCK) as shared_handle:
@@ -1690,14 +2015,9 @@ def main() -> int:
             return 2
         try:
             git = require_clean_tracked_head()
-            claim_files = fixed_registry_files(
-                CLAIMS, r"[0-9a-f]{40,64}\.json"
-            )
+            successor = technical_successor_record(git["head"])
+            claim_files = validate_successor_claim_registry(git["head"])
             expected_claim_path = preflight_claim_path(git["head"])
-            if any(path != expected_claim_path for path in claim_files):
-                raise ValueError(
-                    "foreign preflight claim violates single-finalist policy"
-                )
             existing = existing_receipts_for_head(git["head"])
             if len(existing) > 1:
                 raise ValueError("multiple preflight receipts exist for current HEAD")
@@ -1710,14 +2030,20 @@ def main() -> int:
                 print(existing[0].relative_to(ROOT))
                 print(f"sha256={existing[0].stem}")
                 return 0
-            environment = environment_record()
-            host_before = host_identity()
-            plan_sha256 = file_identity(PLAN)["sha256"]
             claim_path = preflight_claim_path(git["head"])
             if os.path.lexists(claim_path):
                 raise ValueError(
                     "preflight claim is spent without a valid receipt; retry forbidden"
                 )
+            if expected_claim_path in claim_files:
+                raise ValueError(
+                    "successor preflight claim is spent; workspace remains untouched"
+                )
+            prepare_fresh_successor_workspace()
+            environment = environment_record()
+            host_before = host_identity()
+            plan_sha256 = file_identity(PLAN)["sha256"]
+            require_isolated_home_empty()
             claim_path, claim = create_preflight_claim(
                 git["head"], plan_sha256, environment, host_before
             )
@@ -1818,6 +2144,7 @@ def main() -> int:
                     "contract": gate_contract,
                 },
                 "checks": checks,
+                "technical_successor": successor,
                 "heldout_bank_files_accessed": [],
             }
             path, digest = persist_content_addressed(receipt)

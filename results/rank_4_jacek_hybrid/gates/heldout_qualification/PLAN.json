@@ -1,5 +1,5 @@
 {
-  "schema": "rank4-jacek-hybrid-heldout-qualification-plan-v2",
+  "schema": "rank4-jacek-hybrid-heldout-qualification-plan-v3",
   "status": "preregistered-unbound",
   "campaign": {
     "campaign_id": "rank_4_jacek_hybrid-36h-20260813",
@@ -8,6 +8,56 @@
     "t0_utc": "2026-08-13T19:15:07Z"
   },
   "classification": "single-finalist-untouched-validation-then-final-qualification",
+  "technical_successor_amendment": {
+    "status": "one-technical-successor-authorized-unbound",
+    "reason": "The predecessor one-shot preflight claim is permanently spent by a pre-compile environment defect. The authoritative outer producer evidence retained exit 2 plus digest-length-empty evidence for empty stdout and the configure-rejected stderr. No original inner configure command record or raw stream was persisted. A later independent same-environment reproduction returned CMake zero and produced the Homebrew HOME-required diagnostic twice, identifying omitted HOME as the cause; its stream is also retained only by digest, length, count, and semantic code. No project compile, test, game, held-out access, binding, successful preflight receipt, stage claim, stage report, or decision occurred.",
+    "predecessor_candidate_commit": "9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299",
+    "predecessor_plan_sha256": "fc397ce54dbed8cc6335e7eadd65e3ad6044f56d077eb5d296d9acd6f8611a2b",
+    "predecessor_claim": {
+      "path": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299.json",
+      "bytes": 576,
+      "sha256": "cf285fc2ca072675e09c4ebec35e31630e136cbbac3815bdeb86767d3ef2a842"
+    },
+    "predecessor_failure_receipt": {
+      "path": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/predecessor_failures/564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056.json",
+      "bytes": 5719,
+      "sha256": "564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056"
+    },
+    "authorized_commit_shape": {
+      "successor_must_have_exactly_one_parent": true,
+      "sole_parent_must_equal_predecessor": true,
+      "allowed_changed_paths": [
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json",
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299.json",
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/predecessor_failures/564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056.json",
+        "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
+        "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
+        "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
+        "tools/record_rank4_jacek_hybrid_heldout_qualification.py"
+      ]
+    },
+    "unchanged_finalist_identities": {
+      "candidate_engine_sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b",
+      "candidate_generated_source_sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7",
+      "candidate_test_source_sha256": "ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697",
+      "cmake_sha256": "9eaa60318fff56ea6cad8791c9388069e2a73ec316aa8e61ec7fea156faefbda",
+      "ordinary_gate_sha256": "f15254b2e4469e6d2adcc5f68e5a66920c61433ddbb742f712da346f2f9f91ed",
+      "heldout_gate_wrapper_sha256": "333d875eb7b55644980624c5cfec1aaf44169ca63110126805535d0cdcb86fde"
+    },
+    "successor_constraints": {
+      "authorized_attempts": 1,
+      "predecessor_claim_must_remain_present_and_unchanged": true,
+      "predecessor_failure_receipt_must_be_canonical_content_addressed_and_tracked": true,
+      "all_foreign_predecessor_or_successor_claims_fail_closed": true,
+      "fresh_build_root_required": true,
+      "isolated_empty_task_home_required_before_successor_claim": true,
+      "successor_claim_must_precede_every_build_or_test_command": true,
+      "candidate_gameplay_changed": false,
+      "candidate_test_changed": false,
+      "qualification_configuration_changed": false,
+      "validation_or_final_bank_access_authorized_by_amendment": false
+    }
+  },
   "candidate_binding": {
     "status": "placeholder-until-final-candidate-selection",
     "immutable_content_addressed_binding_required": true,
@@ -47,10 +97,11 @@
     "receipt_registry": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/receipts",
     "one_shot_claim_registry": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims",
     "fresh_fixed_build_directories": [
-      "build/rank4-jacek-hybrid-heldout-preflight/clang-release",
-      "build/rank4-jacek-hybrid-heldout-preflight/gnu-release",
-      "build/rank4-jacek-hybrid-heldout-preflight/clang-sanitized"
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/clang-release",
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/gnu-release",
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/clang-sanitized"
     ],
+    "isolated_task_home": "build/rank4-jacek-hybrid-heldout-preflight-successor/tmp/home",
     "fixed_development_only_sweep_contract_bank": "results/rank_4_jacek_hybrid/openings/development_d04.tsv",
     "dedicated_sweep_gate_target": "papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate",
     "dedicated_sweep_gate_wrapper": "submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_heldout.cpp",

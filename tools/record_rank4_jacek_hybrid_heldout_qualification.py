@@ -43,7 +43,7 @@ RECORDER = Path(__file__).resolve()
 OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification"
 PLAN = OUTPUT / "PLAN.json"
 CAMPAIGN = ROOT / "results/rank_4_jacek_hybrid/campaign.json"
-PLAN_SHA256 = "fc397ce54dbed8cc6335e7eadd65e3ad6044f56d077eb5d296d9acd6f8611a2b"
+PLAN_SHA256 = "3b463b8bc4f9c34d7a9c320b07165a6563c167e14e004f3d970a9b77497408c5"
 CAMPAIGN_SHA256 = "aed2a52f7a59c2b1988b5c365c23b57f8ec41fbfb50927211655a8565df63fa7"
 
 GATE_TARGET = preflight.GATE_TARGET
@@ -73,8 +73,8 @@ PRIVATE_LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-qualification.lock"
 BIND_LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-binding.lock"
 STAGE_TIMEOUT_SECONDS = {"validation": 14_400, "final": 28_800}
 
-PLAN_SCHEMA = "rank4-jacek-hybrid-heldout-qualification-plan-v2"
-BINDING_SCHEMA = "rank4-jacek-hybrid-heldout-binding-v2"
+PLAN_SCHEMA = "rank4-jacek-hybrid-heldout-qualification-plan-v3"
+BINDING_SCHEMA = "rank4-jacek-hybrid-heldout-binding-v3"
 PREFLIGHT_SCHEMA = preflight.SCHEMA
 REPORT_SCHEMA = "rank4-jacek-hybrid-heldout-stage-report-v2"
 DECISION_SCHEMA = "rank4-jacek-hybrid-heldout-decision-v2"
@@ -110,6 +110,8 @@ TRACKED_DEPENDENCIES = (
     PREFLIGHT_PRODUCER,
     PREFLIGHT_TEST,
     PLAN,
+    preflight.PREDECESSOR_CLAIM,
+    preflight.PREDECESSOR_FAILURE,
     CAMPAIGN,
     ROOT / "CMakeLists.txt",
     ROOT / "tools/record_rank4_jacek_hybrid_proof_scope_clock.py",
@@ -670,6 +672,8 @@ def validate_plan() -> dict[str, Any]:
             plan.get("classification") !=
             "single-finalist-untouched-validation-then-final-qualification"):
         raise ValueError("held-out plan identity/classification mismatch")
+    if not preflight.exact_json_equal(plan, preflight.validate_successor_plan()):
+        raise ValueError("held-out technical-successor amendment mismatch")
     if (plan.get("campaign", {}).get("campaign_id") != CAMPAIGN_ID or
             plan.get("campaign", {}).get("campaign_manifest_sha256") !=
             CAMPAIGN_SHA256 or
@@ -1006,6 +1010,7 @@ def _create_binding_locked() -> tuple[Path, str]:
         "preflight_summary": {
             "status": receipt["status"],
             "checks": receipt["checks"],
+            "technical_successor": receipt["technical_successor"],
             "compilers": receipt["compilers"],
             "comparison_gate": receipt["comparison_gate"],
             "builds": receipt["builds"],
@@ -1473,6 +1478,7 @@ def load_and_validate_binding(
     expected_preflight_summary = {
         "status": receipt["status"],
         "checks": receipt["checks"],
+        "technical_successor": receipt["technical_successor"],
         "compilers": receipt["compilers"],
         "comparison_gate": receipt["comparison_gate"],
         "builds": receipt["builds"],

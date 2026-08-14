@@ -1,5 +1,8 @@
 import importlib.util
 import copy
+import hashlib
+import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -164,6 +167,181 @@ class FinalSourcePreflightTest(unittest.TestCase):
                     "c" * 40, "d" * 64, environment, host
                 )
 
+    def test_predecessor_claim_and_failure_receipt_are_exact_and_canonical(self):
+        claim_raw = preflight.PREDECESSOR_CLAIM.read_bytes()
+        failure_raw = preflight.PREDECESSOR_FAILURE.read_bytes()
+        failure = json.loads(failure_raw)
+        self.assertEqual(
+            hashlib.sha256(claim_raw).hexdigest(),
+            preflight.PREDECESSOR_CLAIM_SHA256,
+        )
+        self.assertEqual(
+            hashlib.sha256(failure_raw).hexdigest(),
+            preflight.PREDECESSOR_FAILURE_SHA256,
+        )
+        self.assertEqual(preflight.canonical_json(failure), failure_raw)
+        self.assertEqual(
+            failure["outer_producer_outcome"]["stderr"]["semantic_code"],
+            "clang-release-configure-rejected",
+        )
+        self.assertNotIn(
+            "text", failure["outer_producer_outcome"]["stderr"]
+        )
+        self.assertFalse(
+            failure["outer_producer_outcome"]
+            ["original_configure_command_record_persisted"]
+        )
+        self.assertEqual(
+            failure["independent_post_failure_diagnosis"]["classification"],
+            "independent-reproduction-not-original-command-record",
+        )
+        self.assertEqual(
+            failure["post_failure_diagnostic_state"]["project_object_files_observed"],
+            0,
+        )
+        self.assertEqual(
+            failure["failure_boundary"]["heldout_bank_files_accessed"], []
+        )
+        self.assertEqual(
+            failure["predecessor"]["candidate_test"]["sha256"],
+            "ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697",
+        )
+        original_git_blob = preflight.git_blob
+
+        def committed_blob(head: str, path: Path) -> bytes:
+            if path in (preflight.PREDECESSOR_CLAIM,
+                        preflight.PREDECESSOR_FAILURE):
+                return path.read_bytes()
+            return original_git_blob(head, path)
+
+        with mock.patch.object(
+            preflight, "git_blob", side_effect=committed_blob
+        ):
+            evidence = preflight.validate_predecessor_evidence("a" * 40)
+        self.assertEqual(
+            evidence["claim"]["sha256"],
+            preflight.PREDECESSOR_CLAIM_SHA256,
+        )
+
+    def test_predecessor_evidence_reference_is_mode_neutral(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "claim.json"
+            evidence.write_bytes(preflight.PREDECESSOR_CLAIM.read_bytes())
+            evidence.chmod(0o444)
+            read_only = preflight.mode_neutral_file_reference(evidence)
+            evidence.chmod(0o644)
+            writable = preflight.mode_neutral_file_reference(evidence)
+        self.assertEqual(read_only, writable)
+        self.assertNotIn("mode", read_only)
+        self.assertEqual(
+            read_only["sha256"], preflight.PREDECESSOR_CLAIM_SHA256
+        )
+
+    def test_successor_policy_requires_direct_child_and_exact_path_allowlist(self):
+        head = "a" * 40
+
+        def git_text(*arguments: str) -> str:
+            if arguments[:3] == ("rev-list", "--parents", "-n"):
+                return f"{head} {preflight.PREDECESSOR_HEAD}"
+            if arguments[:2] == ("diff", "--name-only"):
+                return "\n".join(preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS)
+            raise AssertionError(arguments)
+
+        with mock.patch.object(preflight, "git_text", side_effect=git_text), \
+                mock.patch.object(preflight, "validate_successor_plan"), \
+                mock.patch.object(
+                    preflight, "validate_predecessor_evidence",
+                    return_value={"claim": {}, "failure_receipt": {}},
+                ), mock.patch.object(
+                    preflight, "git_blob",
+                    side_effect=lambda _head, path: path.read_bytes(),
+                ):
+            record = preflight.technical_successor_record(head)
+        self.assertTrue(record["direct_parent_verified"])
+        self.assertEqual(
+            record["changed_paths"],
+            sorted(preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS),
+        )
+
+        def extra_path_git_text(*arguments: str) -> str:
+            if arguments[:3] == ("rev-list", "--parents", "-n"):
+                return f"{head} {preflight.PREDECESSOR_HEAD}"
+            return "\n".join((*preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS,
+                              "unexpected.cpp"))
+
+        with mock.patch.object(
+            preflight, "git_text", side_effect=extra_path_git_text
+        ), self.assertRaisesRegex(ValueError, "allowlist"):
+            preflight.technical_successor_record(head)
+
+    def test_plan_projection_proves_qualification_semantics_unchanged(self):
+        successor = json.loads(preflight.PLAN.read_bytes())
+        predecessor = json.loads(
+            preflight.git_blob(preflight.PREDECESSOR_HEAD, preflight.PLAN)
+        )
+        projected = preflight.predecessor_plan_projection(successor)
+        self.assertTrue(preflight.exact_json_equal(projected, predecessor))
+        drifted = copy.deepcopy(successor)
+        drifted["configuration"]["candidate_nodes"] += 1
+        self.assertFalse(preflight.exact_json_equal(
+            preflight.predecessor_plan_projection(drifted), predecessor
+        ))
+
+    def test_third_head_or_other_foreign_claim_fails_before_validation(self):
+        head = "a" * 40
+        prior_successor_or_third_head_claim = (
+            preflight.CLAIMS / ("b" * 40 + ".json")
+        )
+        with mock.patch.object(
+            preflight, "fixed_registry_files",
+            return_value=[
+                preflight.PREDECESSOR_CLAIM,
+                prior_successor_or_third_head_claim,
+            ],
+        ), mock.patch.object(
+            preflight, "validate_predecessor_evidence",
+            side_effect=AssertionError("must fail first"),
+        ), self.assertRaisesRegex(ValueError, "foreign"):
+            preflight.validate_successor_claim_registry(head)
+
+    def test_successor_workspace_creates_empty_home_without_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "successor"
+            temporary = build / "tmp"
+            home = temporary / "home"
+            with mock.patch.object(preflight, "BUILD_ROOT", build), \
+                    mock.patch.object(
+                        preflight, "TEMPORARY_DIRECTORY", temporary
+                    ), mock.patch.object(preflight, "ISOLATED_HOME", home):
+                preflight.prepare_fresh_successor_workspace()
+                self.assertTrue(home.is_dir())
+                self.assertEqual(list(home.iterdir()), [])
+                marker = home / "spent-attempt-marker"
+                marker.write_text("preserve\n", encoding="ascii")
+                with self.assertRaisesRegex(ValueError, "fresh|empty"):
+                    preflight.prepare_fresh_successor_workspace()
+                self.assertEqual(marker.read_text(encoding="ascii"), "preserve\n")
+
+    def test_spent_successor_claim_is_checked_before_workspace_creation(self):
+        source = PRODUCER_PATH.read_text(encoding="ascii")
+        main = source[source.index("def main() -> int:"):]
+        self.assertLess(
+            main.index("if os.path.lexists(claim_path)"),
+            main.index("prepare_fresh_successor_workspace()"),
+        )
+        self.assertLess(
+            main.index("prepare_fresh_successor_workspace()"),
+            main.index("environment = environment_record()"),
+        )
+        self.assertLess(
+            main.index("prepare_fresh_successor_workspace()"),
+            main.index("host_before = host_identity()"),
+        )
+        self.assertLess(
+            main.index("prepare_fresh_successor_workspace()"),
+            main.index("create_preflight_claim("),
+        )
+
     def test_command_records_never_retain_raw_streams(self):
         stdout = "marker\n"
         record = {
@@ -227,7 +405,15 @@ class FinalSourcePreflightTest(unittest.TestCase):
             preflight.optional_regular_file_exists(preflight.POSITION_KEY_TEST),
         )
         environment = preflight.sanitized_environment()
-        self.assertNotIn("HOME", environment)
+        self.assertEqual(environment["HOME"], str(preflight.ISOLATED_HOME))
+        self.assertTrue(preflight.ISOLATED_HOME.is_relative_to(
+            preflight.TEMPORARY_DIRECTORY
+        ))
+        self.assertTrue(preflight.TEMPORARY_DIRECTORY.is_relative_to(
+            preflight.BUILD_ROOT
+        ))
+        self.assertIn("preflight-successor", str(preflight.BUILD_ROOT))
+        self.assertNotEqual(environment["HOME"], os.environ.get("HOME"))
         self.assertEqual(environment["TZ"], "UTC")
 
     def test_darwin_asan_policy_disables_only_unsupported_leak_detection(self):
