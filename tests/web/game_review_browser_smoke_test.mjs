@@ -27,6 +27,8 @@ const CALIBRATION_LOCK = path.join(
 // Presence of the validation-derived lock turns this into a mandatory smoke.
 const LOCKED = existsSync(CALIBRATION_LOCK);
 const EXPECTED_POSSESSIONS = 9;
+const CHROME_STARTUP_ATTEMPTS = 2;
+const CHROME_STARTUP_TIMEOUT_MS = 30000;
 
 const TERMINAL_REPLAY = Object.freeze({
   schema: "papersoccer.replay.v2",
@@ -69,14 +71,19 @@ function chromeExecutable() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function timeoutAfter(milliseconds, message) {
+class ChromeStartupTimeoutError extends Error {}
+
+function timeoutAfter(milliseconds, message, ErrorType = Error) {
   return new Promise((_, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    const timer = setTimeout(() => {
+      const detail = typeof message === "function" ? message() : message;
+      reject(new ErrorType(detail));
+    }, milliseconds);
     timer.unref?.();
   });
 }
 
-async function launchChrome(executable, profileDirectory) {
+async function launchChromeAttempt(executable, profileDirectory) {
   const args = [
     "--headless=new",
     "--remote-debugging-pipe",
@@ -115,13 +122,48 @@ async function launchChrome(executable, profileDirectory) {
   try {
     await Promise.race([
       connection.send("Browser.getVersion"),
-      timeoutAfter(15000, `Chrome did not expose its DevTools pipe.\n${output}`),
+      timeoutAfter(CHROME_STARTUP_TIMEOUT_MS, () =>
+        `Chrome (${executable}, pid ${child.pid ?? "unknown"}) did not expose ` +
+        `its DevTools pipe after ${CHROME_STARTUP_TIMEOUT_MS} ms.\n` +
+        (output || "(no stderr output)"), ChromeStartupTimeoutError),
     ]);
     return { child, connection, output: () => output };
   } catch (error) {
-    child.kill("SIGKILL");
+    try {
+      await stopChrome(child);
+    } catch (cleanupError) {
+      const launchDetail = error instanceof Error ? error.message : String(error);
+      const cleanupDetail = cleanupError instanceof Error
+        ? cleanupError.message
+        : String(cleanupError);
+      throw new Error(
+        `${launchDetail}\nChrome cleanup also failed: ${cleanupDetail}`,
+      );
+    }
     throw error;
   }
+}
+
+async function launchChrome(executable, profileDirectory) {
+  const failures = [];
+  for (let attempt = 1; attempt <= CHROME_STARTUP_ATTEMPTS; attempt += 1) {
+    try {
+      return await launchChromeAttempt(
+        executable,
+        `${profileDirectory}-attempt-${attempt}`,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      failures.push(`Attempt ${attempt}: ${detail}`);
+      if (!(error instanceof ChromeStartupTimeoutError)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error(
+    `Chrome failed to expose its DevTools pipe after ` +
+    `${CHROME_STARTUP_ATTEMPTS} attempts.\n${failures.join("\n")}`,
+  );
 }
 
 async function stopChrome(child) {
