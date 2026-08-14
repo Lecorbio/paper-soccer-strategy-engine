@@ -317,7 +317,7 @@ Production was restored to the 94,312-character rollback source
 Heldout validation and final banks remain unopened, no live upload occurred,
 and final qualification is false.
 
-## Ablation 6: private PositionKey component cache (pending clock gate)
+## Ablation 6: private PositionKey component cache (rejected)
 
 The candidate replaces repeated 128-bit component mixing during compact
 make/unmake with immutable per-topology values. Categories and XOR transition
@@ -338,7 +338,28 @@ panels cleared the frozen requirement of at least 1% median improvement and no
 more than 0.5% p99 regression. The immutable preintegration receipt is
 `results/rank_4_jacek_hybrid/position_key_components_prototype/PASS.md`.
 
-No whole game is claimed yet. The next step is one preregistered DEVELOPMENT
-depth-20 actual-clock comparison against the exact mask-7 rollback algorithm.
-Validation/final banks and the live arena remain unopened; final qualification
-is false.
+The sole preregistered DEVELOPMENT depth-20 actual-clock comparison was valid
+and finished 37-39. The candidate went 21-17 as physical color 0 and 16-22 as
+physical color 1. All 76 games completed with zero unfinished, failed,
+illegal, operational, exception, or hard-timeout results. Exact mask-7 proof
+accounting reconciled, including a zero ply-two scope.
+
+Timing and progress both passed. Candidate first/later p99 was
+800.199/165.170 ms and first/later maximum was 800.199/165.198 ms. Average
+completed depth was 3.845 versus 3.839, and average nodes were 189,229.157
+versus 185,645.754 for the archived rollback control. The frozen selection
+rule nevertheless required at least 38 total wins and at least 19 wins in
+each physical color. The candidate missed the total floor by one and the
+color-1 floor by three, so it is rejected and the exact attempt identity may
+not be rerun.
+
+The authoritative report is
+`results/rank_4_jacek_hybrid/gates/position_key_cache_clock/423af75c4cab30cbb600bd0633bbcba1a58e163de9cf3f2d984874b61c8b1e8d.json`.
+The mandatory-rollback decision receipt is
+`results/rank_4_jacek_hybrid/gates/position_key_cache_clock/selection/37a0872d67356ba9aaf2c6419b6d4e7cecba0a0ff187d548b0f48d6f825f0a9a.json`.
+Production was restored to mask-7 `bot.cpp` SHA-256
+`34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b`
+and 94,312-character source SHA-256
+`2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
+Validation/final banks and the live arena remain unopened; final
+qualification is false.

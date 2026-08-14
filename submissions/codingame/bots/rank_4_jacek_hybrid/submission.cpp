@@ -139,7 +139,7 @@ std::optional<Player> winner(const GameState &state);
 
 }  // namespace papersoccer
 
-namespace papersoccer::hybrid_detail {
+namespace papersoccer::detail {
 
 inline constexpr std::size_t kMaximumMoves = 8;
 
@@ -170,22 +170,6 @@ return PositionKey{
 mix_position_key(tagged ^ 0x243f6a8885a308d3ULL),
 mix_position_key(tagged ^ 0x13198a2e03707344ULL),
 };
-}
-
-inline constexpr PositionKey player_key_component(Player player) noexcept {
-switch (player) {
-case Player::One: return position_key_component(4, 0);
-case Player::Two: return position_key_component(4, 1);
-}
-return {};
-}
-inline constexpr PositionKey status_key_component(Status status) noexcept {
-switch (status) {
-case Status::InProgress: return position_key_component(5, 0);
-case Status::WonByOne: return position_key_component(5, 1);
-case Status::WonByTwo: return position_key_component(5, 2);
-}
-return {};
 }
 
 inline constexpr void xor_position_key(PositionKey &target,
@@ -268,16 +252,6 @@ continue;
 build_adjacency(vertex, Player::One, player_one_adjacency_[vertex]);
 build_adjacency(vertex, Player::Two, player_two_adjacency_[vertex]);
 }
-edge_key_components_.reserve(edge_indices_.size());
-for (std::size_t edge = 0; edge < edge_indices_.size(); ++edge) {
-edge_key_components_.push_back(position_key_component(1, edge));
-}
-vertex_key_components_.reserve(points_.size());
-for (std::size_t vertex = 0; vertex < points_.size(); ++vertex) {
-vertex_key_components_.push_back({position_key_component(2, vertex),
-position_key_component(3, vertex),
-position_key_component(6, vertex)});
-}
 }
 
 const RulesConfig &config() const noexcept { return config_; }
@@ -306,18 +280,6 @@ const Adjacency &adjacency(VertexIndex vertex, Player player) const noexcept {
 return player == Player::One ? player_one_adjacency_[vertex]
 : player_two_adjacency_[vertex];
 }
-PositionKey edge_key(EdgeIndex edge) const noexcept {
-return edge_key_components_[edge];
-}
-PositionKey visited_key(VertexIndex vertex) const noexcept {
-return vertex_key_components_[vertex][0];
-}
-PositionKey ball_key(VertexIndex vertex) const noexcept {
-return vertex_key_components_[vertex][1];
-}
-PositionKey boundary_key(VertexIndex vertex) const noexcept {
-return vertex_key_components_[vertex][2];
-}
 
 private:
 RulesConfig config_{};
@@ -326,8 +288,6 @@ std::unordered_map<Point, VertexIndex, PointHash> point_indices_{};
 std::unordered_map<Segment, EdgeIndex, SegmentHash> edge_indices_{};
 std::vector<Adjacency> player_one_adjacency_{};
 std::vector<Adjacency> player_two_adjacency_{};
-std::vector<PositionKey> edge_key_components_{};
-std::vector<std::array<PositionKey, 3>> vertex_key_components_{};
 
 void add_vertex(Point point) {
 if (point_indices_.contains(point)) {
@@ -399,7 +359,7 @@ for (const Segment &segment : state.used_segments) {
 const auto edge = topology_->find_edge(segment);
 if (edge.has_value()) {
 used_edges_.set(*edge);
-xor_position_key(position_key_, topology_->edge_key(*edge));
+xor_position_key(position_key_, position_key_component(1, *edge));
 }
 }
 for (const auto &[point, visits] : state.visit_count) {
@@ -409,7 +369,7 @@ continue;
 const auto vertex = topology_->find_vertex(point);
 if (vertex.has_value()) {
 visited_vertices_.set(*vertex);
-xor_position_key(position_key_, topology_->visited_key(*vertex));
+xor_position_key(position_key_, position_key_component(2, *vertex));
 }
 }
 add_dynamic_key();
@@ -500,10 +460,11 @@ undo_stack_.push_back(
 Undo{ball_, arc.edge, to_move_, status_, destination_was_visited});
 remove_dynamic_key();
 used_edges_.set(arc.edge);
-xor_position_key(position_key_, topology_->edge_key(arc.edge));
+xor_position_key(position_key_, position_key_component(1, arc.edge));
 visited_vertices_.set(arc.destination);
 if (!destination_was_visited) {
-xor_position_key(position_key_, topology_->visited_key(arc.destination));
+xor_position_key(position_key_,
+position_key_component(2, arc.destination));
 }
 ball_ = arc.destination;
 
@@ -550,10 +511,10 @@ ball_ = undo.previous_ball;
 to_move_ = undo.previous_player;
 status_ = undo.previous_status;
 used_edges_.reset(undo.edge);
-xor_position_key(position_key_, topology_->edge_key(undo.edge));
+xor_position_key(position_key_, position_key_component(1, undo.edge));
 if (!undo.destination_was_visited) {
 visited_vertices_.reset(destination);
-xor_position_key(position_key_, topology_->visited_key(destination));
+xor_position_key(position_key_, position_key_component(2, destination));
 }
 add_dynamic_key();
 }
@@ -582,9 +543,11 @@ std::vector<Undo> undo_stack_{};
 PositionKey position_key_{};
 
 void add_dynamic_key() noexcept {
-xor_position_key(position_key_, topology_->ball_key(ball_));
-xor_position_key(position_key_, player_key_component(to_move_));
-xor_position_key(position_key_, status_key_component(status_));
+xor_position_key(position_key_, position_key_component(3, ball_));
+xor_position_key(position_key_,
+position_key_component(4, static_cast<std::uint64_t>(to_move_)));
+xor_position_key(position_key_,
+position_key_component(5, static_cast<std::uint64_t>(status_)));
 }
 
 void remove_dynamic_key() noexcept { add_dynamic_key(); }
@@ -607,7 +570,7 @@ TacticalProbeResult run_tactical_probe(SearchPosition &position,
 std::uint32_t max_depth,
 std::uint32_t max_nodes);
 
-}  // namespace papersoccer::hybrid_detail
+}  // namespace papersoccer::detail
 
 namespace papersoccer {
 
@@ -942,8 +905,6 @@ inline constexpr float kBias = -0.0212487676F;
 }  // namespace papersoccer::turn_action_v2::teacher_residual_model
 
 namespace papersoccer::turn_action_v2 {
-
-namespace detail = ::papersoccer::hybrid_detail;
 
 constexpr std::uint32_t kFirstSearchTimeMs = 800;
 constexpr std::uint32_t kLaterSearchTimeMs = 165;
@@ -1370,7 +1331,7 @@ throw SearchBudgetReached{};
 detail::PositionKey boundary_key() const noexcept {
 detail::PositionKey key = position_.position_key();
 detail::xor_position_key(
-key, position_.topology()->boundary_key(position_.ball_vertex()));
+key, detail::position_key_component(6, position_.ball_vertex()));
 return key;
 }
 

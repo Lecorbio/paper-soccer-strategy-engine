@@ -23,8 +23,6 @@
 
 namespace papersoccer::turn_action_v2 {
 
-namespace detail = ::papersoccer::hybrid_detail;
-
 constexpr std::uint32_t kFirstSearchTimeMs = 800;
 constexpr std::uint32_t kLaterSearchTimeMs = 165;
 constexpr std::uint32_t kMaximumTurnDepth = 32;
@@ -450,7 +448,7 @@ class CompleteTurnSearch {
   detail::PositionKey boundary_key() const noexcept {
     detail::PositionKey key = position_.position_key();
     detail::xor_position_key(
-        key, position_.topology()->boundary_key(position_.ball_vertex()));
+        key, detail::position_key_component(6, position_.ball_vertex()));
     return key;
   }
 

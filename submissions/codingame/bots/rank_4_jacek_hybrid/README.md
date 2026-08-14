@@ -56,13 +56,12 @@ throughput checks, but scored only 18-20 as physical color 1 against a frozen
 minimum of 19 wins per color. The same identity may not be rerun, and the
 production files remain the exact rollback artifacts listed above.
 
-The current DEVELOPMENT candidate privately precomputes the unchanged
-128-bit PositionKey components used during make/unmake. It leaves the shared
-engine header untouched and preserves every fixed-work decision and statistic.
-The generated source is 95,750 ASCII characters with SHA-256
-`47f44e8e62d3aaa2a48f6eea6fca4d17cfbbfd3ff9a5ac01ca84b1e0bf4cca03`.
-It has passed its key, rules-matrix, replay, source-size, and fixed-work timing
-gates, but remains DEVELOPMENT-only pending one preregistered clock match.
+The later private PositionKey component cache was also rejected by its only
+preregistered DEVELOPMENT clock match. It passed exact-key, fixed-work,
+timing, proof-accounting, and search-progress checks, but lost 37-39 and won
+only 16 games as physical color 1. The frozen floors were 38 total wins and
+19 wins in each color. Its exact identity may not be rerun, and production is
+again the 94,312-character mask-7 rollback source listed above.
 
 Generate and run the scaffold gates from the repository root:
 
