@@ -63,9 +63,11 @@ earlier new bank.  No protected bank was passed to the generator.  The older
 promotion banks do not expose a state-ID-only registry, so their bytes remain
 unopened; this limitation is explicit in `campaign.json`.
 
-Do not run, parse, summarize, or inspect a `final_*.tsv` result until exactly
-one finalist source byte count and SHA-256 have been locked.  Merely hashing
-the frozen bank files is permitted.
+Before the closed one-shot qualification recorded below, the frozen rule was
+not to run, parse, summarize, or inspect a `final_*.tsv` result until exactly
+one finalist source byte count and SHA-256 had been locked. That prerequisite
+authorized only the completed qualification; it does not authorize a retry or
+a fresh held-out campaign.
 
 ## Authoritative held-out qualification
 
@@ -85,6 +87,34 @@ The terminal decision is
 `gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`:
 `final_qualification=false` and arena authorization is false. This exact
 qualification cannot be retried, and no live upload occurred.
+
+## Post-heldout DEVELOPMENT mask-3 removal
+
+After that terminal held-out rejection, a separately preregistered
+DEVELOPMENT-only campaign tested whether removing the ply-one exact-proof scope
+could rescue the hybrid without using held-out scores for selection. Stage 1
+compared mask `3` directly with the same-binary mask-`7` control over the four
+existing DEVELOPMENT banks. Mask 3 finished `152-154`: `85-68` as physical
+color 0 and `67-86` as physical color 1. It therefore missed the frozen floor
+of 160 total wins by eight and the floor of 77 color-1 wins by ten. Those were
+the only selection-threshold errors.
+
+All 306 games completed with zero failed, unfinished, illegal, operational,
+exception, or hard-timeout results. Candidate first/later maxima were
+`800.185/165.237 ms`; reference maxima were `800.260/165.335 ms`, all within
+the strict `990/198 ms` ceilings. Timing, proof-scope, engine-work, color and
+bank aggregation, process safety, and source/binary/admin/environment
+provenance all replayed cleanly with stable before/after evidence.
+
+The canonical Stage-1 report is
+`gates/mask3_removal_clock/reports/64623834951fd4a00484ef0aa1a890127fe9b6a19539b65b3fb874fcf4794725.json`.
+The terminal decision is
+`gates/mask3_removal_clock/decisions/894442b0d0a81418d591469bb1b8c1d34cc6c0a8ed13371812a66a21d1e5bc48.json`.
+Stages 2 and 3 were never claimed or opened. The decision authorizes no retry,
+source activation, fresh held-out campaign, or arena action. Canonical Rank 4,
+source SHA-256
+`5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9`,
+remains the incumbent.
 
 ## Verification
 

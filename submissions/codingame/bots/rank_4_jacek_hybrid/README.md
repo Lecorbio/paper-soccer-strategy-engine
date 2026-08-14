@@ -34,9 +34,9 @@ Rank-4 over the complete 306-game DEVELOPMENT panel.
 
 A later null-action proof fast path was rejected 36-40 on the authoritative
 depth-20 DEVELOPMENT clock gate despite passing safety, timing, and search-
-progress checks. The production path was therefore rolled back narrowly to
-the archived pre-fast-path proof algorithm while retaining operational mask
-7. The regenerated rollback artifacts are:
+progress checks. At that pre-heldout development boundary, the working hybrid
+path was rolled back narrowly to the archived pre-fast-path proof algorithm
+while retaining operational mask 7. The regenerated rollback artifacts are:
 
 - `bot.cpp`: SHA-256
   `34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b`.
@@ -54,17 +54,19 @@ The later sole-legal-edge ordering bypass was also rejected by its one-shot
 DEVELOPMENT gate. It tied 38-38 overall and passed safety, timing, and node-
 throughput checks, but scored only 18-20 as physical color 1 against a frozen
 minimum of 19 wins per color. The same identity may not be rerun, and the
-production files remain the exact rollback artifacts listed above.
+hybrid files remained the exact rollback artifacts listed above at that
+ablation boundary.
 
 The later private PositionKey component cache was also rejected by its only
 preregistered DEVELOPMENT clock match. It passed exact-key, fixed-work,
 timing, proof-accounting, and search-progress checks, but lost 37-39 and won
 only 16 games as physical color 1. The frozen floors were 38 total wins and
-19 wins in each color. Its exact identity may not be rerun, and production is
-again the 94,312-character mask-7 rollback source listed above.
+19 wins in each color. Its exact identity may not be rerun, and the hybrid was
+again restored at that boundary to the 94,312-character mask-7 rollback source
+listed above.
 
-The final registered semantic candidate was safe-handoff frontier width with
-the single registered weight 10.
+The last semantic candidate registered before held-out qualification was
+safe-handoff frontier width with the single registered weight 10.
 Only exact-proof `Unknown` leaf boundaries count unique safe fresh handoff
 endpoints; exact mates bypass the term, while root and ply-one proof scans
 retain the rollback algorithm exactly. The candidate was 95,272 ASCII
@@ -77,8 +79,8 @@ Its frozen packet is under
 but the sole locked Stage-1 benchmark failed: paired median overhead was
 1.003703, within the 1.010 ceiling, while paired p99 was 1.106654, above the
 1.020 ceiling. The feature is rejected without a retry or whole game, and the
-working source is restored to the exact mask-7 rollback above. The canonical
-decision receipt is
+working source was restored at that boundary to the exact mask-7 rollback
+above. The canonical decision receipt is
 `results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/selection/f85a74985e56e3ad67d3602a44d712e5f511a4a491d313a160583bd764e9be89.json`.
 
 ## Authoritative held-out qualification
@@ -99,6 +101,23 @@ The terminal decision is
 `results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`:
 final qualification and arena authorization are both false. This exact
 qualification cannot be retried, and no live upload occurred.
+
+## Post-heldout DEVELOPMENT mask-3 removal
+
+A post-heldout, DEVELOPMENT-only campaign then tested the pre-heldout mask-`3`
+fallback against the same-binary mask-`7` control. Stage 1 finished `152-154`:
+mask 3 won 85 games as physical color 0 and 67 as physical color 1. It missed
+the frozen floors of 160 total wins and 77 wins in each color; the exact misses
+were eight total wins and ten color-1 wins. All safety, timing, proof,
+engine-work, aggregation, and provenance checks passed.
+
+The canonical report is
+`results/rank_4_jacek_hybrid/gates/mask3_removal_clock/reports/64623834951fd4a00484ef0aa1a890127fe9b6a19539b65b3fb874fcf4794725.json`.
+The terminal decision is
+`results/rank_4_jacek_hybrid/gates/mask3_removal_clock/decisions/894442b0d0a81418d591469bb1b8c1d34cc6c0a8ed13371812a66a21d1e5bc48.json`.
+It left Stages 2 and 3 unopened and authorizes no retry, source activation,
+fresh held-out campaign, or arena action. Canonical Rank 4 remains the
+incumbent; the mask-7 rollback remains historical/control evidence only.
 
 Generate and run the scaffold gates from the repository root:
 

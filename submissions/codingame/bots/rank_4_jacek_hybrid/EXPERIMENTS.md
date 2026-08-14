@@ -191,12 +191,11 @@ Local structural evidence:
   remaining allowance under 99,999: 5,995 characters.
 
 No whole-game match was run during this implementation step, and no protected
-validation or final bank was opened. The smallest proposed actual-clock
-development matrix uses one complete preregistered development bank and four
-nested hybrid-control comparisons: masks `1 vs 0`, `3 vs 1`, `7 vs 3`, and
-`15 vs 7`. This measures each scope's conditional marginal in search order.
-A cheap fixed-node screen should exercise all 16 masks first; only the selected
-mask should advance against mask zero and Rank-4 on the full development bank.
+validation or final bank was opened. At that historical point, the planned
+actual-clock development matrix used one complete preregistered development
+bank and four nested hybrid-control comparisons: masks `1 vs 0`, `3 vs 1`,
+`7 vs 3`, and `15 vs 7`. The later DEVELOPMENT scope-selection section records
+the completed matrix and supersedes that proposal.
 
 ## DEVELOPMENT scope selection: mask 7
 
@@ -263,10 +262,10 @@ new production identities rather than reusing the archived control hashes:
   `ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697`.
 
 The scaffold, tie-only, mask-15, archived pre-fast-path, and rejected
-null-fast-path identities above remain historical evidence; none identifies
-the current rollback bytes. At this rollback boundary, no heldout or final
-bank had yet been opened for the rollback candidate and no live upload had
-occurred.
+null-fast-path identities above remain historical evidence; none identified
+the then-current rollback bytes. At this rollback boundary, no heldout or
+final bank had yet been opened for the rollback candidate and no live upload
+had occurred.
 
 ## Ablation 5: sole-legal-edge ordering bypass (rejected)
 
@@ -366,10 +365,10 @@ been opened and no live upload had occurred.
 
 ## Ablation 7: safe-handoff frontier width (rejected at Stage 1)
 
-The final registered semantic hypothesis reuses the exact leaf-boundary proof
-scan to count unique reachable fresh endpoints at which the opponent retains
-a legal reply after the incoming edge. Exact `Win` and `Loss` outcomes keep
-their mate scores. Only `Unknown` leaves receive
+The last semantic hypothesis registered before held-out qualification reused
+the exact leaf-boundary proof scan to count unique reachable fresh endpoints
+at which the opponent retains a legal reply after the incoming edge. Exact
+`Win` and `Loss` outcomes keep their mate scores. Only `Unknown` leaves receive
 `player_sign(to_move) * count * 10 * (100 - replay_blend) / 100`, after which
 the adjusted value is stored in the existing evaluation cache. Weight 10 is
 the only registered value.
@@ -398,10 +397,11 @@ submission, parity, and frontier suites also pass under fresh Apple-Clang
 ASan/UBSan with leak detection disabled on macOS.
 
 The immutable packet and sequential stop-on-failure thresholds are under
-`results/rank_4_jacek_hybrid/frontier_semantic_prototype/`. Stage 3 executes
-the depth-20 clock bank once; Stage 4 must reuse that immutable receipt while
-running only depths 4, 8, and 12. No timing benchmark or whole game had been
-run when the packet was frozen.
+`results/rank_4_jacek_hybrid/frontier_semantic_prototype/`. Under that
+historical plan, Stage 3 would have executed the depth-20 clock bank once and
+Stage 4 would have reused that immutable receipt while running only depths 4,
+8, and 12. The Stage-1 failure below meant neither stage was authorized. No
+timing benchmark or whole game had been run when the packet was frozen.
 
 The sole locked Stage-1 run used 512 public-rule/tactical leaf fixtures, seven
 warm-up pairs, and 31 measured alternating AB/BA pairs. Its control/candidate
@@ -414,7 +414,8 @@ whole-game screen. The raw report is
 The canonical rejection receipt is
 `results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/selection/f85a74985e56e3ad67d3602a44d712e5f511a4a491d313a160583bd764e9be89.json`.
 The candidate is rejected, not heldout-qualified, not uploaded, and not final;
-production is restored to the exact 94,312-character mask-7 rollback.
+the working hybrid source was restored at that boundary to the exact
+94,312-character mask-7 rollback.
 
 ## Authoritative held-out qualification of the restored rollback
 
@@ -434,3 +435,35 @@ The terminal decision is
 `results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`.
 It records `final_qualification=false` and arena authorization false. This
 exact qualification cannot be retried, and no live upload occurred.
+
+## Post-heldout DEVELOPMENT mask-3 removal (rejected at Stage 1)
+
+After the held-out decision closed, a separately preregistered
+DEVELOPMENT-only removal campaign tested the pre-heldout mask-`3` fallback.
+Its first stage directly compared mask 3 with the same-binary mask-`7` control
+over the existing depth-4, -8, -12, and -20 DEVELOPMENT banks. This ordering
+was frozen before the new DEVELOPMENT result and did not use held-out score,
+color, timing, or opening details to tune the candidate.
+
+Mask 3 finished `152-154`. Its physical-color records were `85-68` as color 0
+and `67-86` as color 1. The frozen selection rule required at least 160 wins
+overall and at least 77 wins in each color, so the candidate missed the total
+floor by eight and the color-1 floor by ten. Those were the only threshold
+errors. All 306 games completed with zero unfinished, failed, illegal,
+operational, exception, or hard-timeout results.
+
+Candidate first/later p99 and maxima were `800.166/800.185 ms` and
+`165.167/165.237 ms`; the mask-7 reference values were
+`800.203/800.260 ms` and `165.170/165.335 ms`. All remained below the strict
+`990/198 ms` maxima. Proof-scope identities and sums, exact engine-work and
+bank/color aggregation, process safety, chronology, and before/after
+source/binary/admin/environment evidence all replayed cleanly.
+
+The canonical report is
+`results/rank_4_jacek_hybrid/gates/mask3_removal_clock/reports/64623834951fd4a00484ef0aa1a890127fe9b6a19539b65b3fb874fcf4794725.json`.
+The terminal decision is
+`results/rank_4_jacek_hybrid/gates/mask3_removal_clock/decisions/894442b0d0a81418d591469bb1b8c1d34cc6c0a8ed13371812a66a21d1e5bc48.json`.
+It records a terminal DEVELOPMENT rejection: Stages 2 and 3 were never
+claimed or opened, and no retry, source activation, fresh held-out campaign,
+or arena action is authorized. Canonical Rank 4 remains the incumbent; the
+mask-7 rollback remains only historical/control evidence.
