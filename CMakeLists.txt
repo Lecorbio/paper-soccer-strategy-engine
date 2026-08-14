@@ -604,6 +604,35 @@ if(NOT EMSCRIPTEN)
     PRIVATE papersoccer_opening_bank_support)
 
   add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_heldout.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_hybrid.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_rank4.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/opening_bank")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    PRIVATE papersoccer_opening_bank_support papersoccer_core)
+  add_test(
+    NAME
+      papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate_self_test
+    COMMAND
+      papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+      --bank
+        ${CMAKE_CURRENT_SOURCE_DIR}/results/rank_4_jacek_hybrid/openings/development_d04.tsv
+      --expected-role development --expected-depths 4
+      --expected-seeds 18128950407139886133
+      --expected-sha256
+        984fbb78d85d7f9806c77e675b9b22a9b047bd15311f510ab0cedcd9a63244dc
+      --self-test)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate_self_test
+    PROPERTIES TIMEOUT 30)
+
+  add_executable(
     papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
     submissions/codingame/bots/rank_4_jacek_hybrid/replay_tactical_audit.cpp)
   target_include_directories(

@@ -120,6 +120,12 @@ struct Summary {
   int reference_wins{};
   int unfinished{};
   int failed{};
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+  int candidate_sweeps{};
+  int reference_sweeps{};
+  int split_pairs{};
+  int unresolved_pairs{};
+#endif
   std::array<ColorTotals, 2> colors{};
   EngineTotals candidate;
   EngineTotals reference;
@@ -805,12 +811,69 @@ void add_game(Summary &summary, const GameResult &game,
   }
 }
 
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+enum class PairOutcome { CandidateWin, ReferenceWin, Unresolved };
+
+PairOutcome pair_outcome(const GameResult &game, int candidate_player) {
+  if (game.failed || game.unfinished || !game.winner.has_value()) {
+    return PairOutcome::Unresolved;
+  }
+  return *game.winner == candidate_player ? PairOutcome::CandidateWin
+                                           : PairOutcome::ReferenceWin;
+}
+
+void add_opening_pair(Summary &summary, const GameResult &candidate_player0,
+                      const GameResult &candidate_player1) {
+  const PairOutcome first = pair_outcome(candidate_player0, 0);
+  const PairOutcome second = pair_outcome(candidate_player1, 1);
+  if (first == PairOutcome::CandidateWin &&
+      second == PairOutcome::CandidateWin) {
+    ++summary.candidate_sweeps;
+  } else if (first == PairOutcome::ReferenceWin &&
+             second == PairOutcome::ReferenceWin) {
+    ++summary.reference_sweeps;
+  } else if (first != PairOutcome::Unresolved &&
+             second != PairOutcome::Unresolved) {
+    ++summary.split_pairs;
+  } else {
+    ++summary.unresolved_pairs;
+  }
+  add_game(summary, candidate_player0, 0);
+  add_game(summary, candidate_player1, 1);
+}
+
+void validate_pair_accounting(const Summary &summary) {
+  if (summary.games < 0 || summary.games % 2 != 0) {
+    throw std::runtime_error("paired-opening game count is invalid");
+  }
+  const int opening_pairs = summary.games / 2;
+  if (summary.candidate_sweeps + summary.reference_sweeps +
+          summary.split_pairs + summary.unresolved_pairs !=
+      opening_pairs) {
+    throw std::runtime_error("paired-opening category accounting mismatch");
+  }
+  if (summary.candidate_wins !=
+      2 * summary.candidate_sweeps + summary.split_pairs) {
+    throw std::runtime_error("candidate wins do not reconcile with pairs");
+  }
+  if (summary.reference_wins !=
+      2 * summary.reference_sweeps + summary.split_pairs) {
+    throw std::runtime_error("reference wins do not reconcile with pairs");
+  }
+}
+#endif
 void merge_summary(Summary &into, const Summary &from) {
   into.games += from.games;
   into.candidate_wins += from.candidate_wins;
   into.reference_wins += from.reference_wins;
   into.unfinished += from.unfinished;
   into.failed += from.failed;
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+  into.candidate_sweeps += from.candidate_sweeps;
+  into.reference_sweeps += from.reference_sweeps;
+  into.split_pairs += from.split_pairs;
+  into.unresolved_pairs += from.unresolved_pairs;
+#endif
   for (std::size_t color = 0; color < into.colors.size(); ++color) {
     into.colors[color].games += from.colors[color].games;
     into.colors[color].candidate_wins +=
@@ -922,6 +985,12 @@ void print_summary(std::string_view kind, std::uint64_t bank,
             << " reference_wins=" << summary.reference_wins
             << " unfinished=" << summary.unfinished
             << " failed=" << summary.failed;
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+  std::cout << " candidate_sweeps=" << summary.candidate_sweeps
+            << " reference_sweeps=" << summary.reference_sweeps
+            << " split_pairs=" << summary.split_pairs
+            << " unresolved_pairs=" << summary.unresolved_pairs;
+#endif
   for (int color = 0; color < 2; ++color) {
     const ColorTotals &totals = summary.colors[color];
     std::cout << " candidate_p" << color << '='
@@ -995,6 +1064,42 @@ void run_self_test(const Config &config) {
   if (!same_state(opening, paired_copy)) {
     throw std::runtime_error("paired-color opening copy differs");
   }
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+  const auto resolved = [](int winner) {
+    GameResult result;
+    result.winner = winner;
+    return result;
+  };
+  GameResult unresolved;
+  unresolved.unfinished = true;
+  Summary accounting;
+  add_opening_pair(accounting, resolved(0), resolved(1));
+  add_opening_pair(accounting, resolved(1), resolved(0));
+  add_opening_pair(accounting, resolved(0), resolved(0));
+  add_opening_pair(accounting, unresolved, unresolved);
+  validate_pair_accounting(accounting);
+  if (accounting.games != 8 || accounting.candidate_wins != 3 ||
+      accounting.reference_wins != 3 || accounting.unfinished != 2 ||
+      accounting.failed != 0 || accounting.candidate_sweeps != 1 ||
+      accounting.reference_sweeps != 1 || accounting.split_pairs != 1 ||
+      accounting.unresolved_pairs != 1) {
+    throw std::runtime_error("held-out paired accounting self-test failed");
+  }
+  Summary partial_unresolved;
+  add_opening_pair(partial_unresolved, resolved(0), unresolved);
+  bool rejected_partial_pair = false;
+  try {
+    validate_pair_accounting(partial_unresolved);
+  } catch (const std::runtime_error &) {
+    rejected_partial_pair = true;
+  }
+  if (!rejected_partial_pair) {
+    throw std::runtime_error("partial unresolved pair was not rejected");
+  }
+  std::cout << "heldout_pair_self_test candidate_sweeps=1"
+               " reference_sweeps=1 split_pairs=1 unresolved_pairs=1"
+               " exact_accounting=pass\n";
+#endif
   std::cout << "self_test deterministic_bank_load=pass"
                " strict_metadata_and_hashes=pass paired_state=pass"
                " public_rules_only=pass transcripts=not-retained\n";
@@ -1016,12 +1121,24 @@ int main(int argc, char **argv) {
       Summary bank_summary;
       for (const opening_bank::OpeningRecord &record : bank.records) {
         const ps::GameState opening = codingame_opening(record);
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+        const GameResult candidate_player0 = play(opening, 0, config);
+        const GameResult candidate_player1 = play(opening, 1, config);
+        add_opening_pair(bank_summary, candidate_player0, candidate_player1);
+#else
         add_game(bank_summary, play(opening, 0, config), 0);
         add_game(bank_summary, play(opening, 1, config), 1);
+#endif
       }
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+      validate_pair_accounting(bank_summary);
+#endif
       print_summary("bank_summary", bank_index, bank_summary);
       merge_summary(overall, bank_summary);
     }
+#if defined(PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING)
+    validate_pair_accounting(overall);
+#endif
     print_summary("summary", 0, overall);
     print_configuration(config);
     return overall.unfinished == 0 && overall.failed == 0 &&
