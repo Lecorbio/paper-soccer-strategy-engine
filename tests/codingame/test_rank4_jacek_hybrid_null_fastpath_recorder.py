@@ -193,6 +193,35 @@ class NullFastpathRecorderTest(unittest.TestCase):
                 [output / f"{digest}.json"],
             )
 
+    def test_v1_rejection_does_not_count_as_the_one_v2_attempt(self):
+        head = "a" * 40
+        payload = {
+            "schema": "rank4-jacek-hybrid-null-fastpath-clock-v1",
+            "attempt_id": recorder.attempt_id(head),
+        }
+        raw = recorder.canonical_json(payload)
+        digest = hashlib.sha256(raw).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / f"{digest}.json").write_bytes(raw)
+            self.assertEqual(recorder.matching_attempts(head, output), [])
+
+    def test_v2_attempt_identity_binds_all_amendment_prerequisites(self):
+        key = recorder.attempt_key("a" * 40)
+        self.assertEqual(key["schema"], recorder.SCHEMA)
+        self.assertEqual(
+            key["original_plan_sha256"],
+            recorder.EXPECTED_ORIGINAL_PLAN_SHA256,
+        )
+        self.assertEqual(
+            key["audit_receipt_sha256"],
+            recorder.EXPECTED_AUDIT_RECEIPT_SHA256,
+        )
+        self.assertEqual(
+            key["rejected_attempt_sha256"],
+            recorder.EXPECTED_REJECTED_ATTEMPT_SHA256,
+        )
+
     def test_candidate_and_archive_exact_identities(self):
         identities = {
             str(path.relative_to(ROOT)): recorder.common.file_identity(path)
@@ -203,13 +232,24 @@ class NullFastpathRecorderTest(unittest.TestCase):
                 recorder.CONTROL_BOT,
                 recorder.CONTROL_SOURCE,
                 recorder.BANK,
+                recorder.ORIGINAL_PLAN,
                 recorder.PLAN,
+                recorder.AUDIT_RECEIPT,
+                recorder.REJECTED_ATTEMPT,
                 recorder.CONTROL_MANIFEST,
             )
         }
         recorder.validate_exact_file_identities(identities)
         bindings = recorder.require_origin_and_archive_bindings()
-        self.assertEqual(bindings["plan"]["candidate"]["exact_proof_mask"], 7)
+        self.assertEqual(
+            bindings["plan_v2"]["candidate"]["exact_proof_mask"], 7
+        )
+        self.assertEqual(
+            bindings["audit_receipt"]["technical_audit"]["status"], "pass"
+        )
+        self.assertFalse(
+            bindings["rejected_attempt"]["development_ablation_acceptable"]
+        )
         self.assertEqual(
             bindings["control_manifest"]["source_commit"],
             recorder.CONTROL_SOURCE_COMMIT,

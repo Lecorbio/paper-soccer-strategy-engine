@@ -29,7 +29,12 @@ import record_rank4_jacek_hybrid_proof_scope_clock as common
 ROOT = Path(__file__).resolve().parents[1]
 RECORDER = Path(__file__).resolve()
 OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/null_fastpath_clock"
-PLAN = OUTPUT / "plan.json"
+ORIGINAL_PLAN = OUTPUT / "plan.json"
+PLAN = OUTPUT / "plan_v2.json"
+AUDIT_RECEIPT = OUTPUT / "static_audit_receipt.json"
+REJECTED_ATTEMPT = OUTPUT / (
+    "74576b4a30d48f4e596ea0f52ab9c5498e1b1da15b323f848dcc1d603dc710ab.json"
+)
 LOCK = ROOT / "build/rank4-jacek-hybrid-null-fastpath-clock.lock"
 GATE_TARGET = (
     "papersoccer_codingame_rank_4_jacek_hybrid_"
@@ -39,7 +44,7 @@ GATE = ROOT / "build" / GATE_TARGET
 BANK = ROOT / "results/rank_4_jacek_hybrid/openings/development_d20.tsv"
 RUN_TIMEOUT_SECONDS = 1_800
 
-SCHEMA = "rank4-jacek-hybrid-null-fastpath-clock-v1"
+SCHEMA = "rank4-jacek-hybrid-null-fastpath-clock-v2"
 CLASSIFICATION = (
     "development-null-fastpath-clock-ablation-not-final-qualification"
 )
@@ -68,8 +73,17 @@ EXPECTED_CONTROL_SOURCE_BYTES = 94_004
 EXPECTED_BANK_SHA256 = (
     "2aa4b635dcaf23b2587b22fdb7558f4c8d6b4dd5a33e3fec2c164931b3fcd8d4"
 )
-EXPECTED_PLAN_SHA256 = (
+EXPECTED_ORIGINAL_PLAN_SHA256 = (
     "29d0a718747078a46f71e3f4466cfba96377fa7b9a19967fd4684933a29bdbf6"
+)
+EXPECTED_PLAN_SHA256 = (
+    "0db7f944df34b857a3930896869abe7b9c16a2f1ccd9cd0b90e16650fa6b5a9b"
+)
+EXPECTED_AUDIT_RECEIPT_SHA256 = (
+    "4245451b27985365494a0fc69f2c562efda4fe5a1c720dafe71cf0807e0e8fe6"
+)
+EXPECTED_REJECTED_ATTEMPT_SHA256 = (
+    "74576b4a30d48f4e596ea0f52ab9c5498e1b1da15b323f848dcc1d603dc710ab"
 )
 EXPECTED_MANIFEST_SHA256 = (
     "d94204c4d314332e439e38de774d0e110c73910b961bd0f0152252b7404ae772"
@@ -101,7 +115,10 @@ TRACKED_INPUTS = (
     RECORDER,
     ROOT / "tools/record_rank4_jacek_hybrid_proof_scope_clock.py",
     ROOT / "CMakeLists.txt",
+    ORIGINAL_PLAN,
     PLAN,
+    AUDIT_RECEIPT,
+    REJECTED_ATTEMPT,
     CONTROL_MANIFEST,
     CONTROL_BOT,
     CONTROL_SOURCE,
@@ -311,7 +328,11 @@ def selection_errors(aggregate: dict[str, str]) -> list[str]:
 def attempt_key(head: str) -> dict[str, str]:
     return {
         "head": head,
+        "schema": SCHEMA,
+        "original_plan_sha256": EXPECTED_ORIGINAL_PLAN_SHA256,
         "plan_sha256": EXPECTED_PLAN_SHA256,
+        "audit_receipt_sha256": EXPECTED_AUDIT_RECEIPT_SHA256,
+        "rejected_attempt_sha256": EXPECTED_REJECTED_ATTEMPT_SHA256,
         "candidate_bot_sha256": EXPECTED_CANDIDATE_BOT_SHA256,
         "candidate_source_sha256": EXPECTED_CANDIDATE_SOURCE_SHA256,
         "control_bot_sha256": EXPECTED_CONTROL_BOT_SHA256,
@@ -391,11 +412,54 @@ def require_origin_and_archive_bindings() -> dict[str, Any]:
         if git_blob(CONTROL_SOURCE_COMMIT, dependency) != live:
             raise ValueError(f"control dependency changed: {dependency}")
 
+    original_plan = validate_canonical_json_file(
+        ORIGINAL_PLAN, EXPECTED_ORIGINAL_PLAN_SHA256
+    )
     plan = validate_canonical_json_file(PLAN, EXPECTED_PLAN_SHA256)
+    audit_receipt = validate_canonical_json_file(
+        AUDIT_RECEIPT, EXPECTED_AUDIT_RECEIPT_SHA256
+    )
+    rejected_attempt = validate_canonical_json_file(
+        REJECTED_ATTEMPT, EXPECTED_REJECTED_ATTEMPT_SHA256
+    )
     manifest = validate_canonical_json_file(
         CONTROL_MANIFEST, EXPECTED_MANIFEST_SHA256
     )
-    return {"plan": plan, "control_manifest": manifest}
+    if plan.get("schema") != "rank4-jacek-hybrid-null-fastpath-plan-v2":
+        raise ValueError("amended plan schema mismatch")
+    amendment = plan.get("amendment", {})
+    if (amendment.get("previous_plan", {}).get("sha256") !=
+            EXPECTED_ORIGINAL_PLAN_SHA256 or
+            amendment.get("audit_receipt", {}).get("sha256") !=
+            EXPECTED_AUDIT_RECEIPT_SHA256 or
+            amendment.get("premature_attempt", {}).get("sha256") !=
+            EXPECTED_REJECTED_ATTEMPT_SHA256 or
+            amendment.get("gameplay_semantics_changed") is not False or
+            amendment.get("technical_gate_semantics_changed") is not False):
+        raise ValueError("amended plan prerequisite binding mismatch")
+    for key in ("bank", "candidate", "command", "reference", "thresholds"):
+        if plan.get(key) != original_plan.get(key):
+            raise ValueError(f"amended plan changed frozen semantics: {key}")
+    if (audit_receipt.get("technical_audit", {}).get("status") != "pass" or
+            audit_receipt.get("premature_attempt", {}).get("sha256") !=
+            EXPECTED_REJECTED_ATTEMPT_SHA256 or
+            audit_receipt.get("premature_attempt", {}).get(
+                "gameplay_result_accepted") is not False):
+        raise ValueError("static audit receipt prerequisite mismatch")
+    if (rejected_attempt.get("schema") !=
+            "rank4-jacek-hybrid-null-fastpath-clock-v1" or
+            rejected_attempt.get("returncode") != -15 or
+            rejected_attempt.get("development_ablation_acceptable") is not False or
+            rejected_attempt.get("stdout") != "" or
+            rejected_attempt.get("stderr") != ""):
+        raise ValueError("premature rejected-attempt prerequisite mismatch")
+    return {
+        "original_plan": original_plan,
+        "plan_v2": plan,
+        "audit_receipt": audit_receipt,
+        "rejected_attempt": rejected_attempt,
+        "control_manifest": manifest,
+    }
 
 
 def validate_exact_file_identities(
@@ -415,7 +479,13 @@ def validate_exact_file_identities(
             (EXPECTED_CONTROL_SOURCE_SHA256,
              EXPECTED_CONTROL_SOURCE_BYTES, True),
         str(BANK.relative_to(ROOT)): (EXPECTED_BANK_SHA256, 13_150, True),
+        str(ORIGINAL_PLAN.relative_to(ROOT)):
+            (EXPECTED_ORIGINAL_PLAN_SHA256, None, True),
         str(PLAN.relative_to(ROOT)): (EXPECTED_PLAN_SHA256, None, True),
+        str(AUDIT_RECEIPT.relative_to(ROOT)):
+            (EXPECTED_AUDIT_RECEIPT_SHA256, None, True),
+        str(REJECTED_ATTEMPT.relative_to(ROOT)):
+            (EXPECTED_REJECTED_ATTEMPT_SHA256, None, True),
         str(CONTROL_MANIFEST.relative_to(ROOT)):
             (EXPECTED_MANIFEST_SHA256, None, True),
     }
@@ -581,6 +651,21 @@ def main() -> int:
             "frozen_plan": {
                 "path": str(PLAN.relative_to(ROOT)),
                 "sha256": EXPECTED_PLAN_SHA256,
+            },
+            "amendment_prerequisites": {
+                "original_plan": {
+                    "path": str(ORIGINAL_PLAN.relative_to(ROOT)),
+                    "sha256": EXPECTED_ORIGINAL_PLAN_SHA256,
+                },
+                "audit_receipt": {
+                    "path": str(AUDIT_RECEIPT.relative_to(ROOT)),
+                    "sha256": EXPECTED_AUDIT_RECEIPT_SHA256,
+                },
+                "rejected_attempt": {
+                    "path": str(REJECTED_ATTEMPT.relative_to(ROOT)),
+                    "sha256": EXPECTED_REJECTED_ATTEMPT_SHA256,
+                    "accepted_gameplay_result": False,
+                },
             },
             "origin_bindings": bindings,
             "started_utc": started,
