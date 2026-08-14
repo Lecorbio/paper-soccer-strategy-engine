@@ -45,10 +45,10 @@ the archived pre-fast-path proof algorithm while retaining operational mask
 - `submission_test.cpp`: SHA-256
   `ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697`.
 
-No protected heldout or final bank has been opened for this candidate, and it
-has not been uploaded to the live arena. Final qualification remains false.
-See `EXPERIMENTS.md` for exact, disabled-parity, all-mask symmetry, frozen
-DEVELOPMENT results, and the null-fast-path rejection lineage.
+The authoritative held-out outcome for these restored rollback bytes is
+recorded below. See `EXPERIMENTS.md` for exact, disabled-parity, all-mask
+symmetry, frozen DEVELOPMENT results, and the null-fast-path rejection
+lineage.
 
 The later sole-legal-edge ordering bypass was also rejected by its one-shot
 DEVELOPMENT gate. It tied 38-38 overall and passed safety, timing, and node-
@@ -80,6 +80,25 @@ but the sole locked Stage-1 benchmark failed: paired median overhead was
 working source is restored to the exact mask-7 rollback above. The canonical
 decision receipt is
 `results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/selection/f85a74985e56e3ad67d3602a44d712e5f511a4a491d313a160583bd764e9be89.json`.
+
+## Authoritative held-out qualification
+
+The restored mask-7 rollback passed the one-shot VALIDATION stage 61-45: 34
+wins as physical color 0 and 27 as physical color 1, clearing the frozen
+floors of 54 total and 26 in each color. FINAL then finished 104-108, with 48
+wins as color 0 and 56 as color 1. It missed the 108-win total floor and the
+53-win color-0 floor. Safety, timing, proof and sweep accounting, input and
+compiler stability, and source, admin, binding, and portability provenance
+all remained clean.
+
+The canonical VALIDATION and FINAL reports are respectively
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/reports/validation/e0b5ed9bd6c77ce90317cc363ab19679e01216172de9ebb01b5eb05d2c6bc5cc.json`
+and
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/reports/final/19e0d5e692d5afce2f9a83ef2247bcf53816bf7d66c6a60aa0bcef9205b4c271.json`.
+The terminal decision is
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`:
+final qualification and arena authorization are both false. This exact
+qualification cannot be retried, and no live upload occurred.
 
 Generate and run the scaffold gates from the repository root:
 

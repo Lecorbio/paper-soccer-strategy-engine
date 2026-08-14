@@ -264,9 +264,9 @@ new production identities rather than reusing the archived control hashes:
 
 The scaffold, tie-only, mask-15, archived pre-fast-path, and rejected
 null-fast-path identities above remain historical evidence; none identifies
-the current rollback bytes. No heldout or final bank has been opened for the
-rollback candidate, no live upload has occurred, and final qualification is
-false.
+the current rollback bytes. At this rollback boundary, no heldout or final
+bank had yet been opened for the rollback candidate and no live upload had
+occurred.
 
 ## Ablation 5: sole-legal-edge ordering bypass (rejected)
 
@@ -314,8 +314,8 @@ The rejection receipt is
 `results/rank_4_jacek_hybrid/gates/sole_legal_edge_clock/selection/e36314e33d9ca66f9c901c0e99dc613e10b43e1941668cc59ad5e6b3d8a0b5af.json`.
 Production was restored to the 94,312-character rollback source
 `2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
-Heldout validation and final banks remain unopened, no live upload occurred,
-and final qualification is false.
+At this ablation's rejection boundary, heldout validation and final banks had
+not yet been opened and no live upload had occurred.
 
 ## Ablation 6: private PositionKey component cache (rejected)
 
@@ -361,8 +361,8 @@ Production was restored to mask-7 `bot.cpp` SHA-256
 `34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b`
 and 94,312-character source SHA-256
 `2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
-Validation/final banks and the live arena remain unopened; final
-qualification is false.
+At this ablation's rejection boundary, validation and final banks had not yet
+been opened and no live upload had occurred.
 
 ## Ablation 7: safe-handoff frontier width (rejected at Stage 1)
 
@@ -415,3 +415,22 @@ The canonical rejection receipt is
 `results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/selection/f85a74985e56e3ad67d3602a44d712e5f511a4a491d313a160583bd764e9be89.json`.
 The candidate is rejected, not heldout-qualified, not uploaded, and not final;
 production is restored to the exact 94,312-character mask-7 rollback.
+
+## Authoritative held-out qualification of the restored rollback
+
+The restored mask-7 rollback subsequently completed its one-shot held-out
+qualification. VALIDATION passed 61-45, with 34 wins as physical color 0 and
+27 as physical color 1; the frozen floors were 54 total and 26 in each color.
+FINAL finished 104-108, with 48 wins as color 0 and 56 as color 1. The
+candidate missed the 108-win total floor and the 53-win color-0 floor. Safety,
+timing, proof and sweep accounting, input and compiler stability, and source,
+admin, binding, and portability provenance all remained clean.
+
+The canonical reports are
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/reports/validation/e0b5ed9bd6c77ce90317cc363ab19679e01216172de9ebb01b5eb05d2c6bc5cc.json`
+and
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/reports/final/19e0d5e692d5afce2f9a83ef2247bcf53816bf7d66c6a60aa0bcef9205b4c271.json`.
+The terminal decision is
+`results/rank_4_jacek_hybrid/gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`.
+It records `final_qualification=false` and arena authorization false. This
+exact qualification cannot be retried, and no live upload occurred.

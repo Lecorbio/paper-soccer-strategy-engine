@@ -67,6 +67,25 @@ Do not run, parse, summarize, or inspect a `final_*.tsv` result until exactly
 one finalist source byte count and SHA-256 have been locked.  Merely hashing
 the frozen bank files is permitted.
 
+## Authoritative held-out qualification
+
+The locked finalist completed its one-shot qualification. VALIDATION passed
+61-45, with 34 wins as physical color 0 and 27 as physical color 1, clearing
+the frozen floors of 54 total and 26 in each color. FINAL finished 104-108,
+with 48 wins as color 0 and 56 as color 1; it failed the 108-win total floor
+and the 53-win color-0 floor. Safety, timing, proof and sweep accounting,
+input and compiler stability, and source, admin, binding, and portability
+provenance all remained clean.
+
+The canonical VALIDATION and FINAL reports are
+`gates/heldout_qualification/binding_recovery_v1/reports/validation/e0b5ed9bd6c77ce90317cc363ab19679e01216172de9ebb01b5eb05d2c6bc5cc.json`
+and
+`gates/heldout_qualification/binding_recovery_v1/reports/final/19e0d5e692d5afce2f9a83ef2247bcf53816bf7d66c6a60aa0bcef9205b4c271.json`.
+The terminal decision is
+`gates/heldout_qualification/binding_recovery_v1/decisions/9c12b44cc2ffa475e55e1e166c637f725e8107736677c432b03ea31ef376997f.json`:
+`final_qualification=false` and arena authorization is false. This exact
+qualification cannot be retried, and no live upload occurred.
+
 ## Verification
 
 Build the existing generic opening-bank tool, then run the read-only check:
