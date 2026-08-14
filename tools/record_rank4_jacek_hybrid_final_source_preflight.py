@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Produce the fixed final-source preflight for held-out qualification.
+"""Produce the separately preregistered recovery-v1 source preflight.
 
 This program has no path, compiler, target, test, bank, or environment knobs.
 It builds the committed finalist with independently discovered Clang and GNU
 compilers, runs the fixed release and sanitizer test panels, and executes one
 small DEVELOPMENT-only comparison-gate contract probe.  It never addresses a
-VALIDATION or FINAL bank.  Successful evidence is canonical,
-content-addressed JSON under the fixed held-out preflight directory.
+VALIDATION or FINAL bank.  Successful evidence is canonical and
+content-addressed under the isolated recovery-v1 directory.  Both closed
+attempts and their build trees are evidence inputs, never cleanup targets.
 
 The qualification binder treats this tracked producer and its exact command
 plan as part of the candidate identity.  Merely writing a JSON document with
@@ -27,7 +28,6 @@ from pathlib import Path
 import platform
 import re
 import shlex
-import shutil
 import stat
 import subprocess
 import sys
@@ -48,31 +48,63 @@ QUALIFICATION_TEST = (
     ROOT / "tests/codingame/"
     "test_rank4_jacek_hybrid_heldout_qualification.py"
 )
-PLAN = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json"
-OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight"
+QUALIFICATION_ROOT = (
+    ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification"
+)
+PLAN = QUALIFICATION_ROOT / "PLAN.json"
+RECOVERY_ROOT = QUALIFICATION_ROOT / "recovery_v1"
+RECOVERY_PLAN = RECOVERY_ROOT / "PLAN.json"
+OUTPUT = RECOVERY_ROOT / "preflight"
 RECEIPTS = OUTPUT / "receipts"
 CLAIMS = OUTPUT / "claims"
 PREDECESSOR_FAILURES = OUTPUT / "predecessor_failures"
-LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-successor.lock"
+V3_PREFLIGHT = QUALIFICATION_ROOT / "preflight"
+V3_CLAIMS = V3_PREFLIGHT / "claims"
+V3_RECEIPTS = V3_PREFLIGHT / "receipts"
+V3_PREDECESSOR_FAILURES = V3_PREFLIGHT / "predecessor_failures"
+LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-recovery-v1.lock"
 BENCHMARK_LOCK = Path("/tmp/rank4-hybrid-prototype-benchmark.lock")
-BUILD_ROOT = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-successor"
+BUILD_ROOT = ROOT / "build/rank4-jacek-hybrid-heldout-preflight-recovery-v1"
 CLANG_BUILD = BUILD_ROOT / "clang-release"
 GNU_BUILD = BUILD_ROOT / "gnu-release"
 SANITIZER_BUILD = BUILD_ROOT / "clang-sanitized"
 TEMPORARY_DIRECTORY = BUILD_ROOT / "tmp"
 ISOLATED_HOME = TEMPORARY_DIRECTORY / "home"
 
-SCHEMA = "rank4-jacek-hybrid-final-source-preflight-v3"
-CLAIM_SCHEMA = "rank4-jacek-hybrid-final-source-preflight-claim-v1"
+HISTORICAL_V2_ROOT = ROOT / "build/rank4-jacek-hybrid-heldout-preflight"
+HISTORICAL_V3_ROOT = (
+    ROOT / "build/rank4-jacek-hybrid-heldout-preflight-successor"
+)
+HISTORICAL_V2_CLANG = HISTORICAL_V2_ROOT / "clang-release"
+HISTORICAL_V3_CLANG = HISTORICAL_V3_ROOT / "clang-release"
+
+SCHEMA = "rank4-jacek-hybrid-final-source-preflight-recovery-v1"
+CLAIM_SCHEMA = (
+    "rank4-jacek-hybrid-final-source-preflight-recovery-claim-v1"
+)
+V3_CLAIM_SCHEMA = "rank4-jacek-hybrid-final-source-preflight-claim-v1"
 PREDECESSOR_FAILURE_SCHEMA = (
     "rank4-jacek-hybrid-final-source-preflight-predecessor-failure-v1"
 )
+RECOVERY_PREDECESSOR_FAILURE_SCHEMA = (
+    "rank4-jacek-hybrid-final-source-preflight-recovery-"
+    "predecessor-failure-v1"
+)
 CAMPAIGN_ID = "rank_4_jacek_hybrid-36h-20260813"
 CAMPAIGN_T0_UTC = "2026-08-13T19:15:07Z"
+CAMPAIGN_DEADLINE_UTC = "2026-08-15T07:15:07Z"
+RECOVERY_CAMPAIGN_ID = (
+    "rank_4_jacek_hybrid-36h-20260813-final-technical-recovery-v1"
+)
+RECOVERY_PREREGISTERED_UTC = "2026-08-14T07:40:52Z"
 SUCCESSOR_PLAN_SHA256 = (
     "3b463b8bc4f9c34d7a9c320b07165a6563c167e14e004f3d970a9b77497408c5"
 )
+RECOVERY_PLAN_SHA256 = (
+    "eb6bd6d0b915ef87880b67438e6c8882d52c9ffccab115d11e1bda605a1efba0"
+)
 PREDECESSOR_HEAD = "9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299"
+FAILED_SUCCESSOR_HEAD = "f551f30bc5c37f090d636ba100c0d605a8a01c51"
 PREDECESSOR_PLAN_SHA256 = (
     "fc397ce54dbed8cc6335e7eadd65e3ad6044f56d077eb5d296d9acd6f8611a2b"
 )
@@ -85,9 +117,19 @@ PREDECESSOR_CLAIM_SHA256 = (
 PREDECESSOR_FAILURE_SHA256 = (
     "564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056"
 )
-PREDECESSOR_CLAIM = CLAIMS / f"{PREDECESSOR_HEAD}.json"
+PREDECESSOR_CLAIM = V3_CLAIMS / f"{PREDECESSOR_HEAD}.json"
 PREDECESSOR_FAILURE = (
-    PREDECESSOR_FAILURES / f"{PREDECESSOR_FAILURE_SHA256}.json"
+    V3_PREDECESSOR_FAILURES / f"{PREDECESSOR_FAILURE_SHA256}.json"
+)
+FAILED_SUCCESSOR_CLAIM_SHA256 = (
+    "8efbee6be13fba5869a95d12abf12a570f12264bc0b5eb384d70385f54801266"
+)
+FAILED_SUCCESSOR_FAILURE_SHA256 = (
+    "bb149d5dcf2ae3b33cb0dafd7725e3ad263a60c617224f3d648c9c9a6fdd3bd4"
+)
+FAILED_SUCCESSOR_CLAIM = V3_CLAIMS / f"{FAILED_SUCCESSOR_HEAD}.json"
+FAILED_SUCCESSOR_FAILURE = PREDECESSOR_FAILURES / (
+    f"{FAILED_SUCCESSOR_FAILURE_SHA256}.json"
 )
 ORDINARY_GATE_TARGET = (
     "papersoccer_codingame_rank_4_jacek_hybrid_comparison_gate"
@@ -103,12 +145,25 @@ SOURCE_TEST = BOT / "submission_test.cpp"
 POSITION_KEY_TEST = BOT / "position_key_cache_test.cpp"
 ORDINARY_GATE_SOURCE = BOT / "comparison_gate.cpp"
 HELDOUT_GATE_WRAPPER = BOT / "comparison_gate_heldout.cpp"
-TECHNICAL_SUCCESSOR_ALLOWED_PATHS = (
+V3_TECHNICAL_SUCCESSOR_ALLOWED_PATHS = (
     "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json",
     "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/"
     f"{PREDECESSOR_HEAD}.json",
     "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/"
     "predecessor_failures/" + f"{PREDECESSOR_FAILURE_SHA256}.json",
+    "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
+    "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
+    "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
+    "tools/record_rank4_jacek_hybrid_heldout_qualification.py",
+)
+TECHNICAL_RECOVERY_ALLOWED_PATHS = (
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/"
+    f"{FAILED_SUCCESSOR_HEAD}.json",
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/recovery_v1/"
+    "PLAN.json",
+    "results/rank_4_jacek_hybrid/gates/heldout_qualification/recovery_v1/"
+    "preflight/predecessor_failures/" +
+    f"{FAILED_SUCCESSOR_FAILURE_SHA256}.json",
     "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
     "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
     "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
@@ -234,8 +289,11 @@ TRACKED_INPUTS = (
     PRODUCER_TEST,
     QUALIFICATION_TEST,
     PLAN,
+    RECOVERY_PLAN,
     PREDECESSOR_CLAIM,
     PREDECESSOR_FAILURE,
+    FAILED_SUCCESSOR_CLAIM,
+    FAILED_SUCCESSOR_FAILURE,
     ROOT / "CMakeLists.txt",
     ROOT / "submissions/codingame/tools/generate_submission.mjs",
     ROOT / "submissions/codingame/tools/protocol_smoke_test.mjs",
@@ -392,6 +450,14 @@ def parse_utc(value: str) -> dt.datetime:
 def require_after_t0(value: str, label: str) -> None:
     if parse_utc(value) < parse_utc(CAMPAIGN_T0_UTC):
         raise ValueError(f"{label} predates campaign T0")
+
+
+def require_recovery_window(value: str, label: str) -> None:
+    parsed = parse_utc(value)
+    if parsed < parse_utc(RECOVERY_PREREGISTERED_UTC):
+        raise ValueError(f"{label} predates recovery preregistration")
+    if parsed > parse_utc(CAMPAIGN_DEADLINE_UTC):
+        raise ValueError(f"{label} exceeds the original 36-hour deadline")
 
 
 def identity_label(path: Path) -> str:
@@ -569,7 +635,7 @@ def mode_neutral_file_reference(path: Path) -> dict[str, Any]:
 
 def validate_predecessor_evidence(head: str) -> dict[str, Any]:
     failure_files = fixed_registry_files(
-        PREDECESSOR_FAILURES, r"[0-9a-f]{64}\.json"
+        V3_PREDECESSOR_FAILURES, r"[0-9a-f]{64}\.json"
     )
     if failure_files != [PREDECESSOR_FAILURE]:
         raise ValueError("predecessor failure receipt registry is not exact")
@@ -591,7 +657,7 @@ def validate_predecessor_evidence(head: str) -> dict[str, Any]:
         "one_shot": True,
         "plan_sha256": PREDECESSOR_PLAN_SHA256,
         "producer_sha256": PREDECESSOR_PRODUCER_SHA256,
-        "schema": CLAIM_SCHEMA,
+        "schema": V3_CLAIM_SCHEMA,
     }
     if (sha256_bytes(claim_raw) != PREDECESSOR_CLAIM_SHA256 or
             canonical_json(claim) != claim_raw or
@@ -724,7 +790,7 @@ def validate_successor_plan() -> dict[str, Any]:
             shape.get("sole_parent_must_equal_predecessor") is not True or
             not exact_json_equal(
                 shape.get("allowed_changed_paths"),
-                list(TECHNICAL_SUCCESSOR_ALLOWED_PATHS),
+                list(V3_TECHNICAL_SUCCESSOR_ALLOWED_PATHS),
             ) or not is_exact_int(
                 constraints.get("authorized_attempts"), minimum=1
             ) or constraints.get("authorized_attempts") != 1 or
@@ -745,45 +811,412 @@ def validate_successor_plan() -> dict[str, Any]:
     return plan
 
 
-def technical_successor_record(head: str) -> dict[str, Any]:
-    if head == PREDECESSOR_HEAD or not re.fullmatch(r"[0-9a-f]{40}", head):
-        raise ValueError("preflight must run at the authorized successor commit")
+def deterministic_tree_snapshot(root: Path) -> dict[str, Any]:
+    """Hash a preserved incident subtree without following any symlink."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"historical build subtree is absent: {root}")
+    digest = hashlib.sha256()
+    files = directories = symlinks = total_bytes = object_files = 0
+    entries = sorted(root.rglob("*"), key=lambda item: item.relative_to(
+        root).as_posix())
+    for entry in entries:
+        relative = entry.relative_to(root).as_posix()
+        metadata = os.lstat(entry)
+        if stat.S_ISLNK(metadata.st_mode):
+            symlinks += 1
+            continue
+        if stat.S_ISDIR(metadata.st_mode):
+            directories += 1
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("historical build subtree has a special file")
+        raw = entry.read_bytes()
+        file_sha256 = sha256_bytes(raw)
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(raw)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_sha256.encode("ascii"))
+        digest.update(b"\0")
+        files += 1
+        total_bytes += len(raw)
+        if relative.endswith(".o"):
+            object_files += 1
+    return {
+        "root": str(root.relative_to(ROOT)),
+        "algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "files": files,
+        "directories": directories,
+        "symlinks": symlinks,
+        "total_bytes": total_bytes,
+        "object_files": object_files,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _historical_root_topology(
+    root: Path, expected_tmp_directories: tuple[str, ...],
+) -> dict[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"historical build root is absent: {root}")
+    direct = sorted(root.iterdir(), key=lambda item: item.name)
+    if any(item.is_symlink() for item in direct):
+        raise ValueError("historical build root contains a symlink")
+    direct_directories = [item.name for item in direct if item.is_dir()]
+    other_direct_entries = [item.name for item in direct if not item.is_dir()]
+    if direct_directories != ["clang-release", "tmp"] or other_direct_entries:
+        raise ValueError("historical build root topology changed")
+    temporary = root / "tmp"
+    temporary_entries = sorted(temporary.iterdir(), key=lambda item: item.name)
+    if any(item.is_symlink() for item in temporary_entries):
+        raise ValueError("historical task temporary directory contains a symlink")
+    tmp_directories = [item.name for item in temporary_entries if item.is_dir()]
+    tmp_other_entries = [item.name for item in temporary_entries if not item.is_dir()]
+    if tmp_directories != list(expected_tmp_directories) or tmp_other_entries:
+        raise ValueError("historical task temporary topology changed")
+    if expected_tmp_directories:
+        task_home = temporary / "home"
+        if any(task_home.iterdir()):
+            raise ValueError("historical isolated HOME is no longer empty")
+    return {
+        "root": str(root.relative_to(ROOT)),
+        "direct_directories": direct_directories,
+        "other_direct_entries": other_direct_entries,
+        "tmp_directories": tmp_directories,
+        "tmp_other_entries": tmp_other_entries,
+        "task_home_empty": bool(expected_tmp_directories),
+    }
+
+
+def historical_workspace_evidence() -> dict[str, Any]:
+    expected_snapshots = {
+        str(HISTORICAL_V2_CLANG.relative_to(ROOT)): {
+            "root": str(HISTORICAL_V2_CLANG.relative_to(ROOT)),
+            "algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+            "files": 1_175, "directories": 604, "symlinks": 0,
+            "total_bytes": 2_753_127, "object_files": 0,
+            "sha256": (
+                "d38a5f734a608cad7f89b63e791a2e559f3db37bcbc9c4c8a841814704c8a84d"
+            ),
+        },
+        str(HISTORICAL_V3_CLANG.relative_to(ROOT)): {
+            "root": str(HISTORICAL_V3_CLANG.relative_to(ROOT)),
+            "algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+            "files": 1_243, "directories": 606, "symlinks": 0,
+            "total_bytes": 13_312_643, "object_files": 28,
+            "sha256": (
+                "9436251f7a2249c906eeb1b206efb6de51610e2fe4ecec0adcb48bc6c25b97a4"
+            ),
+        },
+    }
+    observed = {
+        path: deterministic_tree_snapshot(ROOT / path)
+        for path in sorted(expected_snapshots)
+    }
+    if not exact_json_equal(observed, expected_snapshots):
+        raise ValueError("historical build incident snapshot changed")
+    topology = [
+        _historical_root_topology(HISTORICAL_V2_ROOT, ()),
+        _historical_root_topology(HISTORICAL_V3_ROOT, ("home",)),
+    ]
+    return {"snapshots": observed, "root_topology": topology, "stable": True}
+
+
+def _require_empty_or_absent_tree(path: Path, label: str) -> None:
+    if not fixed_directory_exists(path):
+        return
+    entries = list(path.iterdir())
+    if entries:
+        raise ValueError(f"fixed {label} registry is not empty")
+
+
+def validate_failed_successor_evidence(head: str) -> dict[str, Any]:
+    old_claims = fixed_registry_files(V3_CLAIMS, r"[0-9a-f]{40}\.json")
+    if old_claims != [PREDECESSOR_CLAIM, FAILED_SUCCESSOR_CLAIM]:
+        raise ValueError("closed v3 claim registry is not exact")
+    if fixed_registry_files(V3_PREDECESSOR_FAILURES, r"[0-9a-f]{64}\.json") != [
+            PREDECESSOR_FAILURE]:
+        raise ValueError("closed v3 predecessor-failure registry changed")
+    if fixed_registry_files(PREDECESSOR_FAILURES, r"[0-9a-f]{64}\.json") != [
+            FAILED_SUCCESSOR_FAILURE]:
+        raise ValueError("recovery predecessor-failure registry is not exact")
+    if fixed_registry_files(V3_RECEIPTS, r"[0-9a-f]{64}\.json"):
+        raise ValueError("closed v3 unexpectedly has a success receipt")
+    for relative, label in (
+        ("bindings", "binding"), ("binding_claims", "binding-claim"),
+        ("claims", "stage-claim"), ("reports", "stage-report"),
+        ("decisions", "decision"),
+    ):
+        _require_empty_or_absent_tree(QUALIFICATION_ROOT / relative, label)
+    for path in (FAILED_SUCCESSOR_CLAIM, FAILED_SUCCESSOR_FAILURE):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("failed-successor evidence is not a regular file")
+
+    claim_raw = FAILED_SUCCESSOR_CLAIM.read_bytes()
+    claim = json.loads(claim_raw)
+    expected_claim = {
+        "candidate_commit": FAILED_SUCCESSOR_HEAD,
+        "claim_precedes_first_build_or_test_command": True,
+        "claimed_utc": "2026-08-14T07:25:58.703642+00:00",
+        "environment_sha256": (
+            "9068b14b231d8abacd33f201785556a4b72e5f8232b8644d975678cbd00d9346"
+        ),
+        "host_sha256": (
+            "1a7f59560af8acc4bc4533679ffc1fe83a835bf979928bb47909c7cbffbed30c"
+        ),
+        "one_shot": True,
+        "plan_sha256": SUCCESSOR_PLAN_SHA256,
+        "producer_sha256": (
+            "242e8c43bdfad46fc93f76449dd40f1e3487d5617b67492b39cf121740df8da4"
+        ),
+        "schema": V3_CLAIM_SCHEMA,
+    }
+    if (sha256_bytes(claim_raw) != FAILED_SUCCESSOR_CLAIM_SHA256 or
+            canonical_json(claim) != claim_raw or
+            not exact_json_equal(claim, expected_claim)):
+        raise ValueError("failed-successor claim identity changed")
+
+    failure_raw = FAILED_SUCCESSOR_FAILURE.read_bytes()
+    failure = json.loads(failure_raw)
+    outcome = failure.get("outer_producer_outcome", {})
+    inference = failure.get("control_flow_inference", {})
+    boundary = failure.get("failure_boundary", {})
+    diagnosis = failure.get("post_failure_diagnostic_state", {})
+    root_cause = diagnosis.get("root_cause", {})
+    authorization = failure.get("authorization", {})
+    if (FAILED_SUCCESSOR_FAILURE.stem != FAILED_SUCCESSOR_FAILURE_SHA256 or
+            sha256_bytes(failure_raw) != FAILED_SUCCESSOR_FAILURE_SHA256 or
+            canonical_json(failure) != failure_raw or
+            failure.get("schema") != RECOVERY_PREDECESSOR_FAILURE_SCHEMA or
+            failure.get("status") !=
+            "failed-technical-preflight-after-clang-focused-tests" or
+            failure.get("classification") !=
+            "spent-v3-successor-claim-technical-metadata-taxonomy-failure-"
+            "no-heldout-access" or
+            outcome.get("returncode") != 2 or
+            outcome.get("stdout") != {
+                "bytes": 0, "empty": True,
+                "semantic_code": "empty-outer-stdout",
+                "sha256": sha256_bytes(b""),
+            } or outcome.get("stderr") != {
+                "bytes": 41, "empty": False,
+                "semantic_code": "clang-release-compiler-metadata-rejected",
+                "sha256": sha256_bytes(
+                    b"clang_release compiler metadata mismatch\n"
+                ),
+            } or inference.get("classification") !=
+            "inference-from-unique-producer-raise-location-corroborated-by-"
+            "preserved-build-and-ctest-artifacts" or
+            inference.get("clang_configure_completed") is not True or
+            inference.get("clang_compile_completed") is not True or
+            inference.get("clang_focused_tests_completed") is not True or
+            inference.get("clang_focused_tests_passed") != 8 or
+            inference.get("original_clang_command_records_persisted") is not False or
+            inference.get("gnu_panel_started") is not False or
+            inference.get("sanitizer_panel_started") is not False or
+            inference.get("development_contract_command_started") is not False or
+            root_cause.get("classification") !=
+            "producer-compiler-family-taxonomy-mismatch" or
+            root_cause.get("compiler_path") != "/usr/bin/clang++" or
+            root_cause.get("compiler_path_present_in_metadata") is not True or
+            root_cause.get("producer_expected_cmake_compiler_id") != "Clang" or
+            root_cause.get("observed_cmake_compiler_id") != "AppleClang" or
+            any(boundary.get(name) is not False for name in (
+                "binding_claim_created", "binding_created", "decisions_created",
+                "development_contract_game_run", "final_bank_accessed",
+                "preflight_success_receipt_created", "recovery_claim_created",
+                "stage_claims_created", "stage_reports_created",
+                "validation_bank_accessed",
+            )) or boundary.get("heldout_bank_files_accessed") != [] or
+            authorization.get("authorized_attempts_remaining_in_predecessor_v2")
+            != 0 or
+            authorization.get("authorized_attempts_remaining_in_predecessor_v3")
+            != 0 or
+            authorization.get("predecessor_receipts_authorize_recovery") is not False or
+            authorization.get("recovery_attempts_authorized_by_separate_preregistration")
+            != 1 or authorization.get("no_rollover_or_retry") is not True or
+            authorization.get("heldout_data_access_authorized_by_this_receipt")
+            is not False):
+        raise ValueError("failed-successor failure receipt binding mismatch")
+    require_after_t0(failure["recorded_utc"], "failed-successor receipt")
+    prior = validate_predecessor_evidence(head)
+    for path, raw in (
+        (FAILED_SUCCESSOR_CLAIM, claim_raw),
+        (FAILED_SUCCESSOR_FAILURE, failure_raw),
+    ):
+        if git_blob(head, path) != raw:
+            raise ValueError("failed-successor evidence is not exact at recovery HEAD")
+    old_plan = git_blob(FAILED_SUCCESSOR_HEAD, PLAN)
+    old_producer = git_blob(FAILED_SUCCESSOR_HEAD, PRODUCER)
+    if (len(old_plan) != 17_456 or sha256_bytes(old_plan) !=
+            SUCCESSOR_PLAN_SHA256 or len(old_producer) != 93_588 or
+            sha256_bytes(old_producer) !=
+            "242e8c43bdfad46fc93f76449dd40f1e3487d5617b67492b39cf121740df8da4"):
+        raise ValueError("failed-successor plan/producer identity changed")
+    return {
+        "plan_v2": prior,
+        "plan_v3": {
+            "claim": mode_neutral_file_reference(FAILED_SUCCESSOR_CLAIM),
+            "failure_receipt": mode_neutral_file_reference(
+                FAILED_SUCCESSOR_FAILURE
+            ),
+        },
+    }
+
+
+def validate_recovery_plan() -> dict[str, Any]:
+    raw = RECOVERY_PLAN.read_bytes()
+    if (sha256_bytes(raw) != RECOVERY_PLAN_SHA256 or
+            canonical_json(json.loads(raw)) != raw):
+        raise ValueError("technical-recovery plan identity mismatch")
+    recovery = json.loads(raw)
+    campaign = recovery.get("recovery_campaign", {})
+    parent = campaign.get("parent_campaign", {})
+    boundary = campaign.get("preregistration_boundary", {})
+    shape = recovery.get("authorized_commit_shape", {})
+    projection = recovery.get("qualification_semantics_projection", {})
+    delta = recovery.get("technical_delta", {})
+    clang_policy = delta.get("compiler_metadata_policy", {}).get("clang", {})
+    gnu_policy = delta.get("compiler_metadata_policy", {}).get("gnu", {})
+    constraints = recovery.get("one_shot_constraints", {})
+    namespaces = recovery.get("namespaces", {})
+    workspaces = recovery.get("workspaces", {})
+    if (recovery.get("schema") !=
+            "rank4-jacek-hybrid-heldout-technical-recovery-plan-v1" or
+            recovery.get("status") != "preregistered-unbound-one-shot" or
+            recovery.get("classification") !=
+            "distinct-final-infrastructure-only-technical-recovery-not-a-"
+            "plan-v3-retry" or
+            campaign.get("recovery_campaign_id") != RECOVERY_CAMPAIGN_ID or
+            campaign.get("preregistered_utc") != RECOVERY_PREREGISTERED_UTC or
+            campaign.get("recovery_attempt_ordinal") != 3 or
+            campaign.get("recovery_attempts_authorized") != 1 or
+            campaign.get("no_rollover_or_retry") is not True or
+            campaign.get("clock_reset") is not False or
+            campaign.get("optimization_window_enlarged") is not False or
+            boundary.get("classification") !=
+            "final-recovery-preregistration-frozen-before-any-producer-or-"
+            "qualification-attempt" or
+            boundary.get("preflight_producer_main_invoked_before_final_freeze")
+            is not False or
+            boundary.get("qualification_bind_or_run_invoked_before_final_freeze")
+            is not False or
+            boundary.get("recovery_build_ctest_or_gate_command_started_before_"
+                         "final_freeze") is not False or
+            boundary.get("validation_or_final_bank_access_before_final_freeze")
+            is not False or
+            boundary.get("static_python_unit_tests_run_before_final_freeze")
+            is not True or
+            boundary.get("static_tests_invoked_producer_main_or_qualification_"
+                         "bind_run") is not False or
+            boundary.get("static_tests_accessed_validation_or_final_banks")
+            is not False or
+            parent.get("campaign_id") != CAMPAIGN_ID or
+            parent.get("t0_utc") != CAMPAIGN_T0_UTC or
+            parent.get("deadline_utc") != CAMPAIGN_DEADLINE_UTC or
+            shape.get("candidate_must_be_exact_direct_child_of") !=
+            FAILED_SUCCESSOR_HEAD or
+            shape.get("candidate_must_have_exactly_one_parent") is not True or
+            shape.get("exact_changed_path_set_required") is not True or
+            not exact_json_equal(
+                shape.get("allowed_changed_paths"),
+                list(TECHNICAL_RECOVERY_ALLOWED_PATHS),
+            ) or projection.get("mode") != "identity-exact-canonical-json" or
+            projection.get("source_commit") != FAILED_SUCCESSOR_HEAD or
+            projection.get("source_plan", {}).get("sha256") !=
+            SUCCESSOR_PLAN_SHA256 or
+            any(projection.get(name) is not False for name in (
+                "banks_changed", "evidence_policy_changed",
+                "qualification_configuration_changed", "stage_order_changed",
+                "thresholds_changed",
+            )) or delta.get("only_behavior_change") !=
+            "derive-and-verify-one-exact-cmake-compiler-id-from-bound-compiler-"
+            "platform-version-evidence" or
+            any(delta.get(name) is not False for name in (
+                "banks_changed", "candidate_gameplay_changed",
+                "candidate_test_changed", "cmake_changed", "gates_changed",
+                "stage_order_changed", "thresholds_changed",
+            )) or clang_policy.get("loose_set_acceptance_forbidden") is not True or
+            clang_policy.get("cmake_id_if_condition_true") != "AppleClang" or
+            clang_policy.get("cmake_id_otherwise") != "Clang" or
+            gnu_policy.get("cmake_id_exact") != "GNU" or
+            namespaces.get("recovery_output_root") !=
+            str(RECOVERY_ROOT.relative_to(ROOT)) or
+            namespaces.get("preflight_claims") !=
+            str(CLAIMS.relative_to(ROOT)) or
+            namespaces.get("preflight_receipts") !=
+            str(RECEIPTS.relative_to(ROOT)) or
+            namespaces.get("closed_v3_runtime_registries_must_not_be_written_by_"
+                           "recovery") is not True or
+            workspaces.get("recovery_build_root") !=
+            str(BUILD_ROOT.relative_to(ROOT)) or
+            workspaces.get("isolated_empty_task_home") !=
+            str(ISOLATED_HOME.relative_to(ROOT)) or
+            workspaces.get("historical_roots_are_forbidden_cleanup_targets") != [
+                str(HISTORICAL_V2_ROOT.relative_to(ROOT)),
+                str(HISTORICAL_V3_ROOT.relative_to(ROOT)),
+            ] or
+            constraints.get("recovery_attempts") != 1 or
+            constraints.get("spent_claim_without_valid_receipt_is_terminal")
+            is not True or
+            constraints.get("validation_or_final_bank_access_authorized_by_recovery_plan")
+            is not False):
+        raise ValueError("technical-recovery plan policy mismatch")
+    require_after_t0(RECOVERY_PREREGISTERED_UTC, "recovery preregistration")
+    qualification_raw = PLAN.read_bytes()
+    if (len(qualification_raw) != 17_456 or
+            sha256_bytes(qualification_raw) != SUCCESSOR_PLAN_SHA256 or
+            git_blob(FAILED_SUCCESSOR_HEAD, PLAN) != qualification_raw or
+            not exact_json_equal(
+                json.loads(qualification_raw), validate_successor_plan()
+            )):
+        raise ValueError("recovery changed frozen v3 qualification semantics")
+    return recovery
+
+
+def technical_recovery_record(head: str) -> dict[str, Any]:
+    if head == FAILED_SUCCESSOR_HEAD or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ValueError("preflight must run at the preregistered recovery commit")
     parents = git_text("rev-list", "--parents", "-n", "1", head).split()
-    if parents != [head, PREDECESSOR_HEAD]:
-        raise ValueError("technical successor is not the sole direct child of predecessor")
+    if parents != [head, FAILED_SUCCESSOR_HEAD]:
+        raise ValueError("technical recovery is not the sole direct child of f551")
     changed = tuple(sorted(filter(None, git_text(
-        "diff", "--name-only", PREDECESSOR_HEAD, head
+        "diff", "--name-only", FAILED_SUCCESSOR_HEAD, head
     ).splitlines())))
-    if changed != tuple(sorted(TECHNICAL_SUCCESSOR_ALLOWED_PATHS)):
-        raise ValueError("technical-successor commit path allowlist mismatch")
-    validate_successor_plan()
-    predecessor_evidence = validate_predecessor_evidence(head)
+    if changed != tuple(sorted(TECHNICAL_RECOVERY_ALLOWED_PATHS)):
+        raise ValueError("technical-recovery commit path closure mismatch")
+    validate_recovery_plan()
+    predecessor_evidence = validate_failed_successor_evidence(head)
+    historical = historical_workspace_evidence()
     unchanged: dict[str, dict[str, Any]] = {}
     for path, expected_bytes, expected_sha256 in UNCHANGED_FINALIST_FILES:
         live = path.read_bytes()
         committed = git_blob(head, path)
-        previous = git_blob(PREDECESSOR_HEAD, path)
+        previous = git_blob(FAILED_SUCCESSOR_HEAD, path)
         if (live != committed or committed != previous or
                 len(live) != expected_bytes or
                 sha256_bytes(live) != expected_sha256):
-            raise ValueError(f"technical successor changed finalist input: {path}")
+            raise ValueError(f"technical recovery changed frozen input: {path}")
         unchanged[identity_label(path)] = {
-            "path": identity_label(path),
-            "bytes": expected_bytes,
+            "path": identity_label(path), "bytes": expected_bytes,
             "sha256": expected_sha256,
         }
     return {
         "authorized": True,
-        "attempt_ordinal": 2,
-        "predecessor_candidate_commit": PREDECESSOR_HEAD,
-        "successor_candidate_commit": head,
+        "authorization_source": "separate-recovery-v1-preregistration",
+        "attempt_ordinal": 3,
+        "recovery_attempts_authorized": 1,
+        "no_rollover_or_retry": True,
+        "failed_successor_commit": FAILED_SUCCESSOR_HEAD,
+        "recovery_candidate_commit": head,
         "direct_parent_verified": True,
         "changed_paths": list(changed),
-        "predecessor_evidence": predecessor_evidence,
+        "closed_predecessor_evidence": predecessor_evidence,
+        "historical_workspaces": historical,
         "unchanged_finalist_identities": unchanged,
         "fresh_build_root": str(BUILD_ROOT.relative_to(ROOT)),
         "isolated_home": str(ISOLATED_HOME.relative_to(ROOT)),
-        "heldout_bank_files_accessed_by_amendment": [],
+        "heldout_bank_files_accessed_by_recovery": [],
     }
 
 
@@ -796,6 +1229,8 @@ def require_clean_tracked_head() -> dict[str, Any]:
     committer_utc = git_text("show", "-s", "--format=%cI", head)
     require_after_t0(author_utc, "candidate author time")
     require_after_t0(committer_utc, "candidate commit time")
+    require_recovery_window(author_utc, "recovery candidate author time")
+    require_recovery_window(committer_utc, "recovery candidate commit time")
     for path in tracked_inputs():
         if path.is_symlink() or git_blob(head, path) != path.read_bytes():
             raise ValueError(f"preflight input differs from committed HEAD: {path}")
@@ -957,6 +1392,7 @@ def create_preflight_claim(
         raise OSError("fixed preflight-claim registry is invalid")
     claimed_utc = utc_now()
     require_after_t0(claimed_utc, "preflight claim")
+    require_recovery_window(claimed_utc, "recovery preflight claim")
     payload = {
         "schema": CLAIM_SCHEMA,
         "candidate_commit": head,
@@ -1013,6 +1449,7 @@ def validate_preflight_claim(
             claim.get("claim_precedes_first_build_or_test_command") is not True):
         raise ValueError("preflight claim binding mismatch")
     require_after_t0(claim["claimed_utc"], "preflight claim")
+    require_recovery_window(claim["claimed_utc"], "recovery preflight claim")
 
 
 def persist_content_addressed(payload: dict[str, Any]) -> tuple[Path, str]:
@@ -1492,13 +1929,16 @@ def source_checks() -> dict[str, Any]:
 
 
 def prepare_build_directory(path: Path) -> None:
+    if path not in (CLANG_BUILD, GNU_BUILD, SANITIZER_BUILD):
+        raise ValueError("preflight build path is not one exact recovery panel")
     if os.path.lexists(path):
-        if path.is_symlink() or not path.is_relative_to(BUILD_ROOT):
-            raise ValueError("refusing to replace non-fixed preflight build path")
-        if not path.is_dir():
-            raise ValueError("fixed preflight build path is not a directory")
-        shutil.rmtree(path)
-    path.mkdir(parents=True)
+        raise ValueError("recovery panel path already exists; retry forbidden")
+    if (BUILD_ROOT.is_symlink() or not BUILD_ROOT.is_dir() or
+            TEMPORARY_DIRECTORY.is_symlink() or
+            not TEMPORARY_DIRECTORY.is_dir() or
+            ISOLATED_HOME.is_symlink() or not ISOLATED_HOME.is_dir()):
+        raise ValueError("recovery workspace scaffold is not exact")
+    ensure_directory_durable(path)
 
 
 def build_artifact_paths(build: Path) -> tuple[Path, ...]:
@@ -1526,9 +1966,65 @@ def build_artifact_paths(build: Path) -> tuple[Path, ...]:
     return tuple(sorted(paths))
 
 
+def expected_cmake_compiler_id(
+    logical_family: str, compiler: Path, compiler_record: dict[str, Any],
+) -> str:
+    expected_family = "Clang" if logical_family == "Clang" else "GNU"
+    if logical_family not in ("Clang", "GNU"):
+        raise ValueError("unknown logical compiler family")
+    if (compiler_record.get("family") != expected_family or
+            compiler_record.get("executable", {}).get("path") != str(compiler) or
+            not isinstance(compiler_record.get("version_first_line"), str)):
+        raise ValueError("compiler record cannot derive one exact CMake ID")
+    if logical_family == "GNU":
+        return "GNU"
+    apple = (
+        platform.system() == "Darwin" and
+        str(compiler) == "/usr/bin/clang++" and
+        compiler_record["version_first_line"].startswith("Apple clang version ")
+    )
+    return "AppleClang" if apple else "Clang"
+
+
+def compiler_metadata_evidence(
+    compiler_text: str, logical_family: str, compiler: Path,
+    compiler_record: dict[str, Any],
+) -> dict[str, Any]:
+    expected_id = expected_cmake_compiler_id(
+        logical_family, compiler, compiler_record
+    )
+    observed_ids = re.findall(
+        r'^set\(CMAKE_CXX_COMPILER_ID "([^"]+)"\)$',
+        compiler_text, re.MULTILINE,
+    )
+    observed_paths = re.findall(
+        r'^set\(CMAKE_CXX_COMPILER "([^"]+)"\)$',
+        compiler_text, re.MULTILINE,
+    )
+    if len(observed_ids) != 1 or len(observed_paths) != 1:
+        raise ValueError("compiler metadata ID/path closure mismatch")
+    evidence = {
+        "logical_family": logical_family,
+        "derivation": {
+            "platform_system": platform.system(),
+            "compiler_path": str(compiler),
+            "version_first_line": compiler_record["version_first_line"],
+        },
+        "expected_cmake_id": expected_id,
+        "observed_cmake_id": observed_ids[0],
+        "observed_compiler_path": observed_paths[0],
+        "exact_id_match": observed_ids[0] == expected_id,
+        "exact_compiler_path_match": observed_paths[0] == str(compiler),
+    }
+    if (evidence["exact_id_match"] is not True or
+            evidence["exact_compiler_path_match"] is not True):
+        raise ValueError("compiler metadata mismatch")
+    return evidence
+
+
 def run_build_panel(
     name: str, build: Path, compiler: Path, compiler_family: str,
-    sanitizers: bool,
+    compiler_record: dict[str, Any], sanitizers: bool,
 ) -> dict[str, Any]:
     prepare_build_directory(build)
     configure, _ = run_fixed_command(
@@ -1565,9 +2061,12 @@ def run_build_panel(
         else "PAPERSOCCER_ENABLE_SANITIZERS:BOOL=OFF"
     if expected_sanitizer not in cache_text:
         raise ValueError(f"{name} sanitizer cache flag mismatch")
-    expected_family = f'set(CMAKE_CXX_COMPILER_ID "{compiler_family}")'
-    if expected_family not in compiler_text or str(compiler) not in compiler_text:
-        raise ValueError(f"{name} compiler metadata mismatch")
+    try:
+        compiler_id_evidence = compiler_metadata_evidence(
+            compiler_text, compiler_family, compiler, compiler_record
+        )
+    except ValueError as error:
+        raise ValueError(f"{name} compiler metadata mismatch") from error
     address = "-fsanitize=address,undefined" in flags_text and \
         "-fsanitize=address,undefined" in link_text
     undefined_behavior = address and "-fno-sanitize-recover=all" in flags_text
@@ -1581,6 +2080,7 @@ def run_build_panel(
         "tests": tests,
         "cmake_cache": file_identity(cache_path),
         "compiler_metadata": file_identity(compiler_metadata_path),
+        "compiler_id_evidence": compiler_id_evidence,
         "instrumentation": {
             "address": address,
             "undefined_behavior": undefined_behavior,
@@ -1622,6 +2122,8 @@ def validate_command_record(
         raise ValueError("preflight command did not pass the fixed invocation")
     require_after_t0(record["started_utc"], "preflight command start")
     require_after_t0(record["ended_utc"], "preflight command end")
+    require_recovery_window(record["started_utc"], "recovery command start")
+    require_recovery_window(record["ended_utc"], "recovery command end")
     if (parse_utc(record["started_utc"]) > parse_utc(record["ended_utc"]) or
             not is_exact_int(record["elapsed_monotonic_ns"], minimum=1) or
             record["elapsed_monotonic_ns"] <= 0 or
@@ -1655,19 +2157,23 @@ def validate_passed_receipt(
     receipt: dict[str, Any], digest: str, expected_head: str,
     expected_plan_sha256: str,
 ) -> None:
-    plan_identity = file_identity(PLAN)
+    plan_identity = file_identity(RECOVERY_PLAN)
+    qualification_plan_identity = file_identity(PLAN)
     if plan_identity["sha256"] != expected_plan_sha256:
-        raise ValueError("live held-out plan hash differs from frozen identity")
+        raise ValueError("live recovery plan hash differs from frozen identity")
     expected_keys = {
-        "schema", "status", "campaign_id", "campaign_t0_utc",
+        "schema", "status", "campaign_id", "parent_campaign_id",
+        "campaign_t0_utc", "campaign_deadline_utc",
+        "recovery_preregistered_utc",
         "classification", "final_qualification", "producer",
         "candidate_commit", "candidate_commit_times", "plan",
+        "qualification_plan",
         "created_utc", "claim", "environment", "host", "git",
         "process_preflight", "tool_identities_before",
         "tool_identities_after",
         "tracked_inputs_before", "tracked_inputs_after", "source_checks",
         "generator_check", "compilers", "builds", "comparison_gate",
-        "checks", "technical_successor", "heldout_bank_files_accessed",
+        "checks", "technical_recovery", "heldout_bank_files_accessed",
     }
     if not isinstance(receipt, dict) or set(receipt) != expected_keys:
         raise ValueError("preflight receipt schema fields mismatch")
@@ -1675,24 +2181,36 @@ def validate_passed_receipt(
             sha256_bytes(canonical_json(receipt)) != digest):
         raise ValueError("preflight receipt content address mismatch")
     if (receipt["schema"] != SCHEMA or receipt["status"] != "passed" or
-            receipt["campaign_id"] != CAMPAIGN_ID or
+            receipt["campaign_id"] != RECOVERY_CAMPAIGN_ID or
+            receipt["parent_campaign_id"] != CAMPAIGN_ID or
             receipt["campaign_t0_utc"] != CAMPAIGN_T0_UTC or
+            receipt["campaign_deadline_utc"] != CAMPAIGN_DEADLINE_UTC or
+            receipt["recovery_preregistered_utc"] !=
+            RECOVERY_PREREGISTERED_UTC or
             receipt["classification"] !=
-            "final-source-preflight-before-heldout-access" or
+            "distinct-final-technical-recovery-preflight-before-heldout-access" or
             receipt["final_qualification"] is not False or
             receipt["candidate_commit"] != expected_head or
             not exact_json_equal(receipt["plan"], plan_identity) or
+            not exact_json_equal(
+                receipt["qualification_plan"], qualification_plan_identity
+            ) or
             not exact_json_equal(receipt["environment"], environment_record()) or
             not exact_json_equal(receipt["host"], host_identity()) or
-            not exact_json_equal(
-                receipt["technical_successor"],
-                technical_successor_record(expected_head),
-            ) or
             not exact_json_equal(receipt["heldout_bank_files_accessed"], [])):
         raise ValueError("preflight receipt top-level binding mismatch")
+    recovery = receipt["technical_recovery"]
+    live_recovery = technical_recovery_record(expected_head)
+    if (not isinstance(recovery, dict) or set(recovery) != {
+            "before", "after", "stable",
+            } or recovery.get("stable") is not True or
+            not exact_json_equal(recovery.get("before"), live_recovery) or
+            not exact_json_equal(recovery.get("after"), live_recovery)):
+        raise ValueError("technical-recovery evidence changed")
     if not exact_json_equal(receipt["producer"], file_identity(PRODUCER)):
         raise ValueError("preflight producer identity mismatch")
     require_after_t0(receipt["created_utc"], "preflight receipt")
+    require_recovery_window(receipt["created_utc"], "recovery receipt")
     validate_preflight_claim(
         receipt["claim"], expected_head, expected_plan_sha256,
         receipt["environment"], receipt["host"],
@@ -1706,6 +2224,7 @@ def validate_passed_receipt(
     }
     for value in expected_commit_times.values():
         require_after_t0(value, "preflight candidate commit")
+        require_recovery_window(value, "recovery candidate commit")
     if not exact_json_equal(receipt["candidate_commit_times"], expected_commit_times):
         raise ValueError("preflight candidate commit times mismatch")
     expected_git = {
@@ -1818,19 +2337,29 @@ def validate_passed_receipt(
         if str(path) != live["executable"]["path"]:
             raise ValueError(f"preflight compiler path mismatch: {family}")
     build_specs = {
-        "clang_release": (CLANG_BUILD, discovered["clang"][0], "Clang", False),
-        "gnu_release": (GNU_BUILD, discovered["gnu"][0], "GNU", False),
+        "clang_release": (
+            CLANG_BUILD, discovered["clang"][0], "Clang",
+            discovered["clang"][1], False,
+        ),
+        "gnu_release": (
+            GNU_BUILD, discovered["gnu"][0], "GNU",
+            discovered["gnu"][1], False,
+        ),
         "clang_sanitized": (
-            SANITIZER_BUILD, discovered["clang"][0], "Clang", True
+            SANITIZER_BUILD, discovered["clang"][0], "Clang",
+            discovered["clang"][1], True,
         ),
     }
     if set(receipt["builds"]) != set(build_specs):
         raise ValueError("preflight build panel set mismatch")
-    for name, (build, compiler, compiler_family, sanitizers) in build_specs.items():
+    for name, (
+            build, compiler, compiler_family, compiler_record, sanitizers,
+    ) in build_specs.items():
         panel = receipt["builds"][name]
         if (set(panel) != {
                 "name", "sanitizers_enabled", "configure", "compile", "tests",
-                "cmake_cache", "compiler_metadata", "instrumentation",
+                "cmake_cache", "compiler_metadata", "compiler_id_evidence",
+                "instrumentation",
                 "build_artifacts", "passed",
         } or panel["name"] != name or
                 panel["sanitizers_enabled"] is not sanitizers or
@@ -1864,7 +2393,10 @@ def validate_passed_receipt(
         }):
             raise ValueError(f"preflight sanitizer evidence mismatch: {name}")
         metadata_text = metadata_candidates[0].read_text(encoding="utf-8")
-        if f'set(CMAKE_CXX_COMPILER_ID "{compiler_family}")' not in metadata_text:
+        if not exact_json_equal(
+                panel["compiler_id_evidence"], compiler_metadata_evidence(
+                    metadata_text, compiler_family, compiler, compiler_record
+                )):
             raise ValueError(f"preflight compiler family evidence mismatch: {name}")
         validate_command_record(
             panel["configure"], configure_command(build, compiler, sanitizers), 600
@@ -1963,34 +2495,27 @@ def existing_receipts_for_head(head: str) -> list[Path]:
     return matches
 
 
-def validate_successor_claim_registry(head: str) -> list[Path]:
+def validate_recovery_claim_registry(head: str) -> list[Path]:
     files = fixed_registry_files(CLAIMS, r"[0-9a-f]{40,64}\.json")
-    allowed = {PREDECESSOR_CLAIM, preflight_claim_path(head)}
+    allowed = {preflight_claim_path(head)}
     if any(path not in allowed for path in files):
-        raise ValueError("foreign preflight claim violates successor policy")
-    if PREDECESSOR_CLAIM not in files:
-        raise ValueError("spent predecessor preflight claim is absent")
-    validate_predecessor_evidence(head)
+        raise ValueError("foreign preflight claim violates recovery policy")
     return files
 
 
-def prepare_fresh_successor_workspace() -> None:
-    """Create only an empty task HOME; never clean a possibly spent attempt."""
-    allowed_directories = {
-        BUILD_ROOT.resolve(strict=False),
-        TEMPORARY_DIRECTORY.resolve(strict=False),
-        ISOLATED_HOME.resolve(strict=False),
-    }
+def require_recovery_downstream_absent_before_claim() -> None:
+    for relative, label in (
+        ("bindings", "binding"), ("binding_claims", "binding-claim"),
+        ("claims", "stage-claim"), ("reports", "stage-report"),
+        ("decisions", "decision"),
+    ):
+        _require_empty_or_absent_tree(RECOVERY_ROOT / relative, label)
+
+
+def prepare_fresh_recovery_workspace() -> None:
+    """Create one absent recovery root; never clean any prior attempt."""
     if os.path.lexists(BUILD_ROOT):
-        if BUILD_ROOT.is_symlink() or not BUILD_ROOT.is_dir():
-            raise ValueError("fresh successor build root is not a real directory")
-        observed = {BUILD_ROOT.resolve(strict=True)}
-        for entry in BUILD_ROOT.rglob("*"):
-            if entry.is_symlink() or not entry.is_dir():
-                raise ValueError("successor workspace is not a fresh empty scaffold")
-            observed.add(entry.resolve(strict=True))
-        if not observed.issubset(allowed_directories):
-            raise ValueError("successor workspace contains an unexpected directory")
+        raise ValueError("recovery build root already exists; retry forbidden")
     ensure_directory_durable(ISOLATED_HOME)
     require_isolated_home_empty()
 
@@ -1998,7 +2523,7 @@ def prepare_fresh_successor_workspace() -> None:
 def require_isolated_home_empty() -> None:
     if (ISOLATED_HOME.is_symlink() or not ISOLATED_HOME.is_dir() or
             any(ISOLATED_HOME.iterdir())):
-        raise ValueError("isolated successor HOME is not an empty real directory")
+        raise ValueError("isolated recovery HOME is not an empty real directory")
 
 
 def main() -> int:
@@ -2015,8 +2540,8 @@ def main() -> int:
             return 2
         try:
             git = require_clean_tracked_head()
-            successor = technical_successor_record(git["head"])
-            claim_files = validate_successor_claim_registry(git["head"])
+            recovery_before = technical_recovery_record(git["head"])
+            claim_files = validate_recovery_claim_registry(git["head"])
             expected_claim_path = preflight_claim_path(git["head"])
             existing = existing_receipts_for_head(git["head"])
             if len(existing) > 1:
@@ -2025,7 +2550,8 @@ def main() -> int:
                 raw = existing[0].read_bytes()
                 payload = json.loads(raw)
                 validate_passed_receipt(
-                    payload, existing[0].stem, git["head"], file_identity(PLAN)["sha256"]
+                    payload, existing[0].stem, git["head"],
+                    file_identity(RECOVERY_PLAN)["sha256"],
                 )
                 print(existing[0].relative_to(ROOT))
                 print(f"sha256={existing[0].stem}")
@@ -2037,12 +2563,13 @@ def main() -> int:
                 )
             if expected_claim_path in claim_files:
                 raise ValueError(
-                    "successor preflight claim is spent; workspace remains untouched"
+                    "recovery preflight claim is spent; workspace remains untouched"
                 )
-            prepare_fresh_successor_workspace()
+            require_recovery_downstream_absent_before_claim()
+            prepare_fresh_recovery_workspace()
             environment = environment_record()
             host_before = host_identity()
-            plan_sha256 = file_identity(PLAN)["sha256"]
+            plan_sha256 = file_identity(RECOVERY_PLAN)["sha256"]
             require_isolated_home_empty()
             claim_path, claim = create_preflight_claim(
                 git["head"], plan_sha256, environment, host_before
@@ -2063,13 +2590,16 @@ def main() -> int:
             gnu_path, gnu_before = discover_compiler("gnu")
             builds = {
                 "clang_release": run_build_panel(
-                    "clang_release", CLANG_BUILD, clang_path, "Clang", False
+                    "clang_release", CLANG_BUILD, clang_path, "Clang",
+                    clang_before, False,
                 ),
                 "gnu_release": run_build_panel(
-                    "gnu_release", GNU_BUILD, gnu_path, "GNU", False
+                    "gnu_release", GNU_BUILD, gnu_path, "GNU",
+                    gnu_before, False,
                 ),
                 "clang_sanitized": run_build_panel(
-                    "clang_sanitized", SANITIZER_BUILD, clang_path, "Clang", True
+                    "clang_sanitized", SANITIZER_BUILD, clang_path, "Clang",
+                    clang_before, True,
                 ),
             }
             gate_command, gate_stdout = run_fixed_command(
@@ -2094,14 +2624,23 @@ def main() -> int:
             git_after = require_clean_tracked_head()
             if git_after != git:
                 raise ValueError("git identity changed during preflight")
+            recovery_after = technical_recovery_record(git["head"])
+            if not exact_json_equal(recovery_before, recovery_after):
+                raise ValueError("historical recovery evidence changed during execution")
             created_utc = utc_now()
             checks = {name: {"status": "passed"} for name in REQUIRED_CHECKS}
             receipt = {
                 "schema": SCHEMA,
                 "status": "passed",
-                "campaign_id": CAMPAIGN_ID,
+                "campaign_id": RECOVERY_CAMPAIGN_ID,
+                "parent_campaign_id": CAMPAIGN_ID,
                 "campaign_t0_utc": CAMPAIGN_T0_UTC,
-                "classification": "final-source-preflight-before-heldout-access",
+                "campaign_deadline_utc": CAMPAIGN_DEADLINE_UTC,
+                "recovery_preregistered_utc": RECOVERY_PREREGISTERED_UTC,
+                "classification": (
+                    "distinct-final-technical-recovery-preflight-before-"
+                    "heldout-access"
+                ),
                 "final_qualification": False,
                 "producer": file_identity(PRODUCER),
                 "candidate_commit": git["head"],
@@ -2109,7 +2648,8 @@ def main() -> int:
                     "author_utc": git["author_utc"],
                     "committer_utc": git["committer_utc"],
                 },
-                "plan": file_identity(PLAN),
+                "plan": file_identity(RECOVERY_PLAN),
+                "qualification_plan": file_identity(PLAN),
                 "created_utc": created_utc,
                 "claim": {**claim, "path": identity_label(claim_path)},
                 "environment": environment,
@@ -2144,12 +2684,17 @@ def main() -> int:
                     "contract": gate_contract,
                 },
                 "checks": checks,
-                "technical_successor": successor,
+                "technical_recovery": {
+                    "before": recovery_before,
+                    "after": recovery_after,
+                    "stable": True,
+                },
                 "heldout_bank_files_accessed": [],
             }
             path, digest = persist_content_addressed(receipt)
             validate_passed_receipt(
-                receipt, digest, git["head"], file_identity(PLAN)["sha256"]
+                receipt, digest, git["head"],
+                file_identity(RECOVERY_PLAN)["sha256"],
             )
         except (
             KeyError, OSError, TypeError, UnicodeError, ValueError,

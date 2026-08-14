@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind and run the one-shot Rank-4/Jacek held-out qualification.
+"""Bind and run the isolated recovery-v1 Rank-4/Jacek qualification.
 
 ``bind`` freezes one committed finalist, its preflight receipt, compilers,
 dependencies, build metadata, and comparison binary without touching any
@@ -8,9 +8,10 @@ It claims a stage before reading its first bank byte, never retries a spent
 claim, and cannot address FINAL until the unchanged binding has a persisted,
 accepted VALIDATION report.
 
-The dedicated held-out comparison binary emits explicit paired-sweep counters
-without changing the ordinary development gate. Binding remains blocked until
-the fixed preflight executes and proves that exact output contract.
+The untouched PLAN v3 remains the sole source of bank, threshold, and stage
+semantics.  This recorder writes only beneath recovery_v1 and remains blocked
+until the separately preregistered recovery preflight proves the exact output
+contract.
 """
 
 from __future__ import annotations
@@ -40,10 +41,15 @@ import record_rank4_jacek_hybrid_proof_scope_clock as common
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDER = Path(__file__).resolve()
-OUTPUT = ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification"
-PLAN = OUTPUT / "PLAN.json"
+QUALIFICATION_ROOT = (
+    ROOT / "results/rank_4_jacek_hybrid/gates/heldout_qualification"
+)
+OUTPUT = QUALIFICATION_ROOT / "recovery_v1"
+PLAN = QUALIFICATION_ROOT / "PLAN.json"
+RECOVERY_PLAN = OUTPUT / "PLAN.json"
 CAMPAIGN = ROOT / "results/rank_4_jacek_hybrid/campaign.json"
 PLAN_SHA256 = "3b463b8bc4f9c34d7a9c320b07165a6563c167e14e004f3d970a9b77497408c5"
+RECOVERY_PLAN_SHA256 = preflight.RECOVERY_PLAN_SHA256
 CAMPAIGN_SHA256 = "aed2a52f7a59c2b1988b5c365c23b57f8ec41fbfb50927211655a8565df63fa7"
 
 GATE_TARGET = preflight.GATE_TARGET
@@ -69,18 +75,22 @@ OPENING_TARGET_DIRECTORY = (
     BUILD_ROOT / "CMakeFiles/papersoccer_opening_bank_support.dir"
 )
 LOCK = Path("/tmp/rank4-hybrid-prototype-benchmark.lock")
-PRIVATE_LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-qualification.lock"
-BIND_LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-binding.lock"
+PRIVATE_LOCK = (
+    ROOT / "build/rank4-jacek-hybrid-heldout-qualification-recovery-v1.lock"
+)
+BIND_LOCK = ROOT / "build/rank4-jacek-hybrid-heldout-binding-recovery-v1.lock"
 STAGE_TIMEOUT_SECONDS = {"validation": 14_400, "final": 28_800}
 
 PLAN_SCHEMA = "rank4-jacek-hybrid-heldout-qualification-plan-v3"
-BINDING_SCHEMA = "rank4-jacek-hybrid-heldout-binding-v3"
+RECOVERY_PLAN_SCHEMA = "rank4-jacek-hybrid-heldout-technical-recovery-plan-v1"
+BINDING_SCHEMA = "rank4-jacek-hybrid-heldout-binding-recovery-v1"
 PREFLIGHT_SCHEMA = preflight.SCHEMA
-REPORT_SCHEMA = "rank4-jacek-hybrid-heldout-stage-report-v2"
-DECISION_SCHEMA = "rank4-jacek-hybrid-heldout-decision-v2"
-CLAIM_SCHEMA = "rank4-jacek-hybrid-heldout-stage-claim-v1"
-BIND_CLAIM_SCHEMA = "rank4-jacek-hybrid-heldout-binding-claim-v1"
-CAMPAIGN_ID = "rank_4_jacek_hybrid-36h-20260813"
+REPORT_SCHEMA = "rank4-jacek-hybrid-heldout-stage-report-recovery-v1"
+DECISION_SCHEMA = "rank4-jacek-hybrid-heldout-decision-recovery-v1"
+CLAIM_SCHEMA = "rank4-jacek-hybrid-heldout-stage-claim-recovery-v1"
+BIND_CLAIM_SCHEMA = "rank4-jacek-hybrid-heldout-binding-claim-recovery-v1"
+CAMPAIGN_ID = preflight.RECOVERY_CAMPAIGN_ID
+PARENT_CAMPAIGN_ID = preflight.CAMPAIGN_ID
 CAMPAIGN_T0_UTC = "2026-08-13T19:15:07Z"
 
 PAIR_FIELDS = preflight.PAIR_FIELDS
@@ -110,8 +120,11 @@ TRACKED_DEPENDENCIES = (
     PREFLIGHT_PRODUCER,
     PREFLIGHT_TEST,
     PLAN,
+    RECOVERY_PLAN,
     preflight.PREDECESSOR_CLAIM,
     preflight.PREDECESSOR_FAILURE,
+    preflight.FAILED_SUCCESSOR_CLAIM,
+    preflight.FAILED_SUCCESSOR_FAILURE,
     CAMPAIGN,
     ROOT / "CMakeLists.txt",
     ROOT / "tools/record_rank4_jacek_hybrid_proof_scope_clock.py",
@@ -204,8 +217,8 @@ def parse_utc(value: str) -> dt.datetime:
 
 
 def require_after_t0(value: str, label: str) -> None:
-    if parse_utc(value) < parse_utc(CAMPAIGN_T0_UTC):
-        raise ValueError(f"{label} predates campaign T0")
+    preflight.require_after_t0(value, label)
+    preflight.require_recovery_window(value, label)
 
 
 def _lexical_absolute(path: Path) -> Path:
@@ -666,6 +679,7 @@ def _read_exact_json(path: Path, expected_sha256: str) -> dict[str, Any]:
 
 def validate_plan() -> dict[str, Any]:
     plan = _read_exact_json(PLAN, PLAN_SHA256)
+    recovery_plan = _read_exact_json(RECOVERY_PLAN, RECOVERY_PLAN_SHA256)
     campaign = _read_exact_json(CAMPAIGN, CAMPAIGN_SHA256)
     if (plan.get("schema") != PLAN_SCHEMA or
             plan.get("status") != "preregistered-unbound" or
@@ -674,15 +688,20 @@ def validate_plan() -> dict[str, Any]:
         raise ValueError("held-out plan identity/classification mismatch")
     if not preflight.exact_json_equal(plan, preflight.validate_successor_plan()):
         raise ValueError("held-out technical-successor amendment mismatch")
-    if (plan.get("campaign", {}).get("campaign_id") != CAMPAIGN_ID or
+    if (recovery_plan.get("schema") != RECOVERY_PLAN_SCHEMA or
+            not preflight.exact_json_equal(
+                recovery_plan, preflight.validate_recovery_plan()
+            )):
+        raise ValueError("held-out technical-recovery plan mismatch")
+    if (plan.get("campaign", {}).get("campaign_id") != PARENT_CAMPAIGN_ID or
             plan.get("campaign", {}).get("campaign_manifest_sha256") !=
             CAMPAIGN_SHA256 or
             plan.get("campaign", {}).get("t0_utc") != CAMPAIGN_T0_UTC or
-            campaign.get("campaign_id") != CAMPAIGN_ID or
+            campaign.get("campaign_id") != PARENT_CAMPAIGN_ID or
             campaign.get("time_boundary", {}).get("goal_created_at_utc") !=
             CAMPAIGN_T0_UTC):
         raise ValueError("campaign binding mismatch")
-    require_after_t0(
+    preflight.require_after_t0(
         campaign["time_boundary"]["preregistered_at_utc"],
         "campaign preregistration",
     )
@@ -773,7 +792,9 @@ def fixed_preflight_receipt(
     if len(matches) != 1:
         raise ValueError("current HEAD requires exactly one fixed preflight receipt")
     path, receipt, digest = matches[0]
-    preflight.validate_passed_receipt(receipt, digest, head, PLAN_SHA256)
+    preflight.validate_passed_receipt(
+        receipt, digest, head, RECOVERY_PLAN_SHA256
+    )
     source = dependency_identities.get(identity_label(SOURCE_PATH))
     if (source is None or receipt["source_checks"]["generated_source"] != {
             **source, "source_limit": 99_999,
@@ -799,6 +820,7 @@ def qualification_key(
         "schema": BINDING_SCHEMA,
         "campaign_id": CAMPAIGN_ID,
         "plan_sha256": PLAN_SHA256,
+        "recovery_plan_sha256": RECOVERY_PLAN_SHA256,
         "candidate_commit": head,
         "candidate_engine_sha256": dependency_identities[
             identity_label(ENGINE_PATH)]["sha256"],
@@ -991,8 +1013,13 @@ def _create_binding_locked() -> tuple[Path, str]:
         "status": "frozen-unopened-heldout",
         "created_utc": created_utc,
         "campaign_id": CAMPAIGN_ID,
+        "parent_campaign_id": PARENT_CAMPAIGN_ID,
         "campaign_t0_utc": CAMPAIGN_T0_UTC,
         "plan": {"path": identity_label(PLAN), "sha256": PLAN_SHA256},
+        "recovery_plan": {
+            "path": identity_label(RECOVERY_PLAN),
+            "sha256": RECOVERY_PLAN_SHA256,
+        },
         "campaign_manifest": {
             "path": identity_label(CAMPAIGN), "sha256": CAMPAIGN_SHA256,
         },
@@ -1010,7 +1037,7 @@ def _create_binding_locked() -> tuple[Path, str]:
         "preflight_summary": {
             "status": receipt["status"],
             "checks": receipt["checks"],
-            "technical_successor": receipt["technical_successor"],
+            "technical_recovery": receipt["technical_recovery"],
             "compilers": receipt["compilers"],
             "comparison_gate": receipt["comparison_gate"],
             "builds": receipt["builds"],
@@ -1391,8 +1418,9 @@ def load_and_validate_binding(
     )
     plan = validate_plan()
     expected_keys = {
-        "schema", "status", "created_utc", "campaign_id", "campaign_t0_utc",
-        "plan", "campaign_manifest", "candidate_qualification_id",
+        "schema", "status", "created_utc", "campaign_id",
+        "parent_campaign_id", "campaign_t0_utc", "plan", "recovery_plan",
+        "campaign_manifest", "candidate_qualification_id",
         "qualification_key", "binding_claim", "candidate_commit",
         "configuration", "bank_registry_from_campaign_metadata_only",
         "dependency_identities", "dependency_routing", "preflight_receipt",
@@ -1404,9 +1432,14 @@ def load_and_validate_binding(
     if (set(binding) != expected_keys or
             binding.get("status") != "frozen-unopened-heldout" or
             binding.get("campaign_id") != CAMPAIGN_ID or
+            binding.get("parent_campaign_id") != PARENT_CAMPAIGN_ID or
             binding.get("campaign_t0_utc") != CAMPAIGN_T0_UTC or
             binding.get("plan", {}).get("sha256") != PLAN_SHA256 or
             binding.get("plan", {}).get("path") != identity_label(PLAN) or
+            binding.get("recovery_plan") != {
+                "path": identity_label(RECOVERY_PLAN),
+                "sha256": RECOVERY_PLAN_SHA256,
+            } or
             binding.get("campaign_manifest") != {
                 "path": identity_label(CAMPAIGN), "sha256": CAMPAIGN_SHA256,
             } or
@@ -1478,7 +1511,7 @@ def load_and_validate_binding(
     expected_preflight_summary = {
         "status": receipt["status"],
         "checks": receipt["checks"],
-        "technical_successor": receipt["technical_successor"],
+        "technical_recovery": receipt["technical_recovery"],
         "compilers": receipt["compilers"],
         "comparison_gate": receipt["comparison_gate"],
         "builds": receipt["builds"],

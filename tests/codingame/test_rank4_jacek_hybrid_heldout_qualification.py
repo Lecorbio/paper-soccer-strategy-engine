@@ -145,8 +145,18 @@ class HeldoutQualificationTest(unittest.TestCase):
         )
         self.assertEqual(
             recorder.BINDING_SCHEMA,
-            "rank4-jacek-hybrid-heldout-binding-v3",
+            "rank4-jacek-hybrid-heldout-binding-recovery-v1",
         )
+        recovery_plan = json.loads(recorder.RECOVERY_PLAN.read_bytes())
+        self.assertEqual(
+            recovery_plan["schema"],
+            "rank4-jacek-hybrid-heldout-technical-recovery-plan-v1",
+        )
+        self.assertEqual(
+            recovery_plan["recovery_campaign"]["recovery_attempts_authorized"],
+            1,
+        )
+        self.assertFalse(recovery_plan["recovery_campaign"]["clock_reset"])
         self.assertEqual(sum(item["games"] for item in self.plan["banks"]["validation"]), 106)
         self.assertEqual(sum(item["games"] for item in self.plan["banks"]["final"]), 212)
         self.assertEqual(self.plan["paired_sweep_test"]["equivalent_rational_max_inclusive"], "1/40")
@@ -169,6 +179,15 @@ class HeldoutQualificationTest(unittest.TestCase):
             str(recorder.preflight.PREDECESSOR_FAILURE.relative_to(ROOT)),
             dependency_labels,
         )
+        self.assertIn(str(recorder.RECOVERY_PLAN.relative_to(ROOT)), dependency_labels)
+        self.assertIn(
+            str(recorder.preflight.FAILED_SUCCESSOR_CLAIM.relative_to(ROOT)),
+            dependency_labels,
+        )
+        self.assertIn(
+            str(recorder.preflight.FAILED_SUCCESSOR_FAILURE.relative_to(ROOT)),
+            dependency_labels,
+        )
         amendment = self.plan["technical_successor_amendment"]
         self.assertEqual(
             amendment["predecessor_failure_receipt"]["sha256"],
@@ -179,7 +198,10 @@ class HeldoutQualificationTest(unittest.TestCase):
             amendment["successor_constraints"]
             ["validation_or_final_bank_access_authorized_by_amendment"]
         )
-        self.assertIn("preflight-successor", str(recorder.BUILD_ROOT))
+        self.assertIn("preflight-recovery-v1", str(recorder.BUILD_ROOT))
+        self.assertTrue(recorder.OUTPUT.is_relative_to(
+            recorder.QUALIFICATION_ROOT / "recovery_v1"
+        ))
         for item in (
             *self.plan["banks"]["validation"], *self.plan["banks"]["final"],
         ):
@@ -195,6 +217,28 @@ class HeldoutQualificationTest(unittest.TestCase):
 
         with mock.patch.object(Path, "read_bytes", guarded):
             recorder.validate_plan()
+
+    def test_qualification_key_binds_both_frozen_and_recovery_plans(self):
+        dependencies = {
+            recorder.identity_label(recorder.ENGINE_PATH): {"sha256": "a" * 64},
+            recorder.identity_label(recorder.SOURCE_PATH): {"sha256": "b" * 64},
+        }
+        with mock.patch.object(
+            recorder.preflight, "environment_record",
+            return_value={"sha256": "c" * 64},
+        ), mock.patch.object(
+            recorder.preflight, "host_identity",
+            return_value={"sha256": "d" * 64},
+        ):
+            key = recorder.qualification_key(
+                self.plan, "e" * 40, dependencies, "f" * 64
+            )
+        self.assertEqual(key["plan_sha256"], recorder.PLAN_SHA256)
+        self.assertEqual(
+            key["recovery_plan_sha256"], recorder.RECOVERY_PLAN_SHA256
+        )
+        self.assertEqual(key["campaign_id"], recorder.CAMPAIGN_ID)
+        self.assertNotEqual(recorder.CAMPAIGN_ID, recorder.PARENT_CAMPAIGN_ID)
 
     def test_validation_command_cannot_address_final(self):
         command = recorder.command_for_stage(self.plan, "validation")

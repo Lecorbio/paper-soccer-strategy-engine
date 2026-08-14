@@ -99,6 +99,10 @@ class FinalSourcePreflightTest(unittest.TestCase):
         self.assertIn(preflight.QUALIFICATION_RECORDER, paths)
         self.assertIn(preflight.PRODUCER_TEST, paths)
         self.assertIn(preflight.QUALIFICATION_TEST, paths)
+        self.assertIn(preflight.PLAN, paths)
+        self.assertIn(preflight.RECOVERY_PLAN, paths)
+        self.assertIn(preflight.FAILED_SUCCESSOR_CLAIM, paths)
+        self.assertIn(preflight.FAILED_SUCCESSOR_FAILURE, paths)
         self.assertNotIn(
             ROOT / "results/rank_4_jacek_hybrid/openings/validation_d04.tsv",
             paths,
@@ -237,42 +241,227 @@ class FinalSourcePreflightTest(unittest.TestCase):
             read_only["sha256"], preflight.PREDECESSOR_CLAIM_SHA256
         )
 
-    def test_successor_policy_requires_direct_child_and_exact_path_allowlist(self):
+    def test_failed_successor_claim_and_receipt_are_exact_and_canonical(self):
+        claim_raw = preflight.FAILED_SUCCESSOR_CLAIM.read_bytes()
+        failure_raw = preflight.FAILED_SUCCESSOR_FAILURE.read_bytes()
+        failure = json.loads(failure_raw)
+        self.assertEqual(
+            hashlib.sha256(claim_raw).hexdigest(),
+            preflight.FAILED_SUCCESSOR_CLAIM_SHA256,
+        )
+        self.assertEqual(
+            hashlib.sha256(failure_raw).hexdigest(),
+            preflight.FAILED_SUCCESSOR_FAILURE_SHA256,
+        )
+        self.assertEqual(preflight.canonical_json(failure), failure_raw)
+        self.assertNotIn("text", failure["outer_producer_outcome"]["stderr"])
+        self.assertEqual(
+            failure["control_flow_inference"]["classification"],
+            "inference-from-unique-producer-raise-location-corroborated-by-"
+            "preserved-build-and-ctest-artifacts",
+        )
+        self.assertEqual(
+            failure["post_failure_diagnostic_state"]["root_cause"]
+            ["observed_cmake_compiler_id"], "AppleClang",
+        )
+        self.assertEqual(
+            failure["authorization"]
+            ["authorized_attempts_remaining_in_predecessor_v3"], 0,
+        )
+        self.assertFalse(
+            failure["authorization"]["predecessor_receipts_authorize_recovery"]
+        )
+
+    def test_historical_incident_trees_and_root_topology_are_preserved(self):
+        v2 = {
+            "root": str(preflight.HISTORICAL_V2_CLANG.relative_to(ROOT)),
+            "algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+            "files": 1_175, "directories": 604, "symlinks": 0,
+            "total_bytes": 2_753_127, "object_files": 0,
+            "sha256": (
+                "d38a5f734a608cad7f89b63e791a2e559f3db37bcbc9c4c8a841814704c8a84d"
+            ),
+        }
+        v3 = {
+            "root": str(preflight.HISTORICAL_V3_CLANG.relative_to(ROOT)),
+            "algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+            "files": 1_243, "directories": 606, "symlinks": 0,
+            "total_bytes": 13_312_643, "object_files": 28,
+            "sha256": (
+                "9436251f7a2249c906eeb1b206efb6de51610e2fe4ecec0adcb48bc6c25b97a4"
+            ),
+        }
+        snapshot_by_path = {
+            preflight.HISTORICAL_V2_CLANG: v2,
+            preflight.HISTORICAL_V3_CLANG: v3,
+        }
+        with mock.patch.object(
+            preflight, "deterministic_tree_snapshot",
+            side_effect=lambda path: snapshot_by_path[path],
+        ), mock.patch.object(
+            preflight, "_historical_root_topology",
+            side_effect=[{"tmp_directories": []}, {"tmp_directories": ["home"]}],
+        ):
+            evidence = preflight.historical_workspace_evidence()
+        self.assertTrue(evidence["stable"])
+        self.assertEqual(evidence["root_topology"][1]["tmp_directories"], ["home"])
+        drifted = dict(v3)
+        drifted["object_files"] = 27
+        drifted_by_path = dict(snapshot_by_path)
+        drifted_by_path[preflight.HISTORICAL_V3_CLANG] = drifted
+        with mock.patch.object(
+            preflight, "deterministic_tree_snapshot",
+            side_effect=lambda path: drifted_by_path[path],
+        ), self.assertRaisesRegex(ValueError, "snapshot changed"):
+            preflight.historical_workspace_evidence()
+        source = PRODUCER_PATH.read_text(encoding="ascii")
+        self.assertNotIn("rmtree(", source)
+
+    def test_tree_snapshot_algorithm_is_path_size_and_digest_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "nested"
+            nested.mkdir()
+            artifact = nested / "probe.o"
+            artifact.write_bytes(b"artifact")
+            with mock.patch.object(preflight, "ROOT", root):
+                record = preflight.deterministic_tree_snapshot(root)
+        file_sha = hashlib.sha256(b"artifact").hexdigest()
+        expected = hashlib.sha256(
+            b"nested/probe.o\0" + str(len(b"artifact")).encode("ascii") +
+            b"\0" + file_sha.encode("ascii") + b"\0"
+        ).hexdigest()
+        self.assertEqual(record["sha256"], expected)
+        self.assertEqual(record["directories"], 1)
+        self.assertEqual(record["object_files"], 1)
+
+    def test_compiler_id_is_one_derived_exact_value_and_exact_path(self):
+        clang_record = {
+            "family": "Clang",
+            "executable": {"path": "/usr/bin/clang++"},
+            "version_first_line": "Apple clang version 21.0.0.21000101",
+        }
+        apple_metadata = (
+            'set(CMAKE_CXX_COMPILER "/usr/bin/clang++")\n'
+            'set(CMAKE_CXX_COMPILER_ID "AppleClang")\n'
+        )
+        with mock.patch.object(
+            preflight.platform, "system", return_value="Darwin"
+        ):
+            evidence = preflight.compiler_metadata_evidence(
+                apple_metadata, "Clang", Path("/usr/bin/clang++"), clang_record
+            )
+            self.assertEqual(evidence["expected_cmake_id"], "AppleClang")
+            self.assertEqual(evidence["observed_cmake_id"], "AppleClang")
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                preflight.compiler_metadata_evidence(
+                    apple_metadata.replace("AppleClang", "Clang"),
+                    "Clang", Path("/usr/bin/clang++"), clang_record,
+                )
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                preflight.compiler_metadata_evidence(
+                    apple_metadata.replace(
+                        "/usr/bin/clang++", "/opt/homebrew/bin/clang++"
+                    ),
+                    "Clang", Path("/usr/bin/clang++"), clang_record,
+                )
+        upstream_record = {
+            "family": "Clang",
+            "executable": {"path": "/usr/bin/clang++"},
+            "version_first_line": "clang version 21.0.0",
+        }
+        upstream_metadata = (
+            'set(CMAKE_CXX_COMPILER "/usr/bin/clang++")\n'
+            'set(CMAKE_CXX_COMPILER_ID "Clang")\n'
+        )
+        with mock.patch.object(preflight.platform, "system", return_value="Linux"):
+            self.assertEqual(
+                preflight.compiler_metadata_evidence(
+                    upstream_metadata, "Clang", Path("/usr/bin/clang++"),
+                    upstream_record,
+                )["expected_cmake_id"], "Clang",
+            )
+        gnu_record = {
+            "family": "GNU", "executable": {"path": "/usr/bin/g++"},
+            "version_first_line": "g++ (GCC) 15.1.0",
+        }
+        gnu_metadata = (
+            'set(CMAKE_CXX_COMPILER "/usr/bin/g++")\n'
+            'set(CMAKE_CXX_COMPILER_ID "GNU")\n'
+        )
+        with mock.patch.object(preflight.platform, "system", return_value="Linux"):
+            self.assertEqual(
+                preflight.compiler_metadata_evidence(
+                    gnu_metadata, "GNU", Path("/usr/bin/g++"), gnu_record
+                )["expected_cmake_id"], "GNU",
+            )
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                preflight.compiler_metadata_evidence(
+                    gnu_metadata.replace("GNU", "Clang"),
+                    "GNU", Path("/usr/bin/g++"), gnu_record,
+                )
+
+    def test_panel_preparation_never_cleans_an_existing_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "recovery"
+            temporary = build / "tmp"
+            home = temporary / "home"
+            clang = build / "clang-release"
+            gnu = build / "gnu-release"
+            sanitizer = build / "clang-sanitized"
+            home.mkdir(parents=True)
+            with mock.patch.object(preflight, "BUILD_ROOT", build), \
+                    mock.patch.object(preflight, "TEMPORARY_DIRECTORY", temporary), \
+                    mock.patch.object(preflight, "ISOLATED_HOME", home), \
+                    mock.patch.object(preflight, "CLANG_BUILD", clang), \
+                    mock.patch.object(preflight, "GNU_BUILD", gnu), \
+                    mock.patch.object(preflight, "SANITIZER_BUILD", sanitizer):
+                preflight.prepare_build_directory(clang)
+                marker = clang / "spent-marker"
+                marker.write_text("preserve\n", encoding="ascii")
+                with self.assertRaisesRegex(ValueError, "retry forbidden"):
+                    preflight.prepare_build_directory(clang)
+                self.assertEqual(marker.read_text(encoding="ascii"), "preserve\n")
+
+    def test_recovery_policy_requires_direct_child_and_exact_path_closure(self):
         head = "a" * 40
 
         def git_text(*arguments: str) -> str:
             if arguments[:3] == ("rev-list", "--parents", "-n"):
-                return f"{head} {preflight.PREDECESSOR_HEAD}"
+                return f"{head} {preflight.FAILED_SUCCESSOR_HEAD}"
             if arguments[:2] == ("diff", "--name-only"):
-                return "\n".join(preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS)
+                return "\n".join(preflight.TECHNICAL_RECOVERY_ALLOWED_PATHS)
             raise AssertionError(arguments)
 
         with mock.patch.object(preflight, "git_text", side_effect=git_text), \
-                mock.patch.object(preflight, "validate_successor_plan"), \
+                mock.patch.object(preflight, "validate_recovery_plan"), \
                 mock.patch.object(
-                    preflight, "validate_predecessor_evidence",
-                    return_value={"claim": {}, "failure_receipt": {}},
+                    preflight, "validate_failed_successor_evidence",
+                    return_value={"plan_v2": {}, "plan_v3": {}},
+                ), mock.patch.object(
+                    preflight, "historical_workspace_evidence",
+                    return_value={"stable": True},
                 ), mock.patch.object(
                     preflight, "git_blob",
                     side_effect=lambda _head, path: path.read_bytes(),
                 ):
-            record = preflight.technical_successor_record(head)
+            record = preflight.technical_recovery_record(head)
         self.assertTrue(record["direct_parent_verified"])
         self.assertEqual(
             record["changed_paths"],
-            sorted(preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS),
+            sorted(preflight.TECHNICAL_RECOVERY_ALLOWED_PATHS),
         )
 
         def extra_path_git_text(*arguments: str) -> str:
             if arguments[:3] == ("rev-list", "--parents", "-n"):
-                return f"{head} {preflight.PREDECESSOR_HEAD}"
-            return "\n".join((*preflight.TECHNICAL_SUCCESSOR_ALLOWED_PATHS,
+                return f"{head} {preflight.FAILED_SUCCESSOR_HEAD}"
+            return "\n".join((*preflight.TECHNICAL_RECOVERY_ALLOWED_PATHS,
                               "unexpected.cpp"))
 
         with mock.patch.object(
             preflight, "git_text", side_effect=extra_path_git_text
-        ), self.assertRaisesRegex(ValueError, "allowlist"):
-            preflight.technical_successor_record(head)
+        ), self.assertRaisesRegex(ValueError, "closure"):
+            preflight.technical_recovery_record(head)
 
     def test_plan_projection_proves_qualification_semantics_unchanged(self):
         successor = json.loads(preflight.PLAN.read_bytes())
@@ -286,6 +475,24 @@ class FinalSourcePreflightTest(unittest.TestCase):
         self.assertFalse(preflight.exact_json_equal(
             preflight.predecessor_plan_projection(drifted), predecessor
         ))
+        recovery = json.loads(preflight.RECOVERY_PLAN.read_bytes())
+        self.assertEqual(
+            recovery["qualification_semantics_projection"]["source_plan"]
+            ["sha256"], preflight.SUCCESSOR_PLAN_SHA256,
+        )
+        self.assertEqual(
+            preflight.PLAN.read_bytes(),
+            preflight.git_blob(preflight.FAILED_SUCCESSOR_HEAD, preflight.PLAN),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            changed_path = Path(directory) / "PLAN.json"
+            changed = copy.deepcopy(recovery)
+            changed["technical_delta"]["thresholds_changed"] = True
+            changed_path.write_bytes(preflight.canonical_json(changed))
+            with mock.patch.object(
+                preflight, "RECOVERY_PLAN", changed_path
+            ), self.assertRaisesRegex(ValueError, "identity"):
+                preflight.validate_recovery_plan()
 
     def test_third_head_or_other_foreign_claim_fails_before_validation(self):
         head = "a" * 40
@@ -294,53 +501,62 @@ class FinalSourcePreflightTest(unittest.TestCase):
         )
         with mock.patch.object(
             preflight, "fixed_registry_files",
-            return_value=[
-                preflight.PREDECESSOR_CLAIM,
-                prior_successor_or_third_head_claim,
-            ],
-        ), mock.patch.object(
-            preflight, "validate_predecessor_evidence",
-            side_effect=AssertionError("must fail first"),
+            return_value=[prior_successor_or_third_head_claim],
         ), self.assertRaisesRegex(ValueError, "foreign"):
-            preflight.validate_successor_claim_registry(head)
+            preflight.validate_recovery_claim_registry(head)
 
     def test_successor_workspace_creates_empty_home_without_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
-            build = Path(directory) / "successor"
+            build = Path(directory) / "recovery-v1"
             temporary = build / "tmp"
             home = temporary / "home"
             with mock.patch.object(preflight, "BUILD_ROOT", build), \
                     mock.patch.object(
                         preflight, "TEMPORARY_DIRECTORY", temporary
                     ), mock.patch.object(preflight, "ISOLATED_HOME", home):
-                preflight.prepare_fresh_successor_workspace()
+                preflight.prepare_fresh_recovery_workspace()
                 self.assertTrue(home.is_dir())
                 self.assertEqual(list(home.iterdir()), [])
                 marker = home / "spent-attempt-marker"
                 marker.write_text("preserve\n", encoding="ascii")
-                with self.assertRaisesRegex(ValueError, "fresh|empty"):
-                    preflight.prepare_fresh_successor_workspace()
+                with self.assertRaisesRegex(ValueError, "retry forbidden"):
+                    preflight.prepare_fresh_recovery_workspace()
                 self.assertEqual(marker.read_text(encoding="ascii"), "preserve\n")
 
-    def test_spent_successor_claim_is_checked_before_workspace_creation(self):
+    def test_spent_recovery_claim_is_checked_before_workspace_creation(self):
         source = PRODUCER_PATH.read_text(encoding="ascii")
         main = source[source.index("def main() -> int:"):]
         self.assertLess(
             main.index("if os.path.lexists(claim_path)"),
-            main.index("prepare_fresh_successor_workspace()"),
+            main.index("prepare_fresh_recovery_workspace()"),
         )
         self.assertLess(
-            main.index("prepare_fresh_successor_workspace()"),
+            main.index("prepare_fresh_recovery_workspace()"),
             main.index("environment = environment_record()"),
         )
         self.assertLess(
-            main.index("prepare_fresh_successor_workspace()"),
+            main.index("prepare_fresh_recovery_workspace()"),
             main.index("host_before = host_identity()"),
         )
         self.assertLess(
-            main.index("prepare_fresh_successor_workspace()"),
+            main.index("prepare_fresh_recovery_workspace()"),
             main.index("create_preflight_claim("),
         )
+        self.assertLess(
+            main.index("require_recovery_downstream_absent_before_claim()"),
+            main.index("prepare_fresh_recovery_workspace()"),
+        )
+
+    def test_preclaim_recovery_downstream_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            preflight, "RECOVERY_ROOT", Path(directory)
+        ):
+            preflight.require_recovery_downstream_absent_before_claim()
+            binding = Path(directory) / "bindings" / "spent.json"
+            binding.parent.mkdir()
+            binding.write_text("{}\n", encoding="ascii")
+            with self.assertRaisesRegex(ValueError, "binding registry"):
+                preflight.require_recovery_downstream_absent_before_claim()
 
     def test_command_records_never_retain_raw_streams(self):
         stdout = "marker\n"
@@ -386,7 +602,7 @@ class FinalSourcePreflightTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "schema fields"):
             preflight.validate_passed_receipt(
                 forged, "a" * 64, "b" * 40,
-                preflight.file_identity(preflight.PLAN)["sha256"],
+                preflight.file_identity(preflight.RECOVERY_PLAN)["sha256"],
             )
 
     def test_build_and_test_panels_are_fixed_and_sanitized(self):
@@ -412,7 +628,7 @@ class FinalSourcePreflightTest(unittest.TestCase):
         self.assertTrue(preflight.TEMPORARY_DIRECTORY.is_relative_to(
             preflight.BUILD_ROOT
         ))
-        self.assertIn("preflight-successor", str(preflight.BUILD_ROOT))
+        self.assertIn("preflight-recovery-v1", str(preflight.BUILD_ROOT))
         self.assertNotEqual(environment["HOME"], os.environ.get("HOME"))
         self.assertEqual(environment["TZ"], "UTC")
 
