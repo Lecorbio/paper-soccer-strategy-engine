@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import math
 import stat
 import subprocess
 import tempfile
@@ -217,6 +218,46 @@ class TrueSkillTests(unittest.TestCase):
     def test_exact_rating_tie_uses_canonical_id(self) -> None:
         standings, _ = subject.rate_games([entrant("z"), entrant("a")], [])
         self.assertEqual([row["id"] for row in standings], ["a", "z"])
+
+    def test_standings_comparison_accepts_only_tiny_platform_float_drift(self) -> None:
+        standings, _ = subject.rate_games(
+            [entrant("a"), entrant("b")],
+            [{
+                "playerOneId": "a",
+                "playerTwoId": "b",
+                "winnerId": "a",
+                "forfeitId": None,
+            }],
+        )
+        drifted = [dict(row) for row in standings]
+        for field in subject.STANDING_FLOAT_FIELDS:
+            drifted[0][field] = math.nextafter(drifted[0][field], math.inf)
+        self.assertTrue(subject._standings_match(drifted, standings))
+
+        for field in subject.STANDING_FLOAT_FIELDS:
+            changed = [dict(row) for row in standings]
+            changed[0][field] += 1e-8
+            self.assertFalse(subject._standings_match(changed, standings))
+
+        nonfinite = [dict(row) for row in standings]
+        nonfinite[0]["score"] = math.inf
+        self.assertFalse(subject._standings_match(nonfinite, standings))
+
+        changed_win_rate = [dict(row) for row in standings]
+        changed_win_rate[0]["winRate"] = math.nextafter(
+            changed_win_rate[0]["winRate"], math.inf
+        )
+        self.assertFalse(subject._standings_match(changed_win_rate, standings))
+
+    def test_standings_comparison_keeps_rank_and_records_exact(self) -> None:
+        standings, _ = subject.rate_games([entrant("a"), entrant("b")], [])
+        changed_rank = [dict(row) for row in standings]
+        changed_rank[0]["rank"] = 2
+        self.assertFalse(subject._standings_match(changed_rank, standings))
+
+        changed_record = [dict(row) for row in standings]
+        changed_record[0]["wins"] = 1
+        self.assertFalse(subject._standings_match(changed_record, standings))
 
 
 class NativeMatchTests(unittest.TestCase):

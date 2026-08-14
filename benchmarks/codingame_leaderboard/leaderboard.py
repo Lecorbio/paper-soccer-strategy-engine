@@ -68,6 +68,16 @@ RATING_PARAMETERS = {
     "conservativeMultiplier": 3.0,
 }
 
+# Python delegates these transcendental operations to the platform C library.
+# macOS and glibc can therefore differ by a few ULPs after hundreds of
+# sequential TrueSkill updates even though every game and ranking decision is
+# identical. Keep the stored values at full precision, but permit only
+# numerically insignificant drift when replay-validating an artifact produced
+# on another supported runner.
+STANDING_FLOAT_REL_TOLERANCE = 1e-12
+STANDING_FLOAT_ABS_TOLERANCE = 1e-12
+STANDING_FLOAT_FIELDS = frozenset({"score", "mu", "sigma"})
+
 HERE = Path(__file__).resolve().parent
 DEFAULT_REPOSITORY = HERE.parents[1]
 DEFAULT_ROSTER = HERE / "roster.json"
@@ -573,6 +583,44 @@ def rate_games(
                 }
             )
     return standings, head_to_head
+
+
+def _standings_match(
+    recorded: Any, recomputed: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Compare standings exactly except for cross-platform libm drift."""
+    if not isinstance(recorded, list) or len(recorded) != len(recomputed):
+        return False
+    for recorded_row, recomputed_row in zip(recorded, recomputed):
+        if not isinstance(recorded_row, dict):
+            return False
+        if set(recorded_row) != set(recomputed_row):
+            return False
+        for field, recomputed_value in recomputed_row.items():
+            recorded_value = recorded_row[field]
+            if field not in STANDING_FLOAT_FIELDS:
+                if recorded_value != recomputed_value:
+                    return False
+                continue
+            if (
+                isinstance(recorded_value, bool)
+                or not isinstance(recorded_value, (int, float))
+                or isinstance(recomputed_value, bool)
+                or not isinstance(recomputed_value, (int, float))
+            ):
+                return False
+            recorded_float = float(recorded_value)
+            recomputed_float = float(recomputed_value)
+            if not math.isfinite(recorded_float) or not math.isfinite(recomputed_float):
+                return False
+            if not math.isclose(
+                recorded_float,
+                recomputed_float,
+                rel_tol=STANDING_FLOAT_REL_TOLERANCE,
+                abs_tol=STANDING_FLOAT_ABS_TOLERANCE,
+            ):
+                return False
+    return True
 
 
 def _git_output(repository: Path, *arguments: str) -> str:
@@ -1615,7 +1663,10 @@ def validate_tournament(
         )
         validate_match_replay(referee, game["match"], scheduled)
     standings, head_to_head = rate_games(entrants, games)
-    _require(artifact.get("standings") == standings, "standings do not recompute exactly from games")
+    _require(
+        _standings_match(artifact.get("standings"), standings),
+        "standings do not recompute from games within the cross-platform floating tolerance",
+    )
     _require(artifact.get("headToHead") == head_to_head, "head-to-head data do not recompute exactly")
 
 
