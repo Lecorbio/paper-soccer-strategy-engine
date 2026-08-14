@@ -588,6 +588,47 @@ if(NOT EMSCRIPTEN)
     endif()
   endforeach()
 
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_null_fastpath.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_hybrid.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_prefastpath.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4_jacek_hybrid"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/opening_bank")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    PRIVATE papersoccer_opening_bank_support)
+
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    submissions/codingame/bots/rank_4_jacek_hybrid/replay_tactical_audit.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4_jacek_hybrid"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    PRIVATE papersoccer_core)
+  add_test(
+    NAME papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_cheap
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+      --cheap)
+  add_test(
+    NAME papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+      --full --state-cap 2000000 --global-state-cap 100000000)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_cheap
+    PROPERTIES TIMEOUT 30)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
+    PROPERTIES LABELS "qualification;long" RUN_SERIAL TRUE TIMEOUT 120)
+
   add_executable(papersoccer_codingame_rank_4_jacek_hybrid_parity_test
     submissions/codingame/bots/rank_4_jacek_hybrid/parity_test.cpp)
   target_include_directories(

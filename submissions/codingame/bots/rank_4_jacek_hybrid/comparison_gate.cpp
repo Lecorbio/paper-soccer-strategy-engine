@@ -507,11 +507,13 @@ Config parse_options(int argc, char **argv) {
     throw std::invalid_argument(
         "expected SHA-256 count must match bank path count");
   }
+#if !defined(PAPER_SOCCER_GATE_RANK4_SLOT_HAS_EXACT_PROOF)
   if (config.reference_engine == ReferenceEngine::Rank4 &&
       config.reference_exact_proof_mask != 0) {
     throw std::invalid_argument(
         "Rank-4 reference does not expose an exact proof mask");
   }
+#endif
   return config;
 }
 
