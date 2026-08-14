@@ -629,6 +629,20 @@ if(NOT EMSCRIPTEN)
     papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
     PROPERTIES LABELS "qualification;long" RUN_SERIAL TRUE TIMEOUT 120)
 
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_position_key_cache_test
+    submissions/codingame/bots/rank_4_jacek_hybrid/position_key_cache_test.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_position_key_cache_test
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4_jacek_hybrid")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_position_key_cache_test
+    PRIVATE papersoccer_core)
+  add_test(
+    NAME papersoccer_codingame_rank_4_jacek_hybrid_position_key_cache_test
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_position_key_cache_test)
+
   add_executable(papersoccer_codingame_rank_4_jacek_hybrid_parity_test
     submissions/codingame/bots/rank_4_jacek_hybrid/parity_test.cpp)
   target_include_directories(

@@ -56,6 +56,14 @@ throughput checks, but scored only 18-20 as physical color 1 against a frozen
 minimum of 19 wins per color. The same identity may not be rerun, and the
 production files remain the exact rollback artifacts listed above.
 
+The current DEVELOPMENT candidate privately precomputes the unchanged
+128-bit PositionKey components used during make/unmake. It leaves the shared
+engine header untouched and preserves every fixed-work decision and statistic.
+The generated source is 95,750 ASCII characters with SHA-256
+`47f44e8e62d3aaa2a48f6eea6fca4d17cfbbfd3ff9a5ac01ca84b1e0bf4cca03`.
+It has passed its key, rules-matrix, replay, source-size, and fixed-work timing
+gates, but remains DEVELOPMENT-only pending one preregistered clock match.
+
 Generate and run the scaffold gates from the repository root:
 
 ```sh

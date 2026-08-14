@@ -1,3 +1,7 @@
+#include "../../../../src/bots/mcts_internal.hpp"
+
+// The archived bot must bind shared papersoccer::detail; its later
+// candidate-private header defines only hybrid_detail and is unused.
 #define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
 #define turn_action_v2 rank4_jacek_gate_prefastpath_engine
 #include "../../../../results/rank_4_jacek_hybrid/controls/null_fastpath_pre_2a37f20/bot.c8412600f0b90610660f24a02828e77f67cc7d78bdf775da11628b3355274215.cpp"

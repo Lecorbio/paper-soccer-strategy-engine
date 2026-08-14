@@ -316,3 +316,29 @@ Production was restored to the 94,312-character rollback source
 `2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7`.
 Heldout validation and final banks remain unopened, no live upload occurred,
 and final qualification is false.
+
+## Ablation 6: private PositionKey component cache (pending clock gate)
+
+The candidate replaces repeated 128-bit component mixing during compact
+make/unmake with immutable per-topology values. Categories and XOR transition
+points are unchanged: used edge, visited vertex, ball, player, status, and
+turn-boundary ball. A hybrid-private `hybrid_detail` header prevents any
+effect on Rank 4 or other bots; the shared MCTS header remains byte-identical.
+
+The exact candidate is 95,750 ASCII characters, SHA-256
+`47f44e8e62d3aaa2a48f6eea6fca4d17cfbbfd3ff9a5ac01ca84b1e0bf4cca03`.
+It passed 399,450 direct key observations, a 20-configuration dimensions/rules
+matrix with 2,560 make/unmake operations, and all 10,040 fixed-work decisions
+with identical actions, root values, and statistics. The full 511-prefix
+replay audit also passed with zero displaced or capped decisions.
+
+In its single locked production-table microbenchmark, forced-heavy median/p99
+ratios were 0.976901/0.981884 and mixed ratios were 0.989095/0.987205. Both
+panels cleared the frozen requirement of at least 1% median improvement and no
+more than 0.5% p99 regression. The immutable preintegration receipt is
+`results/rank_4_jacek_hybrid/position_key_components_prototype/PASS.md`.
+
+No whole game is claimed yet. The next step is one preregistered DEVELOPMENT
+depth-20 actual-clock comparison against the exact mask-7 rollback algorithm.
+Validation/final banks and the live arena remain unopened; final qualification
+is false.
