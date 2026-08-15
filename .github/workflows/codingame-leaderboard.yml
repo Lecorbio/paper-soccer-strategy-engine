@@ -53,7 +53,7 @@ jobs:
 
       - name: Restore optional checkpoint
         if: ${{ inputs.checkpoint_run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codingame-leaderboard-checkpoint
           path: build/leaderboard
@@ -88,7 +88,7 @@ jobs:
             --referee "$BUILD_DIR/papersoccer_codingame_referee" --check
 
       - name: Upload complete review artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codingame-leaderboard-review
           path: |
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload resumable checkpoint on failure
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codingame-leaderboard-checkpoint
           path: ${{ env.CHECKPOINT }}
