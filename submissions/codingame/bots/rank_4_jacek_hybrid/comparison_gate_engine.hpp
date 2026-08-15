@@ -42,5 +42,7 @@ EngineDecision choose_rank4(const GameState &state,
                             const EngineConfig &config);
 EngineDecision choose_hybrid(const GameState &state,
                              const EngineConfig &config);
+EngineDecision choose_hybrid_control(const GameState &state,
+                                     const EngineConfig &config);
 
 }  // namespace papersoccer::rank4_jacek_gate

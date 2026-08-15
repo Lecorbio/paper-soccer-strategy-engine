@@ -2,13 +2,16 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
+#include <fcntl.h>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -18,8 +21,10 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <system_error>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -45,7 +50,12 @@ struct Config {
   std::string expected_role{"development"};
   std::vector<std::uint64_t> expected_seeds;
   std::vector<std::string> expected_sha256;
+  std::vector<std::uint64_t> expected_bytes;
   std::vector<int> expected_depths;
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  std::vector<std::uint64_t> generated_pairs;
+  std::vector<int> play_depths;
+#endif
   int max_turns{240};
   std::uint64_t candidate_nodes{30'000};
   std::uint64_t reference_nodes{30'000};
@@ -240,6 +250,51 @@ std::vector<std::uint64_t> parse_seeds(std::string_view raw) {
   return seeds;
 }
 
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+std::vector<std::uint64_t> parse_generated_pairs(std::string_view raw) {
+  std::vector<std::uint64_t> pairs;
+  std::size_t begin = 0;
+  while (begin <= raw.size()) {
+    const std::size_t separator = raw.find(',', begin);
+    const std::size_t end = separator == std::string_view::npos
+                                ? raw.size()
+                                : separator;
+    pairs.push_back(parse_unsigned<std::uint64_t>(
+        raw.substr(begin, end - begin), "generated pair count"));
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    begin = separator + 1U;
+  }
+  if (pairs.empty() || pairs.size() > 64U) {
+    throw std::invalid_argument("generated pair-count list is invalid");
+  }
+  return pairs;
+}
+#endif
+
+#if !defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+std::vector<std::uint64_t> parse_expected_bytes(std::string_view raw) {
+  std::vector<std::uint64_t> sizes;
+  std::size_t begin = 0;
+  while (begin <= raw.size()) {
+    const std::size_t separator = raw.find(',', begin);
+    const std::size_t end = separator == std::string_view::npos
+                                ? raw.size()
+                                : separator;
+    sizes.push_back(parse_unsigned<std::uint64_t>(
+        raw.substr(begin, end - begin), "expected bank bytes"));
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    begin = separator + 1U;
+  }
+  if (sizes.empty() || sizes.size() > 64U) {
+    throw std::invalid_argument("expected bank byte list is invalid");
+  }
+  return sizes;
+}
+
 std::vector<std::string> parse_sha256(std::string_view raw) {
   std::vector<std::string> hashes;
   std::size_t begin = 0;
@@ -265,6 +320,7 @@ std::vector<std::string> parse_sha256(std::string_view raw) {
   }
   return hashes;
 }
+#endif
 
 constexpr std::array<std::uint32_t, 64> kSha256RoundConstants{{
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
@@ -370,31 +426,366 @@ std::string sha256(std::string_view raw) {
   return out.str();
 }
 
-std::string file_sha256(const std::filesystem::path &path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    throw std::runtime_error("could not open bank for hashing: " +
-                             path.string());
+class UniqueFd {
+ public:
+  UniqueFd() = default;
+  explicit UniqueFd(int value) : value_(value) {}
+  ~UniqueFd() { reset(); }
+
+  UniqueFd(const UniqueFd &) = delete;
+  UniqueFd &operator=(const UniqueFd &) = delete;
+
+  UniqueFd(UniqueFd &&other) noexcept : value_(other.release()) {}
+  UniqueFd &operator=(UniqueFd &&other) noexcept {
+    if (this != &other) {
+      reset(other.release());
+    }
+    return *this;
   }
-  std::ostringstream buffer;
-  buffer << input.rdbuf();
-  if (!input.eof() && input.fail()) {
-    throw std::runtime_error("could not read bank for hashing: " +
-                             path.string());
+
+  [[nodiscard]] int get() const noexcept { return value_; }
+  [[nodiscard]] int release() noexcept {
+    const int released = value_;
+    value_ = -1;
+    return released;
   }
-  return sha256(buffer.str());
+  void reset(int replacement = -1) noexcept {
+    if (value_ >= 0) {
+      ::close(value_);
+    }
+    value_ = replacement;
+  }
+
+ private:
+  int value_{-1};
+};
+
+[[noreturn]] void throw_system_error(std::string_view operation) {
+  const int saved_errno = errno;
+  throw std::runtime_error(std::string(operation) + ": " +
+                           std::strerror(saved_errno));
 }
+
+UniqueFd duplicate_fd(int descriptor) {
+  const int duplicate = ::fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
+  if (duplicate < 0) {
+    throw_system_error("could not duplicate directory descriptor");
+  }
+  return UniqueFd(duplicate);
+}
+
+struct StatIdentity {
+  dev_t device{};
+  ino_t inode{};
+  mode_t mode{};
+  nlink_t links{};
+  off_t size{};
+  timespec modified{};
+  timespec changed{};
+};
+
+timespec modified_time(const struct stat &status) noexcept {
+#if defined(__APPLE__)
+  return status.st_mtimespec;
+#else
+  return status.st_mtim;
+#endif
+}
+
+timespec changed_time(const struct stat &status) noexcept {
+#if defined(__APPLE__)
+  return status.st_ctimespec;
+#else
+  return status.st_ctim;
+#endif
+}
+
+StatIdentity stat_identity(const struct stat &status) noexcept {
+  return StatIdentity{status.st_dev, status.st_ino, status.st_mode,
+                      status.st_nlink, status.st_size,
+                      modified_time(status), changed_time(status)};
+}
+
+bool same_time(const timespec &left, const timespec &right) noexcept {
+  return left.tv_sec == right.tv_sec && left.tv_nsec == right.tv_nsec;
+}
+
+bool same_identity(const StatIdentity &left,
+                   const StatIdentity &right) noexcept {
+  return left.device == right.device && left.inode == right.inode &&
+         left.mode == right.mode && left.links == right.links &&
+         left.size == right.size &&
+         same_time(left.modified, right.modified) &&
+         same_time(left.changed, right.changed);
+}
+
+struct stat descriptor_status(int descriptor, std::string_view label) {
+  struct stat status {};
+  if (::fstat(descriptor, &status) != 0) {
+    throw_system_error(label);
+  }
+  return status;
+}
+
+struct stat pathname_status(int parent, const std::string &name,
+                            std::string_view label) {
+  struct stat status {};
+  if (::fstatat(parent, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0) {
+    throw_system_error(label);
+  }
+  return status;
+}
+
+std::vector<std::string> canonical_path_components(
+    std::string_view raw_path) {
+  if (raw_path.empty() || raw_path.front() == '/' ||
+      raw_path.back() == '/') {
+    throw std::invalid_argument("opening bank path must be root-relative");
+  }
+  std::vector<std::string> components;
+  std::size_t begin = 0;
+  while (begin < raw_path.size()) {
+    const std::size_t separator = raw_path.find('/', begin);
+    const std::size_t end = separator == std::string_view::npos
+                                ? raw_path.size()
+                                : separator;
+    const std::string_view component = raw_path.substr(begin, end - begin);
+    if (component.empty() || component == "." || component == ".." ||
+        component.find('\0') != std::string_view::npos) {
+      throw std::invalid_argument(
+          "opening bank path has a noncanonical component");
+    }
+    components.emplace_back(component);
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    begin = separator + 1U;
+  }
+  if (components.empty()) {
+    throw std::invalid_argument("opening bank path is empty");
+  }
+  return components;
+}
+
+struct DirectoryChain {
+  std::vector<UniqueFd> descriptors;
+  std::vector<StatIdentity> identities;
+  std::vector<std::string> components;
+  std::string basename;
+};
+
+DirectoryChain traverse_parent_directory(int root_descriptor,
+                                         std::string_view raw_path) {
+  const std::vector<std::string> path =
+      canonical_path_components(raw_path);
+  DirectoryChain chain;
+  chain.descriptors.push_back(duplicate_fd(root_descriptor));
+  const struct stat root_status = descriptor_status(
+      chain.descriptors.front().get(), "could not stat repository root");
+  if (!S_ISDIR(root_status.st_mode)) {
+    throw std::invalid_argument("repository root is not a directory");
+  }
+  chain.identities.push_back(stat_identity(root_status));
+  for (std::size_t index = 0; index + 1U < path.size(); ++index) {
+    const int parent = chain.descriptors.back().get();
+    const struct stat pathname = pathname_status(
+        parent, path[index], "could not stat opening bank directory");
+    if (!S_ISDIR(pathname.st_mode)) {
+      throw std::invalid_argument(
+          "opening bank intermediate component is not a directory");
+    }
+    const int opened = ::openat(parent, path[index].c_str(),
+                                O_DIRECTORY | O_RDONLY | O_CLOEXEC |
+                                    O_NOFOLLOW);
+    if (opened < 0) {
+      throw_system_error("could not open opening bank directory");
+    }
+    UniqueFd descriptor(opened);
+    const struct stat opened_status = descriptor_status(
+        descriptor.get(), "could not stat opened bank directory");
+    if (!S_ISDIR(opened_status.st_mode) ||
+        !same_identity(stat_identity(pathname),
+                       stat_identity(opened_status))) {
+      throw std::invalid_argument(
+          "opening bank directory changed during traversal");
+    }
+    chain.components.push_back(path[index]);
+    chain.identities.push_back(stat_identity(opened_status));
+    chain.descriptors.push_back(std::move(descriptor));
+  }
+  chain.basename = path.back();
+  return chain;
+}
+
+void recheck_directory_chain(const DirectoryChain &chain) {
+  for (std::size_t index = 0; index < chain.descriptors.size(); ++index) {
+    const struct stat descriptor = descriptor_status(
+        chain.descriptors[index].get(),
+        "could not restat opening bank directory");
+    if (!same_identity(chain.identities[index],
+                       stat_identity(descriptor))) {
+      throw std::invalid_argument(
+          "opening bank directory descriptor changed during read");
+    }
+    if (index != 0) {
+      const struct stat pathname = pathname_status(
+          chain.descriptors[index - 1U].get(),
+          chain.components[index - 1U],
+          "could not restat opening bank directory path");
+      if (!S_ISDIR(pathname.st_mode) ||
+          !same_identity(chain.identities[index],
+                         stat_identity(pathname))) {
+        throw std::invalid_argument(
+            "opening bank directory pathname changed during read");
+      }
+    }
+  }
+}
+
+UniqueFd open_repository_root() {
+  const int descriptor =
+      ::open(".", O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (descriptor < 0) {
+    throw_system_error("could not pin repository root");
+  }
+  return UniqueFd(descriptor);
+}
+
+struct SafeBankRead {
+  std::string bytes;
+  opening_bank::Bank bank;
+};
+
+using SafeReadHook =
+    std::function<void(int parent_descriptor, const std::string &basename)>;
+
+class SafeBankReader {
+ public:
+  explicit SafeBankReader(UniqueFd root) : root_(std::move(root)) {
+    const struct stat status =
+        descriptor_status(root_.get(), "could not stat safe-reader root");
+    if (!S_ISDIR(status.st_mode)) {
+      throw std::invalid_argument("safe-reader root is not a directory");
+    }
+  }
+
+  SafeBankRead read_bank(const std::filesystem::path &path,
+                         std::optional<std::uint64_t> expected_bytes,
+                         const std::string &expected_sha256,
+                         const SafeReadHook &after_open = {}) {
+    const std::string raw_path = path.generic_string();
+    if (std::find(consumed_paths_.begin(), consumed_paths_.end(), raw_path) !=
+        consumed_paths_.end()) {
+      throw std::invalid_argument(
+          "opening bank path may be read only once");
+    }
+    consumed_paths_.push_back(raw_path);
+    DirectoryChain chain = traverse_parent_directory(root_.get(), raw_path);
+    const int parent = chain.descriptors.back().get();
+    const struct stat pathname_before = pathname_status(
+        parent, chain.basename, "could not stat opening bank");
+    if (!S_ISREG(pathname_before.st_mode)) {
+      throw std::invalid_argument("opening bank is not a regular file");
+    }
+    const int opened = ::openat(parent, chain.basename.c_str(),
+                                O_RDONLY | O_NONBLOCK | O_CLOEXEC |
+                                    O_NOFOLLOW);
+    if (opened < 0) {
+      throw_system_error("could not open opening bank");
+    }
+    UniqueFd descriptor(opened);
+    const struct stat descriptor_before = descriptor_status(
+        descriptor.get(), "could not stat opened bank");
+    const StatIdentity initial_identity = stat_identity(pathname_before);
+    if (!same_identity(initial_identity,
+                       stat_identity(descriptor_before))) {
+      throw std::invalid_argument(
+          "opening bank pathname changed during open");
+    }
+    if (!S_ISREG(descriptor_before.st_mode) ||
+        (descriptor_before.st_mode & 07777) != 0444 ||
+        descriptor_before.st_nlink != 1) {
+      throw std::invalid_argument(
+          "opening bank must be a regular mode-0444 single-link file");
+    }
+    if (descriptor_before.st_size <= 0) {
+      throw std::invalid_argument("opening bank size must be positive");
+    }
+    const std::uint64_t actual_bytes =
+        static_cast<std::uint64_t>(descriptor_before.st_size);
+    if (expected_bytes.has_value() && *expected_bytes != actual_bytes) {
+      throw std::invalid_argument("opening bank byte count mismatch");
+    }
+    if (actual_bytes >
+        static_cast<std::uint64_t>(
+            std::numeric_limits<std::size_t>::max())) {
+      throw std::invalid_argument("opening bank is too large to read");
+    }
+    if (after_open) {
+      after_open(parent, chain.basename);
+    }
+    std::string bytes(static_cast<std::size_t>(actual_bytes), '\0');
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+      const std::size_t count = std::min(
+          bytes.size() - offset,
+          static_cast<std::size_t>(
+              std::numeric_limits<ssize_t>::max()));
+      const ssize_t read_count =
+          ::read(descriptor.get(), bytes.data() + offset, count);
+      if (read_count < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        throw_system_error("could not read opening bank");
+      }
+      if (read_count == 0) {
+        throw std::invalid_argument("opening bank ended before expected size");
+      }
+      offset += static_cast<std::size_t>(read_count);
+    }
+    if (sha256(bytes) != expected_sha256) {
+      throw std::invalid_argument("opening bank file SHA-256 mismatch");
+    }
+    opening_bank::Bank bank =
+        opening_bank::parse_bank_text(bytes, raw_path);
+    const struct stat descriptor_after = descriptor_status(
+        descriptor.get(), "could not restat opened bank");
+    const struct stat pathname_after = pathname_status(
+        parent, chain.basename, "could not restat opening bank path");
+    if (!same_identity(initial_identity,
+                       stat_identity(descriptor_after)) ||
+        !same_identity(initial_identity, stat_identity(pathname_after))) {
+      throw std::invalid_argument("opening bank changed during read");
+    }
+    recheck_directory_chain(chain);
+    return SafeBankRead{std::move(bytes), std::move(bank)};
+  }
+
+ private:
+  UniqueFd root_;
+  std::vector<std::string> consumed_paths_;
+};
 
 void print_usage() {
   std::cout
       << "usage: comparison_gate [options]\n"
          "  --profile nodes|clock\n"
          "  --reference-engine rank4|hybrid-control\n"
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+         "  --expected-role development\n"
+         "  --expected-depths N,N,N,N\n"
+         "  --expected-seeds N,N,N,N (aligned with expected depths)\n"
+         "  --generated-pairs N,N,N,N (aligned with expected depths)\n"
+         "  --play-depths N[,N...] (subset of expected depths)\n"
+#else
          "  --bank PATH (repeat for each preregistered TSV)\n"
          "  --expected-role development|validation|test\n"
          "  --expected-seeds N[,N...] (aligned with expected depths)\n"
          "  --expected-sha256 H[,H...] (aligned with bank paths)\n"
+         "  --expected-bytes N[,N...] (aligned with bank paths)\n"
          "  --expected-depths N[,N...]\n"
+#endif
          "  --max-turns N\n"
          "  --candidate-nodes N\n"
          "  --reference-nodes N\n"
@@ -449,15 +840,38 @@ Config parse_options(int argc, char **argv) {
             "reference engine must be rank4 or hybrid-control");
       }
     } else if (option == "--bank") {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+      throw std::invalid_argument(
+          "--bank is forbidden for the generated-bank campaign");
+#else
       config.banks.emplace_back(value);
+#endif
     } else if (option == "--expected-role") {
       config.expected_role = value;
     } else if (option == "--expected-seeds") {
       config.expected_seeds = parse_seeds(value);
     } else if (option == "--expected-sha256") {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+      throw std::invalid_argument(
+          "--expected-sha256 is forbidden for generated banks");
+#else
       config.expected_sha256 = parse_sha256(value);
+#endif
+    } else if (option == "--expected-bytes") {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+      throw std::invalid_argument(
+          "--expected-bytes is forbidden for generated banks");
+#else
+      config.expected_bytes = parse_expected_bytes(value);
+#endif
     } else if (option == "--expected-depths") {
       config.expected_depths = parse_depths(value);
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+    } else if (option == "--generated-pairs") {
+      config.generated_pairs = parse_generated_pairs(value);
+    } else if (option == "--play-depths") {
+      config.play_depths = parse_depths(value);
+#endif
     } else if (option == "--max-turns") {
       config.max_turns = parse_int(value, option);
     } else if (option == "--candidate-nodes") {
@@ -496,9 +910,6 @@ Config parse_options(int argc, char **argv) {
                                   std::string(option));
     }
   }
-  if (config.banks.empty()) {
-    throw std::invalid_argument("at least one --bank is required");
-  }
   if (!opening_bank::valid_phase(config.expected_role)) {
     throw std::invalid_argument("expected role is invalid");
   }
@@ -509,10 +920,47 @@ Config parse_options(int argc, char **argv) {
     throw std::invalid_argument(
         "expected seed count must match expected depth count");
   }
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  if (!config.banks.empty() || !config.expected_sha256.empty() ||
+      !config.expected_bytes.empty()) {
+    throw std::invalid_argument(
+        "generated-bank campaign cannot accept file-bank metadata");
+  }
+  if (config.expected_role != "development") {
+    throw std::invalid_argument(
+        "generated-bank campaign role must be development");
+  }
+  if (config.expected_depths.size() != 4U ||
+      config.expected_seeds.size() != 4U ||
+      config.generated_pairs.size() != 4U) {
+    throw std::invalid_argument(
+        "generated-bank campaign requires exactly four aligned depths, seeds, and pair counts");
+  }
+  if (config.play_depths.empty()) {
+    throw std::invalid_argument("--play-depths is required");
+  }
+  for (const int depth : config.play_depths) {
+    if (std::find(config.expected_depths.begin(),
+                  config.expected_depths.end(), depth) ==
+        config.expected_depths.end()) {
+      throw std::invalid_argument(
+          "play depths must be a subset of generated depths");
+    }
+  }
+#else
+  if (config.banks.empty()) {
+    throw std::invalid_argument("at least one --bank is required");
+  }
   if (config.expected_sha256.size() != config.banks.size()) {
     throw std::invalid_argument(
         "expected SHA-256 count must match bank path count");
   }
+  if (!config.expected_bytes.empty() &&
+      config.expected_bytes.size() != config.banks.size()) {
+    throw std::invalid_argument(
+        "expected byte count must match bank path count");
+  }
+#endif
 #if !defined(PAPER_SOCCER_GATE_RANK4_SLOT_HAS_EXACT_PROOF)
   if (config.reference_engine == ReferenceEngine::Rank4 &&
       config.reference_exact_proof_mask != 0) {
@@ -534,16 +982,25 @@ bool same_state(const ps::GameState &left, const ps::GameState &right) {
          left.visit_count == right.visit_count;
 }
 
-std::vector<opening_bank::Bank> load_banks(const Config &config) {
-  std::vector<opening_bank::Bank> banks;
-  banks.reserve(config.banks.size());
+#if !defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+std::vector<SafeBankRead> read_bank_contents(const Config &config) {
+  SafeBankReader reader(open_repository_root());
+  std::vector<SafeBankRead> contents;
+  contents.reserve(config.banks.size());
   for (std::size_t index = 0; index < config.banks.size(); ++index) {
-    const std::filesystem::path &path = config.banks[index];
-    if (file_sha256(path) != config.expected_sha256[index]) {
-      throw std::invalid_argument("opening bank file SHA-256 mismatch");
-    }
-    banks.push_back(opening_bank::load_bank(path));
+    const std::optional<std::uint64_t> expected_bytes =
+        config.expected_bytes.empty()
+            ? std::nullopt
+            : std::optional<std::uint64_t>(config.expected_bytes[index]);
+    contents.push_back(reader.read_bank(config.banks[index], expected_bytes,
+                                        config.expected_sha256[index]));
   }
+  return contents;
+}
+#endif
+
+void validate_banks(const Config &config,
+                    const std::vector<opening_bank::Bank> &banks) {
   opening_bank::validate_disjoint(banks);
   if (banks.size() != config.expected_depths.size()) {
     throw std::invalid_argument(
@@ -572,7 +1029,80 @@ std::vector<opening_bank::Bank> load_banks(const Config &config) {
   if (actual != expected) {
     throw std::invalid_argument("opening bank depth/seed set mismatch");
   }
+}
+
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+std::vector<opening_bank::Bank> generate_all_banks(const Config &config) {
+  std::vector<opening_bank::Bank> generated;
+  generated.reserve(config.expected_depths.size());
+  for (std::size_t index = 0; index < config.expected_depths.size(); ++index) {
+    if (config.generated_pairs[index] >
+        static_cast<std::uint64_t>(
+            std::numeric_limits<std::size_t>::max())) {
+      throw std::invalid_argument("generated pair count is too large");
+    }
+    const std::size_t depth =
+        static_cast<std::size_t>(config.expected_depths[index]);
+    const std::size_t pairs =
+        static_cast<std::size_t>(config.generated_pairs[index]);
+    opening_bank::Bank bank = opening_bank::generate_bank(
+        config.expected_role, depth, pairs, config.expected_seeds[index],
+        generated);
+    if (bank.phase != config.expected_role || bank.depth != depth ||
+        bank.pairs != pairs ||
+        bank.generator_seed != config.expected_seeds[index] ||
+        bank.records.size() != pairs) {
+      throw std::runtime_error(
+          "generated opening bank does not match its aligned specification");
+    }
+    const std::string rendered = opening_bank::render_bank(bank);
+    opening_bank::Bank reparsed = opening_bank::parse_bank_text(
+        rendered, "generated-development-depth-" +
+                      std::to_string(config.expected_depths[index]));
+    if (reparsed != bank) {
+      throw std::runtime_error(
+          "generated opening bank failed render/parse roundtrip");
+    }
+    generated.push_back(std::move(reparsed));
+  }
+  validate_banks(config, generated);
+  return generated;
+}
+
+std::vector<opening_bank::Bank> select_generated_banks(
+    const Config &config,
+    const std::vector<opening_bank::Bank> &generated) {
+  std::vector<opening_bank::Bank> selected;
+  selected.reserve(config.play_depths.size());
+  for (const int play_depth : config.play_depths) {
+    const auto bank = std::find_if(
+        generated.begin(), generated.end(),
+        [play_depth](const opening_bank::Bank &candidate) {
+          return candidate.depth == static_cast<std::size_t>(play_depth);
+        });
+    if (bank == generated.end()) {
+      throw std::runtime_error("generated play depth was not found");
+    }
+    selected.push_back(*bank);
+  }
+  opening_bank::validate_disjoint(selected);
+  return selected;
+}
+#endif
+
+std::vector<opening_bank::Bank> load_banks(const Config &config) {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  return select_generated_banks(config, generate_all_banks(config));
+#else
+  std::vector<SafeBankRead> contents = read_bank_contents(config);
+  std::vector<opening_bank::Bank> banks;
+  banks.reserve(contents.size());
+  for (SafeBankRead &content : contents) {
+    banks.push_back(std::move(content.bank));
+  }
+  validate_banks(config, banks);
   return banks;
+#endif
 }
 
 ps::GameState codingame_opening(
@@ -648,7 +1178,11 @@ Invocation invoke(Engine engine, ps::GameState &state, bool first,
     } else if (config.reference_engine == ReferenceEngine::Rank4) {
       result.decision = gate::choose_rank4(state, engine_config);
     } else {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+      result.decision = gate::choose_hybrid_control(state, engine_config);
+#else
       result.decision = gate::choose_hybrid(state, engine_config);
+#endif
     }
   } catch (const std::exception &) {
     result.exception = true;
@@ -1012,31 +1546,65 @@ void print_configuration(const Config &config) {
             << (config.reference_engine == ReferenceEngine::Rank4
                     ? "rank4"
                     : "hybrid-control")
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+            << " bank_count=" << config.play_depths.size()
+#else
             << " bank_count=" << config.banks.size()
+#endif
             << " expected_role=" << config.expected_role
             << " bank_validation=schema,header,role,depth,seed,replay,state-sha256,canonical-sha256,disjoint"
             << " max_turns=" << config.max_turns
             << " expected_depths=";
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  for (std::size_t index = 0; index < config.play_depths.size(); ++index) {
+    if (index != 0) {
+      std::cout << ',';
+    }
+    std::cout << config.play_depths[index];
+  }
+#else
   for (std::size_t index = 0; index < config.expected_depths.size(); ++index) {
     if (index != 0) {
       std::cout << ',';
     }
     std::cout << config.expected_depths[index];
   }
+#endif
   std::cout << " expected_seeds=";
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  for (std::size_t index = 0; index < config.play_depths.size(); ++index) {
+    if (index != 0) {
+      std::cout << ',';
+    }
+    const auto expected = std::find(config.expected_depths.begin(),
+                                    config.expected_depths.end(),
+                                    config.play_depths[index]);
+    if (expected == config.expected_depths.end()) {
+      throw std::runtime_error("configuration play depth was not found");
+    }
+    const std::size_t expected_index = static_cast<std::size_t>(
+        expected - config.expected_depths.begin());
+    std::cout << config.expected_seeds[expected_index];
+  }
+#else
   for (std::size_t index = 0; index < config.expected_seeds.size(); ++index) {
     if (index != 0) {
       std::cout << ',';
     }
     std::cout << config.expected_seeds[index];
   }
+#endif
   std::cout << " expected_sha256=";
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  std::cout << "none";
+#else
   for (std::size_t index = 0; index < config.expected_sha256.size(); ++index) {
     if (index != 0) {
       std::cout << ',';
     }
     std::cout << config.expected_sha256[index];
   }
+#endif
   std::cout << " candidate_nodes=" << config.candidate_nodes
             << " reference_nodes=" << config.reference_nodes
             << " candidate_clock=" << config.candidate_first_ms << '/'
@@ -1049,17 +1617,50 @@ void print_configuration(const Config &config) {
             << static_cast<unsigned int>(config.candidate_exact_proof_mask)
             << " reference_exact_proof_mask="
             << static_cast<unsigned int>(config.reference_exact_proof_mask)
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+            << " openings=preregistered-generated-public-rules"
+#else
             << " openings=preregistered-public-rules"
+#endif
                " replay_corrections=disabled transcripts=not-retained\n";
 }
 
 void run_self_test(const Config &config) {
-  const std::vector<opening_bank::Bank> first = load_banks(config);
-  const std::vector<opening_bank::Bank> repeat = load_banks(config);
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  const std::vector<opening_bank::Bank> first = generate_all_banks(config);
+  const std::vector<opening_bank::Bank> repeat = generate_all_banks(config);
+  validate_banks(config, first);
+  validate_banks(config, repeat);
+  if (first.size() != 4U || repeat.size() != 4U || first != repeat ||
+      first.front().records.empty()) {
+    throw std::runtime_error(
+        "four-bank generated corpus is not exactly deterministic");
+  }
+  const std::vector<opening_bank::Bank> selected =
+      select_generated_banks(config, first);
+  if (selected.size() != config.play_depths.size() || selected.empty()) {
+    throw std::runtime_error("generated play-bank selection is invalid");
+  }
+  const ps::GameState opening =
+      codingame_opening(selected.front().records.front());
+#else
+  const std::vector<SafeBankRead> contents = read_bank_contents(config);
+  std::vector<opening_bank::Bank> first;
+  std::vector<opening_bank::Bank> repeat;
+  first.reserve(contents.size());
+  repeat.reserve(contents.size());
+  for (std::size_t index = 0; index < contents.size(); ++index) {
+    first.push_back(contents[index].bank);
+    repeat.push_back(opening_bank::parse_bank_text(
+        contents[index].bytes, config.banks[index].generic_string()));
+  }
+  validate_banks(config, first);
+  validate_banks(config, repeat);
   if (first != repeat || first.empty() || first.front().records.empty()) {
     throw std::runtime_error("preregistered bank load is not deterministic");
   }
   const ps::GameState opening = codingame_opening(first.front().records.front());
+#endif
   ps::GameState paired_copy = opening;
   if (!same_state(opening, paired_copy)) {
     throw std::runtime_error("paired-color opening copy differs");
@@ -1099,16 +1700,346 @@ void run_self_test(const Config &config) {
   std::cout << "heldout_pair_self_test candidate_sweeps=1"
                " reference_sweeps=1 split_pairs=1 unresolved_pairs=1"
                " exact_accounting=pass\n";
+#elif defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  enum class PairOutcome { Candidate, Reference, Unresolved };
+  const std::array<std::array<PairOutcome, 2>, 4> pairs{{
+      {PairOutcome::Candidate, PairOutcome::Candidate},
+      {PairOutcome::Reference, PairOutcome::Reference},
+      {PairOutcome::Candidate, PairOutcome::Reference},
+      {PairOutcome::Unresolved, PairOutcome::Unresolved},
+  }};
+  std::array<int, 4> classifications{};
+  for (const auto &pair : pairs) {
+    if (pair[0] == PairOutcome::Candidate &&
+        pair[1] == PairOutcome::Candidate) {
+      ++classifications[0];
+    } else if (pair[0] == PairOutcome::Reference &&
+               pair[1] == PairOutcome::Reference) {
+      ++classifications[1];
+    } else if ((pair[0] == PairOutcome::Candidate &&
+                pair[1] == PairOutcome::Reference) ||
+               (pair[0] == PairOutcome::Reference &&
+                pair[1] == PairOutcome::Candidate)) {
+      ++classifications[2];
+    } else if (pair[0] == PairOutcome::Unresolved &&
+               pair[1] == PairOutcome::Unresolved) {
+      ++classifications[3];
+    } else {
+      throw std::runtime_error(
+          "partial unresolved generated pair was not rejected");
+    }
+  }
+  if (classifications != std::array<int, 4>{1, 1, 1, 1}) {
+    throw std::runtime_error(
+        "generated paired accounting self-test failed");
+  }
+  std::cout << "heldout_pair_self_test candidate_sweeps=1"
+               " reference_sweeps=1 split_pairs=1 unresolved_pairs=1"
+               " exact_accounting=pass\n";
 #endif
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+  std::cout << "self_test deterministic_bank_generation=pass"
+               " exact_four_bank_count=pass render_parse_roundtrip=pass"
+               " all_four_disjoint=pass paired_state=pass"
+               " public_rules_only=pass transcripts=not-retained\n";
+#else
   std::cout << "self_test deterministic_bank_load=pass"
                " strict_metadata_and_hashes=pass paired_state=pass"
                " public_rules_only=pass transcripts=not-retained\n";
+#endif
 }
+
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+void sync_directory(int descriptor, std::string_view label) {
+  if (::fsync(descriptor) != 0) {
+    throw_system_error(label);
+  }
+}
+
+void write_fixture_file(int parent, const std::string &name,
+                        std::string_view bytes, mode_t final_mode) {
+  const int opened = ::openat(parent, name.c_str(),
+                              O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC |
+                                  O_NOFOLLOW,
+                              0600);
+  if (opened < 0) {
+    throw_system_error("could not create safe-reader fixture");
+  }
+  UniqueFd descriptor(opened);
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const std::size_t count = std::min(
+        bytes.size() - offset,
+        static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const ssize_t written =
+        ::write(descriptor.get(), bytes.data() + offset, count);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      throw_system_error("could not write safe-reader fixture");
+    }
+    if (written == 0) {
+      throw std::runtime_error("safe-reader fixture write made no progress");
+    }
+    offset += static_cast<std::size_t>(written);
+  }
+  if (::fchmod(descriptor.get(), final_mode) != 0) {
+    throw_system_error("could not set safe-reader fixture mode");
+  }
+  if (::fsync(descriptor.get()) != 0) {
+    throw_system_error("could not sync safe-reader fixture");
+  }
+  sync_directory(parent, "could not sync safe-reader fixture directory");
+}
+
+UniqueFd make_fixture_directory(int parent, const std::string &name) {
+  if (::mkdirat(parent, name.c_str(), 0700) != 0) {
+    throw_system_error("could not create safe-reader fixture directory");
+  }
+  sync_directory(parent,
+                 "could not sync safe-reader fixture parent directory");
+  const int opened = ::openat(parent, name.c_str(),
+                              O_DIRECTORY | O_RDONLY | O_CLOEXEC |
+                                  O_NOFOLLOW);
+  if (opened < 0) {
+    throw_system_error("could not open safe-reader fixture directory");
+  }
+  UniqueFd descriptor(opened);
+  const struct stat status = descriptor_status(
+      descriptor.get(), "could not stat safe-reader fixture directory");
+  if (!S_ISDIR(status.st_mode) || (status.st_mode & 07777) != 0700) {
+    throw std::runtime_error("safe-reader fixture directory mode mismatch");
+  }
+  return descriptor;
+}
+
+template <typename Operation>
+void require_safe_reader_rejection(Operation &&operation,
+                                   std::string_view label) {
+  bool rejected = false;
+  try {
+    operation();
+  } catch (const std::exception &) {
+    rejected = true;
+  }
+  if (!rejected) {
+    throw std::runtime_error(std::string(label) + " was not rejected");
+  }
+}
+
+void unlink_fixture(int parent, const std::string &name) {
+  if (::unlinkat(parent, name.c_str(), 0) != 0) {
+    throw_system_error("could not remove safe-reader fixture");
+  }
+}
+
+void remove_fixture_directory(int parent, const std::string &name) {
+  if (::unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0) {
+    throw_system_error("could not remove safe-reader fixture directory");
+  }
+}
+
+void run_safe_bank_reader_self_test(int argc, char **argv) {
+  constexpr std::string_view kSelfTestOption =
+      "--safe-bank-reader-self-test";
+  constexpr std::string_view kRootOption = "--self-test-root";
+  constexpr std::string_view kSelfTestRoot =
+      "build/rank4-jacek-hybrid-tt-exact-collision/clang-release/tmp/"
+      "safe-bank-reader-self-test";
+  if (argc != 4 || std::string_view(argv[1]) != kSelfTestOption ||
+      std::string_view(argv[2]) != kRootOption ||
+      std::string_view(argv[3]) != kSelfTestRoot) {
+    throw std::invalid_argument(
+        "safe bank reader self-test requires the exact preregistered flags");
+  }
+
+  UniqueFd repository_root = open_repository_root();
+  DirectoryChain parent_chain =
+      traverse_parent_directory(repository_root.get(), kSelfTestRoot);
+  const int temporary_parent = parent_chain.descriptors.back().get();
+  const struct stat temporary_parent_status = descriptor_status(
+      temporary_parent, "could not stat safe-reader TMPDIR");
+  if (!S_ISDIR(temporary_parent_status.st_mode) ||
+      (temporary_parent_status.st_mode & 07777) != 0700) {
+    throw std::runtime_error("safe-reader TMPDIR mode mismatch");
+  }
+  struct stat preexisting {};
+  if (::fstatat(temporary_parent, parent_chain.basename.c_str(),
+                &preexisting, AT_SYMLINK_NOFOLLOW) == 0) {
+    throw std::runtime_error("safe-reader self-test root already exists");
+  }
+  if (errno != ENOENT) {
+    throw_system_error("could not verify safe-reader self-test root absence");
+  }
+  if (::mkdirat(temporary_parent, parent_chain.basename.c_str(), 0700) != 0) {
+    throw_system_error("could not create safe-reader self-test root");
+  }
+  sync_directory(temporary_parent,
+                 "could not sync safe-reader self-test parent");
+  const int child_opened =
+      ::openat(temporary_parent, parent_chain.basename.c_str(),
+               O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (child_opened < 0) {
+    throw_system_error("could not open safe-reader self-test root");
+  }
+  UniqueFd child(child_opened);
+  const struct stat child_path = pathname_status(
+      temporary_parent, parent_chain.basename,
+      "could not stat safe-reader self-test root path");
+  const struct stat child_descriptor = descriptor_status(
+      child.get(), "could not stat safe-reader self-test root");
+  if (!S_ISDIR(child_descriptor.st_mode) ||
+      (child_descriptor.st_mode & 07777) != 0700 ||
+      !same_identity(stat_identity(child_path),
+                     stat_identity(child_descriptor))) {
+    throw std::runtime_error("safe-reader self-test root identity mismatch");
+  }
+
+  UniqueFd ordinary = make_fixture_directory(child.get(), "ordinary");
+  UniqueFd inner = make_fixture_directory(ordinary.get(), "inner");
+  const opening_bank::Bank synthetic =
+      opening_bank::generate_bank("development", 1U, 1U,
+                                  UINT64_C(7640891576956012809));
+  const std::string fixture = opening_bank::render_bank(synthetic);
+  const std::string fixture_hash = sha256(fixture);
+  const std::uint64_t fixture_size =
+      static_cast<std::uint64_t>(fixture.size());
+  write_fixture_file(inner.get(), "bank.tsv", fixture, 0444);
+  write_fixture_file(child.get(), "hard-source.tsv", fixture, 0444);
+  if (::linkat(child.get(), "hard-source.tsv", child.get(),
+               "hard-link.tsv", 0) != 0) {
+    throw_system_error("could not create safe-reader hardlink fixture");
+  }
+  if (::symlinkat("ordinary/inner/bank.tsv", child.get(),
+                  "leaf-link.tsv") != 0 ||
+      ::symlinkat("ordinary", child.get(), "ordinary-link") != 0) {
+    throw_system_error("could not create safe-reader symlink fixture");
+  }
+  if (::mkfifoat(child.get(), "fifo", 0444) != 0) {
+    throw_system_error("could not create safe-reader FIFO fixture");
+  }
+  write_fixture_file(child.get(), "wrong-mode.tsv", fixture, 0644);
+  write_fixture_file(child.get(), "wrong-size.tsv", fixture, 0444);
+  write_fixture_file(child.get(), "wrong-hash.tsv", fixture, 0444);
+  write_fixture_file(child.get(), "swap.tsv", fixture, 0444);
+  write_fixture_file(child.get(), "swap-replacement.tsv", fixture, 0444);
+  sync_directory(child.get(), "could not sync safe-reader self-test root");
+
+  {
+    SafeBankReader reader(duplicate_fd(child.get()));
+    const SafeBankRead accepted = reader.read_bank(
+        "ordinary/inner/bank.tsv", fixture_size, fixture_hash);
+    const opening_bank::Bank reparsed = opening_bank::parse_bank_text(
+        accepted.bytes, "synthetic-safe-reader-repeat");
+    if (accepted.bytes != fixture || accepted.bank != synthetic ||
+        reparsed != synthetic) {
+      throw std::runtime_error(
+          "safe-reader did not hash and parse identical bytes");
+    }
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("ordinary-link/inner/bank.tsv", fixture_size,
+                           fixture_hash);
+        },
+        "intermediate symlink");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("leaf-link.tsv", fixture_size, fixture_hash);
+        },
+        "leaf symlink");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("hard-link.tsv", fixture_size, fixture_hash);
+        },
+        "hardlink");
+    require_safe_reader_rejection(
+        [&] { reader.read_bank("fifo", fixture_size, fixture_hash); },
+        "FIFO");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("wrong-mode.tsv", fixture_size, fixture_hash);
+        },
+        "wrong mode");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("wrong-size.tsv", fixture_size + 1U,
+                           fixture_hash);
+        },
+        "wrong size");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("wrong-hash.tsv", fixture_size,
+                           std::string(64U, '0'));
+        },
+        "wrong hash");
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("ordinary/inner/bank.tsv", fixture_size,
+                           fixture_hash);
+        },
+        "second open");
+    bool swap_completed = false;
+    const SafeReadHook swap_path =
+        [&](int parent, const std::string &basename) {
+          if (basename != "swap.tsv" ||
+              ::renameat(parent, basename.c_str(), parent,
+                         "swap-old.tsv") != 0 ||
+              ::renameat(parent, "swap-replacement.tsv", parent,
+                         basename.c_str()) != 0) {
+            throw_system_error("could not perform safe-reader path swap");
+          }
+          swap_completed = true;
+        };
+    require_safe_reader_rejection(
+        [&] {
+          reader.read_bank("swap.tsv", fixture_size, fixture_hash,
+                           swap_path);
+        },
+        "path swap");
+    if (!swap_completed) {
+      throw std::runtime_error("safe-reader path-swap fixture did not run");
+    }
+  }
+
+  unlink_fixture(child.get(), "ordinary-link");
+  unlink_fixture(child.get(), "leaf-link.tsv");
+  unlink_fixture(child.get(), "hard-link.tsv");
+  unlink_fixture(child.get(), "hard-source.tsv");
+  unlink_fixture(child.get(), "fifo");
+  unlink_fixture(child.get(), "wrong-mode.tsv");
+  unlink_fixture(child.get(), "wrong-size.tsv");
+  unlink_fixture(child.get(), "wrong-hash.tsv");
+  unlink_fixture(child.get(), "swap.tsv");
+  unlink_fixture(child.get(), "swap-old.tsv");
+  unlink_fixture(inner.get(), "bank.tsv");
+  sync_directory(inner.get(), "could not sync safe-reader inner directory");
+  inner.reset();
+  remove_fixture_directory(ordinary.get(), "inner");
+  sync_directory(ordinary.get(),
+                 "could not sync safe-reader ordinary directory");
+  ordinary.reset();
+  remove_fixture_directory(child.get(), "ordinary");
+  sync_directory(child.get(), "could not sync safe-reader self-test root");
+  child.reset();
+  remove_fixture_directory(temporary_parent, parent_chain.basename);
+  sync_directory(temporary_parent,
+                 "could not sync safe-reader self-test parent");
+  std::cout << "safe_bank_reader_self_test=pass\n";
+}
+#endif
 
 }  // namespace
 
 int main(int argc, char **argv) {
   try {
+#if defined(PAPERSOCCER_TT_EXACT_COLLISION_CAMPAIGN_TARGET)
+    if (argc >= 2 &&
+        std::string_view(argv[1]) == "--safe-bank-reader-self-test") {
+      run_safe_bank_reader_self_test(argc, argv);
+      return 0;
+    }
+#endif
     const Config config = parse_options(argc, argv);
     if (config.self_test) {
       run_self_test(config);
