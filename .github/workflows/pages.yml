@@ -21,6 +21,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  leaderboard-contract:
+    name: Leaderboard contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate roster, schedule, ratings, and runner
+        run: |
+          for schema in benchmarks/codingame_leaderboard/*.schema.json; do
+            python3 -m json.tool "$schema" >/dev/null
+          done
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+            -s tests/codingame_leaderboard -p 'test_*.py'
+          python3 benchmarks/codingame_leaderboard/leaderboard.py validate
+
+      - name: Reject a stale published snapshot
+        run: |
+          test -s benchmarks/codingame_leaderboard/tournament.json
+          test -s web/leaderboard/leaderboard-results.js
+          cmake -S . -B build/leaderboard-check -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/leaderboard-check --parallel 2 --target \
+            papersoccer_codingame_referee
+          python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
+            --artifact benchmarks/codingame_leaderboard/tournament.json \
+            --referee build/leaderboard-check/papersoccer_codingame_referee
+          python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
+            --input benchmarks/codingame_leaderboard/tournament.json \
+            --output web/leaderboard/leaderboard-results.js \
+            --referee build/leaderboard-check/papersoccer_codingame_referee --check
+
   test-gcc:
     name: GCC build and tests
     runs-on: ubuntu-latest
@@ -86,7 +118,7 @@ jobs:
         run: ./scripts/build-and-test.sh
 
   deploy:
-    needs: [test-gcc, test-clang, test-sanitizers]
+    needs: [leaderboard-contract, test-gcc, test-clang, test-sanitizers]
     if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
