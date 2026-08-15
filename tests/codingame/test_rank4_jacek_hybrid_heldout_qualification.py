@@ -19,6 +19,9 @@ recorder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recorder)
 
 
+FIXED_CLAIM_UTC = "2026-08-14T12:20:00+00:00"
+
+
 STAGE_SWEEPS = {
     "validation": ((3, 1, 10), (3, 1, 9), (3, 1, 9), (3, 2, 8)),
     "final": ((4, 1, 22), (3, 1, 23), (3, 1, 22), (3, 2, 21)),
@@ -368,6 +371,8 @@ class HeldoutQualificationTest(unittest.TestCase):
     def test_atomic_claim_is_spent_before_bank_access_and_cannot_retry(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             recorder, "OUTPUT", Path(directory)
+        ), mock.patch.object(
+            recorder, "utc_now", return_value=FIXED_CLAIM_UTC
         ):
             path, payload = recorder.create_stage_claim(
                 "a" * 64, "validation", "b" * 64
@@ -402,7 +407,11 @@ class HeldoutQualificationTest(unittest.TestCase):
         identifier, binding_sha256 = "a" * 64, "b" * 64
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             recorder, "ROOT", Path(directory)
-        ), mock.patch.object(recorder, "OUTPUT", Path(directory) / "out"):
+        ), mock.patch.object(
+            recorder, "OUTPUT", Path(directory) / "out"
+        ), mock.patch.object(
+            recorder, "utc_now", return_value=FIXED_CLAIM_UTC
+        ):
             producer_label = recorder.identity_label(recorder.RECORDER)
             producer = {
                 "path": producer_label, "bytes": 1, "sha256": "c" * 64,
@@ -525,6 +534,8 @@ class HeldoutQualificationTest(unittest.TestCase):
         identifier = "a" * 64
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             recorder, "OUTPUT", Path(directory) / "out"
+        ), mock.patch.object(
+            recorder, "utc_now", return_value=FIXED_CLAIM_UTC
         ):
             recorder.require_final_attempt_unopened(identifier)
             recorder.create_stage_claim(identifier, "final", "b" * 64)

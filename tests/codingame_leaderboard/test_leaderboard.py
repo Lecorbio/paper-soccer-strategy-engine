@@ -111,10 +111,23 @@ def make_executable(path: Path, source: str) -> None:
 
 
 class RosterTests(unittest.TestCase):
-    def test_checked_in_roster_covers_every_registered_artifact(self) -> None:
+    def test_checked_in_roster_accounts_for_every_registered_artifact(self) -> None:
         roster = subject.load_roster()
         entrants = subject.validate_roster(roster, REPOSITORY)
         self.assertEqual(len(entrants), 20)
+        rostered = {
+            bot_id
+            for entrant in entrants
+            for bot_id in (
+                entrant["id"],
+                *(alias["id"] for alias in entrant["aliases"]),
+            )
+        }
+        registered = set(subject._registered_bots(REPOSITORY, roster))
+        self.assertEqual(
+            registered - rostered,
+            subject.NON_ENTRANT_REGISTERED_BOTS,
+        )
         rank4 = next(item for item in entrants if item["id"] == "rank_4")
         self.assertEqual([alias["id"] for alias in rank4["aliases"]], ["selfplay_nn_v2"])
         self.assertEqual(
@@ -126,6 +139,15 @@ class RosterTests(unittest.TestCase):
         roster = subject.load_roster()
         roster["entrants"][0]["submissionSha256"] = "0" * 64
         with self.assertRaisesRegex(subject.ContractError, "hash is stale"):
+            subject.validate_roster(roster, REPOSITORY)
+
+    def test_unreviewed_non_entrant_is_rejected(self) -> None:
+        roster = subject.load_roster()
+        with mock.patch.object(
+            subject,
+            "NON_ENTRANT_REGISTERED_BOTS",
+            frozenset({"rank_4_jacek_hybrid"}),
+        ), self.assertRaisesRegex(subject.ContractError, "do not exactly cover"):
             subject.validate_roster(roster, REPOSITORY)
 
 
@@ -969,6 +991,7 @@ class TinyEndToEndTests(unittest.TestCase):
                     EXPECTED_ENTRANTS=3,
                     EXPECTED_REGISTERED_BOTS=4,
                     EXPECTED_GAMES=6,
+                    NON_ENTRANT_REGISTERED_BOTS=frozenset(),
                 ),
                 mock.patch.object(subject, "build_schedule", return_value=schedule),
                 mock.patch.object(

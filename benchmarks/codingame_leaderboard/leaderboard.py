@@ -39,8 +39,14 @@ SCHEDULE_SEED = 20260813
 FIRST_TIMEOUT_MS = 1000
 LATER_TIMEOUT_MS = 200
 EXPECTED_ENTRANTS = 20
-EXPECTED_REGISTERED_BOTS = 21
+EXPECTED_REGISTERED_BOTS = 23
 EXPECTED_GAMES = 900
+NON_ENTRANT_REGISTERED_BOTS = frozenset(
+    {
+        "jacek_arena_bfm",
+        "rank_4_jacek_hybrid",
+    }
+)
 BOT_FORFEIT_CLASSIFICATIONS = frozenset(
     {
         "timeout",
@@ -333,11 +339,18 @@ def validate_roster(
         normalized.append(entrant)
 
     registered = _registered_bots(repository, roster)
-    _require(len(registered) == EXPECTED_REGISTERED_BOTS, "CMake must register exactly 21 bots")
+    _require(
+        len(registered) == EXPECTED_REGISTERED_BOTS,
+        f"CMake must register exactly {EXPECTED_REGISTERED_BOTS} bots",
+    )
     _require(len(set(registered)) == len(registered), "CMake bot registry contains duplicates")
     _require(
-        set(registered) == covered_directories,
-        "roster canonical ids and aliases do not exactly cover the CMake bot registry",
+        NON_ENTRANT_REGISTERED_BOTS.isdisjoint(covered_directories),
+        "non-entrant CMake bots must not appear in the frozen tournament roster",
+    )
+    _require(
+        set(registered) == covered_directories | NON_ENTRANT_REGISTERED_BOTS,
+        "frozen roster and explicit non-entrants do not exactly cover the CMake bot registry",
     )
     bot_root = repository / "submissions/codingame/bots"
     artifact_directories = {

@@ -183,31 +183,56 @@ class BindingRecoveryTest(unittest.TestCase):
                 return "\n".join(recorder.ALLOWED_CHANGED_PATHS)
             raise AssertionError((command, arguments))
 
-        def committed_blob(_head, relative):
-            return (ROOT / relative).read_bytes()
+        frozen_relatives = (
+            "tools/record_rank4_jacek_hybrid_heldout_qualification.py",
+            "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
+        )
+        historical_blobs = {
+            relative: recorder.frozen.git_blob(
+                recorder.CANDIDATE_SOURCE_COMMIT, relative
+            )
+            for relative in frozen_relatives
+        }
 
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
-            recorder, "_ORIGINAL_REQUIRE_CLEAN_TRACKED_TREE", return_value=git
-        ), mock.patch.object(
-            recorder.frozen, "git_text", side_effect=git_text
-        ), mock.patch.object(
-            recorder.frozen, "git_blob", side_effect=committed_blob
-        ), mock.patch.object(
-            recorder.frozen, "RECORDER", Path(directory) / "wrong-tool.py"
-        ), mock.patch.object(
-            recorder.frozen, "RECORDER_TEST", Path(directory) / "wrong-test.py"
-        ), mock.patch.object(
-            recorder, "require_admin_after_prereg"
-        ), mock.patch.object(
-            recorder, "validate_binding_recovery_plan"
-        ), mock.patch.object(
-            recorder, "_require_exact_registry_entries"
-        ), mock.patch.object(
-            recorder, "_read_canonical_exact", return_value={}
-        ), mock.patch.object(
-            recorder, "require_parent_runtime_unopened"
-        ):
-            self.assertEqual(recorder.require_clean_admin_tree(), git)
+        with tempfile.TemporaryDirectory() as directory:
+            historical_root = Path(directory)
+            for relative, raw in historical_blobs.items():
+                fixture = historical_root / relative
+                fixture.parent.mkdir(parents=True, exist_ok=True)
+                fixture.write_bytes(raw)
+
+            def committed_blob(_head, relative):
+                return (historical_root / relative).read_bytes()
+
+            with mock.patch.object(
+                recorder, "ROOT", historical_root
+            ), mock.patch.object(
+                recorder, "FROZEN_RECORDER", historical_root / frozen_relatives[0]
+            ), mock.patch.object(
+                recorder, "FROZEN_RECORDER_TEST",
+                historical_root / frozen_relatives[1],
+            ), mock.patch.object(
+                recorder, "_ORIGINAL_REQUIRE_CLEAN_TRACKED_TREE", return_value=git
+            ), mock.patch.object(
+                recorder.frozen, "git_text", side_effect=git_text
+            ), mock.patch.object(
+                recorder.frozen, "git_blob", side_effect=committed_blob
+            ), mock.patch.object(
+                recorder.frozen, "RECORDER", historical_root / "wrong-tool.py"
+            ), mock.patch.object(
+                recorder.frozen, "RECORDER_TEST", historical_root / "wrong-test.py"
+            ), mock.patch.object(
+                recorder, "require_admin_after_prereg"
+            ), mock.patch.object(
+                recorder, "validate_binding_recovery_plan"
+            ), mock.patch.object(
+                recorder, "_require_exact_registry_entries"
+            ), mock.patch.object(
+                recorder, "_read_canonical_exact", return_value={}
+            ), mock.patch.object(
+                recorder, "require_parent_runtime_unopened"
+            ):
+                self.assertEqual(recorder.require_clean_admin_tree(), git)
         source = inspect.getsource(recorder.require_clean_admin_tree)
         self.assertIn("(FROZEN_RECORDER,", source)
         self.assertIn("(FROZEN_RECORDER_TEST,", source)
