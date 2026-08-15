@@ -297,13 +297,53 @@ class Mask3RemovalClockTests(unittest.TestCase):
             host_runtime["host"]["sha256"],
             "1a7f59560af8acc4bc4533679ffc1fe83a835bf979928bb47909c7cbffbed30c",
         )
-        closure = recorder.preserved_binary_closure()
-        self.assertEqual(closure["entries"], 1056)
-        self.assertEqual(closure["closure_sha256"], recorder.EXPECTED_CLOSURE_SHA256)
-        self.assertEqual(closure["binary"]["sha256"], recorder.GATE_SHA256)
+        self.assertEqual(
+            recorder.file_identity(recorder.GATE)["sha256"], recorder.GATE_SHA256
+        )
         history = recorder.validate_historical_evidence()
         self.assertEqual(history["closed_heldout_decision"], recorder.HISTORICAL_JSON[
             "closed_heldout_decision"][1])
+        with self.assertRaisesRegex(
+            ValueError,
+            r"preserved closure identity drift: .*comparison_gate\.cpp",
+        ):
+            recorder.preserved_binary_closure()
+
+        binding = recorder.load_tracked_canonical_json(
+            recorder.FROZEN_BINDING,
+            recorder.FROZEN_BINDING_SHA256,
+            live_mode=0o444,
+        )
+        receipt = recorder.load_tracked_canonical_json(
+            recorder.PREFLIGHT_RECEIPT,
+            recorder.PREFLIGHT_RECEIPT_SHA256,
+        )
+        frozen_identities = dict(binding["dependency_identities"])
+        frozen_identities.update(
+            receipt["builds"]["clang_release"]["build_artifacts"]
+        )
+        comparison_gate_source = recorder.ROOT / (
+            "submissions/codingame/bots/rank_4_jacek_hybrid/"
+            "comparison_gate.cpp"
+        )
+        comparison_gate_label = recorder.path_label(comparison_gate_source)
+        historical_comparison_gate = frozen_identities[comparison_gate_label]
+        live_file_identity = recorder.file_identity
+
+        def historical_source_identity(path: Path, **kwargs) -> dict:
+            if path == comparison_gate_source:
+                return copy.deepcopy(historical_comparison_gate)
+            return live_file_identity(path, **kwargs)
+
+        with mock.patch.object(
+            recorder, "file_identity", side_effect=historical_source_identity
+        ):
+            closure = recorder.preserved_binary_closure()
+        self.assertEqual(closure["entries"], 1056)
+        self.assertEqual(
+            closure["closure_sha256"], recorder.EXPECTED_CLOSURE_SHA256
+        )
+        self.assertEqual(closure["binary"]["sha256"], recorder.GATE_SHA256)
         with mock.patch.object(recorder.platform, "machine", return_value="drifted"):
             with self.assertRaisesRegex(ValueError, "host/runtime"):
                 recorder.host_runtime_identity()

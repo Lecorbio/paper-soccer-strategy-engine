@@ -523,7 +523,30 @@ if(NOT EMSCRIPTEN)
       endif()
       if(PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_jacek_hybrid")
         set(PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY
-          ${CMAKE_CURRENT_SOURCE_DIR}/results/rank_4_jacek_hybrid/openings)
+          results/rank_4_jacek_hybrid/openings)
+        set(PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT
+          "${CMAKE_CURRENT_BINARY_DIR}/rank_4_jacek_hybrid_comparison_gate_fixture")
+        set(PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY
+          "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}/${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}")
+        file(MAKE_DIRECTORY
+          "${PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY}")
+        foreach(PAPERSOCCER_HYBRID_GATE_BANK_NAME IN ITEMS
+            development_d04.tsv
+            development_d08.tsv
+            development_d12.tsv
+            development_d20.tsv)
+          set(PAPERSOCCER_HYBRID_GATE_BANK_SOURCE
+            "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/${PAPERSOCCER_HYBRID_GATE_BANK_NAME}")
+          set(PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE
+            "${PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY}/${PAPERSOCCER_HYBRID_GATE_BANK_NAME}")
+          file(REMOVE "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}")
+          configure_file(
+            "${PAPERSOCCER_HYBRID_GATE_BANK_SOURCE}"
+            "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}"
+            COPYONLY)
+          file(CHMOD "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}"
+            PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
+        endforeach()
         set(PAPERSOCCER_HYBRID_GATE_BANK_ARGS
           --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d04.tsv
           --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d08.tsv
@@ -551,6 +574,12 @@ if(NOT EMSCRIPTEN)
             ${PAPERSOCCER_HYBRID_GATE_BANK_ARGS}
             --profile nodes --candidate-nodes 500 --reference-nodes 500
             --max-turns 320 --candidate-exact-proof-mask 0)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_self_test
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_sha
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          PROPERTIES WORKING_DIRECTORY
+            "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}")
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
@@ -661,7 +690,7 @@ if(NOT EMSCRIPTEN)
     COMMAND
       papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
       --bank
-        ${CMAKE_CURRENT_SOURCE_DIR}/results/rank_4_jacek_hybrid/openings/development_d04.tsv
+        results/rank_4_jacek_hybrid/openings/development_d04.tsv
       --expected-role development --expected-depths 4
       --expected-seeds 18128950407139886133
       --expected-sha256
@@ -669,7 +698,9 @@ if(NOT EMSCRIPTEN)
       --self-test)
   set_tests_properties(
     papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate_self_test
-    PROPERTIES TIMEOUT 30)
+    PROPERTIES
+      TIMEOUT 30
+      WORKING_DIRECTORY "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}")
 
   add_executable(
     papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit

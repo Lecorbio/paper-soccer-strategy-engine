@@ -23,6 +23,9 @@ preflight = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(preflight)
 
 
+FIXED_RECOVERY_CLAIM_UTC = "2026-08-14T12:20:00+00:00"
+
+
 def summary_fields(label: str) -> dict[str, str]:
     fields = {name: "0" for name in preflight.SUMMARY_FIELDS}
     fields.update({
@@ -158,6 +161,8 @@ class FinalSourcePreflightTest(unittest.TestCase):
         host = {"sha256": "b" * 64}
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             preflight, "CLAIMS", Path(directory) / "claims"
+        ), mock.patch.object(
+            preflight, "utc_now", return_value=FIXED_RECOVERY_CLAIM_UTC
         ):
             path, claim = preflight.create_preflight_claim(
                 "c" * 40, "d" * 64, environment, host
@@ -425,6 +430,11 @@ class FinalSourcePreflightTest(unittest.TestCase):
 
     def test_recovery_policy_requires_direct_child_and_exact_path_closure(self):
         head = "a" * 40
+        comparison_gate_frozen = tuple(
+            record for record in preflight.UNCHANGED_FINALIST_FILES
+            if record[0] == preflight.ORDINARY_GATE_SOURCE
+        )
+        self.assertEqual(len(comparison_gate_frozen), 1)
 
         def git_text(*arguments: str) -> str:
             if arguments[:3] == ("rev-list", "--parents", "-n"):
@@ -444,8 +454,62 @@ class FinalSourcePreflightTest(unittest.TestCase):
                 ), mock.patch.object(
                     preflight, "git_blob",
                     side_effect=lambda _head, path: path.read_bytes(),
+                ), mock.patch.object(
+                    preflight, "UNCHANGED_FINALIST_FILES",
+                    comparison_gate_frozen,
+                ), self.assertRaisesRegex(
+                    ValueError,
+                    r"technical recovery changed frozen input: .*comparison_gate\.cpp",
                 ):
-            record = preflight.technical_recovery_record(head)
+            preflight.technical_recovery_record(head)
+
+        # V19 intentionally changed the live DEVELOPMENT comparison gate.  The
+        # historical recovery recorder must reject that drift.  Exact blobs
+        # from the frozen recovery head exercise its accepting path without
+        # changing or rebaselining any frozen identity.
+        with tempfile.TemporaryDirectory() as directory:
+            historical_finalists = []
+            historical_labels = {}
+            for index, (path, expected_bytes, expected_sha256) in enumerate(
+                    preflight.UNCHANGED_FINALIST_FILES):
+                raw = preflight.git_blob(preflight.FAILED_SUCCESSOR_HEAD, path)
+                self.assertEqual(len(raw), expected_bytes)
+                self.assertEqual(preflight.sha256_bytes(raw), expected_sha256)
+                fixture = Path(directory) / f"{index}-{path.name}"
+                fixture.write_bytes(raw)
+                historical_labels[fixture] = preflight.identity_label(path)
+                historical_finalists.append(
+                    (fixture, expected_bytes, expected_sha256)
+                )
+            self.assertEqual(len(historical_finalists), 6)
+
+            original_identity_label = preflight.identity_label
+
+            def historical_identity_label(path: Path) -> str:
+                if path in historical_labels:
+                    return historical_labels[path]
+                return original_identity_label(path)
+
+            with mock.patch.object(
+                    preflight, "git_text", side_effect=git_text
+            ), mock.patch.object(preflight, "validate_recovery_plan"), \
+                    mock.patch.object(
+                        preflight, "validate_failed_successor_evidence",
+                        return_value={"plan_v2": {}, "plan_v3": {}},
+                    ), mock.patch.object(
+                        preflight, "historical_workspace_evidence",
+                        return_value={"stable": True},
+                    ), mock.patch.object(
+                        preflight, "UNCHANGED_FINALIST_FILES",
+                        tuple(historical_finalists),
+                    ), mock.patch.object(
+                        preflight, "identity_label",
+                        side_effect=historical_identity_label,
+                    ), mock.patch.object(
+                        preflight, "git_blob",
+                        side_effect=lambda _head, path: path.read_bytes(),
+                    ):
+                record = preflight.technical_recovery_record(head)
         self.assertTrue(record["direct_parent_verified"])
         self.assertEqual(
             record["changed_paths"],
@@ -659,7 +723,19 @@ class FinalSourcePreflightTest(unittest.TestCase):
             "#define PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING 1\n"
             "#include \"comparison_gate.cpp\"\n",
         )
-        isolation = preflight.heldout_gate_isolation_checks()
+        with self.assertRaisesRegex(
+            ValueError, "ordinary comparison-gate projection changed"
+        ):
+            preflight.heldout_gate_isolation_checks()
+
+        historical_gate = preflight.git_blob(
+            preflight.FAILED_SUCCESSOR_HEAD, preflight.ORDINARY_GATE_SOURCE
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "comparison_gate.cpp"
+            fixture.write_bytes(historical_gate)
+            with mock.patch.object(preflight, "ORDINARY_GATE_SOURCE", fixture):
+                isolation = preflight.heldout_gate_isolation_checks()
         self.assertTrue(isolation["passed"])
         self.assertEqual(
             isolation["ordinary_projection_sha256"],
