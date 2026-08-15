@@ -25,4 +25,10 @@ if [[ -n "${PAPERSOCCER_BUILD_JOBS:-}" ]]; then
 fi
 
 cmake "${build_args[@]}"
-ctest --test-dir "${build_dir}" --output-on-failure
+
+ctest_args=(--test-dir "${build_dir}" --output-on-failure)
+if [[ -n "${PAPERSOCCER_CTEST_EXCLUDE_LABELS:-}" ]]; then
+  ctest_args+=(--label-exclude "${PAPERSOCCER_CTEST_EXCLUDE_LABELS}")
+fi
+
+ctest "${ctest_args[@]}"

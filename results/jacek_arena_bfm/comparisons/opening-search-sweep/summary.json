@@ -1,0 +1,216 @@
+{
+  "schema": "papersoccer.jacek-arena-bfm.opening-search-sweep.v1",
+  "purpose": "offline-exploratory-opening-and-search-selection-sweep",
+  "configuration": {
+    "opaque_h62": true,
+    "workers": 8,
+    "seed": 20260813,
+    "referee_timeout_ms": {"first": 1500.0, "later": 300.0},
+    "balanced_colors": true,
+    "action_transcripts_retained": false,
+    "sources_compiled_separately": true,
+    "screens_run_sequentially": true
+  },
+  "limitations": {
+    "all_games_start_from_initial_state": true,
+    "procedural_opening_diversity": false,
+    "independent_opening_samples": false,
+    "clock_contingent_search": true,
+    "note": "Repeated initial-state games are a consistent clock-contingent whole-game check, not an opening-diverse strength estimate."
+  },
+  "canonical_source": {
+    "bytes": 94195,
+    "sha256": "1e4961e1347a3e12a9a7d5af500d22fbd44e4a851630461d8893e74e8f788591",
+    "exploration": 0.95,
+    "final_selection": "visits-then-mean",
+    "search_order_equivariant": true,
+    "source_archive": "results/jacek_arena_bfm/reports/source_payloads/1e4961e1347a3e12a9a7d5af500d22fbd44e4a851630461d8893e74e8f788591.source"
+  },
+  "small_screens": [
+    {
+      "variant": "canonical-visits-mean",
+      "source_sha256": "1e4961e1347a3e12a9a7d5af500d22fbd44e4a851630461d8893e74e8f788591",
+      "wins": 1, "losses": 19,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 1, "losses": 9},
+      "failures": 0,
+      "report_sha256": "65fb2ed96d1b586427047d481cf1b0178ed6ea6e125030bcd1560b50b5c55337"
+    },
+    {
+      "variant": "fixed-p0-direction-0",
+      "source_sha256": "a44a8fdc3b3aaa9ce0fd43de15d9cde7c9025b5e32c416077c05e8ea4a59a529",
+      "wins": 2, "losses": 18,
+      "player_0": {"wins": 2, "losses": 8},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "6bfa19f369661a36322a993baeedbe91eea4c893ad6ffccdbb22bf7110f0b6c9"
+    },
+    {
+      "variant": "fixed-p0-direction-1",
+      "source_sha256": "ed1ade59bc79811ba097ccb980357a4455004c7eeadd4ae9a37c952544b1e41f",
+      "wins": 0, "losses": 20,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "6f5276fb20b17004052960212cadc3a0b9312e11517be42582a172f5de7537d9"
+    },
+    {
+      "variant": "fixed-p0-direction-2",
+      "source_sha256": "f879b68d8a2f3ee8193373098049fcedf86eea4d7555be14e2909e6aff6f76e0",
+      "wins": 0, "losses": 20,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "eaf242e9ecfc32ade90f68b42914584b11aa72d6fd94445187d5d00e84779ffe"
+    },
+    {
+      "variant": "fixed-p0-direction-3",
+      "source_sha256": "ffe4eb0ec6c957ac0ee764a7397468441980eb248e80bb6919aaf29e50f0bde2",
+      "wins": 5, "losses": 15,
+      "player_0": {"wins": 4, "losses": 6},
+      "player_1": {"wins": 1, "losses": 9},
+      "failures": 0,
+      "report_sha256": "5fec1565c484a3f45cc34833ec79cafb2d91bdb3af9d5980fac3f74c75739276"
+    },
+    {
+      "variant": "fixed-p0-direction-4",
+      "source_sha256": "14b7866fb3603ee07600378dfd90d3fe0f8fe1b38b2384b8ff9f802b277b9ec7",
+      "wins": 0, "losses": 20,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "6d81d8bf512ce3c90b8b51ebe9efd01e62a19e8b51ab9630084db935f2f4f031"
+    },
+    {
+      "variant": "fixed-p0-direction-5",
+      "source_sha256": "9e0532fba155e64b61e5b1a1e33279ab030ae3db0573bed84ccb8e0b8af77135",
+      "wins": 0, "losses": 20,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "2da97a338fbf34f9d756f62d35c2d9fc1170d15e3f7703822e76ad97c2fccc3d"
+    },
+    {
+      "variant": "fixed-p0-direction-6",
+      "source_sha256": "b622bb4699b7e2d3f4b94ea29953a383649c8446eb5ced2cc9ee0e70c26b9c4b",
+      "wins": 4, "losses": 16,
+      "player_0": {"wins": 4, "losses": 6},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "1c8eb8e4bbc3d7fb7041756a687e55b4ccaeba55cc6a758039e4bbc6e56b9652"
+    },
+    {
+      "variant": "fixed-p0-direction-7",
+      "source_sha256": "ab2c5910881adc3eaa9522799bfad577f0c51eeeebaa02b4d7941f9d52d9479a",
+      "wins": 2, "losses": 18,
+      "player_0": {"wins": 0, "losses": 10},
+      "player_1": {"wins": 2, "losses": 8},
+      "failures": 0,
+      "report_sha256": "9340b602b69767f8d27691fe5ef98ef0f323868d1ffa049282d57afe0c8dcf1e"
+    },
+    {
+      "variant": "mean-visits-final-selection",
+      "source_sha256": "dae0d821a75e449cd41aafd354c24ba814d52bd7cb100a97539e71bc22fa4a71",
+      "wins": 2, "losses": 18,
+      "player_0": {"wins": 1, "losses": 9},
+      "player_1": {"wins": 1, "losses": 9},
+      "failures": 0,
+      "report_sha256": "3f28595c3b86d0f0fd0fb8eb7daae3e04437cf6493f5e77fe961b51120b458df"
+    },
+    {
+      "variant": "exploration-c025",
+      "source_sha256": "54430ac5c1b553087d51675d0be11338a56de46176673a3c6a473487d66f1794",
+      "wins": 5, "losses": 15,
+      "player_0": {"wins": 5, "losses": 5},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "e6de1669e274b7b2360a073871c50c9c345865e49866fde0f00768a6e86f43c6"
+    },
+    {
+      "variant": "exploration-c050",
+      "source_sha256": "6b059fd2fa495ddfa7de50546c5312f09c7abf0799e577bae34ce9bbc82e11de",
+      "wins": 1, "losses": 19,
+      "player_0": {"wins": 1, "losses": 9},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "2aafb153023f45a204527dab98e361a33a3fc3928dd15c206c85d6a78023d817"
+    },
+    {
+      "variant": "exploration-c150",
+      "source_sha256": "b33db2a3efb7ce305b3576e6c1274c190ecdfcc7bff31e39dcb286e30de58912",
+      "wins": 2, "losses": 18,
+      "player_0": {"wins": 2, "losses": 8},
+      "player_1": {"wins": 0, "losses": 10},
+      "failures": 0,
+      "report_sha256": "d936151ef7d6ef4a94803e73caf9acd0c1d19d1f29b661a2971308bbe084f060"
+    }
+  ],
+  "followup_screens": [
+    {
+      "variant": "canonical-visits-mean",
+      "games": 100,
+      "source_bytes": 94195,
+      "source_sha256": "1e4961e1347a3e12a9a7d5af500d22fbd44e4a851630461d8893e74e8f788591",
+      "wins": 0, "losses": 100,
+      "player_0": {"wins": 0, "losses": 50},
+      "player_1": {"wins": 0, "losses": 50},
+      "failures": 0,
+      "timing_ms": {"first_p99": 1161.2002579506952, "first_max": 1162.6117909909226, "later_p99": 123.55300173629075, "later_max": 126.7268750234507},
+      "report_sha256": "2ce67fe2e1ea4a69b40264cf0b9223f6cb90a902a448c608a943a7f883963f89"
+    },
+    {
+      "variant": "equivariant-exploration-c025",
+      "games": 100,
+      "source_bytes": 94195,
+      "source_sha256": "54430ac5c1b553087d51675d0be11338a56de46176673a3c6a473487d66f1794",
+      "wins": 33, "losses": 67,
+      "player_0": {"wins": 33, "losses": 17},
+      "player_1": {"wins": 0, "losses": 50},
+      "failures": 0,
+      "search_order_equivariant": true,
+      "timing_ms": {"first_p99": 942.8057505079778, "first_max": 943.1812079856172, "later_p99": 126.05262501747349, "later_max": 127.11766705615446},
+      "report_sha256": "88119848e3a962d22be1f12ab09bfbaf67666ce74017a37364c32c5fb9938e8d"
+    },
+    {
+      "variant": "equivariant-exploration-c025-fixed-p0-direction-3",
+      "games": 100,
+      "source_bytes": 94333,
+      "source_sha256": "54105c6335e34e3c13d71eb526c0b4e9c0a6d011ed0e26e60da0ba3d087a4464",
+      "wins": 1, "losses": 99,
+      "player_0": {"wins": 1, "losses": 49},
+      "player_1": {"wins": 0, "losses": 50},
+      "failures": 0,
+      "small_screen_signal_replicated": false,
+      "timing_ms": {"first_p99": 777.2791936574504, "first_max": 778.0614579678513, "later_p99": 125.35648929770105, "later_max": 132.5130409677513},
+      "report_sha256": "621815601bfb7d7dfdab665646e1d9e33967bb3023b204c67f04eb4c354a17ea"
+    },
+    {
+      "variant": "pre-equivariance-exploration-c025",
+      "games": 100,
+      "source_bytes": 92686,
+      "source_sha256": "3de7eebd3af6a6bb9e4fb872d0f25347412328b40bbf39e9e26f1e32aaaf8787",
+      "wins": 8, "losses": 92,
+      "player_0": {"wins": 3, "losses": 47},
+      "player_1": {"wins": 5, "losses": 45},
+      "failures": 0,
+      "rotational_action_set_invariant": true,
+      "search_order_equivariant": false,
+      "timing_ms": {"first_p99": 1259.0998347767163, "first_max": 1262.3092920402996, "later_p99": 124.74240777082743, "later_max": 129.55429195426404},
+      "report_sha256": "d038e27f13ba50c89f863e320294f27a172ffa848e753144dd1a4d064883b509"
+    }
+  ],
+  "decision": {
+    "best_variant": "equivariant-exploration-c025",
+    "recommended_1000_game_followup": "equivariant-exploration-c025",
+    "recommended_source_sha256": "54430ac5c1b553087d51675d0be11338a56de46176673a3c6a473487d66f1794",
+    "reason": "It improved the exact 100-game screen from canonical C=0.95's 0-100 to 33-67 with zero failures and preserved search-order equivariance.",
+    "qualification_warning": "All 33 wins were as player 0; player 1 remained 0-50. This is not a both-color qualification and needs an opening-diverse and larger follow-up before promotion.",
+    "rejected": {
+      "fixed_direction_3": "The favorable 20-game signal did not replicate when combined with C=0.25: 1-99 at 100 games.",
+      "pre_equivariance_c025": "Only 8-92 and fails the newer search-order-equivariance invariant.",
+      "mean_first_final_selection": "Only 2-18 in the small screen."
+    }
+  },
+  "active_namespace_modified_by_sweep": false,
+  "browser_or_live_source_modified": false
+}

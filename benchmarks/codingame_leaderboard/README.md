@@ -18,9 +18,12 @@ From the repository root:
 python3 benchmarks/codingame_leaderboard/leaderboard.py validate
 ```
 
-This checks that all 21 CMake-registered generated submissions are accounted
-for, the `selfplay_nn_v2` alias is still byte-identical to `rank_4`, source
-hashes are current, and the seeded schedule has all frozen balance properties.
+This checks that all 23 CMake-registered generated submissions are accounted
+for. The frozen tournament keeps its original 20 entrants: the unqualified
+`rank_4_jacek_hybrid` and `jacek_arena_bfm` campaign artifacts are explicit
+non-entrants, while `selfplay_nn_v2` remains a byte-identical alias of
+`rank_4`. Source hashes must be current, and the seeded schedule must retain
+all frozen balance properties.
 
 ## Run or resume
 
@@ -64,4 +67,9 @@ python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
 
 Do not publish a partial or synthetic development snapshot. The checked-in raw
 artifact must contain all 900 matches and the compact output is a deterministic
-function of it.
+function of it. Validation is strict by default for a newly generated
+tournament. CI adds `--allow-historical-sources` only when checking the frozen
+historical artifact after maintenance-only runner or CMake changes. That mode
+preserves the artifact's recorded source provenance; it does not skip the
+current roster and schedule checks, authoritative replay of every transcript,
+recomputed standings, or byte-exact snapshot check.

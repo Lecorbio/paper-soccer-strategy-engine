@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# GNU Make treats `--parallel` without a count as unbounded.  The repository
+# contains many large, generated CodinGame translation units, so cap hosted
+# runner compilation to avoid memory-pressure kills while preserving coverage.
+env:
+  PAPERSOCCER_BUILD_JOBS: "2"
+
 concurrency:
   group: pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
@@ -32,7 +38,7 @@ jobs:
             -s tests/codingame_leaderboard -p 'test_*.py'
           python3 benchmarks/codingame_leaderboard/leaderboard.py validate
 
-      - name: Reject a stale published snapshot
+      - name: Replay and validate the frozen published snapshot
         run: |
           test -s benchmarks/codingame_leaderboard/tournament.json
           test -s web/leaderboard/leaderboard-results.js
@@ -41,16 +47,18 @@ jobs:
             papersoccer_codingame_referee
           python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
             --artifact benchmarks/codingame_leaderboard/tournament.json \
-            --referee build/leaderboard-check/papersoccer_codingame_referee
+            --referee build/leaderboard-check/papersoccer_codingame_referee \
+            --allow-historical-sources
           python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
             --input benchmarks/codingame_leaderboard/tournament.json \
             --output web/leaderboard/leaderboard-results.js \
-            --referee build/leaderboard-check/papersoccer_codingame_referee --check
+            --referee build/leaderboard-check/papersoccer_codingame_referee \
+            --allow-historical-sources --check
 
   test-gcc:
     name: GCC build and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CC: gcc
       CXX: g++
@@ -58,6 +66,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Stabilize duplicate pragma-once headers
         run: |
@@ -73,7 +83,7 @@ jobs:
   test-clang:
     name: Clang build and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CC: clang
       CXX: clang++
@@ -81,6 +91,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Build and test
         run: ./scripts/build-and-test.sh
@@ -95,11 +107,14 @@ jobs:
       PAPERSOCCER_BUILD_DIR: build/ci-sanitizers
       PAPERSOCCER_BUILD_TYPE: Debug
       PAPERSOCCER_ENABLE_SANITIZERS: "ON"
+      PAPERSOCCER_CTEST_EXCLUDE_LABELS: long
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Build and test
         run: ./scripts/build-and-test.sh

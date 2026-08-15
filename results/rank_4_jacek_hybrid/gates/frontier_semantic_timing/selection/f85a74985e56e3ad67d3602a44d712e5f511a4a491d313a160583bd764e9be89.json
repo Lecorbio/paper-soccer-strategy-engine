@@ -1,0 +1,131 @@
+{
+  "audit": {
+    "candidate_result_digest": 17056548531757416599,
+    "canonical_pretty_json_recomputed": true,
+    "control_result_digest": 9610481692246354856,
+    "fixture_digest": 17309245452317158517,
+    "fixture_signatures_equal_for_all_pairs": true,
+    "metrics_recomputed_exactly": true,
+    "paired_ratios_recomputed_exactly": true,
+    "raw_sample_count": 31,
+    "sample_indices_exact": "0..30",
+    "sample_order_exact": "alternating control-candidate/candidate-control",
+    "sole_run": {
+      "authoritative_sole_run_attested_by_campaign_owner": true,
+      "limitation": "The frozen runner uses O_EXCL only on its caller-selected output path and has no global source-identity attempt claim or directory fsync; sole-run status therefore relies on the campaign-owner attestation and frozen-plan policy.",
+      "retry_permission_created_by_limitation": false
+    }
+  },
+  "campaign": {
+    "campaign_id": "rank_4_jacek_hybrid-36h-20260813",
+    "manifest_path": "results/rank_4_jacek_hybrid/manifests/aed2a52f7a59c2b1988b5c365c23b57f8ec41fbfb50927211655a8565df63fa7.json",
+    "manifest_sha256": "aed2a52f7a59c2b1988b5c365c23b57f8ec41fbfb50927211655a8565df63fa7",
+    "t0_epoch": 1786648507,
+    "t0_europe_warsaw": "2026-08-13T21:15:07+02:00",
+    "t0_utc": "2026-08-13T19:15:07Z"
+  },
+  "decision": {
+    "candidate_selected": false,
+    "failure_action": "Reject weight 10, restore the exact mask-7 rollback, and end this semantic hypothesis.",
+    "reason": "The frozen conjunctive Stage-1 paired-ratio p99 threshold failed.",
+    "stage": 1,
+    "status": "rejected",
+    "whole_game_stages_authorized": false
+  },
+  "frontier_execution_boundary": {
+    "final_bank_read": false,
+    "frontier_whole_games_run": false,
+    "heldout_qualification_run": false,
+    "retry_authorized": false,
+    "stage2_fixed_node_run": false,
+    "stage3_operational_d20_run": false,
+    "stage4_operational_confirmation_run": false,
+    "validation_bank_read": false
+  },
+  "packet": {
+    "candidate_bot_sha256": "408adc5288674550cc08274aec74380074117e32ad8f6915c7e39badc8dfba98",
+    "candidate_commit": "f423547034ba51e6144caac3fa6f4e2c333e1700",
+    "candidate_source_sha256": "08d0c0859ef8a197f8bfdd89afb048bec41c3a888228433b85991cd937882550",
+    "control_bot_sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b",
+    "control_commit": "4c9afa70a36183fc1451e4335b7251651a7b2791",
+    "control_source_sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7",
+    "harness_path": "results/rank_4_jacek_hybrid/frontier_semantic_prototype/leaf_proof_microbenchmark.549b6c29.cpp",
+    "harness_sha256": "549b6c293f05d05b8e1724073decee034fc2959c2981902215925a53c91de059",
+    "manifest_path": "results/rank_4_jacek_hybrid/frontier_semantic_prototype/manifest.408adc52.json",
+    "manifest_sha256": "e521be0b71da44b21d438a595271110a045114853b7b61db5d2a4e43d45b177f",
+    "plan_path": "results/rank_4_jacek_hybrid/frontier_semantic_prototype/DEVELOPMENT_SELECTION_PLAN.9c550604.md",
+    "plan_sha256": "9c55060467344e23fd26d154a7051fd66f11da6044603ede616bb6f45fc89c7b",
+    "runner_path": "results/rank_4_jacek_hybrid/frontier_semantic_prototype/run_leaf_proof_microbenchmark.29497387.py",
+    "runner_sha256": "29497387ad9a48e54efbedc57d63e9df1b11fc52d71dec714eb78741a990bbe9"
+  },
+  "raw_report": {
+    "bytes": 28421,
+    "classification": "development-timing-not-strength-evidence",
+    "passed": false,
+    "path": "results/rank_4_jacek_hybrid/gates/frontier_semantic_timing/bb883a55fcc3ab0e1992d9135f683fcb8aa1aacde913e4fd22f06bce83c5d4bf.json",
+    "sha256": "bb883a55fcc3ab0e1992d9135f683fcb8aa1aacde913e4fd22f06bce83c5d4bf"
+  },
+  "recomputed_metrics": {
+    "candidate_median_ns": 2534500,
+    "candidate_p99_ns": 2735667,
+    "control_median_ns": 2497209,
+    "control_p99_ns": 3042250,
+    "p99_excess_absolute": 0.08665384721395775,
+    "p99_excess_relative_percent": 8.495475217054672,
+    "p99_nearest_rank_one_based": 31,
+    "paired_ratio_median": 1.0037026228212713,
+    "paired_ratio_p99": 1.1066538472139578
+  },
+  "rollback": {
+    "checklist": [
+      "Keep bot.cpp at the exact selected rollback hash.",
+      "Keep submission.cpp ASCII, 94,312 bytes, and at the exact selected rollback hash.",
+      "Keep CMakeLists.txt at the rollback hash with the frontier semantic target absent.",
+      "Run the generator check and maintained rollback tests before committing.",
+      "Commit and push the rejection receipt, raw report, rollback source, CMake removal, and rejection documentation together.",
+      "Do not rerun Stage 1 or run frontier Stages 2-4, heldout qualification, or upload the rejected source."
+    ],
+    "precommit_read_only_check": {
+      "bot_hash_restored": true,
+      "cmake_hash_restored": true,
+      "frontier_semantic_cmake_target_absent": true,
+      "submission_ascii": true,
+      "submission_bytes": 94312,
+      "submission_hash_restored": true
+    },
+    "selected_exact_proof_mask": 7,
+    "selected_files": [
+      {
+        "bytes": 63107,
+        "path": "submissions/codingame/bots/rank_4_jacek_hybrid/bot.cpp",
+        "sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b"
+      },
+      {
+        "ascii": true,
+        "bytes": 94312,
+        "path": "submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp",
+        "sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7"
+      },
+      {
+        "bytes": 52948,
+        "path": "CMakeLists.txt",
+        "sha256": "10ff6cad72c75d2c06cac56831defe16e2d7b34a5cbc5f948dfcdf74d9559bdd"
+      }
+    ]
+  },
+  "schema": "rank4-frontier-weight10-development-rejection-v1",
+  "threshold_evaluation": {
+    "conjunctive": true,
+    "median": {
+      "actual": 1.0037026228212713,
+      "maximum": 1.01,
+      "passed": true
+    },
+    "overall_passed": false,
+    "p99": {
+      "actual": 1.1066538472139578,
+      "maximum": 1.02,
+      "passed": false
+    }
+  }
+}

@@ -1,0 +1,224 @@
+{
+  "schema": "papersoccer.replay-book.v1",
+  "replays": [
+    {
+      "label": "Laars as player 0",
+      "player_id": 0,
+      "first_turn": 6,
+      "transcript": "0/5/21/2/7/523/3/35/0/36350/07/5/6/6/0/5/5/631/16430/5023/21/41674/7577/2/21/3/577/55327/724101305/533/3050100/321647/66666/72/5202/243/11425056542006074772/71/714/3/66144/3/6302/330/007/2/2/2/0/0363636/7507/13/34546764750014/71/05211",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "Laars as player 1",
+      "player_id": 1,
+      "first_turn": 5,
+      "transcript": "1/1/7/6/6/3/07/05/74/53/1/2060350634/14/663/1211/4/1/03635/6060/1474553/032/17723/364/27056/56/30206577/724452/22076524144/2/0574/1313/12744/3/17563/235/350/17/1647074665/3/5/2/01/05/0367635/61/7241466335/6300/61420/742164203/02/3/24705/652/105633/6/35",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "prior rank-5 win against Snekkers branch 0/6 as player 0",
+      "player_id": 0,
+      "first_turn": 4,
+      "transcript": "0/6/5/5/71/34/1/033/5/5/2/5/57/1/2477/1647253/463071420/33/641000/7245/7470/063224/366111/3/0/3/17/55/520061/6/7/2/1/03/057/65/753/0/14652530/1/21/02543367432235/36/17/02545/2357/571/32/05417667070/20/1465317074612/03632/025441/1/427713527/46/360633/45/64/47230/00531657667161/65",
+      "provenance": "public game 896331941; replaces the continuation that lost in candidate v1",
+      "source_game_id": 896331941,
+      "source_agent_id": 6561697,
+      "source_score": 42.71964143465696
+    },
+    {
+      "label": "public win against Snekkers branch 0/2 as player 0",
+      "player_id": 0,
+      "first_turn": 2,
+      "transcript": "0/2/7/45/7/5/71/34/2212/2/7/1/6/1/03636074/33535/7/00535/0/633/10/35/035/27635/50/241/035067/46/57/1/0/5/2310/256/102/16613165475/5331/17574/236746167/064/276313/17/60/672/3310/6/52/42756/06310/50223611/07",
+      "provenance": "EricSMSO public game 876578468; first candidate-v1 divergence against Snekkers",
+      "source_game_id": 876578468,
+      "source_agent_id": 2602969,
+      "source_score": 41.59695938356412
+    },
+    {
+      "label": "rank-1 win against Snekkers branch 1/1 as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "1/1/0/1/275/03674/2476/4/7/75/6143/123/617/505/3/23/6/125032/0/361745642/4/1/63/2774142564/2/03677770645/72/520224/6/03144/75/0653/13/6/4/74/61632116/50275/3552/14/7421/02716443/1/175364613/272564/3/1/756/035/725/6/614145/2/500333",
+      "provenance": "rank-leading jacek public game 876577953; exact later branch against Snekkers",
+      "source_game_id": 876577953,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "rank-3 win against Snekkers branch 7/6 as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "7/6/7/53/10/34/71/45/221/2/1/35/70/54/17/43/660/33/020/641364/2755/2/166/1336/74747/5/0/5/6/3/5/31/7167/7223036135/24/3/50/241/25727/0252/75767/234/4/125635",
+      "provenance": "Deltaspace public game 876579045; exact later branch against Snekkers",
+      "source_game_id": 876579045,
+      "source_agent_id": 5471081,
+      "source_score": 45.344827590570695
+    },
+    {
+      "label": "derjack as player 0",
+      "player_id": 0,
+      "first_turn": 2,
+      "transcript": "0/1/0/6/33/5/3/6/5/3/6/05/21/66/7/4/6/3/161/13442/72/01/17/0/255336/5702/4202577/22/520167/5452066/6/1/7/7/0524/53/27/164453/2572461330067/2/50141016/64/146652134/632/0613574302100/164721/41675/03/5030654/47271/17",
+      "provenance": "rank-leading jacek public game 874063244; retains the accepted opening and replaces candidate v1's late losing branch",
+      "source_game_id": 874063244,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "candidate-v1 win against derjack as player 1",
+      "player_id": 1,
+      "first_turn": 19,
+      "transcript": "6/7/5/61/44/53/0/0617227/47271/053/03/5023/1/4/7/425/61434/3/0/3/65/3/41/65/67/1/6/47275253147/11/425/01/61410/63613/42/754/607/03647/16/366163071/123/4/555/234/44",
+      "provenance": "candidate-v1 public game 896344778; exact late branch from another completed win against derjack",
+      "source_game_id": 896344778,
+      "source_agent_id": 6561767,
+      "source_score": 40.68622842413971
+    },
+    {
+      "label": "Marchete opening 3 as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "3/1/7/7/7/2/2/505/6/6/1/7/5352/7243/2/3/6/02574/5/3/6/6171/6110300/5253/312/1/7/2/0/25252744/64136/02566/44/71134/4/27254/4/166/74/6/16/323257/50/1467016023/03663/534705/07/2050610164563353/57/006353012/3647/23/02525",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "YurkovAS late branch as player 0",
+      "player_id": 0,
+      "first_turn": 40,
+      "transcript": "0/3/2/3/6/5/2/4/76/5/6/4/10/55/2476317/1/221/030524745/674663071/36/071/3/0/2/21/3/5671/47/5671/4/72714/43/65212221/4/2/505/247021/2506335/2553/66/677/0174744/366311/1256650134/6413312/005325357/014271761/0270/56/57/47/22/2470/13/030522575771",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "saraneth late branch as player 0",
+      "player_id": 0,
+      "first_turn": 18,
+      "transcript": "0/5/21/3/0/3/17/55/061/4276/1/42/217/4/427570/5/4432225/35/36/57/1/4/125664130061/02745/2470/274763/25/5/0/5/230/65/57/4721/2470/5/71/335/7242476061/721/0/364/671/33/0523111/60575/6671/4/721/7533/6301/74/2221/3166614743/67/756/3552133550500/33/6631231642706/427543/07027027/4561160327417/01",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "trictrac as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "7/6/1/44/21/7/7/422/7/455/00/21657/1/75353/10/27433/141/3/17/25/42700/256/3607/135524/665760/166352325/06/33/0/10676356144/133/3/1/6/1/44/2/71/7/42355/01/435755",
+      "provenance": "retained baseline replay"
+    },
+    {
+      "label": "independently screened late-game correction",
+      "player_id": 0,
+      "first_turn": 20,
+      "transcript": "7/6/0/35/01/44/21/4/1/63/07/2/57/25/052761/421/1/4/1/7474/42474176",
+      "provenance": "retained baseline correction"
+    },
+    {
+      "label": "rank-1 win against Deltaspace as player 0",
+      "player_id": 0,
+      "first_turn": 4,
+      "transcript": "0/6/5/4/5/53/61/72442/30/2/7/46413/00/2/531/316/50216/56/52076572/450120/357177/532/21/03/2/3/2500/65/441/24763072/4167474/2507/2253117/50/247656431605470/7272/350230/270/330/1/7/2/42/25/2743527/677/45017/2/46124/5201317/05/74/53611631757/65/31/30616474/60317",
+      "provenance": "rank-leading jacek public game 874062302; retained candidate-v2 branch after 0/6",
+      "source_game_id": 874062302,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "rank-1 win against Deltaspace as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "1/1/7/6/0/75/74/3/00523/135/01/13/27435/35/7/164675/6/6/71/72524/4611232/764/763/30654/17201/3550102144444/1721/425/46/16467/5/024674/75252/53/530/1/0/711324/75/0632/3/1/3/17505675/23/2027545/2/13/3/25050/50/11356675/47/4772420613520633/10/3067425/46165",
+      "provenance": "rank-leading jacek public game 874063805; replaces the player-1 continuation that lost twice in candidate v1",
+      "source_game_id": 874063805,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "baseline win against trictrac branch 0/6 as player 0",
+      "player_id": 0,
+      "first_turn": 4,
+      "transcript": "0/6/5/4/5/3/6/7243/5716172/23/0/3/1/2/1/35/77/43/225/4/250174700/54/661/45/05417/60316443/47411/4/60217077/4/7/53/120/543212225/017/4/167/1/75/32/036175/74235/357/41/652770/55/44717271/4/71413/5/2001",
+      "provenance": "baseline public game 896337632; shares the accepted rank-1 opening choice and supplies trictrac's exact continuation",
+      "source_game_id": 896337632,
+      "source_agent_id": 6561733,
+      "source_score": 42.19914837204899
+    },
+    {
+      "label": "rank-1 win against Marchete opening 4 as player 1",
+      "player_id": 1,
+      "first_turn": 1,
+      "transcript": "4/6/6/3/6/3/2/746/6/14117/7/7/71/63/003/14/6544/61613/0/7144524612/4/61713/4/53550143/01/6605/74/20553/6301021/72432/4/2/75/555/7531070/723613423/2/4/71/43/17/0522725743/425750/306064/5747/72422/13610/722744641320555/0603364",
+      "provenance": "rank-leading jacek public game 874062265; replaces the opening-4 response that still lost in candidate v1",
+      "source_game_id": 874062265,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "rank-1 win against Marchete opening 2 as player 1",
+      "player_id": 1,
+      "first_turn": 1,
+      "transcript": "2/4/6/05/0/33/6/7241767/1/1/6/42/5/67/63/610/2/5453/2/10077/46114/360753114/54/1303/63/03/6455/0636/74/205721/0613316/6521312/7/43/163635/27/000/6657645/3074453/63/6113/024/11/247642/71/25721165444235/4167/03/056/666/52/06333",
+      "provenance": "rank-leading jacek public game 874063354; first candidate-v1 divergence against Marchete's opening 2",
+      "source_game_id": 874063354,
+      "source_agent_id": 6273433,
+      "source_score": 50.24648822736027
+    },
+    {
+      "label": "prior win against YurkovAS late branch as player 0",
+      "player_id": 0,
+      "first_turn": 30,
+      "transcript": "0/3/2/3/6/5/2/4/76/5/6/4/10/55/2476317/1/221/030524745/674663071/36/071/3/0/2/21/3/0/3/17/25/0567/4/7/5/4610/6/1/36075333325/4471271/065556333/63012/5/31/0632/25071/01703664723/052531636650706/66/063131241160/1/2566/357165/247020/756/46131/213/0305247575001",
+      "provenance": "public game 896330310; starts at candidate v1's earlier exact divergence",
+      "source_game_id": 896330310,
+      "source_agent_id": 6561690,
+      "source_score": 41.36937025301642
+    },
+    {
+      "label": "prior rank-5 win against field3 as player 1",
+      "player_id": 1,
+      "first_turn": 7,
+      "transcript": "1/1/7/6/0/75/03/213/570/6433/00/063203/0365/4644/1/3/0/2535/0/35/07/216575/022/003545/77/6/7/53/0/5253/0/5252/01/2/7/43/00/164561613255/074321/7672410/1/013563335/06/52032366/03350/57/41/65/67/614474113/0/3644",
+      "provenance": "public game 896331529; first divergence from the current loss",
+      "source_game_id": 896331529,
+      "source_agent_id": 6561697,
+      "source_score": 42.71964143465696
+    },
+    {
+      "label": "prior rank-8 win against EricSMSO as player 1",
+      "player_id": 1,
+      "first_turn": 11,
+      "transcript": "0/0/0/6/6/5/2/5/0527271/614347/013/433/1/3/17/54/657/5/2/5/06/61434/7/23/1/7244/1/2/1/164276336/60/335/7/4/225/41675/41/66/57/7/7101/4722223535/242570310/052746/063450/166652/06/45310136/00/35335",
+      "provenance": "public game 896325547; exact late correction for candidate v1's EricSMSO loss",
+      "source_game_id": 896325547,
+      "source_agent_id": 6561668,
+      "source_score": 42.32021010566431
+    },
+    {
+      "label": "prior rank-5 win against Shurishe as player 0",
+      "player_id": 0,
+      "first_turn": 20,
+      "transcript": "0/3/2/3/6/5/2/4/76/5/6/5/63072/1/30/24/764671/1/0/2/21/3/44710/3/17/25/0527/1/03560/03475/24607/4/7/0365/0/031/0",
+      "provenance": "public game 896331609; exact late correction for candidate v1's Shurishe loss",
+      "source_game_id": 896331609,
+      "source_agent_id": 6561697,
+      "source_score": 42.71964143465696
+    },
+    {
+      "label": "prior rank-5 win against saraneth as player 1",
+      "player_id": 1,
+      "first_turn": 19,
+      "transcript": "7/6/0/2/1/4/1/2/0/53/01/2750363/03667/274466/0/75/0522/205335023/0/2554/1/65/7/0105354/7/53/11/6613425/0632/5/06/653/0/063135/752250300/23/31/30/7/447/10/3/17/55/775470/071/0/05327524/10/13313/0525/5023/250367/63/00707/4165633/025641231/274455/74236522702024/67/07463254/453",
+      "provenance": "public game 896331733; later exact correction avoids a broad opening override",
+      "source_game_id": 896331733,
+      "source_agent_id": 6561697,
+      "source_score": 42.71964143465696
+    },
+    {
+      "label": "prior rank-8 win against jacek as player 1",
+      "player_id": 1,
+      "first_turn": 3,
+      "transcript": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/532/27412/41/654/74761/06344/1721/05/3075221/23/57/063633/652141/6033/35/6/3/35/27/002525457/41/65/67/57132/1/31/2530606/1/6/7/012/216/36016/17535254/35475206/7/713550/074322446/547/71/0252347/460220/64117/0642447123/300561/4535/502363",
+      "provenance": "public game 896325858; exact version-26 continuation from the prior rank-8 win against rank-leading jacek",
+      "source_game_id": 896325858,
+      "source_agent_id": 6561668,
+      "source_score": 42.32021010566431
+    }
+  ]
+}

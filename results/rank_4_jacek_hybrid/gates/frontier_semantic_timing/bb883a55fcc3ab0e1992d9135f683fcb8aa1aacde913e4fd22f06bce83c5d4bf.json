@@ -1,0 +1,919 @@
+{
+  "attestation": {
+    "final_bank_read": false,
+    "strength_evidence": false,
+    "validation_bank_read": false,
+    "whole_games_run": false
+  },
+  "build": {
+    "candidate_binary_sha256": "63c35c65b63d6ff12be8c0ad16e23c7f5b243ddf077a056a029b2b8e7bc0aeb4",
+    "candidate_command": [
+      "/usr/bin/clang++",
+      "-std=c++20",
+      "-O3",
+      "-DNDEBUG",
+      "-DFRONTIER_IMPL=\"/Users/lecorbio/.codex/worktrees/5392/paper-soccer-strategy-engine/submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp\"",
+      "/Users/lecorbio/.codex/worktrees/5392/paper-soccer-strategy-engine/results/rank_4_jacek_hybrid/frontier_semantic_prototype/leaf_proof_microbenchmark.549b6c29.cpp",
+      "-o",
+      "/var/folders/z5/pjvrk14116dcgpsn35qzrrn00000gn/T/rank4-frontier-leaf-benchmark.21kf9cpy/candidate"
+    ],
+    "compiler": "/usr/bin/clang++",
+    "compiler_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "control_binary_sha256": "b22942bbfd1b0e07e1e2c857b1f9f6610d1bc04079ae41c8e6cee29a4bdfed17",
+    "control_command": [
+      "/usr/bin/clang++",
+      "-std=c++20",
+      "-O3",
+      "-DNDEBUG",
+      "-DFRONTIER_IMPL=\"/private/tmp/rank4-position-rollback.2wEDPC/repo/submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp\"",
+      "/Users/lecorbio/.codex/worktrees/5392/paper-soccer-strategy-engine/results/rank_4_jacek_hybrid/frontier_semantic_prototype/leaf_proof_microbenchmark.549b6c29.cpp",
+      "-o",
+      "/var/folders/z5/pjvrk14116dcgpsn35qzrrn00000gn/T/rank4-frontier-leaf-benchmark.21kf9cpy/control"
+    ],
+    "flags": [
+      "-std=c++20",
+      "-O3",
+      "-DNDEBUG"
+    ]
+  },
+  "classification": "development-timing-not-strength-evidence",
+  "fixture_contract": {
+    "cache_contract": "512 evaluation probes and zero hits",
+    "fixture_count": 512,
+    "public_tactical_transcripts": 8,
+    "remaining_fixtures": "deterministic public-rules random walk",
+    "timed_region": "one first-use exact leaf-boundary proof/evaluation call per preconstructed search; corpus and topology setup excluded"
+  },
+  "lock": {
+    "held_for_build_warmup_measurement_and_write": true,
+    "mode": "exclusive-nonblocking",
+    "path": "/tmp/rank4-hybrid-prototype-benchmark.lock"
+  },
+  "metrics": {
+    "candidate_median_ns": 2534500,
+    "candidate_p99_ns": 2735667,
+    "control_median_ns": 2497209,
+    "control_p99_ns": 3042250,
+    "paired_ratio_median": 1.0037026228212713,
+    "paired_ratio_p99": 1.1066538472139578
+  },
+  "passed": false,
+  "sampling": {
+    "measured_pairs": 31,
+    "order": "alternating AB/BA",
+    "raw_samples": [
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2541917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 3042250,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 0,
+        "order": "control-candidate",
+        "paired_ratio": 0.8355384994658559
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2535791,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2631084,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 1,
+        "order": "candidate-control",
+        "paired_ratio": 0.9637818480899888
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2637166,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2494250,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 2,
+        "order": "control-candidate",
+        "paired_ratio": 1.057298185827403
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2486584,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2480750,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 3,
+        "order": "candidate-control",
+        "paired_ratio": 1.0023517081527764
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2730208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2467084,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 4,
+        "order": "control-candidate",
+        "paired_ratio": 1.1066538472139578
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2507208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2497959,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 5,
+        "order": "candidate-control",
+        "paired_ratio": 1.0037026228212713
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2455000,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2497209,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 6,
+        "order": "control-candidate",
+        "paired_ratio": 0.9830975300825842
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2641500,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2450875,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 7,
+        "order": "candidate-control",
+        "paired_ratio": 1.0777783444688123
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2646166,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2526875,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 8,
+        "order": "control-candidate",
+        "paired_ratio": 1.0472089042790007
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2535833,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2474334,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 9,
+        "order": "candidate-control",
+        "paired_ratio": 1.0248547690004663
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2487375,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2604792,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 10,
+        "order": "control-candidate",
+        "paired_ratio": 0.9549226963227774
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2548917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2459208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 11,
+        "order": "candidate-control",
+        "paired_ratio": 1.0364788175705348
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2532917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2670041,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 12,
+        "order": "control-candidate",
+        "paired_ratio": 0.948643485249852
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2485208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2573000,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 13,
+        "order": "candidate-control",
+        "paired_ratio": 0.9658795180722891
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2512208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2530250,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 14,
+        "order": "control-candidate",
+        "paired_ratio": 0.9928694793004644
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2534500,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2533916,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 15,
+        "order": "candidate-control",
+        "paired_ratio": 1.000230473306929
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2489500,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2471917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 16,
+        "order": "control-candidate",
+        "paired_ratio": 1.0071131029075815
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2735667,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2567708,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 17,
+        "order": "candidate-control",
+        "paired_ratio": 1.0654120328323937
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2462166,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2593250,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 18,
+        "order": "control-candidate",
+        "paired_ratio": 0.9494518461390148
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2481959,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2561833,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 19,
+        "order": "candidate-control",
+        "paired_ratio": 0.9688215430123666
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2412333,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2427166,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 20,
+        "order": "control-candidate",
+        "paired_ratio": 0.9938887575056671
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2475292,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2588542,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 21,
+        "order": "candidate-control",
+        "paired_ratio": 0.9562495026157583
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2529584,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2485959,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 22,
+        "order": "control-candidate",
+        "paired_ratio": 1.0175485597308724
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2695583,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2437208,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 23,
+        "order": "candidate-control",
+        "paired_ratio": 1.1060126997777786
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2622541,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2412875,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 24,
+        "order": "control-candidate",
+        "paired_ratio": 1.0868946795834844
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2536125,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2800625,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 25,
+        "order": "candidate-control",
+        "paired_ratio": 0.905556795358179
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2408917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2501250,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 26,
+        "order": "control-candidate",
+        "paired_ratio": 0.9630852573713143
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2492041,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2476583,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 27,
+        "order": "candidate-control",
+        "paired_ratio": 1.0062416644223109
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2653666,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2496042,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 28,
+        "order": "control-candidate",
+        "paired_ratio": 1.0631495784125427
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2582500,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2484167,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 29,
+        "order": "candidate-control",
+        "paired_ratio": 1.0395838927093066
+      },
+      {
+        "candidate": {
+          "calls": 512,
+          "elapsed_ns": 2613917,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 17056548531757416599
+        },
+        "control": {
+          "calls": 512,
+          "elapsed_ns": 2420625,
+          "evaluation_hits": 0,
+          "evaluation_probes": 512,
+          "fixture_digest": 17309245452317158517,
+          "leaf_losses": 0,
+          "leaf_probes": 512,
+          "leaf_wins": 134,
+          "result_digest": 9610481692246354856
+        },
+        "index": 30,
+        "order": "control-candidate",
+        "paired_ratio": 1.079852104311903
+      }
+    ],
+    "warmup_pairs": 7
+  },
+  "schema": "rank4-frontier-weight10-leaf-proof-benchmark-v1",
+  "source": {
+    "candidate_path": "/Users/lecorbio/.codex/worktrees/5392/paper-soccer-strategy-engine/submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp",
+    "candidate_sha256": "08d0c0859ef8a197f8bfdd89afb048bec41c3a888228433b85991cd937882550",
+    "control_path": "/private/tmp/rank4-position-rollback.2wEDPC/repo/submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp",
+    "control_sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7",
+    "harness_path": "/Users/lecorbio/.codex/worktrees/5392/paper-soccer-strategy-engine/results/rank_4_jacek_hybrid/frontier_semantic_prototype/leaf_proof_microbenchmark.549b6c29.cpp",
+    "harness_sha256": "549b6c293f05d05b8e1724073decee034fc2959c2981902215925a53c91de059"
+  },
+  "thresholds": {
+    "conjunctive": true,
+    "paired_ratio_median_max": 1.01,
+    "paired_ratio_p99_max": 1.02
+  }
+}

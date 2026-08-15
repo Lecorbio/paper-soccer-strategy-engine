@@ -330,8 +330,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 rank_4 rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
-  jacek_native_bfm
+  alpha_beta rank_5 rank_4 rank_4_jacek_hybrid rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  jacek_native_bfm jacek_arena_bfm
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
@@ -481,7 +481,8 @@ if(NOT EMSCRIPTEN)
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
-      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm")
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe 0)
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
@@ -505,11 +506,81 @@ if(NOT EMSCRIPTEN)
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate.cpp")
-      target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
-        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
-      target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
-        PRIVATE papersoccer_core)
-      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_jacek_hybrid")
+        target_sources(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate PRIVATE
+          "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate_rank4.cpp"
+          "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/comparison_gate_hybrid.cpp")
+        target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/opening_bank")
+        target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE papersoccer_opening_bank_support)
+      endif()
+      if(NOT PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+        target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+        target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+          PRIVATE papersoccer_core)
+      endif()
+      if(PAPERSOCCER_CODINGAME_BOT STREQUAL "rank_4_jacek_hybrid")
+        set(PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY
+          results/rank_4_jacek_hybrid/openings)
+        set(PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT
+          "${CMAKE_CURRENT_BINARY_DIR}/rank_4_jacek_hybrid_comparison_gate_fixture")
+        set(PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY
+          "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}/${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}")
+        file(MAKE_DIRECTORY
+          "${PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY}")
+        foreach(PAPERSOCCER_HYBRID_GATE_BANK_NAME IN ITEMS
+            development_d04.tsv
+            development_d08.tsv
+            development_d12.tsv
+            development_d20.tsv)
+          set(PAPERSOCCER_HYBRID_GATE_BANK_SOURCE
+            "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/${PAPERSOCCER_HYBRID_GATE_BANK_NAME}")
+          set(PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE
+            "${PAPERSOCCER_HYBRID_GATE_FIXTURE_BANK_DIRECTORY}/${PAPERSOCCER_HYBRID_GATE_BANK_NAME}")
+          file(REMOVE "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}")
+          configure_file(
+            "${PAPERSOCCER_HYBRID_GATE_BANK_SOURCE}"
+            "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}"
+            COPYONLY)
+          file(CHMOD "${PAPERSOCCER_HYBRID_GATE_BANK_FIXTURE}"
+            PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
+        endforeach()
+        set(PAPERSOCCER_HYBRID_GATE_BANK_ARGS
+          --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d04.tsv
+          --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d08.tsv
+          --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d12.tsv
+          --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d20.tsv
+          --expected-role development
+          --expected-seeds 18128950407139886133,9297997631523997120,11025886481058993262,4624785204876369057
+          --expected-sha256 984fbb78d85d7f9806c77e675b9b22a9b047bd15311f510ab0cedcd9a63244dc,6dbec157e7094f07796a9aa1ac97b43919930377ec315c761eaace216630259e,d30d087020e4946ce77b6d6e578484d583f0cf25f2ffa90a1918f8d9a9a8a11a,2aa4b635dcaf23b2587b22fdb7558f4c8d6b4dd5a33e3fec2c164931b3fcd8d4
+          --expected-depths 4,8,12,20)
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_self_test
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            ${PAPERSOCCER_HYBRID_GATE_BANK_ARGS} --self-test)
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_sha
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            --bank ${PAPERSOCCER_HYBRID_GATE_BANK_DIRECTORY}/development_d04.tsv
+            --expected-role development --expected-depths 4
+            --expected-seeds 18128950407139886133
+            --expected-sha256 0000000000000000000000000000000000000000000000000000000000000000
+            --self-test)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_sha
+          PROPERTIES WILL_FAIL TRUE)
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
+            ${PAPERSOCCER_HYBRID_GATE_BANK_ARGS}
+            --profile nodes --candidate-nodes 500 --reference-nodes 500
+            --max-turns 320 --candidate-exact-proof-mask 0)
+        set_tests_properties(
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_self_test
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_sha
+          ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          PROPERTIES WORKING_DIRECTORY
+            "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}")
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "neural_puct")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
             --candidate-simulations 32 --candidate-nodes 2048
@@ -550,6 +621,9 @@ if(NOT EMSCRIPTEN)
         set_tests_properties(
           ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_score
           PROPERTIES WILL_FAIL TRUE)
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
+          COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate)
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "safe_inward" OR
          PAPERSOCCER_CODINGAME_BOT STREQUAL "rebound_proof" OR
@@ -581,6 +655,103 @@ if(NOT EMSCRIPTEN)
       endif()
     endif()
   endforeach()
+
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_null_fastpath.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_hybrid.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_prefastpath.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4_jacek_hybrid"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/opening_bank")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_null_fastpath_comparison_gate
+    PRIVATE papersoccer_opening_bank_support)
+
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_heldout.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_hybrid.cpp
+    submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_rank4.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/opening_bank")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+    PRIVATE papersoccer_opening_bank_support papersoccer_core)
+  add_test(
+    NAME
+      papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate_self_test
+    COMMAND
+      papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate
+      --bank
+        results/rank_4_jacek_hybrid/openings/development_d04.tsv
+      --expected-role development --expected-depths 4
+      --expected-seeds 18128950407139886133
+      --expected-sha256
+        984fbb78d85d7f9806c77e675b9b22a9b047bd15311f510ab0cedcd9a63244dc
+      --self-test)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate_self_test
+    PROPERTIES
+      TIMEOUT 30
+      WORKING_DIRECTORY "${PAPERSOCCER_HYBRID_GATE_FIXTURE_ROOT}")
+
+  add_executable(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    submissions/codingame/bots/rank_4_jacek_hybrid/replay_tactical_audit.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4_jacek_hybrid"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+    PRIVATE papersoccer_core)
+  add_test(
+    NAME papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_cheap
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+      --cheap)
+  add_test(
+    NAME papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit
+      --full --state-cap 2000000 --global-state-cap 100000000)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_cheap
+    PROPERTIES TIMEOUT 30)
+  set_tests_properties(
+    papersoccer_codingame_rank_4_jacek_hybrid_replay_tactical_audit_full
+    PROPERTIES LABELS "qualification;long" RUN_SERIAL TRUE TIMEOUT 120)
+
+  add_executable(papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    submissions/codingame/bots/rank_4_jacek_hybrid/parity_test.cpp)
+  target_include_directories(
+    papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(
+    papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_codingame_rank_4_jacek_hybrid_parity_test
+    COMMAND papersoccer_codingame_rank_4_jacek_hybrid_parity_test)
+
+  add_executable(papersoccer_codingame_jacek_arena_bfm_generator_benchmark
+    submissions/codingame/bots/jacek_arena_bfm/generator_benchmark.cpp)
+  add_executable(papersoccer_codingame_jacek_arena_bfm_selfplay_generator
+    submissions/codingame/bots/jacek_arena_bfm/selfplay_generator.cpp)
+
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME papersoccer_codingame_jacek_arena_bfm_purity
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/jacek_arena_bfm/check_purity.py)
+    set_tests_properties(papersoccer_codingame_jacek_arena_bfm_purity
+      PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
 
   add_executable(papersoccer_codingame_neural_puct_feature_probe
     submissions/codingame/bots/neural_puct/feature_probe.cpp)

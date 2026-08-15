@@ -1,0 +1,707 @@
+{
+  "arena_exclusions": {
+    "path": "results/rank_4_jacek_hybrid/arena/exclusions/578524a7cf0908fa29df3541b4f0b1f7f9e85c1c0374d0dbc0d656686e9df159.json",
+    "policy": "Every arena collector invocation must bind this exact registry and reject all pre-T0/local-prior game IDs before replay fetch.",
+    "record_count": 4205,
+    "schema": "papersoccer.live-replay-exclusions.v1",
+    "sha256": "578524a7cf0908fa29df3541b4f0b1f7f9e85c1c0374d0dbc0d656686e9df159"
+  },
+  "campaign_id": "rank_4_jacek_hybrid-36h-20260813",
+  "control": {
+    "codingame": {
+      "agent_id": 6604719,
+      "completed_games": 90,
+      "historical_rank": 4,
+      "record": "66-24",
+      "remote_digest_disclosure": "CodinGame upload bytes are editor-attested/fingerprinted; the public API does not expose the remote source bytes or digest.",
+      "submission_id": 41114327
+    },
+    "files": [
+      {
+        "bytes": 3854,
+        "path": "submissions/codingame/bots/rank_4/EXPERIMENTS.md",
+        "sha256": "e3ecf0a88d747d20b8ae82c7aa538ea548061fb69827532845bbac23399a2e9a"
+      },
+      {
+        "bytes": 2312,
+        "path": "submissions/codingame/bots/rank_4/README.md",
+        "sha256": "4f12092af1172e110e37796bdba8f2e423ba20944be316afd6296db841092aba"
+      },
+      {
+        "bytes": 906,
+        "path": "submissions/codingame/bots/rank_4/arena_loss_regressions.hpp",
+        "sha256": "b30fe7ce2531eb85cc46583287681fab75f4ca73037520173a9d0b73391d3eb9"
+      },
+      {
+        "bytes": 53689,
+        "path": "submissions/codingame/bots/rank_4/bot.cpp",
+        "sha256": "9276c258cd613b6b78948aeb8aa2649851d226947d419f84a351968a9035c0ad"
+      },
+      {
+        "bytes": 27138,
+        "path": "submissions/codingame/bots/rank_4/comparison_gate.cpp",
+        "sha256": "1604b1b2f6716ac438568eccee31963d4228198e352900cded7ad8643fabcc32"
+      },
+      {
+        "bytes": 2741,
+        "path": "submissions/codingame/bots/rank_4/generate_replay_book.mjs",
+        "sha256": "f153d031b1944255d589ef787389b453e7ba7472913fc95a436af8635a20b3a5"
+      },
+      {
+        "bytes": 3137,
+        "path": "submissions/codingame/bots/rank_4/generate_replay_value_header.mjs",
+        "sha256": "c58b9477a44c810d1a80f1aa0e2a0db31edc2a4a7c0d44c1f26d131530b90c95"
+      },
+      {
+        "bytes": 2865,
+        "path": "submissions/codingame/bots/rank_4/generate_teacher_residual_header.mjs",
+        "sha256": "104a5b2ce6140684b08e44cdfe26ac11a842d9fdc2fdaf546da933b6e79513a3"
+      },
+      {
+        "bytes": 25316,
+        "path": "submissions/codingame/bots/rank_4/observed_arena_loss_regressions.hpp",
+        "sha256": "72d2ac0377822c2a418781fb419f16b9bdfdf637fddd5659d71c23b25919b271"
+      },
+      {
+        "bytes": 5924,
+        "path": "submissions/codingame/bots/rank_4/replay_book.hpp",
+        "sha256": "1a23a0425628e4bc903f34f1923f8e5393ced9326a31e210b202d22715a52a2c"
+      },
+      {
+        "bytes": 12729,
+        "path": "submissions/codingame/bots/rank_4/replay_book.json",
+        "sha256": "835f273e37b43e79c21269169f2ea68570c610ff6a974a235a82c8c97e8551dc"
+      },
+      {
+        "bytes": 13448,
+        "path": "submissions/codingame/bots/rank_4/replay_value_model.hpp",
+        "sha256": "36ac226b60f0cc5a5fac9f2dc35017320ebd00c304847f83a8d07ef1eef7f2bd"
+      },
+      {
+        "bytes": 14552,
+        "path": "submissions/codingame/bots/rank_4/replay_value_model.json",
+        "sha256": "1687475728c04f6d255a6fdcbeefce8a5255f7db01f63c3e2a8a74a5c4fcf7b5"
+      },
+      {
+        "bytes": 371,
+        "path": "submissions/codingame/bots/rank_4/sources.txt",
+        "sha256": "51e84f3901d70167753744710ac841c687bafdf012756ec6d23014ca320c4f7d"
+      },
+      {
+        "bytes": 98624,
+        "path": "submissions/codingame/bots/rank_4/submission.cpp",
+        "sha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9"
+      },
+      {
+        "bytes": 512,
+        "path": "submissions/codingame/bots/rank_4/submission.json",
+        "sha256": "00d5cc4978f9307cc32f1b21cf09876b9a80d3f2fdb60a9730a068dde6f1aee3"
+      },
+      {
+        "bytes": 17792,
+        "path": "submissions/codingame/bots/rank_4/submission_test.cpp",
+        "sha256": "ca6152af6c24d6408a4179e0d54514a7be0b4967c5e43873a34eaa70c20bd246"
+      },
+      {
+        "bytes": 703,
+        "path": "submissions/codingame/bots/rank_4/teacher_residual_model.hpp",
+        "sha256": "e2034019126d54c2e0fd33922d7304c09979a64007a8d55e20823eda46834e42"
+      },
+      {
+        "bytes": 3266,
+        "path": "submissions/codingame/bots/rank_4/teacher_residual_model.json",
+        "sha256": "db120a0e12c64671fdc2361a3e48a2e61ac39700d65e52140835e7b5ccee0cd8"
+      },
+      {
+        "bytes": 1701,
+        "path": "submissions/codingame/bots/rank_4/timing_probe.cpp",
+        "sha256": "967137865432d748f1cf1adcf1b1fb5f73e803822fde21d2cef552d53ba045b7"
+      }
+    ],
+    "namespace": "rank_4",
+    "safety_rule": "Never modify rank_4; preserve it as the rollback and paired control.",
+    "source": {
+      "bytes": 98624,
+      "path": "submissions/codingame/bots/rank_4/submission.cpp",
+      "sha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9"
+    },
+    "tree": {
+      "file_count": 20,
+      "path": "submissions/codingame/bots/rank_4",
+      "total_bytes": 291580,
+      "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+      "tree_sha256": "e38c2c9377290b7a5113aaa166fad56ce0af5da87464e8660b658bb302bcde1d"
+    }
+  },
+  "lineage": {
+    "classification": "rank4-derived Jacek hybrid; explicitly not clean-room",
+    "conceptual_inputs": [
+      "Jacek complete rebound turns as actions",
+      "mover-relative board representation",
+      "neural position evaluation",
+      "single-threaded best-first minimax/UCT-style allocation"
+    ],
+    "design_antecedents": [
+      {
+        "bytes": 91259,
+        "path": "submissions/codingame/bots/rank_4_exchange/submission.cpp",
+        "sha256": "e72bb4bdc3377d0a4602fd807a31083683677c4516f318d75352b60d63355f20"
+      },
+      {
+        "bytes": 99955,
+        "path": "submissions/codingame/bots/rank_4_fullturn_bfm/submission.cpp",
+        "sha256": "5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da"
+      },
+      {
+        "bytes": 67480,
+        "path": "submissions/codingame/bots/jacek_native_bfm/README.md",
+        "sha256": "91862aa91cc9272e3935180a47dc4b118518fbc84efe4a5cf4903c41c57a085f"
+      },
+      {
+        "bytes": 17347,
+        "path": "submissions/codingame/bots/jacek_arena_bfm/README.md",
+        "sha256": "41b5d5d2fc5c890dc453a5d544ff9af34f866bb1e92eeb7e0a25b7b32dbe48b9"
+      }
+    ],
+    "future_input_rule": "Any copied source, model, corpus, replay, action, or label not listed here must be recorded in an append-only lineage receipt before its result is used.",
+    "inherited": [
+      "Rank-4 complete-turn alpha-beta engine and exact game rules",
+      "Rank-4 replay book, replay-value anchor, teacher residual, and their historical corpus lineage",
+      "Generic repository build, arena, opening-bank, collector, provenance, and test infrastructure"
+    ],
+    "prohibited_claims": [
+      "clean-room model or engine",
+      "fresh-only training lineage",
+      "remote API source-byte attestation"
+    ]
+  },
+  "objective": "Build and continuously improve a Rank-4-derived Jacek-style hybrid for 36 wall-clock hours, preserving an operationally safe control.",
+  "procedural_openings": {
+    "assignments": [
+      {
+        "bytes": 10836,
+        "candidate_draws": 73,
+        "color_swapped_games": 78,
+        "depth": 4,
+        "generator_phase": "development",
+        "header_seed": "18128950407139886133",
+        "maximum_record_attempt": 4,
+        "pairs": 39,
+        "path": "results/rank_4_jacek_hybrid/openings/development_d04.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "development",
+        "sha256": "984fbb78d85d7f9806c77e675b9b22a9b047bd15311f510ab0cedcd9a63244dc"
+      },
+      {
+        "bytes": 11185,
+        "candidate_draws": 38,
+        "color_swapped_games": 76,
+        "depth": 8,
+        "generator_phase": "development",
+        "header_seed": "9297997631523997120",
+        "maximum_record_attempt": 0,
+        "pairs": 38,
+        "path": "results/rank_4_jacek_hybrid/openings/development_d08.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "development",
+        "sha256": "6dbec157e7094f07796a9aa1ac97b43919930377ec315c761eaace216630259e"
+      },
+      {
+        "bytes": 11888,
+        "candidate_draws": 38,
+        "color_swapped_games": 76,
+        "depth": 12,
+        "generator_phase": "development",
+        "header_seed": "11025886481058993262",
+        "maximum_record_attempt": 0,
+        "pairs": 38,
+        "path": "results/rank_4_jacek_hybrid/openings/development_d12.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "development",
+        "sha256": "d30d087020e4946ce77b6d6e578484d583f0cf25f2ffa90a1918f8d9a9a8a11a"
+      },
+      {
+        "bytes": 13150,
+        "candidate_draws": 38,
+        "color_swapped_games": 76,
+        "depth": 20,
+        "generator_phase": "development",
+        "header_seed": "4624785204876369057",
+        "maximum_record_attempt": 0,
+        "pairs": 38,
+        "path": "results/rank_4_jacek_hybrid/openings/development_d20.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "development",
+        "sha256": "2aa4b635dcaf23b2587b22fdb7558f4c8d6b4dd5a33e3fec2c164931b3fcd8d4"
+      },
+      {
+        "bytes": 4196,
+        "candidate_draws": 18,
+        "color_swapped_games": 28,
+        "depth": 4,
+        "generator_phase": "validation",
+        "header_seed": "6709526056091773226",
+        "maximum_record_attempt": 1,
+        "pairs": 14,
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d04.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "validation",
+        "sha256": "857ea82db033ab8e5aa956ede63803fe7882ede05ea42b86ad175180e707f6d0"
+      },
+      {
+        "bytes": 4140,
+        "candidate_draws": 13,
+        "color_swapped_games": 26,
+        "depth": 8,
+        "generator_phase": "validation",
+        "header_seed": "7978351507335573424",
+        "maximum_record_attempt": 0,
+        "pairs": 13,
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d08.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "validation",
+        "sha256": "8ecfa05ce4f92367c11a4c7c9d441d105eabde03dc28f02abe4d3d55d008541e"
+      },
+      {
+        "bytes": 4387,
+        "candidate_draws": 13,
+        "color_swapped_games": 26,
+        "depth": 12,
+        "generator_phase": "validation",
+        "header_seed": "11628761959191340354",
+        "maximum_record_attempt": 0,
+        "pairs": 13,
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d12.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "validation",
+        "sha256": "535c8f537701b7952fedb3f01f1d9167d9496d314cc6496f1898737c8bf8f61f"
+      },
+      {
+        "bytes": 4819,
+        "candidate_draws": 13,
+        "color_swapped_games": 26,
+        "depth": 20,
+        "generator_phase": "validation",
+        "header_seed": "8065722295843934942",
+        "maximum_record_attempt": 0,
+        "pairs": 13,
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d20.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "validation",
+        "sha256": "b374b1d98cef6e4f6bb5d67739efda298f6d77f6f7dbd253e66933ae49d29cc8"
+      },
+      {
+        "bytes": 7282,
+        "candidate_draws": 46,
+        "color_swapped_games": 54,
+        "depth": 4,
+        "generator_phase": "test",
+        "header_seed": "6950345424396585233",
+        "maximum_record_attempt": 4,
+        "pairs": 27,
+        "path": "results/rank_4_jacek_hybrid/openings/final_d04.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "final",
+        "sha256": "593c62c2f484b164a34d58764f7a163c103e80531e28e72a0edab68bf062cdeb"
+      },
+      {
+        "bytes": 7722,
+        "candidate_draws": 27,
+        "color_swapped_games": 54,
+        "depth": 8,
+        "generator_phase": "test",
+        "header_seed": "13781571303722659152",
+        "maximum_record_attempt": 0,
+        "pairs": 27,
+        "path": "results/rank_4_jacek_hybrid/openings/final_d08.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "final",
+        "sha256": "862f433b399fe5ada6f65f40bd9830f6c128f2eaa999d7a37d104e6b8ac6b4cd"
+      },
+      {
+        "bytes": 7935,
+        "candidate_draws": 26,
+        "color_swapped_games": 52,
+        "depth": 12,
+        "generator_phase": "test",
+        "header_seed": "7381674447952460139",
+        "maximum_record_attempt": 0,
+        "pairs": 26,
+        "path": "results/rank_4_jacek_hybrid/openings/final_d12.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "final",
+        "sha256": "7aceb4aa25aa43ee42983fc2df0bbf5de8f97faafed19f12cc191c5e4cac5cd9"
+      },
+      {
+        "bytes": 8771,
+        "candidate_draws": 26,
+        "color_swapped_games": 52,
+        "depth": 20,
+        "generator_phase": "test",
+        "header_seed": "3336968612918225993",
+        "maximum_record_attempt": 0,
+        "pairs": 26,
+        "path": "results/rank_4_jacek_hybrid/openings/final_d20.tsv",
+        "record_seed_derivation": "rank4-jacek-hybrid-opening-record/v1",
+        "role": "final",
+        "sha256": "925aa7c2109fc58d53aa9baa800214af94c2c4becae6a6bb51e3eab624a4e62c"
+      }
+    ],
+    "depths": [
+      4,
+      8,
+      12,
+      20
+    ],
+    "duplicate_policy": "Reject exact-state or horizontal-reflection canonical overlap against the 1,600 metadata-only predecessor identities and all earlier new banks.",
+    "final_seal": "Do not run, parse, summarize, or inspect final_* results until a single finalist source byte count and SHA-256 are locked.",
+    "generator": "uniform-legal-move-generator/v1",
+    "protected_bank_policy": "No protected bank was opened or passed to the generator. Older promotion-bank state identities are unavailable as an ID-only registry; domain-separated seeds and predecessor metadata exclusions are the non-consuming boundary.",
+    "role_totals": {
+      "development": {
+        "color_swapped_games": 306,
+        "openings": 153,
+        "result_access": "iterative model selection"
+      },
+      "final": {
+        "color_swapped_games": 212,
+        "openings": 106,
+        "result_access": "one-shot after finalist source/SHA lock"
+      },
+      "validation": {
+        "color_swapped_games": 106,
+        "openings": 53,
+        "result_access": "candidate selection only"
+      }
+    },
+    "schema": "papersoccer.opening-bank.v1",
+    "seed_derivation": "Composite bank header and each one-record generator candidate use separate SHA-256 domain tags over T0_epoch, role, depth, pairs, record_index, and deterministic rejection attempt.",
+    "selection": "splitmix64-unbiased-rejection-sampling/v1"
+  },
+  "protected_boundary": {
+    "explicit_bank_files": [
+      {
+        "bytes": 16448,
+        "path": "submissions/codingame/promotion/openings/development.tsv",
+        "sha256": "048b86ab0ba781a7cb1289b1ff4712070af6e384f91fd157895ac9e92772f319"
+      },
+      {
+        "bytes": 479,
+        "path": "submissions/codingame/promotion/openings/initial.tsv",
+        "sha256": "4661c38f195f718d1fac83dc43f3683f5a101dd7b6858eaff2f529cb82b49a01"
+      },
+      {
+        "bytes": 19776,
+        "path": "submissions/codingame/promotion/openings/test.tsv",
+        "sha256": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb"
+      },
+      {
+        "bytes": 21923,
+        "path": "submissions/codingame/promotion/openings/validation.tsv",
+        "sha256": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d"
+      },
+      {
+        "bytes": 20341,
+        "path": "submissions/codingame/promotion/reference/rank1_validation.tsv",
+        "sha256": "5363c74182980e0060083fd47b38bc73babe179609dfc8f4d3e6da3f38c15cd8"
+      },
+      {
+        "bytes": 21923,
+        "path": "submissions/codingame/promotion/reference/t10_prospective_validation.tsv",
+        "sha256": "e648f35df1b60d8597092311230d12d2085c6143dcd02a3ed0aa22999ced4e1d"
+      },
+      {
+        "bytes": 19776,
+        "path": "submissions/codingame/promotion/reference/t10_sealed_final.tsv",
+        "sha256": "48ae304aa870a98bc101b647e5f3c3eff024a5ea5576b91e4cf0779baf9b9ddb"
+      },
+      {
+        "bytes": 16448,
+        "path": "submissions/codingame/promotion/reference/t3_development.tsv",
+        "sha256": "048b86ab0ba781a7cb1289b1ff4712070af6e384f91fd157895ac9e92772f319"
+      },
+      {
+        "bytes": 16549,
+        "path": "submissions/codingame/promotion/reference/t3_validation_source.tsv",
+        "sha256": "e078ee0b9b40672c846a7226f6a22c652e3da996b701de76cded445b146d5719"
+      },
+      {
+        "bytes": 23989,
+        "path": "submissions/codingame/promotion/reference/t4_final_test.tsv",
+        "sha256": "ef48f9e190aa14cf4b791641ca73276f0794179b3a2f1c3fa26eda32d465cdd4"
+      },
+      {
+        "bytes": 16837,
+        "path": "submissions/codingame/promotion/reference/t4_validation.tsv",
+        "sha256": "9ab3d1f63d94e84efa37507b934e2d266aa6c7d91dc69e50ec1b29d88c0a4efb"
+      },
+      {
+        "bytes": 24488,
+        "path": "submissions/codingame/promotion/reference/t5_exposed_validation.tsv",
+        "sha256": "91aee496bae9646ba6f1257490e01ea3657657948897617285cf90bfccf266e2"
+      },
+      {
+        "bytes": 24041,
+        "path": "submissions/codingame/promotion/reference/t5_replacement_exposed_validation.tsv",
+        "sha256": "ae5c3e1998c85a87e1545bd6b74874cd1dd8802e427190b2e398660d745abc92"
+      },
+      {
+        "bytes": 23989,
+        "path": "submissions/codingame/promotion/reference/t6_exposed_final.tsv",
+        "sha256": "ef48f9e190aa14cf4b791641ca73276f0794179b3a2f1c3fa26eda32d465cdd4"
+      },
+      {
+        "bytes": 25157,
+        "path": "submissions/codingame/promotion/reference/t6_exposed_validation.tsv",
+        "sha256": "69c0f3e78c878ed6e51e599f7207d445dbeb8a8564fecac63ff4105953bf600d"
+      },
+      {
+        "bytes": 25224,
+        "path": "submissions/codingame/promotion/reference/t7_prospective_validation.tsv",
+        "sha256": "878ca510b63e50339eaeccc57b50445c6b5915b568ccb26a588b386341c5b002"
+      },
+      {
+        "bytes": 24355,
+        "path": "submissions/codingame/promotion/reference/t7_sealed_final.tsv",
+        "sha256": "de7e592610c2ab2842874b5b647fca951cf7d51373b4c0c49d8b255b9543ed59"
+      },
+      {
+        "bytes": 22613,
+        "path": "submissions/codingame/promotion/reference/t8_prospective_validation.tsv",
+        "sha256": "e670fc39902308b66debd8deb3dc82fb9e0ce0f61562b3078328e99350c54f3b"
+      },
+      {
+        "bytes": 21491,
+        "path": "submissions/codingame/promotion/reference/t8_sealed_final.tsv",
+        "sha256": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204"
+      },
+      {
+        "bytes": 22613,
+        "path": "submissions/codingame/promotion/reference/t9_prospective_validation.tsv",
+        "sha256": "e670fc39902308b66debd8deb3dc82fb9e0ce0f61562b3078328e99350c54f3b"
+      },
+      {
+        "bytes": 21491,
+        "path": "submissions/codingame/promotion/reference/t9_sealed_final.tsv",
+        "sha256": "e6c8efaa094576ad4ac3dc22a69ea595f224aaa64d7c3ecdc39b7e98c7dfb204"
+      },
+      {
+        "bytes": 7122,
+        "path": "benchmarks/flagship_study/openings/development_d04.tsv",
+        "sha256": "99f5ffe035aed851c7b43b9f52a65c554418d4da52f1d8e3ab62476d5c206f19"
+      },
+      {
+        "bytes": 7530,
+        "path": "benchmarks/flagship_study/openings/development_d08.tsv",
+        "sha256": "81031d20b3cb4ab87ab2c48550010b19c2ae9e4d2a1be39f75d4aaee9bff1bfb"
+      },
+      {
+        "bytes": 7988,
+        "path": "benchmarks/flagship_study/openings/development_d12.tsv",
+        "sha256": "d14078679891e1cc5d96fb13cad008de2bd65e654ed97f2d138eb99715259d5f"
+      },
+      {
+        "bytes": 8805,
+        "path": "benchmarks/flagship_study/openings/development_d20.tsv",
+        "sha256": "d1c05512c50f45819b6ffac72e8d2814a6b87839fd790a6944b4a2313556176d"
+      },
+      {
+        "bytes": 25554,
+        "path": "benchmarks/flagship_study/openings/test_d04.tsv",
+        "sha256": "b9282d3f61a54638ec6b991a2944b6ad6f2c815188845a8e6e5863d3b6fcefe6"
+      },
+      {
+        "bytes": 27166,
+        "path": "benchmarks/flagship_study/openings/test_d08.tsv",
+        "sha256": "70103a63fb15f30f57a140467a07af666b5f71928b8291deb5a1eb3c400549ad"
+      },
+      {
+        "bytes": 29017,
+        "path": "benchmarks/flagship_study/openings/test_d12.tsv",
+        "sha256": "b3315e6aa8ec64b52ff14bfacfc3fa81d1d94de896bceb8ec5471cd6542ec0bf"
+      },
+      {
+        "bytes": 32310,
+        "path": "benchmarks/flagship_study/openings/test_d20.tsv",
+        "sha256": "edb686a25491163cf7cd85325901a069877f36b9f4b4d03fdebd34ee9acf109c"
+      },
+      {
+        "bytes": 13618,
+        "path": "benchmarks/flagship_study/openings/validation_d04.tsv",
+        "sha256": "9ffa305b9c2b9aeb99233377df65ebd87aace7ce6991ba940a609fe46ddc8404"
+      },
+      {
+        "bytes": 14447,
+        "path": "benchmarks/flagship_study/openings/validation_d08.tsv",
+        "sha256": "2e10f14f6dec3f8dbf2cdbf0695e2cc759cb27ef6215580aee5e49cbb33f6ee2"
+      },
+      {
+        "bytes": 15353,
+        "path": "benchmarks/flagship_study/openings/validation_d12.tsv",
+        "sha256": "80f53894cf4b2cf13a199e402a005efc6eb765353171d12514819313974ab802"
+      },
+      {
+        "bytes": 16990,
+        "path": "benchmarks/flagship_study/openings/validation_d20.tsv",
+        "sha256": "4978afba0389bea5484c86e1f8f83b2bfc0709a331489c8c2d74ba94e5378ed0"
+      },
+      {
+        "bytes": 13637,
+        "path": "benchmarks/flagship_study/openings/validation_v4_d04.tsv",
+        "sha256": "9cb8786782fb0302b46b508bdb7532c0c9c09628dc1ca9aa99adf2665195614a"
+      },
+      {
+        "bytes": 14451,
+        "path": "benchmarks/flagship_study/openings/validation_v4_d08.tsv",
+        "sha256": "cf92970053478ab4156df4035dd94e40af90dbe1d7411bf529c9441c85a81249"
+      },
+      {
+        "bytes": 15366,
+        "path": "benchmarks/flagship_study/openings/validation_v4_d12.tsv",
+        "sha256": "d7307d9cf17af14e5619eba8a843cff101d928e6be83eec5c68ca49e8200b314"
+      },
+      {
+        "bytes": 16999,
+        "path": "benchmarks/flagship_study/openings/validation_v4_d20.tsv",
+        "sha256": "84ee7fdbc7c83b274623d293bc59e9135e457b9b2abd23cd8812753f3f90fc20"
+      },
+      {
+        "bytes": 7126,
+        "path": "benchmarks/game_review_gate/openings/development_d04.tsv",
+        "sha256": "31a9884b541f530277b20283bf6ded751e8005535d5bf12d39bff2a6158fe74a"
+      },
+      {
+        "bytes": 7540,
+        "path": "benchmarks/game_review_gate/openings/development_d08.tsv",
+        "sha256": "3bf0ae35b7c170e8aa8d13743e35b7a1d1bb76786132535bec068b0caaa258b2"
+      },
+      {
+        "bytes": 7985,
+        "path": "benchmarks/game_review_gate/openings/development_d12.tsv",
+        "sha256": "f9f334acf64bae44f7541b89c472e55066776af7d7b8e1b2f4168a3637675cd6"
+      },
+      {
+        "bytes": 8818,
+        "path": "benchmarks/game_review_gate/openings/development_d20.tsv",
+        "sha256": "140e71ab0ec33c6aa979753599c98aab060148bd1a0d9baf5186189dd68583a4"
+      },
+      {
+        "bytes": 25547,
+        "path": "benchmarks/game_review_gate/openings/test_d04.tsv",
+        "sha256": "43b57547a35a88d1e4a76efbd20a6ba4d1bfb222b80c008a159a922aa6dcfd33"
+      },
+      {
+        "bytes": 27174,
+        "path": "benchmarks/game_review_gate/openings/test_d08.tsv",
+        "sha256": "ba255e8df2083a859fa490787afd8fe396c80c759a5938e0b77b239e74fb30fa"
+      },
+      {
+        "bytes": 29036,
+        "path": "benchmarks/game_review_gate/openings/test_d12.tsv",
+        "sha256": "e54db998b6941960baaab1165cdea8f53f343197b7bcdbe87de5393f5f5ff60f"
+      },
+      {
+        "bytes": 32295,
+        "path": "benchmarks/game_review_gate/openings/test_d20.tsv",
+        "sha256": "9e8bb74981e80c94c931e472c164caf24b85fca5d85d446ffa021d323d5a5c20"
+      },
+      {
+        "bytes": 13640,
+        "path": "benchmarks/game_review_gate/openings/validation_d04.tsv",
+        "sha256": "d96db3a627cef90f365d2629b9610ccbdbc9e33df2dc3b8d8c1f77624357f130"
+      },
+      {
+        "bytes": 14449,
+        "path": "benchmarks/game_review_gate/openings/validation_d08.tsv",
+        "sha256": "e820f596f71255922db7f9896d382782a90b75ba44ba881be379eb04dfbc9852"
+      },
+      {
+        "bytes": 15358,
+        "path": "benchmarks/game_review_gate/openings/validation_d12.tsv",
+        "sha256": "38adf0e4d90e46a248a6219fdef2752775bc0dc5aaf6d1288363308e70b7ea3a"
+      },
+      {
+        "bytes": 16983,
+        "path": "benchmarks/game_review_gate/openings/validation_d20.tsv",
+        "sha256": "bc90c9fb1c195904311532cdaefe082747382c60a4745ebc823b00664c167ba1"
+      }
+    ],
+    "opening_identity_exclusions": {
+      "bank_count": 28,
+      "bytes": 348111,
+      "canonical_key_count": 1600,
+      "content_policy": "metadata-only; no protected bank bytes parsed",
+      "path": "benchmarks/game_review_gate/opening_identities.json",
+      "schema": "papersoccer.game-review-opening-identities.v1",
+      "sha256": "0980237293814ee1507ca6bfe943620b02ce14ef6d882fbb82bbf7bc79d072df",
+      "state_hash_count": 1600
+    },
+    "policy": "Protected banks and replay archives were hashed as opaque bytes only; no sealed bank or replay payload content was parsed for this freeze.",
+    "root_matches_json": {
+      "path": "matches.json",
+      "policy": "must remain absent; arena outputs must use campaign-specific paths",
+      "status_at_freeze": "absent"
+    },
+    "roots": [
+      {
+        "file_count": 49,
+        "path": "submissions/codingame/promotion",
+        "total_bytes": 10333074,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "4130f3f1baecc3133c2ef6776d48b8eb7964df3d2f15302253c22c59427748f4"
+      },
+      {
+        "file_count": 44,
+        "path": "benchmarks/flagship_study",
+        "total_bytes": 146223641,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "9f943bf96f4f0a40c5412f25d3a8cf156d348ea2709a6a8cd33bdc1460cd63f3"
+      },
+      {
+        "file_count": 27,
+        "path": "benchmarks/game_review_gate",
+        "total_bytes": 5703678,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "2cbd39a7733ca725325be92008743a08af26118c2077917494a8b4344011ea5f"
+      },
+      {
+        "file_count": 1103,
+        "path": "results/jacek_arena_bfm",
+        "total_bytes": 1280270812,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "ef49c3272c3f1f23f2cfd11135d71412e87f590dc48c0231f276137a8601842b"
+      },
+      {
+        "file_count": 35,
+        "path": "submissions/codingame/bots/jacek_nn",
+        "total_bytes": 1313720,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "ad6667bc8f0f9907d38c5c5c0859749ea59e0a7bec027f0415d91d7d0f4fd94a"
+      },
+      {
+        "file_count": 30,
+        "path": "submissions/codingame/bots/selfplay_nn_v2",
+        "total_bytes": 7096197,
+        "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        "tree_sha256": "c582379fcb7c1b5fb81e5ba488a61cb85a457993364f5bf71d98346aabda39b7"
+      }
+    ]
+  },
+  "repository": {
+    "campaign_branch_created_after_t0": "codex/rank4-jacek-hybrid-36h",
+    "commit_at_freeze": "a70756a278017edf00ab26811ef3d1e23b402d09",
+    "note": "The commit is the clean HEAD at T0; hybrid work is intentionally uncommitted after it.",
+    "worktree_branch_at_freeze": "codex/jacek-arena-bfm-campaign"
+  },
+  "schema": "papersoccer.rank4-jacek-hybrid-campaign.v1",
+  "time_boundary": {
+    "deadline_epoch": 1786778107,
+    "deadline_europe_warsaw": "2026-08-15T09:15:07+02:00",
+    "deadline_utc": "2026-08-15T07:15:07Z",
+    "goal_created_at_epoch": 1786648507,
+    "goal_created_at_europe_warsaw": "2026-08-13T21:15:07+02:00",
+    "goal_created_at_utc": "2026-08-13T19:15:07Z",
+    "preregistered_at_utc": "2026-08-13T19:25:06Z",
+    "wall_clock_seconds": 129600
+  }
+}
