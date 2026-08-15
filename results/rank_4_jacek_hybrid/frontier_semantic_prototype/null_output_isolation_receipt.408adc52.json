@@ -1,0 +1,42 @@
+{
+  "schema": "rank4-frontier-null-output-isolation-v1",
+  "classification": "deterministic-fixed-work-correctness-not-timing-or-strength",
+  "base_commit": "4c9afa70a36183fc1451e4335b7251651a7b2791",
+  "control_bot_sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b",
+  "candidate_bot_sha256": "408adc5288674550cc08274aec74380074117e32ad8f6915c7e39badc8dfba98",
+  "harness": {
+    "path": "null_output_isolation_harness.ce98802e.cpp",
+    "bytes": 6044,
+    "sha256": "ce98802e06046ccd52c8a48abfbeed0d1302cae6e9db4c1f06f7ca927518888e"
+  },
+  "corpus": {
+    "deterministic_live_states": 1004,
+    "proof_masks": [1, 5],
+    "proof_mask_meanings": ["root", "root_plus_ply1"],
+    "leaf_frontier_collection_enabled": false,
+    "node_budgets": [1, 16, 64, 256, 1024],
+    "decisions": 10040
+  },
+  "comparison": {
+    "encoded_action_deltas": 0,
+    "root_score_deltas": 0,
+    "emitted_search_stats_deltas": 0,
+    "stdout_bytes": 1059169,
+    "stdout_lines": 10058,
+    "control_stdout_sha256": "5742b850fc7ce285f3936c43a38565b1e50ecd56599971956f328e0cee4926cf",
+    "candidate_stdout_sha256": "5742b850fc7ce285f3936c43a38565b1e50ecd56599971956f328e0cee4926cf",
+    "stderr_bytes": 52,
+    "stderr_lines": 1,
+    "control_stderr_sha256": "f20d99fe7924f98b29c366e2494da2ac2681641d74b32e0c4fcdeb85371e327a",
+    "candidate_stderr_sha256": "f20d99fe7924f98b29c366e2494da2ac2681641d74b32e0c4fcdeb85371e327a",
+    "byte_identical": true
+  },
+  "attestation": {
+    "timing_measured": false,
+    "whole_games_run": false,
+    "heldout_bank_read": false,
+    "validation_bank_read": false,
+    "final_bank_read": false
+  },
+  "passed": true
+}

@@ -39,8 +39,14 @@ SCHEDULE_SEED = 20260813
 FIRST_TIMEOUT_MS = 1000
 LATER_TIMEOUT_MS = 200
 EXPECTED_ENTRANTS = 20
-EXPECTED_REGISTERED_BOTS = 21
+EXPECTED_REGISTERED_BOTS = 23
 EXPECTED_GAMES = 900
+NON_ENTRANT_REGISTERED_BOTS = frozenset(
+    {
+        "jacek_arena_bfm",
+        "rank_4_jacek_hybrid",
+    }
+)
 BOT_FORFEIT_CLASSIFICATIONS = frozenset(
     {
         "timeout",
@@ -333,11 +339,18 @@ def validate_roster(
         normalized.append(entrant)
 
     registered = _registered_bots(repository, roster)
-    _require(len(registered) == EXPECTED_REGISTERED_BOTS, "CMake must register exactly 21 bots")
+    _require(
+        len(registered) == EXPECTED_REGISTERED_BOTS,
+        f"CMake must register exactly {EXPECTED_REGISTERED_BOTS} bots",
+    )
     _require(len(set(registered)) == len(registered), "CMake bot registry contains duplicates")
     _require(
-        set(registered) == covered_directories,
-        "roster canonical ids and aliases do not exactly cover the CMake bot registry",
+        NON_ENTRANT_REGISTERED_BOTS.isdisjoint(covered_directories),
+        "non-entrant CMake bots must not appear in the frozen tournament roster",
+    )
+    _require(
+        set(registered) == covered_directories | NON_ENTRANT_REGISTERED_BOTS,
+        "frozen roster and explicit non-entrants do not exactly cover the CMake bot registry",
     )
     bot_root = repository / "submissions/codingame/bots"
     artifact_directories = {
@@ -1716,6 +1729,7 @@ def publish_snapshot(
     roster_path: Path = DEFAULT_ROSTER,
     referee: Path,
     check: bool = False,
+    require_current_sources: bool = True,
 ) -> None:
     roster = load_roster(roster_path)
     artifact = _load_json(artifact_path)
@@ -1726,6 +1740,7 @@ def publish_snapshot(
         repository,
         roster_path=roster_path,
         referee=referee,
+        require_current_sources=require_current_sources,
     )
     expected = render_snapshot(artifact)
     if check:
@@ -1751,6 +1766,14 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="authoritatively replay every artifact transcript (required with --artifact)",
     )
+    validate.add_argument(
+        "--allow-historical-sources",
+        action="store_true",
+        help=(
+            "accept recorded historical source provenance while still enforcing the current "
+            "roster and schedule and replaying every transcript"
+        ),
+    )
 
     run = subparsers.add_parser("run", help="run or resume the serial native tournament")
     run.add_argument("--repository", type=Path, default=DEFAULT_REPOSITORY)
@@ -1771,6 +1794,14 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("--output", type=Path, default=DEFAULT_SNAPSHOT)
     publish.add_argument("--referee", type=Path, required=True)
     publish.add_argument("--check", action="store_true")
+    publish.add_argument(
+        "--allow-historical-sources",
+        action="store_true",
+        help=(
+            "accept recorded historical source provenance while still enforcing the current "
+            "roster and schedule and replaying every transcript"
+        ),
+    )
     return parser
 
 
@@ -1792,6 +1823,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     arguments.repository,
                     referee=arguments.referee,
                     roster_path=arguments.roster,
+                    require_current_sources=not arguments.allow_historical_sources,
                 )
             print(
                 f"validated {len(entrants)} entrants and {len(schedule)} deterministic games",
@@ -1820,6 +1852,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 roster_path=arguments.roster,
                 referee=arguments.referee,
                 check=arguments.check,
+                require_current_sources=not arguments.allow_historical_sources,
             )
     except (ContractError, InfrastructureError, OSError, subprocess.SubprocessError) as error:
         print(f"leaderboard error: {error}", file=sys.stderr)

@@ -1,0 +1,125 @@
+{
+  "schema": "papersoccer.jacek-arena-bfm.alternate-screen-summary.v1",
+  "purpose": "offline-exploratory-strength-screen",
+  "configuration": {
+    "games_per_candidate": 100,
+    "workers": 8,
+    "seed": 20260813,
+    "candidate_colors": {
+      "player_0": 50,
+      "player_1": 50
+    },
+    "referee_timeout_ms": {
+      "first": 1500.0,
+      "later": 300.0
+    },
+    "opaque_h62": true,
+    "profile": "custom",
+    "profile_exact": false,
+    "sequential_candidates": true
+  },
+  "limitations": {
+    "procedural_opening_diversity": false,
+    "all_games_start_from_initial_state": true,
+    "independent_opening_samples": false,
+    "note": "Repeated same-opening games are a consistent clock-contingent whole-game check, not an opening-diverse strength estimate."
+  },
+  "baseline": {
+    "identity": "fresh-32x32-s101-ad87209e4c6c",
+    "games": 1000,
+    "wins": 291,
+    "losses": 709,
+    "score": 0.291,
+    "failures": 0,
+    "report": "results/jacek_arena_bfm/comparisons/final-cumulative-scratch-fast-1000.json"
+  },
+  "candidates": [
+    {
+      "model_directory": "frozen-scratch-4000-s1701-e1",
+      "identity": "fresh-32x32-s1701-95c4024fdbfa",
+      "source_bytes": 92687,
+      "source_sha256": "1671605da8905ea2691ccf906de5d2ef2b1a816f3a8b6ce765391f2f3d77a6fd",
+      "source_archive": "results/jacek_arena_bfm/reports/source_payloads/1671605da8905ea2691ccf906de5d2ef2b1a816f3a8b6ce765391f2f3d77a6fd.source",
+      "wins": 27,
+      "losses": 73,
+      "score": 0.27,
+      "score_delta_from_baseline": -0.021,
+      "failures": 0,
+      "player_0": {"wins": 2, "losses": 48},
+      "player_1": {"wins": 25, "losses": 25},
+      "candidate_timing_ms": {
+        "first": {"p99": 1153.7832149193855, "max": 1154.6047080191784},
+        "later": {"p99": 123.67505313595757, "max": 127.84983398159966}
+      },
+      "report": "results/jacek_arena_bfm/comparisons/alternates/fresh-32x32-s1701-95c4024fdbfa-fast-100.json",
+      "report_sha256": "c4b31ceb6503be3223d3b58d29f797ff8b08e83d172bbb23091ae64f264cc0c6"
+    },
+    {
+      "model_directory": "frozen-scratch-4000-s1701-e2",
+      "identity": "fresh-32x32-s1701-2e3c36e2644d",
+      "source_bytes": 92688,
+      "source_sha256": "6869967aedb59c09f280603f7812a1857cfcf8eab06ac257cda89f463153583d",
+      "source_archive": "results/jacek_arena_bfm/reports/source_payloads/6869967aedb59c09f280603f7812a1857cfcf8eab06ac257cda89f463153583d.source",
+      "wins": 23,
+      "losses": 77,
+      "score": 0.23,
+      "score_delta_from_baseline": -0.061,
+      "failures": 0,
+      "player_0": {"wins": 0, "losses": 50},
+      "player_1": {"wins": 23, "losses": 27},
+      "candidate_timing_ms": {
+        "first": {"p99": 1166.350829564035, "max": 1166.4453329867683},
+        "later": {"p99": 123.5934939130675, "max": 128.61108302604407}
+      },
+      "report": "results/jacek_arena_bfm/comparisons/alternates/fresh-32x32-s1701-2e3c36e2644d-fast-100.json",
+      "report_sha256": "5c1e3481eb1825b4573eb243d0d8c4c4c056cb95a84b41d71fd8168abb217781"
+    },
+    {
+      "model_directory": "frozen-scratch-4000-s101",
+      "identity": "fresh-32x32-s101-8c9fa74e3ef5",
+      "source_bytes": 92686,
+      "source_sha256": "2b90c69e059270e3c426c0e9566a2df8b5b802f920f379793a0b8608f1a13253",
+      "source_archive": "results/jacek_arena_bfm/reports/source_payloads/2b90c69e059270e3c426c0e9566a2df8b5b802f920f379793a0b8608f1a13253.source",
+      "wins": 6,
+      "losses": 94,
+      "score": 0.06,
+      "score_delta_from_baseline": -0.231,
+      "failures": 0,
+      "player_0": {"wins": 0, "losses": 50},
+      "player_1": {"wins": 6, "losses": 44},
+      "candidate_timing_ms": {
+        "first": {"p99": 1350.2385136927478, "max": 1353.156209050212},
+        "later": {"p99": 124.40086581860669, "max": 130.11208397801965}
+      },
+      "report": "results/jacek_arena_bfm/comparisons/alternates/fresh-32x32-s101-8c9fa74e3ef5-fast-100.json",
+      "report_sha256": "232157ceda82ba94d9e3883365e928712b8a46b4a833fe6bbc2a00e0fbc34cad"
+    },
+    {
+      "model_directory": "frozen-scratch-4000-s1701",
+      "identity": "fresh-32x32-s1701-d858ec38de59",
+      "source_bytes": 92688,
+      "source_sha256": "955c6a5a3e9fbd4762d3beb7902f515c8ee02a608230a31f0a4a1af5ec432a45",
+      "source_archive": "results/jacek_arena_bfm/reports/source_payloads/955c6a5a3e9fbd4762d3beb7902f515c8ee02a608230a31f0a4a1af5ec432a45.source",
+      "wins": 4,
+      "losses": 96,
+      "score": 0.04,
+      "score_delta_from_baseline": -0.251,
+      "failures": 0,
+      "player_0": {"wins": 4, "losses": 46},
+      "player_1": {"wins": 0, "losses": 50},
+      "candidate_timing_ms": {
+        "first": {"p99": 1035.0077039998723, "max": 1035.217583004851},
+        "later": {"p99": 123.47820327151564, "max": 126.29133299924433}
+      },
+      "report": "results/jacek_arena_bfm/comparisons/alternates/fresh-32x32-s1701-d858ec38de59-fast-100.json",
+      "report_sha256": "17848445159df198bf53d6f7b470410236410f6f4d56748847c2570b04946a6a"
+    }
+  ],
+  "decision": {
+    "materially_exceeds_baseline": false,
+    "recommended_for_1000_game_screen": null,
+    "reason": "No alternate exceeded the selected seed-101 one-epoch baseline's 29.1% point score; the closest alternate scored 27.0%."
+  },
+  "active_namespace_modified": false,
+  "deployed_or_browser_state_modified": false
+}

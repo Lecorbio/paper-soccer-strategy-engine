@@ -1,0 +1,339 @@
+{
+  "schema": "rank4-jacek-hybrid-heldout-qualification-plan-v3",
+  "status": "preregistered-unbound",
+  "campaign": {
+    "campaign_id": "rank_4_jacek_hybrid-36h-20260813",
+    "campaign_manifest": "results/rank_4_jacek_hybrid/campaign.json",
+    "campaign_manifest_sha256": "aed2a52f7a59c2b1988b5c365c23b57f8ec41fbfb50927211655a8565df63fa7",
+    "t0_utc": "2026-08-13T19:15:07Z"
+  },
+  "classification": "single-finalist-untouched-validation-then-final-qualification",
+  "technical_successor_amendment": {
+    "status": "one-technical-successor-authorized-unbound",
+    "reason": "The predecessor one-shot preflight claim is permanently spent by a pre-compile environment defect. The authoritative outer producer evidence retained exit 2 plus digest-length-empty evidence for empty stdout and the configure-rejected stderr. No original inner configure command record or raw stream was persisted. A later independent same-environment reproduction returned CMake zero and produced the Homebrew HOME-required diagnostic twice, identifying omitted HOME as the cause; its stream is also retained only by digest, length, count, and semantic code. No project compile, test, game, held-out access, binding, successful preflight receipt, stage claim, stage report, or decision occurred.",
+    "predecessor_candidate_commit": "9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299",
+    "predecessor_plan_sha256": "fc397ce54dbed8cc6335e7eadd65e3ad6044f56d077eb5d296d9acd6f8611a2b",
+    "predecessor_claim": {
+      "path": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299.json",
+      "bytes": 576,
+      "sha256": "cf285fc2ca072675e09c4ebec35e31630e136cbbac3815bdeb86767d3ef2a842"
+    },
+    "predecessor_failure_receipt": {
+      "path": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/predecessor_failures/564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056.json",
+      "bytes": 5719,
+      "sha256": "564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056"
+    },
+    "authorized_commit_shape": {
+      "successor_must_have_exactly_one_parent": true,
+      "sole_parent_must_equal_predecessor": true,
+      "allowed_changed_paths": [
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/PLAN.json",
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims/9cdc96d1fc11b05b5cffa4db3c29b7af20b1e299.json",
+        "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/predecessor_failures/564cf4e0073a48a1dbeb81f711d09d5624575e345bce1cc75ee294970231a056.json",
+        "tests/codingame/test_rank4_jacek_hybrid_final_source_preflight.py",
+        "tests/codingame/test_rank4_jacek_hybrid_heldout_qualification.py",
+        "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
+        "tools/record_rank4_jacek_hybrid_heldout_qualification.py"
+      ]
+    },
+    "unchanged_finalist_identities": {
+      "candidate_engine_sha256": "34b1dd621e894e996df3249b209540fb85f2715f174298bbb1c69b2ec8a69b7b",
+      "candidate_generated_source_sha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7",
+      "candidate_test_source_sha256": "ba5c8e25ac3d446558e4be4ed4a41993dd2bfaac9cd05dd13677617f445bf697",
+      "cmake_sha256": "9eaa60318fff56ea6cad8791c9388069e2a73ec316aa8e61ec7fea156faefbda",
+      "ordinary_gate_sha256": "f15254b2e4469e6d2adcc5f68e5a66920c61433ddbb742f712da346f2f9f91ed",
+      "heldout_gate_wrapper_sha256": "333d875eb7b55644980624c5cfec1aaf44169ca63110126805535d0cdcb86fde"
+    },
+    "successor_constraints": {
+      "authorized_attempts": 1,
+      "predecessor_claim_must_remain_present_and_unchanged": true,
+      "predecessor_failure_receipt_must_be_canonical_content_addressed_and_tracked": true,
+      "all_foreign_predecessor_or_successor_claims_fail_closed": true,
+      "fresh_build_root_required": true,
+      "isolated_empty_task_home_required_before_successor_claim": true,
+      "successor_claim_must_precede_every_build_or_test_command": true,
+      "candidate_gameplay_changed": false,
+      "candidate_test_changed": false,
+      "qualification_configuration_changed": false,
+      "validation_or_final_bank_access_authorized_by_amendment": false
+    }
+  },
+  "candidate_binding": {
+    "status": "placeholder-until-final-candidate-selection",
+    "immutable_content_addressed_binding_required": true,
+    "same_binding_required_for_validation_final_and_pooled_decision": true,
+    "fields_frozen_by_binding": [
+      "candidate_commit",
+      "candidate_engine_source_sha256",
+      "candidate_generated_source_sha256",
+      "candidate_generated_source_bytes",
+      "candidate_test_source_sha256",
+      "complete_tracked_dependency_identities",
+      "qualification_and_preflight_producer_and_test_identities",
+      "comparison_gate_binary_sha256",
+      "comparison_gate_runtime_linkage_and_materialized_system_library_identities",
+      "cmake_cache_sha256",
+      "compiler_flags_sha256",
+      "link_command_sha256",
+      "all_fixed_build_artifact_identities",
+      "fixed_tool_and_compiler_executable_identities",
+      "sanitized_environment_and_host_runtime_identity",
+      "clang_identity_and_release_checks",
+      "gnu_identity_and_release_checks",
+      "address_sanitizer_check",
+      "undefined_behavior_sanitizer_check",
+      "final_source_and_protocol_preflight_receipt_sha256"
+    ]
+  },
+  "blocking_prerequisites": [
+    "Do not create a binding until one finalist is selected and committed.",
+    "Do not create a binding until a canonical content-addressed final-source preflight receipt passes every required compiler, sanitizer, generator, source-limit, protocol, parity, replay, and purity check.",
+    "Do not create a binding until the frozen comparison gate emits and verifies candidate_sweeps, reference_sweeps, split_pairs, and unresolved_pairs on every bank_summary and summary line.",
+    "The current pre-binding comparison output without explicit paired-sweep counters is insufficient and must never be used to infer sweeps from aggregate wins."
+  ],
+  "final_source_preflight": {
+    "producer": "tools/record_rank4_jacek_hybrid_final_source_preflight.py",
+    "producer_accepts_no_paths_compilers_targets_tests_banks_or_environment_arguments": true,
+    "receipt_registry": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/receipts",
+    "one_shot_claim_registry": "results/rank_4_jacek_hybrid/gates/heldout_qualification/preflight/claims",
+    "fresh_fixed_build_directories": [
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/clang-release",
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/gnu-release",
+      "build/rank4-jacek-hybrid-heldout-preflight-successor/clang-sanitized"
+    ],
+    "isolated_task_home": "build/rank4-jacek-hybrid-heldout-preflight-successor/tmp/home",
+    "fixed_development_only_sweep_contract_bank": "results/rank_4_jacek_hybrid/openings/development_d04.tsv",
+    "dedicated_sweep_gate_target": "papersoccer_codingame_rank_4_jacek_hybrid_heldout_comparison_gate",
+    "dedicated_sweep_gate_wrapper": "submissions/codingame/bots/rank_4_jacek_hybrid/comparison_gate_heldout.cpp",
+    "ordinary_comparison_gate_output_unchanged": true,
+    "validation_or_final_bank_access": "forbidden",
+    "shared_benchmark_lock": "/tmp/rank4-hybrid-prototype-benchmark.lock",
+    "compiler_tool_build_source_environment_host_and_process_evidence_revalidated_by_binding": true,
+    "darwin_asan_leak_detection": {
+      "enabled": false,
+      "reason": "AppleClang-ASan-leak-detection-disabled-pre-main-runtime-limitation",
+      "address_and_undefined_behavior_sanitizers_still_required": true
+    }
+  },
+  "configuration": {
+    "profile": "clock",
+    "reference_engine": "rank4",
+    "maximum_turns": 320,
+    "candidate_nodes": 3000000,
+    "reference_nodes": 3000000,
+    "candidate_clock_ms": [800, 165],
+    "reference_clock_ms": [800, 165],
+    "operational_hard_clock_ms": [1000, 200],
+    "candidate_exact_proof_mask": 7,
+    "reference_exact_proof_mask": 0,
+    "opening_rules": "preregistered-public-codingame-rules",
+    "replay_corrections": "disabled",
+    "transcripts": "not-retained"
+  },
+  "banks": {
+    "validation": [
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d04.tsv",
+        "gate_role": "validation",
+        "logical_role": "validation",
+        "depth": 4,
+        "seed": "6709526056091773226",
+        "bytes": 4196,
+        "sha256": "857ea82db033ab8e5aa956ede63803fe7882ede05ea42b86ad175180e707f6d0",
+        "opening_pairs": 14,
+        "games": 28
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d08.tsv",
+        "gate_role": "validation",
+        "logical_role": "validation",
+        "depth": 8,
+        "seed": "7978351507335573424",
+        "bytes": 4140,
+        "sha256": "8ecfa05ce4f92367c11a4c7c9d441d105eabde03dc28f02abe4d3d55d008541e",
+        "opening_pairs": 13,
+        "games": 26
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d12.tsv",
+        "gate_role": "validation",
+        "logical_role": "validation",
+        "depth": 12,
+        "seed": "11628761959191340354",
+        "bytes": 4387,
+        "sha256": "535c8f537701b7952fedb3f01f1d9167d9496d314cc6496f1898737c8bf8f61f",
+        "opening_pairs": 13,
+        "games": 26
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/validation_d20.tsv",
+        "gate_role": "validation",
+        "logical_role": "validation",
+        "depth": 20,
+        "seed": "8065722295843934942",
+        "bytes": 4819,
+        "sha256": "b374b1d98cef6e4f6bb5d67739efda298f6d77f6f7dbd253e66933ae49d29cc8",
+        "opening_pairs": 13,
+        "games": 26
+      }
+    ],
+    "final": [
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/final_d04.tsv",
+        "gate_role": "test",
+        "logical_role": "final",
+        "depth": 4,
+        "seed": "6950345424396585233",
+        "bytes": 7282,
+        "sha256": "593c62c2f484b164a34d58764f7a163c103e80531e28e72a0edab68bf062cdeb",
+        "opening_pairs": 27,
+        "games": 54
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/final_d08.tsv",
+        "gate_role": "test",
+        "logical_role": "final",
+        "depth": 8,
+        "seed": "13781571303722659152",
+        "bytes": 7722,
+        "sha256": "862f433b399fe5ada6f65f40bd9830f6c128f2eaa999d7a37d104e6b8ac6b4cd",
+        "opening_pairs": 27,
+        "games": 54
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/final_d12.tsv",
+        "gate_role": "test",
+        "logical_role": "final",
+        "depth": 12,
+        "seed": "7381674447952460139",
+        "bytes": 7935,
+        "sha256": "7aceb4aa25aa43ee42983fc2df0bbf5de8f97faafed19f12cc191c5e4cac5cd9",
+        "opening_pairs": 26,
+        "games": 52
+      },
+      {
+        "path": "results/rank_4_jacek_hybrid/openings/final_d20.tsv",
+        "gate_role": "test",
+        "logical_role": "final",
+        "depth": 20,
+        "seed": "3336968612918225993",
+        "bytes": 8771,
+        "sha256": "925aa7c2109fc58d53aa9baa800214af94c2c4becae6a6bb51e3eab624a4e62c",
+        "opening_pairs": 26,
+        "games": 52
+      }
+    ]
+  },
+  "stage_order": [
+    {
+      "stage": "validation",
+      "games": 106,
+      "opening_pairs": 53,
+      "candidate_wins_min": 54,
+      "candidate_wins_by_physical_color_min": [26, 26],
+      "failure_policy": "Any structural, source, process, timing, unfinished, failed-game, identity, or threshold failure rejects the candidate and permanently forbids FINAL access."
+    },
+    {
+      "stage": "final",
+      "requires": "accepted content-addressed validation report for the unchanged binding",
+      "games": 212,
+      "opening_pairs": 106,
+      "candidate_wins_min": 108,
+      "candidate_wins_by_physical_color_min": [53, 53],
+      "failure_policy": "Any structural, source, process, timing, unfinished, failed-game, identity, or threshold failure rejects the candidate."
+    },
+    {
+      "stage": "pooled",
+      "requires": "accepted validation and final reports for the unchanged binding",
+      "games": 318,
+      "opening_pairs": 159,
+      "candidate_wins_min": 174,
+      "candidate_wins_by_physical_color_min": [83, 83]
+    }
+  ],
+  "operational_thresholds": {
+    "unfinished_games_max": 0,
+    "failed_games_max": 0,
+    "illegal_actions_max": 0,
+    "operational_failures_max": 0,
+    "exceptions_max": 0,
+    "hard_timeouts_max": 0,
+    "candidate_and_reference_first_ms_p99_strictly_less_than": 900,
+    "candidate_and_reference_later_ms_p99_strictly_less_than": 180,
+    "candidate_and_reference_first_ms_max_strictly_less_than": 990,
+    "candidate_and_reference_later_ms_max_strictly_less_than": 198
+  },
+  "paired_sweep_test": {
+    "scope": "pooled-validation-plus-final",
+    "candidate_sweep_definition": "candidate wins both physical-color games from one opening",
+    "reference_sweep_definition": "Rank-4 reference wins both physical-color games from one opening",
+    "split_pair_policy": "exclude split pairs from the sign-test sample only",
+    "unresolved_pairs_max": 0,
+    "required_pair_accounting": "candidate_sweeps + reference_sweeps + split_pairs + unresolved_pairs == opening_pairs",
+    "required_win_accounting": [
+      "candidate_wins == 2*candidate_sweeps + split_pairs",
+      "reference_wins == 2*reference_sweeps + split_pairs"
+    ],
+    "null": "X ~ Binomial(candidate_sweeps + reference_sweeps, 0.5)",
+    "one_sided_tail": "P[X >= candidate_sweeps]",
+    "exact_arithmetic": true,
+    "p_value_max_inclusive": "0.025",
+    "equivalent_rational_max_inclusive": "1/40",
+    "aggregate_wins_must_not_be_used_to_infer_sweeps": true
+  },
+  "evidence_policy": {
+    "attempts_per_candidate_qualification_identity_per_stage": 1,
+    "atomic_claim_is_written_before_first_bank_byte_is_read": true,
+    "interrupted_claim_without_report_is_spent_and_cannot_be_retried": true,
+    "validation_failure_stops_before_any_final_file_stat_hash_open_or_process_argument": true,
+    "accepted_validation_can_be_resumed_into_an_unclaimed_final_stage_without_replaying_validation": true,
+    "exclusive_campaign_lock_required": true,
+    "binding_and_preflight_use_separate_atomic_one_shot_claims_and_the_shared_campaign_lock": true,
+    "clean_tracked_tree_required": true,
+    "clean_campaign_process_preflight_required_before_each_stage": true,
+    "validation_and_final_processes_must_be_sequential_and_nonoverlapping": true,
+    "candidate_commit_source_configuration_compiler_and_binary_must_remain_identical": true,
+    "all_reports_are_canonical_content_addressed_json": true,
+    "content_addressed_directories_and_their_parents_are_fsynced": true,
+    "existing_reports_and_decisions_are_fully_revalidated_and_all_acceptance_pooled_and_authorization_fields_are_recomputed_on_every_invocation": true,
+    "complete_dependency_source_build_binary_and_accessed_bank_hash_maps_required_before_and_after_each_stage": true,
+    "candidate_mcts_header_route_must_match_the_selected_source_and_reference_must_use_shared_mcts_header_without_any_candidate_private_header": true,
+    "heldout_gate_must_classify_each_color_swapped_pair_inside_one_opening_record_iteration_and_must_never_infer_sweeps_from_aggregate_wins": true,
+    "compiler_and_fixed_tool_blobs_must_match_preflight_before_binding_and_before_and_after_each_stage": true,
+    "sanitized_environment_and_host_runtime_are_frozen": true,
+    "all_claim_report_receipt_binding_and_candidate_commit_times_must_be_at_or_after_campaign_t0": true,
+    "stdout_contract": "bank summaries, aggregate summary, and configuration only",
+    "stdout_and_stderr_persistence": "digest-length-empty-indicator-only; raw streams are never retained",
+    "stderr_must_be_empty": true,
+    "replay_corrections": "disabled",
+    "transcripts": "not-retained"
+  },
+  "required_final_source_preflight_checks": [
+    "generated_source_current",
+    "generated_source_ascii_and_at_most_99999_bytes",
+    "generated_source_has_no_local_includes",
+    "clang_release_compile_and_focused_tests",
+    "gnu_release_compile_and_focused_tests",
+    "address_sanitizer_focused_tests",
+    "undefined_behavior_sanitizer_focused_tests",
+    "submission_tests",
+    "rank4_compatibility_parity",
+    "position_key_cache_regression_if_present",
+    "protocol_regression",
+    "cheap_replay_tactical_audit",
+    "full_replay_tactical_audit",
+    "source_purity_and_no_replay_corrections",
+    "ordinary_comparison_gate_output_isolation",
+    "comparison_gate_paired_sweep_output_contract"
+  ],
+  "data_boundary": {
+    "plan_and_binding_source": "campaign manifest metadata only",
+    "binding_must_not_stat_hash_open_or_parse_validation_or_final_tsv_files": true,
+    "binding_and_run_cli_accept_no_preflight_binding_dependency_compiler_or_bank_path_arguments": true,
+    "all_json_registries_and_dependency_paths_are_fixed_repo-owned_or_explicit_system-tool paths": true,
+    "any validation_or_final_tsv_path_from_a_receipt_binding_or_depfile_is_rejected_before stat resolve hash or open": true,
+    "validation_first_access": "only after finalist binding, clean preflight, and atomic validation claim",
+    "final_first_access": "only after persisted accepted validation report, unchanged-binding preflight, and atomic final claim",
+    "no_bank_row_opening_transcript_or_replay_correction_is_persisted": true
+  }
+}
