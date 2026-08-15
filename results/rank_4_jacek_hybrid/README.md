@@ -116,6 +116,29 @@ source SHA-256
 `5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9`,
 remains the incumbent.
 
+## TT exact-collision generated DEVELOPMENT replication
+
+The separately preregistered V19 campaign evaluated candidate identity
+`a72aac1d148d7e85ed896f4b994593eb847335b8d79f31ac14d604d3888a618d`.
+Preexecution completed successfully, including the focused 48-test gate,
+sealed dependency and compiler checks, and an in-memory-only deterministic
+generation self-test. No protected bank file was accessed.
+
+Stage 0 exhausted its frozen 1,700-second aggregate budget before completing
+the corpus. It persisted 968 of 1,324 scheduled children: children 0 through
+966 returned successfully, child 967 was killed at the aggregate boundary,
+and 356 children were never started. The execution lasted 1,700.984 seconds.
+The incomplete output was not parsed as a Stage-0 result and supplies no
+performance or safety conclusion. Neither DEVELOPMENT game stage ran.
+
+The canonical report is
+`gates/tt_exact_collision_generated_v19/reports/ef323674bbf22dcc18c938b3fcca4b40af3e1978aba0a0ee596addd72ba7de51.json`.
+The terminal decision is
+`gates/tt_exact_collision_generated_v19/decisions/3bff57ce07bd80ebc7107192841269a34c08e6e231f6c42fc1ba9c428b5347b0.json`.
+It records `terminal-development-clock-or-deadline-rejection`, authorizes no
+retry, source activation, upload, held-out work, or arena action, and leaves
+canonical Rank 4 as the incumbent.
+
 ## Verification
 
 Build the existing generic opening-bank tool, then run the read-only check:

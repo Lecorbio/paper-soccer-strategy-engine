@@ -119,6 +119,23 @@ It left Stages 2 and 3 unopened and authorizes no retry, source activation,
 fresh held-out campaign, or arena action. Canonical Rank 4 remains the
 incumbent; the mask-7 rollback remains historical/control evidence only.
 
+## TT exact-collision generated DEVELOPMENT replication
+
+The preregistered V19 successor reached Stage 0 after a clean nine-child
+preexecution receipt, but its 1,324-child Stage-0 corpus did not finish within
+the frozen 1,700-second aggregate limit. Children 0 through 966 succeeded;
+child 967 was killed at the aggregate boundary after total elapsed time of
+1,700.984 seconds, leaving 356 children unstarted. The report is deliberately
+unparsed and provides no Stage-0 safety or performance conclusion. No
+generated-bank game stage ran and no protected bank file was accessed.
+
+The canonical report is
+`results/rank_4_jacek_hybrid/gates/tt_exact_collision_generated_v19/reports/ef323674bbf22dcc18c938b3fcca4b40af3e1978aba0a0ee596addd72ba7de51.json`;
+the terminal decision is
+`results/rank_4_jacek_hybrid/gates/tt_exact_collision_generated_v19/decisions/3bff57ce07bd80ebc7107192841269a34c08e6e231f6c42fc1ba9c428b5347b0.json`.
+It authorizes no retry, source activation, upload, held-out work, or arena
+action. Canonical Rank 4 remains the incumbent.
+
 Generate and run the scaffold gates from the repository root:
 
 ```sh

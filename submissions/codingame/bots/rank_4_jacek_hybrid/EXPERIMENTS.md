@@ -467,3 +467,31 @@ It records a terminal DEVELOPMENT rejection: Stages 2 and 3 were never
 claimed or opened, and no retry, source activation, fresh held-out campaign,
 or arena action is authorized. Canonical Rank 4 remains the incumbent; the
 mask-7 rollback remains only historical/control evidence.
+
+## TT exact-collision generated DEVELOPMENT replication (V19)
+
+The final preregistered successor bound candidate identity
+`a72aac1d148d7e85ed896f4b994593eb847335b8d79f31ac14d604d3888a618d`.
+Its preexecution receipt passed all nine children: the focused suite reported
+48/48, direct compiler and dependency evidence remained sealed, all three
+binaries were frozen, and the generated DEVELOPMENT inputs were checked only
+by deterministic in-memory regeneration. No protected bank file was accessed.
+
+The Stage-0 schedule contained 1,324 children under a 1,700-second aggregate
+limit. Children 0 through 966 returned zero with clean process observations.
+Child 967, the second half of mixed measured pair 121, was killed after
+0.473 seconds when the aggregate elapsed time reached 1,700.984 seconds.
+Another 356 children were never started. Consequently the mixed measured
+panel was incomplete, the report retained `parsed=null`, and no full Stage-0
+corpus or scientific performance verdict exists. The depth-20 and combined
+generated-bank game stages were never claimed or executed.
+
+The canonical Stage-0 execution is
+`results/rank_4_jacek_hybrid/gates/tt_exact_collision_generated_v19/executions/a72aac1d148d7e85ed896f4b994593eb847335b8d79f31ac14d604d3888a618d.stage0_public_truth_activation_timing.json`.
+The report is
+`results/rank_4_jacek_hybrid/gates/tt_exact_collision_generated_v19/reports/ef323674bbf22dcc18c938b3fcca4b40af3e1978aba0a0ee596addd72ba7de51.json`,
+and the terminal decision is
+`results/rank_4_jacek_hybrid/gates/tt_exact_collision_generated_v19/decisions/3bff57ce07bd80ebc7107192841269a34c08e6e231f6c42fc1ba9c428b5347b0.json`.
+The decision is a clock-or-deadline rejection with retry, selection, source
+activation, upload, held-out, and arena authorization all false. Canonical
+Rank 4 remains the incumbent.
