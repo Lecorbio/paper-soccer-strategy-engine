@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "papersoccer.codingame-leaderboard-tournament.v1",
+  "title": "Paper Soccer frozen CodinGame-style tournament",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "generatedAtUtc", "contract", "provenance", "games", "standings", "headToHead"],
+  "properties": {
+    "schema": {"const": "papersoccer.codingame-leaderboard-tournament.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "generatedAtUtc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "contract": {
+      "type": "object",
+      "required": ["rules", "protocol", "schedule", "rating", "roster"]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceCommit", "sourceTreeSha256", "sourceTreeDirty", "contractSourceSha256",
+        "referee", "executables", "environment"
+      ],
+      "properties": {
+        "sourceCommit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "sourceTreeSha256": {"$ref": "#/$defs/sha256"},
+        "sourceTreeDirty": {"type": "boolean"},
+        "contractSourceSha256": {"$ref": "#/$defs/sha256"},
+        "referee": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema", "version", "sha256"],
+          "properties": {
+            "schema": {"const": "papersoccer.codingame-match.v1"},
+            "version": {"type": "string", "minLength": 1},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "executables": {
+          "type": "object",
+          "minProperties": 20,
+          "maxProperties": 20,
+          "additionalProperties": {"$ref": "#/$defs/sha256"}
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "cpu", "compiler"],
+          "properties": {
+            "os": {"type": "string", "minLength": 1},
+            "cpu": {"type": "string", "minLength": 1},
+            "compiler": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "games": {
+      "type": "array",
+      "minItems": 900,
+      "maxItems": 900,
+      "items": {"$ref": "#/$defs/game"}
+    },
+    "standings": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {"$ref": "summary.schema.json#/$defs/standing"}
+    },
+    "headToHead": {
+      "type": "array",
+      "minItems": 380,
+      "maxItems": 380,
+      "items": {"$ref": "summary.schema.json#/$defs/headToHead"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "blockId", "stage", "stageIndex", "leg", "playerOneId", "playerTwoId",
+        "winnerId", "loserId", "forfeitId", "match"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^game-[0-9]{4}$"},
+        "blockId": {"type": "string", "pattern": "^block-[0-9]{3}$"},
+        "stage": {"enum": ["color-swapped-round-robin", "seeded-perfect-matching"]},
+        "stageIndex": {"type": "integer", "minimum": 1, "maximum": 7},
+        "leg": {"type": "integer", "minimum": 1, "maximum": 2},
+        "playerOneId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "playerTwoId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "winnerId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "loserId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "forfeitId": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"},
+        "match": {"$ref": "match.schema.json"}
+      }
+    }
+  }
+}

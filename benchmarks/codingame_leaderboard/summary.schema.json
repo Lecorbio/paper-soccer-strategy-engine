@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "papersoccer.codingame-leaderboard-summary.v1",
+  "title": "Paper Soccer compact leaderboard website snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tournament", "standings", "headToHead"],
+  "properties": {
+    "schema": {"const": "papersoccer.codingame-leaderboard-summary.v1"},
+    "tournament": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "generatedAtUtc", "entrantCount", "gameCount", "gamesPerEntrant",
+        "playerOneGamesPerEntrant", "playerTwoGamesPerEntrant", "rulesLabel",
+        "scoringLabel", "scheduleSeed", "sourceCommit", "environment", "rawResultsUrl"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "generatedAtUtc": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+        },
+        "entrantCount": {"const": 20},
+        "gameCount": {"const": 900},
+        "gamesPerEntrant": {"const": 90},
+        "playerOneGamesPerEntrant": {"const": 45},
+        "playerTwoGamesPerEntrant": {"const": 45},
+        "rulesLabel": {"type": "string", "minLength": 1},
+        "scoringLabel": {"const": "Local CodinGame-style score"},
+        "scheduleSeed": {"const": 20260813},
+        "sourceCommit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "cpu", "compiler"],
+          "properties": {
+            "os": {"type": "string", "minLength": 1},
+            "cpu": {"type": "string", "minLength": 1},
+            "compiler": {"type": "string", "minLength": 1}
+          }
+        },
+        "rawResultsUrl": {"type": "string", "format": "uri"}
+      }
+    },
+    "standings": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/standing"}
+    },
+    "headToHead": {
+      "type": "array",
+      "minItems": 380,
+      "maxItems": 380,
+      "items": {"$ref": "#/$defs/headToHead"}
+    }
+  },
+  "$defs": {
+    "sideRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["games", "wins"],
+      "properties": {
+        "games": {"type": "integer", "minimum": 0},
+        "wins": {"type": "integer", "minimum": 0}
+      }
+    },
+    "standing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank", "id", "displayName", "aliases", "score", "mu", "sigma", "games",
+        "wins", "losses", "winRate", "forfeits", "playerOne", "playerTwo",
+        "submissionSha256", "documentationUrl"
+      ],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 1, "maximum": 20},
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "displayName": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+        "score": {"type": "number"},
+        "mu": {"type": "number"},
+        "sigma": {"type": "number", "minimum": 0},
+        "games": {"const": 90},
+        "wins": {"type": "integer", "minimum": 0},
+        "losses": {"type": "integer", "minimum": 0},
+        "winRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "forfeits": {"type": "integer", "minimum": 0},
+        "playerOne": {"$ref": "#/$defs/sideRecord"},
+        "playerTwo": {"$ref": "#/$defs/sideRecord"},
+        "submissionSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "documentationUrl": {"type": "string", "format": "uri"}
+      }
+    },
+    "headToHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rowId", "columnId", "games", "wins", "losses", "score"],
+      "properties": {
+        "rowId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "columnId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "games": {"enum": [4, 6]},
+        "wins": {"type": "integer", "minimum": 0},
+        "losses": {"type": "integer", "minimum": 0},
+        "score": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

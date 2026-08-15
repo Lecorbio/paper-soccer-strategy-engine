@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "papersoccer.codingame-leaderboard-roster.v1",
+  "title": "Paper Soccer CodinGame leaderboard roster",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cmakeRegistry", "entrants"],
+  "properties": {
+    "schema": {"const": "papersoccer.codingame-leaderboard-roster.v1"},
+    "cmakeRegistry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "variable"],
+      "properties": {
+        "path": {"type": "string"},
+        "variable": {"const": "PAPERSOCCER_CODINGAME_BOTS"}
+      }
+    },
+    "entrants": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/entrant"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "alias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "submissionPath", "submissionSha256", "documentationUrl"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "submissionPath": {"type": "string"},
+        "submissionSha256": {"$ref": "#/$defs/sha256"},
+        "documentationUrl": {"type": "string", "format": "uri"}
+      }
+    },
+    "entrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "displayName", "submissionPath", "submissionSha256",
+        "documentationUrl", "executableTarget", "aliases"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "displayName": {"type": "string", "minLength": 1},
+        "submissionPath": {"type": "string"},
+        "submissionSha256": {"$ref": "#/$defs/sha256"},
+        "documentationUrl": {"type": "string", "format": "uri"},
+        "executableTarget": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"$ref": "#/$defs/alias"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+:root {
+  --study-page: #efeee8;
+  --study-panel: #fbfaf6;
+  --study-panel-strong: #fffefa;
+  --study-panel-muted: #f3f4f1;
+  --study-ink: #202833;
+  --study-muted: #5b6670;
+  --study-line: #c8cdd0;
+  --study-line-strong: #aeb6bb;
+  --study-accent: #315a6b;
+  --study-accent-soft: #e3ebee;
+  --study-focus: #1f607b;
+}
+
+.site-header {
+  border-bottom: 1px solid var(--study-line);
+  background: var(--study-panel);
+}
+
+.site-header-inner {
+  display: flex;
+  width: min(100%, 1180px);
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 auto;
+  padding: 10px 18px;
+}
+
+.site-identity {
+  display: grid;
+  flex: none;
+  gap: 1px;
+  color: var(--study-ink);
+  line-height: 1.15;
+  text-decoration: none;
+}
+
+.site-identity span {
+  font-size: 1.04rem;
+  font-weight: 760;
+  letter-spacing: -0.015em;
+}
+
+.site-identity small {
+  color: var(--study-muted);
+  font-size: 0.7rem;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.site-header .site-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.site-header .site-nav a {
+  position: relative;
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--study-muted);
+  padding: 9px 12px;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.site-header .site-nav a::after {
+  position: absolute;
+  right: 12px;
+  bottom: 4px;
+  left: 12px;
+  height: 2px;
+  background: transparent;
+  content: "";
+}
+
+.site-header .site-nav a:hover {
+  background: var(--study-accent-soft);
+  color: var(--study-ink);
+}
+
+.site-header .site-nav a[aria-current="page"] {
+  background: transparent;
+  color: var(--study-ink);
+  font-weight: 650;
+}
+
+.site-header .site-nav a[aria-current="page"]::after {
+  background: var(--study-accent);
+}
+
+.site-identity:focus-visible,
+.site-header .site-nav a:focus-visible {
+  outline: 3px solid var(--study-focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 680px) {
+  .site-header-inner {
+    min-height: 0;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .site-header .site-nav {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .site-header .site-nav a {
+    min-width: 0;
+    min-height: 36px;
+    padding: 8px 6px;
+  }
+}
+
+@media (max-width: 360px) {
+  .site-identity small {
+    display: none;
+  }
+
+  .site-header .site-nav a {
+    font-size: 0.82rem;
+  }
+}

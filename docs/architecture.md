@@ -1,10 +1,10 @@
 # Architecture
 
 Paper Soccer Strategy Engine keeps one C++20 rules model behind every frontend.
-The CLI, arena, replay exporter, and browser session layer all operate on the
-same `GameState`, geometry, move-validation, and bot APIs. This avoids a common
-failure mode in game-AI projects: benchmarking one implementation while users
-play against another.
+The CLI, arena, replay exporter, native CodinGame referee, and browser session
+layer all operate on the same `GameState`, geometry, move-validation, and bot
+APIs. This avoids a common failure mode in game-AI projects: benchmarking one
+implementation while users play against another.
 
 ## System flow
 
@@ -15,7 +15,14 @@ flowchart LR
         Replay[Replay exporter]
         Arena[Native / Wasm arena]
         Browser[Static browser UI]
+        Leaderboard[Static bot leaderboard]
     end
+
+    Tournament[Serial tournament tooling] --> Referee[Native CodinGame referee]
+    Submissions[Reviewed submission executables] --> Referee
+    Referee --> Core
+    Tournament --> Frozen[Raw tournament + compact snapshot]
+    Frozen --> Leaderboard
 
     Browser --> LiveBridge[Gameplay Wasm bridge]
     Browser --> Worker[Classic Game Review worker]
@@ -41,6 +48,8 @@ flowchart LR
 The arrows describe dependencies, not separate rule implementations. Browser
 JavaScript schedules commands, renders snapshots, and handles interaction; C++
 owns legal moves, rebounds, terminal detection, bot state, and replay history.
+The leaderboard is a separate static publication surface: matches run offline,
+and the page only renders checked-in results.
 
 ## Public API and authoritative state
 
@@ -75,6 +84,8 @@ session implementation. Native executables link it directly:
 - `papersoccer_replay_export` writes seeded replay JSON.
 - `papersoccer_arena` adds deterministic paired-match and position reports
   through `papersoccer_arena_support`.
+- `papersoccer_codingame_referee` runs one protocol-faithful match between two
+  reviewed standalone CodinGame submissions.
 - `papersoccer_tests` exercises the same core API used by those frontends.
 
 All bots implement `Bot::choose_move(const GameState&)`. Stateful bots can
@@ -87,6 +98,54 @@ is safe to do so. They do not replace the public rules engine. This division
 keeps performance-sensitive recursion private while allowing rule-parity,
 state-restoration, and legal-move tests to compare it against the authoritative
 API.
+
+## CodinGame referee and leaderboard boundaries
+
+The CodinGame leaderboard deliberately exercises the generated standalone
+submissions rather than adapting their search code to the arena API. For each
+game, the native referee starts two fresh persistent processes, sends each
+player ID once, and then exchanges the standard complete-turn protocol. The
+referee configures the authoritative engine with own goals allowed and a loss
+for a player who becomes blocked. It gives each process 1,000 ms for its first
+decision and 200 ms for every later decision.
+
+Each nonempty digit response is validated as one atomic action before any edge
+is committed. The action must include every mandatory rebound and stop exactly
+when possession changes or the game ends. A timeout, crash, empty or malformed
+response, illegal or reused edge, incomplete rebound, extra edge after a
+handoff or terminal state, or bounded-output overflow is a scored forfeit. A
+referee or process-launch failure is infrastructure failure and aborts the
+tournament; it is never converted into a bot loss. Complete action transcripts,
+decision timings, outcomes, failure classifications, artifact identities, and
+runtime provenance are retained in the raw match records.
+
+Only entries in `benchmarks/codingame_leaderboard/roster.json` are runnable.
+The manifest covers every CMake-registered submission directory, stores the
+generated-source SHA-256 and documentation link, and collapses byte-identical
+artifacts into a canonical entrant. In particular, `selfplay_nn_v2` is an
+alias of `rank_4`, leaving 20 unique competitors. The runner invokes resolved
+executables directly with a clean environment and temporary working directory,
+bounds captured output, and cleans up the entire child process group. There is
+no browser upload, arbitrary command, or server-side execution interface.
+
+The frozen publication consists of 900 serial games: two complete
+color-swapped round robins followed by seven seeded color-swapped
+perfect-matching rounds. SplitMix64 seed `20260813` fixes the recorded rating
+order. Every entrant plays 90 games, exactly 45 as each player, and four or six
+games against each opponent. Decisive results, including forfeits, update a
+classic 1v1 TrueSkill model with the committed parameters. Standings use the
+full-precision conservative estimate `mu - 3 sigma`, with canonical ID only as
+an exact-score tie-breaker.
+
+This is a transparent local approximation of the public description of
+CodinGame ranking, not a reproduction of private platform matchmaking. Both
+the artifact and UI therefore call the value **Local CodinGame-style score**.
+The full tournament artifact remains under `benchmarks/`; a deterministic
+publisher derives the smaller `web/leaderboard/leaderboard-results.js`. The
+website contains standings and pairwise summaries but no transcripts, process
+logs, gameplay Wasm, backend, or runtime network dependency. See
+[Reproducibility](reproducibility.md#codingame-rules-bot-leaderboard) for the
+refresh and freshness workflow.
 
 ## Browser and analysis boundaries
 
@@ -155,6 +214,11 @@ The benchmark overview is a separate direct-file-compatible static page at
 module. The snapshot contains public bot-performance results only; its source
 and freshness workflow are documented in
 [Reproducibility](reproducibility.md#benchmark-website-snapshot).
+
+The bot leaderboard follows the same static boundary at
+`web/leaderboard/index.html`. Its classic script reads the compact checked-in
+`leaderboard-results.js` snapshot. The bulky match transcripts and runtime
+logs remain in the canonical raw artifact and are not shipped as page data.
 
 Undo is a frontend command, not a mutation hidden inside a bot. Restoring a
 state and asking a bot to continue can invalidate retained work. The browser

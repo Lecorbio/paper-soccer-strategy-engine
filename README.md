@@ -6,6 +6,7 @@ A deterministic C++20/WebAssembly game-AI engine whose authentic CodinGame submi
 [![MIT License](https://img.shields.io/github/license/Lecorbio/paper-soccer-strategy-engine)](LICENSE)
 
 **[Play the live demo](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
+· **[View the bot leaderboard](https://lecorbio.github.io/paper-soccer-strategy-engine/leaderboard/)**
 · **[Explore the benchmark](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
 · [Read the frozen study](benchmarks/flagship_study/REPORT.md)
 
@@ -65,6 +66,26 @@ Game Review, and the experiment arena. The project combines MCTS,
 possession-aware alpha-beta, complete-turn analysis, exact endgame search,
 hand-crafted and neural evaluation, compact make/unmake state, diagnostics, and
 frozen statistical evidence.
+
+## CodinGame-rules bot leaderboard
+
+The [local leaderboard](https://lecorbio.github.io/paper-soccer-strategy-engine/leaderboard/)
+compares all 20 unique checked-in generated CodinGame submissions in a frozen
+900-game tournament. A native referee launches the real persistent submission
+executables, speaks the CodinGame complete-turn protocol, applies the official
+first/later decision limits, and validates every response through the shared
+C++ rules engine. The browser runs no tournament code: it renders a compact
+snapshot derived from the reviewed raw artifact.
+
+Scores are deliberately labelled **Local CodinGame-style score**. They use a
+documented classic 1v1 TrueSkill contract and conservative `mu - 3 sigma`
+estimate; CodinGame's complete ranking parameters and matchmaking contract are
+not public, so these values are not presented as platform scores. The explicit
+[roster](benchmarks/codingame_leaderboard/roster.json) permits only reviewed
+repository artifacts, records `selfplay_nn_v2` as an alias of byte-identical
+`rank_4`, and exposes no upload or arbitrary-command path. See the
+[reproduction procedure](docs/reproducibility.md#codingame-rules-bot-leaderboard)
+for validation, refresh, and publication commands.
 
 ## Architecture
 
