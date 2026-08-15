@@ -67,4 +67,9 @@ python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
 
 Do not publish a partial or synthetic development snapshot. The checked-in raw
 artifact must contain all 900 matches and the compact output is a deterministic
-function of it.
+function of it. Validation is strict by default for a newly generated
+tournament. CI adds `--allow-historical-sources` only when checking the frozen
+historical artifact after maintenance-only runner or CMake changes. That mode
+preserves the artifact's recorded source provenance; it does not skip the
+current roster and schedule checks, authoritative replay of every transcript,
+recomputed standings, or byte-exact snapshot check.
