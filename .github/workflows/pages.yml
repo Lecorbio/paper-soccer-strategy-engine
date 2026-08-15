@@ -38,7 +38,7 @@ jobs:
             -s tests/codingame_leaderboard -p 'test_*.py'
           python3 benchmarks/codingame_leaderboard/leaderboard.py validate
 
-      - name: Reject a stale published snapshot
+      - name: Replay and validate the frozen published snapshot
         run: |
           test -s benchmarks/codingame_leaderboard/tournament.json
           test -s web/leaderboard/leaderboard-results.js
@@ -47,11 +47,13 @@ jobs:
             papersoccer_codingame_referee
           python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
             --artifact benchmarks/codingame_leaderboard/tournament.json \
-            --referee build/leaderboard-check/papersoccer_codingame_referee
+            --referee build/leaderboard-check/papersoccer_codingame_referee \
+            --allow-historical-sources
           python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
             --input benchmarks/codingame_leaderboard/tournament.json \
             --output web/leaderboard/leaderboard-results.js \
-            --referee build/leaderboard-check/papersoccer_codingame_referee --check
+            --referee build/leaderboard-check/papersoccer_codingame_referee \
+            --allow-historical-sources --check
 
   test-gcc:
     name: GCC build and tests

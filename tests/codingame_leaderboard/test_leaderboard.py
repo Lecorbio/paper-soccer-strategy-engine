@@ -582,6 +582,31 @@ class RefereeRunnerTests(unittest.TestCase):
 
 
 class FingerprintTests(unittest.TestCase):
+    def test_historical_source_mode_is_explicit_for_validate_and_publish(self) -> None:
+        parser = subject._parser()
+        validate = parser.parse_args(
+            [
+                "validate",
+                "--artifact",
+                "tournament.json",
+                "--referee",
+                "referee",
+                "--allow-historical-sources",
+            ]
+        )
+        publish = parser.parse_args(
+            [
+                "publish",
+                "--referee",
+                "referee",
+                "--allow-historical-sources",
+            ]
+        )
+        strict = parser.parse_args(["validate"])
+        self.assertTrue(validate.allow_historical_sources)
+        self.assertTrue(publish.allow_historical_sources)
+        self.assertFalse(strict.allow_historical_sources)
+
     def test_contract_digest_includes_transcript_validation_cli_source(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             repository = Path(name)

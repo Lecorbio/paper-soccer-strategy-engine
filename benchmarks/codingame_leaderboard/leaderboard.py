@@ -1729,6 +1729,7 @@ def publish_snapshot(
     roster_path: Path = DEFAULT_ROSTER,
     referee: Path,
     check: bool = False,
+    require_current_sources: bool = True,
 ) -> None:
     roster = load_roster(roster_path)
     artifact = _load_json(artifact_path)
@@ -1739,6 +1740,7 @@ def publish_snapshot(
         repository,
         roster_path=roster_path,
         referee=referee,
+        require_current_sources=require_current_sources,
     )
     expected = render_snapshot(artifact)
     if check:
@@ -1764,6 +1766,14 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="authoritatively replay every artifact transcript (required with --artifact)",
     )
+    validate.add_argument(
+        "--allow-historical-sources",
+        action="store_true",
+        help=(
+            "accept recorded historical source provenance while still enforcing the current "
+            "roster and schedule and replaying every transcript"
+        ),
+    )
 
     run = subparsers.add_parser("run", help="run or resume the serial native tournament")
     run.add_argument("--repository", type=Path, default=DEFAULT_REPOSITORY)
@@ -1784,6 +1794,14 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("--output", type=Path, default=DEFAULT_SNAPSHOT)
     publish.add_argument("--referee", type=Path, required=True)
     publish.add_argument("--check", action="store_true")
+    publish.add_argument(
+        "--allow-historical-sources",
+        action="store_true",
+        help=(
+            "accept recorded historical source provenance while still enforcing the current "
+            "roster and schedule and replaying every transcript"
+        ),
+    )
     return parser
 
 
@@ -1805,6 +1823,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     arguments.repository,
                     referee=arguments.referee,
                     roster_path=arguments.roster,
+                    require_current_sources=not arguments.allow_historical_sources,
                 )
             print(
                 f"validated {len(entrants)} entrants and {len(schedule)} deterministic games",
@@ -1833,6 +1852,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 roster_path=arguments.roster,
                 referee=arguments.referee,
                 check=arguments.check,
+                require_current_sources=not arguments.allow_historical_sources,
             )
     except (ContractError, InfrastructureError, OSError, subprocess.SubprocessError) as error:
         print(f"leaderboard error: {error}", file=sys.stderr)
