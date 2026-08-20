@@ -378,3 +378,24 @@ test("the overview provides semantic, accessible, responsive result structures",
   );
   assert.match(benchmarkCss, /:focus-visible/i);
 });
+
+test("study details use one full-width, exclusive accordion", () => {
+  const disclosures = Array.from(
+    benchmarkHtml.matchAll(/<details\b([^>]*)>/g),
+    (match) => match[1],
+  );
+  const studyDisclosures = disclosures.filter((attributes) =>
+    /\bname="benchmark-study-details"/.test(attributes));
+  assert.equal(studyDisclosures.length, 2);
+  assert.ok(studyDisclosures.every((attributes) => !/\bopen\b/.test(attributes)));
+  assert.equal(disclosures.filter((attributes) => /\bname=/.test(attributes)).length, 2);
+  assert.match(
+    benchmarkCss,
+    /\.disclosure-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+  assert.match(
+    benchmarkCss,
+    /\.method-list\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s,
+  );
+  assert.match(benchmarkCss, /\.disclosure summary::after/);
+});

@@ -375,6 +375,26 @@ test("leaderboard tables are semantic and horizontally keyboard-scrollable", () 
   assert.match(leaderboardCss, /@media \(max-width:\s*680px\)/);
 });
 
+test("audit details use one full-width, exclusive accordion", () => {
+  const disclosures = Array.from(
+    leaderboardHtml.matchAll(/<details\b([^>]*)>/g),
+    (match) => match[1],
+  );
+  assert.equal(disclosures.length, 3);
+  assert.ok(disclosures.every((attributes) =>
+    /\bname="leaderboard-audit"/.test(attributes)));
+  assert.equal(disclosures.filter((attributes) => /\bopen\b/.test(attributes)).length, 0);
+  assert.match(
+    leaderboardCss,
+    /\.detail-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+  assert.match(
+    leaderboardCss,
+    /\.alias-list\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,/s,
+  );
+  assert.match(leaderboardCss, /\.disclosure summary::after/);
+});
+
 test("renderer accepts the published contract and rejects inconsistent snapshots", () => {
   assert.equal(renderer.EXPECTED_SCHEMA, fixture.schema);
   assert.equal(renderer.validateResults(fixture), fixture);
