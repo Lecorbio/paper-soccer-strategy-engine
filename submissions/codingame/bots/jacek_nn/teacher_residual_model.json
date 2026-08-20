@@ -7,7 +7,7 @@
   "hard_cap": 6000,
   "trainer_sha256": "aecf0dcbbd8535675a82a373c9e7684126ed9016d6827fd5626bd34feaf1a064",
   "corpus_sha256": "fb1600d5a667f77a35f23121e2f036faac88877828080eb87b101fa89bde2da4",
-  "arena_loss_holdout_sha256": "61c21fde5ee6125d6933dff750ae08a68f451088d05ef62aabeb8014a6ddfa78",
+  "arena_loss_holdout_sha256": "8cb616c09c0c72d49fffc5af1bf45014c267a75b0a7fb1d512b924e91cd43a49",
   "games": {
     "train": 7960,
     "validation": 978,

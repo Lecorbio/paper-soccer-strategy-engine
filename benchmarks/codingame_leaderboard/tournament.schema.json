@@ -41,8 +41,8 @@
         },
         "executables": {
           "type": "object",
-          "minProperties": 20,
-          "maxProperties": 20,
+          "minProperties": 22,
+          "maxProperties": 22,
           "additionalProperties": {"$ref": "#/$defs/sha256"}
         },
         "environment": {
@@ -59,20 +59,20 @@
     },
     "games": {
       "type": "array",
-      "minItems": 900,
-      "maxItems": 900,
+      "minItems": 990,
+      "maxItems": 990,
       "items": {"$ref": "#/$defs/game"}
     },
     "standings": {
       "type": "array",
-      "minItems": 20,
-      "maxItems": 20,
+      "minItems": 22,
+      "maxItems": 22,
       "items": {"$ref": "summary.schema.json#/$defs/standing"}
     },
     "headToHead": {
       "type": "array",
-      "minItems": 380,
-      "maxItems": 380,
+      "minItems": 462,
+      "maxItems": 462,
       "items": {"$ref": "summary.schema.json#/$defs/headToHead"}
     }
   },
@@ -89,7 +89,7 @@
         "id": {"type": "string", "pattern": "^game-[0-9]{4}$"},
         "blockId": {"type": "string", "pattern": "^block-[0-9]{3}$"},
         "stage": {"enum": ["color-swapped-round-robin", "seeded-perfect-matching"]},
-        "stageIndex": {"type": "integer", "minimum": 1, "maximum": 7},
+        "stageIndex": {"type": "integer", "minimum": 1, "maximum": 3},
         "leg": {"type": "integer", "minimum": 1, "maximum": 2},
         "playerOneId": {"type": "string", "pattern": "^[a-z0-9_]+$"},
         "playerTwoId": {"type": "string", "pattern": "^[a-z0-9_]+$"},

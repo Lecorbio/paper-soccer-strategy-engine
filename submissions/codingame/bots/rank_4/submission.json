@@ -13,6 +13,8 @@
     "teacher_residual_model.hpp"
   ],
   "generators": [
+    "generate_arena_loss_header.mjs",
+    "generate_observed_arena_loss_header.mjs",
     "generate_replay_book.mjs",
     "generate_replay_value_header.mjs",
     "generate_teacher_residual_header.mjs"

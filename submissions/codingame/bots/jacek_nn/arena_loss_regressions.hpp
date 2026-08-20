@@ -3,7 +3,7 @@
 #include <array>
 #include <string_view>
 
-namespace papersoccer::selfplay_nn_v2_regressions {
+namespace papersoccer::rank_4_regressions {
 struct Case { std::string_view label; int player_id; std::string_view prefix; };
 inline constexpr std::array<Case, 13> kCases{{
   {"v39 opponent-opening-1 loss family", 1, "1"},
@@ -20,4 +20,4 @@ inline constexpr std::array<Case, 13> kCases{{
   {"Deltaspace player-1 003 branch", 1, "1/1/7/6/0/75/74/3/003"},
   {"jacek 5330 branch", 1, "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330"},
 }};
-}  // namespace papersoccer::selfplay_nn_v2_regressions
+}  // namespace papersoccer::rank_4_regressions

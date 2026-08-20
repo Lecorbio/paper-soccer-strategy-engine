@@ -505,22 +505,31 @@ test("checked-in classic scripts render the full direct-file leaderboard without
 
   const results = context.PAPERSOCCER_CODINGAME_LEADERBOARD_RESULTS;
   assert.equal(results.schema, "papersoccer.codingame-leaderboard-summary.v1");
-  assert.equal(results.standings.length, 20);
+  assert.equal(results.standings.length, 22);
   assert.equal(context.PaperSoccerCodingameLeaderboard.EXPECTED_SCHEMA, results.schema);
-  assert.equal(elements.standingsTable.tBodies[0].children.length, 20);
-  assert.equal(elements.standingsTable.tHead.children[0].children.length, 8);
-  assert.doesNotMatch(elements.standingsTable.tHead.textContent, /forfeits/i);
+  assert.equal(elements.standingsTable.tBodies[0].children.length, 22);
+  const hasForfeits = results.standings.some((entry) => entry.forfeits > 0);
+  const standingsColumns = hasForfeits ? 9 : 8;
+  assert.equal(
+    elements.standingsTable.tHead.children[0].children.length,
+    standingsColumns,
+  );
+  if (hasForfeits) {
+    assert.match(elements.standingsTable.tHead.textContent, /forfeits/i);
+  } else {
+    assert.doesNotMatch(elements.standingsTable.tHead.textContent, /forfeits/i);
+  }
   assert.ok(elements.standingsTable.tBodies[0].children.every(
-    (row) => row.children.length === 8,
+    (row) => row.children.length === standingsColumns,
   ));
 
   const matrixRows = elements.headToHeadTable.tBodies[0].children;
-  assert.equal(matrixRows.length, 20);
-  assert.ok(matrixRows.every((row) => row.children.length === 21));
-  assert.equal(elements.headToHeadTable.tHead.children[0].children.length, 21);
+  assert.equal(matrixRows.length, 22);
+  assert.ok(matrixRows.every((row) => row.children.length === 23));
+  assert.equal(elements.headToHeadTable.tHead.children[0].children.length, 23);
 
-  assert.equal(elements.aliasContent.children[0].children.length, 20);
-  assert.match(elements.aliasContent.textContent, /Alias: selfplay_nn_v2/);
+  assert.equal(elements.aliasContent.children[0].children.length, 22);
+  assert.doesNotMatch(elements.aliasContent.textContent, /Alias:/);
   assert.match(elements.aliasContent.textContent, /Submission [0-9a-f]{12}…/);
   assert.match(elements.provenanceContent.textContent, /Runtime|Tournament/);
   assert.match(elements.provenanceContent.textContent, new RegExp(results.tournament.id));

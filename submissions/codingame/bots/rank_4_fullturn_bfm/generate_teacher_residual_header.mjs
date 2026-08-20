@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const provenanceDirectory = path.resolve(directory, "../selfplay_nn_v2");
+const provenanceDirectory = path.resolve(directory, "../rank_4");
 const inputPath = path.join(directory, "teacher_residual_model.json");
 const outputPath = path.join(directory, "teacher_residual_model.hpp");
 const checkOnly = process.argv[2] === "--check";

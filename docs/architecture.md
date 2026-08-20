@@ -130,18 +130,15 @@ decision timings, outcomes, failure classifications, artifact identities, and
 runtime provenance are retained in the raw match records.
 
 Only entries in `benchmarks/codingame_leaderboard/roster.json` are runnable.
-The frozen manifest stores each entrant's generated-source SHA-256 and
-documentation link and collapses byte-identical artifacts into a canonical
-entrant. The current registry has 23 submission targets: the unqualified
-`rank_4_jacek_hybrid` and `jacek_arena_bfm` artifacts are explicit
-non-entrants, while `selfplay_nn_v2` is an alias of `rank_4`, leaving the
-original 20 competitors. The runner invokes resolved executables directly with
+The manifest covers all 22 CMake-registered submission directories and stores
+each entrant's generated-source SHA-256 and documentation link. Every directory
+maps to its own entrant. The runner invokes resolved executables directly with
 a clean environment and temporary working directory, bounds captured output,
 and cleans up the entire child process group. There is no browser upload,
 arbitrary command, or server-side execution interface.
 
-The frozen publication consists of 900 serial games: two complete
-color-swapped round robins followed by seven seeded color-swapped
+The frozen publication consists of 990 serial games: two complete
+color-swapped round robins followed by three seeded color-swapped
 perfect-matching rounds. SplitMix64 seed `20260813` fixes the recorded rating
 order. Every entrant plays 90 games, exactly 45 as each player, and four or six
 games against each opponent. Decisive results, including forfeits, update a

@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   tournament:
-    name: Serial 900-game tournament
+    name: Serial 990-game tournament
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:

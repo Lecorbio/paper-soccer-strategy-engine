@@ -1,8 +1,8 @@
 # Jacek-anchored search residual bot
 
 `jacek_nn` is a separate challenger that preserves the verified `rank_5`
-engine as its anchor. The incumbent `rank_5`, `selfplay_nn`, and
-`selfplay_nn_v2` directories are unchanged.
+engine as its anchor. The gameplay submissions for `rank_5`, `selfplay_nn`,
+and `rank_4` remain byte-identical.
 
 The anchor includes rank_5's complete-turn alpha-beta search, terminal proofs,
 transposition and evaluation caches, 24-path/511-decision replay book, hand
@@ -33,7 +33,7 @@ The final paste-ready source is 98,623 characters, below CodinGame's 100,000
 character limit. Its SHA-256 is
 `fb570f7d60157ad1681569011b4249a5db415c1aeca6f665936b26ba5cc52102`.
 The retained model JSON has SHA-256
-`ed6274f195905536c12086c4317af2ec93320004cdcbc30c80807674e2d5bbb6`.
+`6497e936f53876d440f72ff914381fb467fafaffe1ae8c1c10b6168f41293a91`.
 
 ## Training artifact
 

@@ -44,7 +44,7 @@ The model parses 338 distinct held-out live positions and rejected 110 exact
 training matches. Its corpus SHA-256 is
 `fb1600d5a667f77a35f23121e2f036faac88877828080eb87b101fa89bde2da4`.
 The retained model JSON SHA-256 is
-`ed6274f195905536c12086c4317af2ec93320004cdcbc30c80807674e2d5bbb6`.
+`6497e936f53876d440f72ff914381fb467fafaffe1ae8c1c10b6168f41293a91`.
 
 After v47, all 404 then-current regression entries matched rank_5 exactly at
 zero residual strength in action, root score, completed/attempted depth, nodes,

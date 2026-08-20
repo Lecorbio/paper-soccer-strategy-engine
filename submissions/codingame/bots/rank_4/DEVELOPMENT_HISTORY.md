@@ -1,4 +1,4 @@
-# Self-play neural v2 experiment record
+# Rank-4 pre-promotion development record
 
 ## Immutable controls
 
@@ -190,10 +190,9 @@ times while `0/6/5` lost once, confirming an unstable general horizon family
 rather than a safe exact-history repair. Only one full loss transcript was
 shared by the two exact-source batches.
 
-This confirmation does not meet the reproducible incumbent-beating score
-gate. Rank_5 therefore remains the verified champion. V2 is preserved as the
-strongest useful experiment, not promoted as a replacement: one batch cleared
-the incumbent and the elite-opponent profile replicated, but the exact-source
-score improvement did not. The next evidence-backed step is a general
-phase-aware clock/search correction for the unstable early horizon, followed
-by a fresh teacher cycle with all 203 regression-state keys held out.
+At this campaign boundary the confirmation did not meet the reproducible
+incumbent-beating score gate, so Rank 5 remained the verified champion. The
+same source was later promoted under the canonical `rank_4` identity after its
+version-56 arena result. The next evidence-backed improvement step remains a
+general phase-aware clock/search correction for the unstable early horizon,
+followed by a fresh teacher cycle with all 203 regression-state keys held out.

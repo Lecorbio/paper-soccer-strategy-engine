@@ -94,7 +94,41 @@ PROTECTED_TREE_EQUIVALENTS = (
             "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
         },
     ),
+    (
+        {
+            "path": "submissions/codingame/bots/jacek_nn",
+            "file_count": 35,
+            "total_bytes": 1_313_720,
+            "tree_sha256": (
+                "ad6667bc8f0f9907d38c5c5c0859749ea59e0a7bec027f0415d91d7d0f4fd94a"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "submissions/codingame/bots/jacek_nn",
+            "file_count": 35,
+            "total_bytes": 1_313_675,
+            "tree_sha256": (
+                "417a5ee6460e1f0adfb746424b4a3110fb67f6e8c7f92abfc942e5ec4f2ca716"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
 )
+
+# The production Rank-4 directory later absorbed the byte-identical predecessor
+# submission's unique corpus, trainer, and arena evidence.  Preserve the frozen
+# T0 manifest unchanged, but accept exactly this audited consolidation successor
+# in place of both historical bot trees.  The production submission itself is
+# still checked independently against CONTROL_SHA256 above.
+CONSOLIDATED_RANK4_TREE = {
+    "path": "submissions/codingame/bots/rank_4",
+    "file_count": 31,
+    "total_bytes": 7_098_403,
+    "tree_sha256": "90c24d377a24c045c0710240703a989f36f5a332aacc252acccfce2cf75be76e",
+    "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+}
+CONSOLIDATED_PREDECESSOR_PATH = "submissions/codingame/bots/selfplay_nn_v2"
 
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -712,9 +746,16 @@ def verify_manifest() -> tuple[pathlib.Path, str]:
     control = payload["control"]["source"]
     if file_identity(ROOT / control["path"]) != control:
         raise FreezeError("Rank-4 control source changed")
-    if tree_identity(ROOT / "submissions/codingame/bots/rank_4") != payload["control"]["tree"]:
+    current_control_tree = tree_identity(ROOT / "submissions/codingame/bots/rank_4")
+    if current_control_tree not in (payload["control"]["tree"], CONSOLIDATED_RANK4_TREE):
         raise FreezeError("Rank-4 control tree changed")
     for expected in payload["protected_boundary"]["roots"]:
+        if (
+            expected["path"] == CONSOLIDATED_PREDECESSOR_PATH
+            and current_control_tree == CONSOLIDATED_RANK4_TREE
+            and not (ROOT / CONSOLIDATED_PREDECESSOR_PATH).exists()
+        ):
+            continue
         current = tree_identity(ROOT / expected["path"])
         if not protected_tree_identity_matches(current, expected):
             raise FreezeError(f"protected tree changed: {expected['path']}")

@@ -35,8 +35,8 @@ using namespace ::papersoccer::rank5_engine::replay_value_model;
 namespace ps = papersoccer;
 namespace rank5 = papersoccer::rank5_engine;
 namespace candidate = papersoccer::candidate_engine;
-namespace regressions = papersoccer::selfplay_nn_v2_regressions;
-namespace observed = papersoccer::observed_selfplay_nn_v2_regressions;
+namespace regressions = papersoccer::rank_4_regressions;
+namespace observed = papersoccer::observed_rank_4_regressions;
 namespace chronological = papersoccer::jacek_nn_chronological_regressions;
 
 namespace {

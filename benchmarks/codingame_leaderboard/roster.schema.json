@@ -18,8 +18,8 @@
     },
     "entrants": {
       "type": "array",
-      "minItems": 20,
-      "maxItems": 20,
+      "minItems": 22,
+      "maxItems": 22,
       "items": {"$ref": "#/$defs/entrant"}
     }
   },

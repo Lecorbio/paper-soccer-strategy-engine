@@ -23,9 +23,9 @@ submission that finished **4th of 208** and, separately, a preregistered
 - **[Possession-aware Game Review](docs/demo-and-replays.md#review-a-finished-game):**
   complete-turn recommendations, exact late-game proofs, grading, replay
   export, and reversible “Try this line” analysis.
-- **[20-bot local leaderboard](benchmarks/codingame_leaderboard/README.md):**
-  900 protocol-faithful games across the frozen roster; the two newer,
-  unqualified campaign artifacts are intentionally excluded.
+- **[22-bot local leaderboard](benchmarks/codingame_leaderboard/README.md):**
+  990 protocol-faithful games across all checked-in generated CodinGame
+  submissions, including `rank_4_jacek_hybrid` and `jacek_arena_bfm`.
 
 ![A late-game Paper Soccer match against Expert DeepTurnSearchBot at move 33 with live search diagnostics](docs/assets/expert-game.png)
 

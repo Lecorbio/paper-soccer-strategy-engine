@@ -151,13 +151,11 @@ and the directory contract are documented in the
 
 The leaderboard is an offline, reviewed benchmark rather than a browser arena.
 Its explicit roster is
-`benchmarks/codingame_leaderboard/roster.json`. The frozen manifest binds each
-entrant's generated submission by SHA-256 and treats `selfplay_nn_v2` as an
-alias of byte-identical `rank_4`. The current CMake registry has 23 targets;
-the unqualified `rank_4_jacek_hybrid` and `jacek_arena_bfm` campaign artifacts
-are explicit non-entrants, leaving the frozen tournament at 20 canonical
-entrants. The website accepts no uploads and cannot run a bot; it only renders
-the checked-in summary.
+`benchmarks/codingame_leaderboard/roster.json`. The manifest covers all 22
+CMake-registered bot directories, binds each generated submission by SHA-256,
+and maps every directory to its own executable entrant, including
+`rank_4_jacek_hybrid` and `jacek_arena_bfm`. The website accepts no uploads and
+cannot run a bot; it only renders the checked-in summary.
 
 First configure a Release build and compile the native referee and submission
 executables:
@@ -173,7 +171,7 @@ Run the fast contract validation independently of a full tournament:
 python3 benchmarks/codingame_leaderboard/leaderboard.py validate
 ```
 
-An intentional full refresh runs all 900 games serially. It starts fresh
+An intentional full refresh runs all 990 games serially. It starts fresh
 persistent bot processes for each match, uses the standard player-ID and
 complete-turn protocol, and enforces 1,000 ms for each bot's first response and
 200 ms thereafter:
@@ -194,7 +192,7 @@ illegal actions, incomplete rebounds, and output after a terminal edge remain
 visible in the artifact as ordinary scored forfeits.
 
 The schedule is fixed by SplitMix64 seed `20260813`: two complete
-color-swapped round robins plus seven seeded color-swapped perfect-matching
+color-swapped round robins plus three seeded color-swapped perfect-matching
 rounds. Each entrant plays 90 games, 45 as each player, and four or six games
 against every opponent. Rating follows decisive 1v1 TrueSkill with `mu=25`,
 `sigma=25/3`, `beta=25/6`, `tau=25/300`, and zero draw probability. The
@@ -231,17 +229,18 @@ python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
   --allow-historical-sources --check
 ```
 
-The checked-in tournament predates two explicit non-entrant campaign bots and
-retains its original source provenance. `--allow-historical-sources` is
-therefore required only when replaying and publishing that frozen artifact; it
-still enforces the current roster/non-entrant contract, replays every
-transcript, recomputes standings, and checks exact snapshot bytes. Omit the flag
-for a newly generated tournament from current sources.
+The checked-in 22-bot tournament retains the exact source provenance of its
+completed run. Later non-gameplay documentation and compatibility maintenance
+changed the surrounding source tree, so `--allow-historical-sources` is
+required when replaying and publishing this artifact. The flag still enforces
+the current roster and schedule, replays every transcript, recomputes standings,
+and checks exact snapshot bytes. Omit it for a newly generated tournament from
+current sources.
 
 The manual tournament workflow uploads both generated artifacts for maintainer
 review. They become site evidence only through a normal pull request. Regular
 pull-request CI runs contract, unit, smoke, and snapshot-freshness checks; it
-does not spend 900 wall-clock-limited games on every change. Changes to the
+does not spend 990 wall-clock-limited games on every change. Changes to the
 roster, generated submissions, referee, rules, schedule, or rating contract
 therefore make the checked-in publication stale instead of silently rerating
 old games.
@@ -510,7 +509,7 @@ Create subdirectories as needed before redirecting output. Examples throughout
 Research scripts use the same convention, including paths such as:
 
 - `results/codingame/selfplay_nn/neural_model.json`;
-- `results/codingame/selfplay_nn_v2/arena_batch_<AGENT_ID>.json`; and
+- `results/codingame/rank_4/arena_batch_<AGENT_ID>.json`; and
 - `results/codingame/alpha_beta/goal_block_strategy/replay_value_model.json`.
 
 Raw `results/` output is ignored by default. The `.gitignore` allowlist makes

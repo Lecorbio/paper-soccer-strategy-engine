@@ -1,6 +1,6 @@
 # Local CodinGame-style leaderboard artifact
 
-This directory owns the frozen 20-entrant roster, deterministic 900-game
+This directory owns the frozen 22-entrant roster, deterministic 990-game
 schedule, TrueSkill contract, serial tournament runner, raw artifact validator,
 and compact website publisher. The browser never runs bots; it consumes only a
 reviewed `leaderboard-results.js` derived from a complete native tournament.
@@ -18,12 +18,9 @@ From the repository root:
 python3 benchmarks/codingame_leaderboard/leaderboard.py validate
 ```
 
-This checks that all 23 CMake-registered generated submissions are accounted
-for. The frozen tournament keeps its original 20 entrants: the unqualified
-`rank_4_jacek_hybrid` and `jacek_arena_bfm` campaign artifacts are explicit
-non-entrants, while `selfplay_nn_v2` remains a byte-identical alias of
-`rank_4`. Source hashes must be current, and the seeded schedule must retain
-all frozen balance properties.
+This checks that all 22 CMake-registered generated submissions are represented
+by the 22-entrant roster. Source hashes must be current, and the seeded schedule
+must retain all frozen balance properties.
 
 ## Run or resume
 
@@ -45,7 +42,7 @@ a minimal environment, a temporary working directory, bounded output, and a
 process-group watchdog; a nonzero referee exit aborts rather than scoring a bot.
 
 `--stop-after N` is available for smoke testing and intentionally leaves only a
-resumable checkpoint when fewer than all 900 games have run.
+resumable checkpoint when fewer than all 990 games have run.
 
 ## Validate and publish
 
@@ -66,7 +63,7 @@ python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
 ```
 
 Do not publish a partial or synthetic development snapshot. The checked-in raw
-artifact must contain all 900 matches and the compact output is a deterministic
+artifact must contain all 990 matches and the compact output is a deterministic
 function of it. Validation is strict by default for a newly generated
 tournament. CI adds `--allow-historical-sources` only when checking the frozen
 historical artifact after maintenance-only runner or CMake changes. That mode

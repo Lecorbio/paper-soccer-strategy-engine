@@ -37,13 +37,13 @@ const lines = [
   "#include <array>",
   "#include <string_view>",
   "",
-  "namespace papersoccer::observed_selfplay_nn_v2_regressions {",
+  "namespace papersoccer::observed_rank_4_regressions {",
   "struct Case { std::string_view label; int player_id; std::string_view prefix; };",
   `inline constexpr std::array<Case, ${cases.length}> kCases{{`,
   ...cases.map((item) =>
     `  {${JSON.stringify(item.label)}, ${item.player_id}, ${JSON.stringify(item.prefix)}},`),
   "}};",
-  "}  // namespace papersoccer::observed_selfplay_nn_v2_regressions",
+  "}  // namespace papersoccer::observed_rank_4_regressions",
   "",
 ];
 const output = lines.join("\n");

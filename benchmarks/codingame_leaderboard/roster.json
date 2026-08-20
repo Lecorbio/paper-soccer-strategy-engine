@@ -30,14 +30,16 @@
       "submissionSha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9",
       "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_4/README.md",
       "executableTarget": "papersoccer_codingame_rank_4_submission",
-      "aliases": [
-        {
-          "id": "selfplay_nn_v2",
-          "submissionPath": "submissions/codingame/bots/selfplay_nn_v2/submission.cpp",
-          "submissionSha256": "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9",
-          "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/selfplay_nn_v2/README.md"
-        }
-      ]
+      "aliases": []
+    },
+    {
+      "id": "rank_4_jacek_hybrid",
+      "displayName": "Rank 4 — Jacek Hybrid",
+      "submissionPath": "submissions/codingame/bots/rank_4_jacek_hybrid/submission.cpp",
+      "submissionSha256": "2293bc87d022e97301cdd0e86db35ea168100b9d1e800be4dc7583bbedfb52e7",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/rank_4_jacek_hybrid/README.md",
+      "executableTarget": "papersoccer_codingame_rank_4_jacek_hybrid_submission",
+      "aliases": []
     },
     {
       "id": "rank_4_fullturn_bfm",
@@ -91,6 +93,15 @@
       "submissionSha256": "d9d96f83197f13b7212e7b652851097053ee7f1662845e06dd722d1c0bc24f71",
       "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_native_bfm/README.md",
       "executableTarget": "papersoccer_codingame_jacek_native_bfm_submission",
+      "aliases": []
+    },
+    {
+      "id": "jacek_arena_bfm",
+      "displayName": "Jacek Arena BFM",
+      "submissionPath": "submissions/codingame/bots/jacek_arena_bfm/submission.cpp",
+      "submissionSha256": "9373f392ffc426c8e6d61843277d7612fe3536cc0abd59baf88f68972ab2b019",
+      "documentationUrl": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/main/submissions/codingame/bots/jacek_arena_bfm/README.md",
+      "executableTarget": "papersoccer_codingame_jacek_arena_bfm_submission",
       "aliases": []
     },
     {

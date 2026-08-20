@@ -114,7 +114,7 @@ class RosterTests(unittest.TestCase):
     def test_checked_in_roster_accounts_for_every_registered_artifact(self) -> None:
         roster = subject.load_roster()
         entrants = subject.validate_roster(roster, REPOSITORY)
-        self.assertEqual(len(entrants), 20)
+        self.assertEqual(len(entrants), 22)
         rostered = {
             bot_id
             for entrant in entrants
@@ -124,16 +124,8 @@ class RosterTests(unittest.TestCase):
             )
         }
         registered = set(subject._registered_bots(REPOSITORY, roster))
-        self.assertEqual(
-            registered - rostered,
-            subject.NON_ENTRANT_REGISTERED_BOTS,
-        )
-        rank4 = next(item for item in entrants if item["id"] == "rank_4")
-        self.assertEqual([alias["id"] for alias in rank4["aliases"]], ["selfplay_nn_v2"])
-        self.assertEqual(
-            subject.sha256_file(REPOSITORY / rank4["submissionPath"]),
-            subject.sha256_file(REPOSITORY / rank4["aliases"][0]["submissionPath"]),
-        )
+        self.assertEqual(registered, rostered)
+        self.assertTrue(all(not entrant["aliases"] for entrant in entrants))
 
     def test_stale_submission_hash_is_rejected(self) -> None:
         roster = subject.load_roster()
@@ -141,13 +133,15 @@ class RosterTests(unittest.TestCase):
         with self.assertRaisesRegex(subject.ContractError, "hash is stale"):
             subject.validate_roster(roster, REPOSITORY)
 
-    def test_unreviewed_non_entrant_is_rejected(self) -> None:
+    def test_unreviewed_registered_bot_is_rejected(self) -> None:
         roster = subject.load_roster()
-        with mock.patch.object(
+        registered = subject._registered_bots(REPOSITORY, roster)
+        with mock.patch.multiple(
             subject,
-            "NON_ENTRANT_REGISTERED_BOTS",
-            frozenset({"rank_4_jacek_hybrid"}),
-        ), self.assertRaisesRegex(subject.ContractError, "do not exactly cover"):
+            EXPECTED_REGISTERED_BOTS=23,
+        ), mock.patch.object(
+            subject, "_registered_bots", return_value=[*registered, "unreviewed"]
+        ), self.assertRaisesRegex(subject.ContractError, "does not exactly cover"):
             subject.validate_roster(roster, REPOSITORY)
 
 
@@ -174,11 +168,11 @@ class ScheduleTests(unittest.TestCase):
     def test_frozen_schedule_hash_and_prefix(self) -> None:
         self.assertEqual(
             subject.schedule_sha256(self.schedule),
-            "85e498f1a7c2996b72ef05c9140ad71ff8a577e1056d1da3cbe65445370b6b54",
+            "54deb8402dc6c9a9de33707e0bfc723d6c0a1803848f393c298a6c4de4a139e5",
         )
         self.assertEqual(
             (self.schedule[0]["playerOneId"], self.schedule[0]["playerTwoId"]),
-            ("conservative_frontier_proof", "selfplay_nn"),
+            ("all_depth_proof", "shell_proof"),
         )
 
     def test_balance_contract(self) -> None:
@@ -192,7 +186,7 @@ class ScheduleTests(unittest.TestCase):
             pairs[tuple(sorted((game["playerOneId"], game["playerTwoId"])))] += 1
         self.assertEqual(set(games.values()), {90})
         self.assertEqual(set(player_one.values()), {45})
-        self.assertEqual(Counter(pairs.values()), {4: 120, 6: 70})
+        self.assertEqual(Counter(pairs.values()), {4: 198, 6: 33})
 
     def test_every_adjacent_block_is_color_swapped(self) -> None:
         for index in range(0, len(self.schedule), 2):
@@ -829,7 +823,7 @@ class TinyEndToEndTests(unittest.TestCase):
             roster_path.parent.mkdir(parents=True)
             build_dir.mkdir()
 
-            registered_ids = ["alpha", "beta", "gamma", "selfplay_nn_v2"]
+            registered_ids = ["alpha", "alpha_clone", "beta", "gamma"]
             (repository / "CMakeLists.txt").write_text(
                 "set(PAPERSOCCER_CODINGAME_BOTS\n  "
                 + "\n  ".join(registered_ids)
@@ -842,7 +836,7 @@ class TinyEndToEndTests(unittest.TestCase):
                 bot_root.mkdir(parents=True)
                 source = (
                     "// reviewed alpha fixture\n"
-                    if bot_id in {"alpha", "selfplay_nn_v2"}
+                    if bot_id in {"alpha", "alpha_clone"}
                     else f"// reviewed {bot_id} fixture\n"
                 )
                 submission = bot_root / "submission.cpp"
@@ -854,11 +848,11 @@ class TinyEndToEndTests(unittest.TestCase):
                 aliases = []
                 if bot_id == "alpha":
                     aliases.append({
-                        "id": "selfplay_nn_v2",
+                        "id": "alpha_clone",
                         "submissionPath": (
-                            "submissions/codingame/bots/selfplay_nn_v2/submission.cpp"
+                            "submissions/codingame/bots/alpha_clone/submission.cpp"
                         ),
-                        "submissionSha256": submission_hashes["selfplay_nn_v2"],
+                        "submissionSha256": submission_hashes["alpha_clone"],
                     })
                 entrants.append({
                     "id": bot_id,
@@ -1016,7 +1010,6 @@ class TinyEndToEndTests(unittest.TestCase):
                     EXPECTED_ENTRANTS=3,
                     EXPECTED_REGISTERED_BOTS=4,
                     EXPECTED_GAMES=6,
-                    NON_ENTRANT_REGISTERED_BOTS=frozenset(),
                 ),
                 mock.patch.object(subject, "build_schedule", return_value=schedule),
                 mock.patch.object(

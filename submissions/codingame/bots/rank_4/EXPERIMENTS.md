@@ -2,12 +2,13 @@
 
 ## Production promotion
 
-The canonical source is the retained `selfplay_nn_v2` 800/165 ms artifact:
+The canonical source is the retained 800/165 ms teacher-residual artifact:
 98,624 characters, SHA-256
 `5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9`.
 The original model training, version 42-44 live batches, and chronological loss
-regressions remain under `../selfplay_nn_v2`; moving them would invalidate
-frozen path-and-hash evidence manifests.
+regressions are consolidated in this directory. Their detailed pre-promotion
+record is in `DEVELOPMENT_HISTORY.md`; immutable campaign snapshots retain the
+historical path strings they originally recorded.
 
 Authenticated CodinGame inspection on 2026-08-09 identified history version
 56 as the same implementation by its 800/165 ms clock, 100% residual weight,

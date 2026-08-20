@@ -4,7 +4,7 @@ CodinGame support is split into reusable tooling and self-contained bots:
 
 ```text
 submissions/codingame/
-├── bots/                 23 registered source artifacts and their evidence
+├── bots/                 22 registered source artifacts and their evidence
 ├── promotion/            historical rank-5-baseline promotion evidence
 └── tools/                shared generation, protocol, and replay utilities
 ```
@@ -44,11 +44,10 @@ are in [tools/README.md](tools/README.md).
 
 [`rank_4`](bots/rank_4/README.md) is the current production snapshot: CodinGame
 history version 56, agent `6604719`, submission `41114327`, rank 4 of 208 with
-score `44.29750553418035` and a 66-24 record. Its generated source is
-byte-identical to the retained [`selfplay_nn_v2`](bots/selfplay_nn_v2/README.md)
-artifact; that older directory remains the canonical location for its training
-and version 42-44 evidence. The later hybrid and fresh-arena campaigns did not
-supersede this incumbent.
+score `44.29750553418035` and a 66-24 record. Its generated gameplay submission
+remains byte-identical while its training corpus, teacher model, and version
+42-44 arena evidence are consolidated in the same directory. The later hybrid
+and fresh-arena campaigns did not supersede this incumbent.
 
 [`rank_5`](bots/rank_5/README.md) is the immutable verified predecessor and the
 source behind the separately named browser `Rank5DerivedBot`. Its historical
@@ -59,16 +58,14 @@ platform rank. Local tournament standings are likewise reported only as
 
 ## Registered artifact index
 
-The CMake registry contains 23 submission directories. The frozen leaderboard
-retains its original 20 entrants: `rank_4_jacek_hybrid` and `jacek_arena_bfm`
-are explicit non-entrants because neither passed its promotion gate, while
-byte-identical `selfplay_nn_v2` remains an alias of the canonical `rank_4`
-entrant. CMake still builds and tests all 23 registered executable targets.
+The CMake registry and local leaderboard contain the same 22 submission
+directories, with every directory represented by one entrant. Leaderboard
+inclusion records protocol-faithful local tournament performance and is
+independent of live-upload or promotion status.
 
 - **Current production:** [`rank_4`](bots/rank_4/README.md).
 - **Verified lineage and prior baseline:**
-  [`rank_5`](bots/rank_5/README.md),
-  [`selfplay_nn_v2`](bots/selfplay_nn_v2/README.md), and
+  [`rank_5`](bots/rank_5/README.md) and
   [`alpha_beta`](bots/alpha_beta/README.md).
 - **Rank-4 search experiments:**
   [`rank_4_jacek_hybrid`](bots/rank_4_jacek_hybrid/README.md),
@@ -93,7 +90,6 @@ entrant. CMake still builds and tests all 23 registered executable targets.
   [`frontier_proof`](bots/frontier_proof/README.md), and
   [`conservative_frontier_proof`](bots/conservative_frontier_proof/README.md).
 
-The frozen entrants, alias, and their artifact hashes are in
-[`benchmarks/codingame_leaderboard/roster.json`](../../benchmarks/codingame_leaderboard/roster.json).
-The validator's explicit `NON_ENTRANT_REGISTERED_BOTS` set accounts for the two
-newer campaign directories without rewriting the completed tournament.
+All 22 entrants and their artifact hashes are in
+[`benchmarks/codingame_leaderboard/roster.json`](../../benchmarks/codingame_leaderboard/roster.json);
+each registered submission directory is represented exactly once.

@@ -9,7 +9,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 TOOLS = ROOT.parents[1] / "tools"
-RESULTS_ROOT = ROOT.parents[3] / "results" / "codingame" / "selfplay_nn_v2"
+RESULTS_ROOT = ROOT.parents[3] / "results" / "codingame" / "rank_4"
 sys.path.insert(0, str(TOOLS))
 
 from analyze_arena import fetch_games, record  # noqa: E402

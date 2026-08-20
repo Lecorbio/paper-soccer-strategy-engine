@@ -33,20 +33,18 @@ MATCH_SCHEMA = "papersoccer.codingame-match.v1"
 TOURNAMENT_SCHEMA = "papersoccer.codingame-leaderboard-tournament.v1"
 CHECKPOINT_SCHEMA = "papersoccer.codingame-leaderboard-checkpoint.v1"
 SUMMARY_SCHEMA = "papersoccer.codingame-leaderboard-summary.v1"
-SCHEDULE_ALGORITHM = "splitmix64-color-pair-blocks-v1"
+SCHEDULE_ALGORITHM = "splitmix64-color-pair-blocks-v2"
 RATING_ALGORITHM = "trueskill-decisive-1v1-v1"
 SCHEDULE_SEED = 20260813
 FIRST_TIMEOUT_MS = 1000
 LATER_TIMEOUT_MS = 200
-EXPECTED_ENTRANTS = 20
-EXPECTED_REGISTERED_BOTS = 23
-EXPECTED_GAMES = 900
-NON_ENTRANT_REGISTERED_BOTS = frozenset(
-    {
-        "jacek_arena_bfm",
-        "rank_4_jacek_hybrid",
-    }
-)
+EXPECTED_ENTRANTS = 22
+EXPECTED_REGISTERED_BOTS = 22
+EXPECTED_GAMES = 990
+GAMES_PER_ENTRANT = 90
+PLAYER_ONE_GAMES_PER_ENTRANT = 45
+SEEDED_MATCHING_ROUNDS = 3
+EXPECTED_SIX_GAME_PAIRS = 33
 BOT_FORFEIT_CLASSIFICATIONS = frozenset(
     {
         "timeout",
@@ -255,7 +253,10 @@ def validate_roster(
     _require(roster.get("schema") == ROSTER_SCHEMA, "unsupported roster schema")
     entrants = roster.get("entrants")
     _require(isinstance(entrants, list), "roster.entrants must be an array")
-    _require(len(entrants) == EXPECTED_ENTRANTS, "roster must have exactly 20 entrants")
+    _require(
+        len(entrants) == EXPECTED_ENTRANTS,
+        f"roster must have exactly {EXPECTED_ENTRANTS} entrants",
+    )
 
     canonical_ids: set[str] = set()
     covered_directories: set[str] = set()
@@ -345,12 +346,8 @@ def validate_roster(
     )
     _require(len(set(registered)) == len(registered), "CMake bot registry contains duplicates")
     _require(
-        NON_ENTRANT_REGISTERED_BOTS.isdisjoint(covered_directories),
-        "non-entrant CMake bots must not appear in the frozen tournament roster",
-    )
-    _require(
-        set(registered) == covered_directories | NON_ENTRANT_REGISTERED_BOTS,
-        "frozen roster and explicit non-entrants do not exactly cover the CMake bot registry",
+        set(registered) == covered_directories,
+        "leaderboard roster does not exactly cover the CMake bot registry",
     )
     bot_root = repository / "submissions/codingame/bots"
     artifact_directories = {
@@ -359,10 +356,6 @@ def validate_roster(
     _require(
         artifact_directories == set(registered),
         "CMake bot registry does not exactly cover directories containing submission.cpp",
-    )
-    _require(
-        covered_directories - canonical_ids == {"selfplay_nn_v2"},
-        "selfplay_nn_v2 must be the roster's only alias",
     )
     return normalized
 
@@ -398,7 +391,9 @@ def build_schedule(ids: Sequence[str], seed: int = SCHEDULE_SEED) -> list[dict[s
                 }
             )
     matchings = _round_robin_matchings(canonical_ids, rng)
-    for round_index, matching in enumerate(matchings[:7], start=1):
+    for round_index, matching in enumerate(
+        matchings[:SEEDED_MATCHING_ROUNDS], start=1
+    ):
         for first, second in matching:
             blocks.append(
                 {
@@ -459,10 +454,21 @@ def validate_schedule(
             f"{block_id}: games are not color-swapped",
         )
     if full_contract:
-        _require(set(games.values()) == {90}, "every entrant must play exactly 90 games")
-        _require(set(player_one_games.values()) == {45}, "every entrant must play player one 45 times")
+        _require(
+            set(games.values()) == {GAMES_PER_ENTRANT},
+            f"every entrant must play exactly {GAMES_PER_ENTRANT} games",
+        )
+        _require(
+            set(player_one_games.values()) == {PLAYER_ONE_GAMES_PER_ENTRANT},
+            "every entrant must play player one exactly "
+            f"{PLAYER_ONE_GAMES_PER_ENTRANT} times",
+        )
         _require(set(pair_counts.values()) <= {4, 6}, "every pair must play four or six games")
-        _require(sum(count == 6 for count in pair_counts.values()) == 70, "exactly 70 pairs must play six games")
+        _require(
+            sum(count == 6 for count in pair_counts.values())
+            == EXPECTED_SIX_GAME_PAIRS,
+            f"exactly {EXPECTED_SIX_GAME_PAIRS} pairs must play six games",
+        )
 
 
 def schedule_sha256(schedule: Sequence[Mapping[str, Any]]) -> str:
@@ -1348,9 +1354,9 @@ def _contract(
             "algorithm": SCHEDULE_ALGORITHM,
             "seed": SCHEDULE_SEED,
             "games": EXPECTED_GAMES,
-            "gamesPerEntrant": 90,
-            "playerOneGamesPerEntrant": 45,
-            "playerTwoGamesPerEntrant": 45,
+            "gamesPerEntrant": GAMES_PER_ENTRANT,
+            "playerOneGamesPerEntrant": PLAYER_ONE_GAMES_PER_ENTRANT,
+            "playerTwoGamesPerEntrant": PLAYER_ONE_GAMES_PER_ENTRANT,
             "sha256": schedule_sha256(schedule),
         },
         "rating": {
@@ -1648,7 +1654,10 @@ def validate_tournament(
     _require(artifact["id"] == expected_tournament_id, "tournament id differs from its provenance")
     games = artifact.get("games")
     _require(isinstance(games, list), "tournament games must be an array")
-    _require(len(games) == EXPECTED_GAMES, "publishable tournament must contain all 900 games")
+    _require(
+        len(games) == EXPECTED_GAMES,
+        f"publishable tournament must contain all {EXPECTED_GAMES} games",
+    )
     for index, (game, scheduled) in enumerate(zip(games, expected_schedule)):
         _require(isinstance(game, dict), f"game {index} must be an object")
         _require_exact_keys(

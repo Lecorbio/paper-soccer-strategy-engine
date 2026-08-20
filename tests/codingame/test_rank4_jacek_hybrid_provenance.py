@@ -70,6 +70,26 @@ class HybridCampaignProvenanceTest(unittest.TestCase):
             )
         )
 
+    def test_rank4_consolidation_successor_is_exact(self) -> None:
+        self.assertFalse(
+            (ROOT / self.freezer.CONSOLIDATED_PREDECESSOR_PATH).exists()
+        )
+        self.assertEqual(
+            self.freezer.tree_identity(
+                ROOT / "submissions/codingame/bots/rank_4"
+            ),
+            self.freezer.CONSOLIDATED_RANK4_TREE,
+        )
+
+    def test_jacek_documentation_successor_is_exact(self) -> None:
+        _, successor = self.freezer.PROTECTED_TREE_EQUIVALENTS[1]
+        self.assertEqual(
+            self.freezer.tree_identity(
+                ROOT / "submissions/codingame/bots/jacek_nn"
+            ),
+            successor,
+        )
+
     def test_time_control_and_derivative_lineage_are_exact(self) -> None:
         self.assertEqual(
             self.manifest["time_boundary"]["goal_created_at_epoch"],

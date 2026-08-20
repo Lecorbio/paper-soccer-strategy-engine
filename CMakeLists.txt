@@ -330,7 +330,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
 endif()
 
 set(PAPERSOCCER_CODINGAME_BOTS
-  alpha_beta rank_5 rank_4 rank_4_jacek_hybrid rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn selfplay_nn_v2 jacek_nn
+  alpha_beta rank_5 rank_4 rank_4_jacek_hybrid rank_4_fullturn_bfm rank_4_exchange challenger selfplay_nn jacek_nn
   jacek_native_bfm jacek_arena_bfm
   neural_puct topology
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
@@ -783,13 +783,13 @@ if(NOT EMSCRIPTEN)
     papersoccer_codingame_selfplay_nn_selfplay_generator
     PRIVATE papersoccer_core)
 
-  add_executable(papersoccer_codingame_selfplay_nn_v2_teacher_sample_generator
-    submissions/codingame/bots/selfplay_nn_v2/teacher_sample_generator.cpp)
+  add_executable(papersoccer_codingame_rank_4_teacher_sample_generator
+    submissions/codingame/bots/rank_4/teacher_sample_generator.cpp)
   target_include_directories(
-    papersoccer_codingame_selfplay_nn_v2_teacher_sample_generator
+    papersoccer_codingame_rank_4_teacher_sample_generator
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(
-    papersoccer_codingame_selfplay_nn_v2_teacher_sample_generator
+    papersoccer_codingame_rank_4_teacher_sample_generator
     PRIVATE papersoccer_core)
 
   add_executable(papersoccer_codingame_jacek_nn_teacher_sample_generator

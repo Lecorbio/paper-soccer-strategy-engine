@@ -19,6 +19,6 @@ results/rank_4_jacek_hybrid/ranker/successor_ranker_v2.hpp linguist-generated=tr
 # Generated experiment corpora and reports remain tracked for provenance.
 submissions/codingame/bots/*/arena_batch_*.json linguist-generated=true
 submissions/codingame/bots/selfplay_nn/selfplay_bootstrap.jsonl linguist-generated=true
-submissions/codingame/bots/selfplay_nn_v2/teacher_samples.jsonl linguist-generated=true
+submissions/codingame/bots/rank_4/teacher_samples.jsonl linguist-generated=true
 submissions/codingame/bots/alpha_beta/experiments/v2_replay_correction_gate/reports/*.json linguist-generated=true
 benchmarks/rank5_derived/*_result.json linguist-generated=true

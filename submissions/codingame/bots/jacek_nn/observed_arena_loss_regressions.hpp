@@ -3,7 +3,7 @@
 #include <array>
 #include <string_view>
 
-namespace papersoccer::observed_selfplay_nn_v2_regressions {
+namespace papersoccer::observed_rank_4_regressions {
 struct Case { std::string_view label; int player_id; std::string_view prefix; };
 inline constexpr std::array<Case, 192> kCases{{
   {"agent-6567975-game-896616558-turn-17", 1, "0/0/0/6/6/5/2/5/0527271/614347/013/433/1/3/17/54/657"},
@@ -199,4 +199,4 @@ inline constexpr std::array<Case, 192> kCases{{
   {"agent-6567993-game-896620832-turn-16", 0, "0/2/7/45/7/4/2213/5/5/5/2/4/31/0/1/35"},
   {"agent-6567993-game-896620832-turn-34", 0, "0/2/7/45/7/4/2213/5/5/5/2/4/31/0/1/35/64125072/57/70/5/4357/6/630307/2/12470/1465/5410367/46127/63016/4521/76321477/71/3/1"},
 }};
-}  // namespace papersoccer::observed_selfplay_nn_v2_regressions
+}  // namespace papersoccer::observed_rank_4_regressions
