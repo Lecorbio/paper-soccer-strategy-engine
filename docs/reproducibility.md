@@ -290,12 +290,21 @@ contract are documented in
 
 The README screenshot is a reproducible documentation capture rather than a
 benchmark artifact. Open the local `web/index.html` at a 1440×900 viewport,
-select **Watch replay**, keep the checked-in default replay, select **Review
-game**, wait for **Fast preview** to finish, and select possession 5. Capture
-that exact state as `docs/assets/game-review.png`.
+select **Expert — DeepTurnSearch**, choose **Move second**, and start the game.
+At each human turn, choose these displayed row/column destinations in order:
 
-The PNG replaces the retired `docs/assets/demo-rank5-derived.jpg`; do not keep
-both screenshots or recapture a different replay/profile under the same name.
+```text
+r6 c3, r6 c2, r5 c4, r5 c3, r4 c4,
+r4 c2, r5 c2, r6 c1, r5 c2, r5 c1
+```
+
+The fixed `deep-400k` opponent then finishes move 33 and returns control to the
+human. Scroll the control panel to its top so the selected Expert profile,
+active-game diagnostics, move number, status, and highlighted legal choices are
+visible. Capture that exact state as `docs/assets/expert-game.png`.
+
+The PNG replaces the retired replay screenshot; do not keep both images or
+recapture a different game/profile under the same name.
 
 ## Game Review gate
 

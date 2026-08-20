@@ -27,7 +27,7 @@ submission that finished **4th of 208** and, separately, a preregistered
   900 protocol-faithful games across the frozen roster; the two newer,
   unqualified campaign artifacts are intentionally excluded.
 
-![Paper Soccer Game Review showing played and recommended possession paths and their first divergence](docs/assets/game-review.png)
+![A late-game Paper Soccer match against Expert DeepTurnSearchBot at move 33 with live search diagnostics](docs/assets/expert-game.png)
 
 ## What the project contains
 
