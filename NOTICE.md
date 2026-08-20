@@ -43,12 +43,13 @@ The repository's MIT license does not relicense Apache-licensed upstream
 portions. No upstream network checkpoint or unpublished CodinGame source is
 included.
 
-## Emscripten-generated browser module
+## Emscripten-generated browser modules
 
-`web/papersoccer-wasm.js` is generated with Emscripten 6.0.2 and includes
-Emscripten runtime code and linked system-library code. Their upstream license
-notices remain applicable. Emscripten is offered under the MIT and
-University of Illinois/NCSA licenses; the MIT notice is reproduced here:
+`web/papersoccer-wasm.js` and `web/papersoccer-analysis-wasm.js` are generated
+with Emscripten 6.0.2 and include Emscripten runtime code and linked
+system-library code. Their upstream license notices remain applicable.
+Emscripten is offered under the MIT and University of Illinois/NCSA licenses;
+the MIT notice is reproduced here:
 
 Copyright (c) 2010-2014 Emscripten authors, see AUTHORS file.
 
@@ -73,9 +74,9 @@ SOFTWARE.
 The version-pinned upstream license bundle, including the Node.js notice, is
 available in the
 [Emscripten 6.0.2 license](https://github.com/emscripten-core/emscripten/blob/6.0.2/LICENSE).
-The single-file C++/WebAssembly output also links selected system-library
+The single-file C++/WebAssembly outputs also link selected system-library
 objects. The exact retained objects are linker-dependent; the conservative
-notice set for this build is:
+notice set for these builds is:
 
 - [musl libc copyright and license](https://github.com/emscripten-core/emscripten/blob/6.0.2/system/lib/libc/musl/COPYRIGHT);
 - [LLVM compiler-rt license](https://github.com/emscripten-core/emscripten/blob/6.0.2/system/lib/compiler-rt/LICENSE.TXT);

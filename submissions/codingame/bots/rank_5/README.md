@@ -1,7 +1,12 @@
-# Paper Soccer rank-5 candidate
+# Historical Paper Soccer rank-5 submission
 
-This folder is an isolated CodinGame candidate. The prior production reference
-is maintained separately in `../alpha_beta/`.
+**Status:** immutable verified predecessor and the contest source behind the
+separately named `Rank5DerivedBot` demo adapter. The current production snapshot
+is [`rank_4`](../rank_4/README.md); this directory is retained for provenance,
+reproduction, and historical comparisons.
+
+This folder originally replaced the production reference maintained in
+`../alpha_beta/`.
 
 `bot.cpp` is the maintained implementation and
 `submission.cpp` is the single paste-ready C++20 submission. The
@@ -9,7 +14,8 @@ generated file is 93,005 ASCII characters, below CodinGame's 100,000-character
 limit. Search uses 650 ms on the first execution and 130 ms afterward, leaving
 margin below the contest's 1,000 ms and 200 ms limits.
 
-The maintained source is byte-for-byte the strongest completed arena candidate:
+At its recorded promotion point, the maintained source was the strongest
+completed arena candidate:
 history version 26, agent `6561779`, submission `41015554`, rank 5 of 206 with
 score `42.42773147296124`. Its SHA-256 is
 `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`.

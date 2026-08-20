@@ -20,6 +20,24 @@ dependencies, and enforces the configured source-size limit.
 `protocol_smoke_test.mjs` starts a compiled submission as each player ID and
 checks its first protocol response. CTest invokes it for every registered bot.
 
+## Frozen promotion-contract validation
+
+The retained promotion manifest is a historical rank-5-baseline experiment and
+currently binds `all_depth_proof`. Name that artifact explicitly when validating
+from a clean checkout:
+
+```sh
+python3 submissions/codingame/tools/promotion_gate.py validate \
+  --bot all_depth_proof
+```
+
+The command checks the generated candidate and immutable rank-5 reference,
+manifest-bound sources, and the four committed opening banks. The default bot
+argument is not the source of truth for an older frozen manifest; use the
+manifest's named candidate as shown above. Full stage replay additionally needs
+the matching ignored raw result tree and sealed-final ledger described in
+[`../promotion/README.md`](../promotion/README.md).
+
 ## Arena replay analysis
 
 ```sh

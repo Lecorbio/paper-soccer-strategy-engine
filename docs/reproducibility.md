@@ -3,7 +3,7 @@
 The repository treats determinism, generated-artifact freshness, and evidence
 provenance as separate checks. The fast path builds and tests the maintained
 project. Additional commands verify the checked-in gameplay and analysis
-WebAssembly modules, trained model header, and immutable CodinGame submission
+WebAssembly modules, trained model header, and immutable CodinGame artifacts
 without rerunning long tournaments.
 
 ## Prerequisites
@@ -13,7 +13,9 @@ For the default native build and complete local test registration:
 - CMake 3.20 or newer;
 - a C++20 compiler (GCC or Clang);
 - Node.js 18 or newer for JavaScript, browser/Wasm, replay, arena-CLI, and
-  submission-freshness tests; and
+  submission-freshness tests;
+- Chrome or Chromium for the registered browser smoke tests, discoverable
+  automatically or supplied through `PAPERSOCCER_CHROME`; and
 - Python 3 for generated-model freshness tests.
 
 Training and research scripts additionally use Python 3.12–3.14 and the pinned
@@ -86,23 +88,41 @@ python tools/train_jacek_neural.py --help >/dev/null
 by research/training code; application and test runtime dependencies are not
 inflated to mirror a developer machine.
 
-## Generated CodinGame submission
+## Generated CodinGame submissions
 
-The accepted historical artifact is
-`submissions/codingame/bots/rank_5/submission.cpp`. It is generated from an
-ordered maintained-source manifest, the replay book, and the replay-trained
-value model. Do not edit the generated file, generated headers, replay book,
-model, or verified source while reorganizing documentation.
+The current production snapshot is
+`submissions/codingame/bots/rank_4/submission.cpp`. It combines complete-turn
+search, the retained replay book and replay-value anchor, and the generated
+teacher-residual model. Verify its generators without writing any artifact:
 
-Verify generator freshness without writing it:
+```bash
+node submissions/codingame/tools/generate_submission.mjs rank_4 --check
+```
+
+Verify the maintained generated source identity:
+
+```bash
+cmake -E sha256sum submissions/codingame/bots/rank_4/submission.cpp
+```
+
+Expected SHA-256:
+
+```text
+5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9
+```
+
+The local snapshot corresponds to CodinGame history version 56, agent
+`6604719`, submission `41114327`, and its completed rank 4/208 result. Because
+CodinGame does not expose a remote source digest, its record documents an
+authenticated history/source fingerprint rather than claiming that the local
+SHA-256 was measured remotely. See the
+[rank-4 record](../submissions/codingame/bots/rank_4/README.md).
+
+The immutable historical `rank_5` artifact remains a separate required input
+because `Rank5DerivedBot` adapts its search implementation. Verify it too:
 
 ```bash
 node submissions/codingame/tools/generate_submission.mjs rank_5 --check
-```
-
-Verify the immutable generated source identity:
-
-```bash
 cmake -E sha256sum submissions/codingame/bots/rank_5/submission.cpp
 ```
 
@@ -118,6 +138,10 @@ The exact artifact corresponds to CodinGame history version 26, agent
 result. The [rank-5 record](../submissions/codingame/bots/rank_5/README.md)
 documents source size, arena evidence, replay provenance, and timing margins.
 
+Do not hand-edit either generated submission, its generated headers, replay
+data, model data, or verified maintained source while reorganizing
+documentation.
+
 The full native test suite also compiles each submission, runs per-bot tests and
 protocol smokes, and invokes every generator in `--check` mode. Shared tooling
 and the directory contract are documented in the
@@ -127,11 +151,13 @@ and the directory contract are documented in the
 
 The leaderboard is an offline, reviewed benchmark rather than a browser arena.
 Its explicit roster is
-`benchmarks/codingame_leaderboard/roster.json`. The manifest covers every
-CMake-registered bot directory, binds each generated submission by SHA-256,
-and treats `selfplay_nn_v2` as an alias of byte-identical `rank_4`. This leaves
-20 unique executable entrants. The website accepts no uploads and cannot run a
-bot; it only renders the checked-in summary.
+`benchmarks/codingame_leaderboard/roster.json`. The frozen manifest binds each
+entrant's generated submission by SHA-256 and treats `selfplay_nn_v2` as an
+alias of byte-identical `rank_4`. The current CMake registry has 23 targets;
+the unqualified `rank_4_jacek_hybrid` and `jacek_arena_bfm` campaign artifacts
+are explicit non-entrants, leaving the frozen tournament at 20 canonical
+entrants. The website accepts no uploads and cannot run a bot; it only renders
+the checked-in summary.
 
 First configure a Release build and compile the native referee and submission
 executables:
@@ -202,8 +228,15 @@ python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
   --input benchmarks/codingame_leaderboard/tournament.json \
   --output web/leaderboard/leaderboard-results.js \
   --referee build/leaderboard/papersoccer_codingame_referee \
-  --check
+  --allow-historical-sources --check
 ```
+
+The checked-in tournament predates two explicit non-entrant campaign bots and
+retains its original source provenance. `--allow-historical-sources` is
+therefore required only when replaying and publishing that frozen artifact; it
+still enforces the current roster/non-entrant contract, replays every
+transcript, recomputes standings, and checks exact snapshot bytes. Omit the flag
+for a newly generated tournament from current sources.
 
 The manual tournament workflow uploads both generated artifacts for maintainer
 review. They become site evidence only through a normal pull request. Regular
@@ -253,6 +286,17 @@ around it remain maintained source. The analysis C ABI and deterministic export
 contract are documented in
 [Architecture](architecture.md#browser-and-analysis-boundaries).
 
+## Documentation screenshot
+
+The README screenshot is a reproducible documentation capture rather than a
+benchmark artifact. Open the local `web/index.html` at a 1440×900 viewport,
+select **Watch replay**, keep the checked-in default replay, select **Review
+game**, wait for **Fast preview** to finish, and select possession 5. Capture
+that exact state as `docs/assets/game-review.png`.
+
+The PNG replaces the retired `docs/assets/demo-rank5-derived.jpg`; do not keep
+both screenshots or recapture a different replay/profile under the same name.
+
 ## Game Review gate
 
 The frozen Game Review gate uses fresh opening banks disjoint from every
@@ -263,7 +307,20 @@ cell, validation 50, and the one-shot selected-profile test 100. Calibration is
 fit on validation decisions only. The exact contract is
 `benchmarks/game_review_gate/manifest.json`.
 
-First build an optimized native arena and verify all frozen opening identities:
+This section records the original source-bound execution workflow. The frozen
+evidence binds competition source identity
+`a021dd00845ed6cc4708852820e0f40157f3c57f4926a2143b1fcb35295a1a42`
+at commit `cacfc0b2ef031fd19ef727ad258ba0a4ed417ef2`. Full
+`run_gate.py validate` also hashes the ignored raw shards under
+`results/game_review_gate/`.
+Consequently it is not a clean-clone validation command and correctly rejects
+later `main` source identities. Current checkouts can run the gate unit tests
+and inspect the checked-in compact result and report; replaying the complete
+validation chain requires the exact historical source snapshot plus its
+preserved raw result tree.
+
+In that archival environment, first build an optimized native arena and verify
+all frozen opening identities:
 
 ```bash
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
@@ -337,12 +394,12 @@ python3 benchmarks/game_review_gate/run_gate.py lock-selection
 python3 benchmarks/game_review_gate/run_gate.py check-lock
 ```
 
-Review and commit the manifest, banks, development and validation summaries,
-latency measurement, final analysis module, selection/calibration lock, and
-generated C++ lock before test. The Release arena embeds its source commit, and
-the test runner refuses an arena from another or dirty source state. Rebuild
-the native Release arena from that exact clean commit, then run the test exactly
-once:
+During the original run, maintainers reviewed and committed the manifest,
+banks, development and validation summaries, latency measurement, final
+analysis module, selection/calibration lock, and generated C++ lock before
+test. The Release arena embeds its source commit, and the test runner refuses
+an arena from another or dirty source state. They rebuilt the native Release
+arena from that exact clean commit, then ran the test exactly once:
 
 ```bash
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
@@ -428,13 +485,15 @@ and compare that output with the tracked canonical file.
 ## Experiment outputs
 
 Use `results/` for raw local reports, generated corpora, downloaded batches,
-and exploratory models:
+exploratory models, and explicitly allowlisted curated campaign records:
 
 ```text
 results/
-├── arena/
-├── models/
-└── codingame/
+├── arena/                       ignored local output
+├── codingame/                   ignored local output
+├── research/                    ignored local output
+├── rank_4_jacek_hybrid/         tracked campaign evidence
+└── jacek_arena_bfm/             mixed; selected evidence is tracked
 ```
 
 Create subdirectories as needed before redirecting output. Examples throughout
@@ -445,10 +504,12 @@ Research scripts use the same convention, including paths such as:
 - `results/codingame/selfplay_nn_v2/arena_batch_<AGENT_ID>.json`; and
 - `results/codingame/alpha_beta/goal_block_strategy/replay_value_model.json`.
 
-The root `results/` directory is ignored. Do not use it for compact evidence
-that supports a committed claim, verified contest artifacts, frozen regression
-fixtures, or model provenance. Reviewed benchmark summaries stay under
-`benchmarks/`; source-owned experiment records stay beside the relevant
+Raw `results/` output is ignored by default. The `.gitignore` allowlist makes
+two deliberate exceptions: the rank-4/Jacek hybrid campaign is tracked there,
+and selected fresh-arena exclusions, plans, attestations, derivations, models,
+reports, comparisons, arena records, and scratch manifests/producers are
+tracked under `results/jacek_arena_bfm/`. Other compact benchmark summaries stay
+under `benchmarks/`; source-owned experiment records stay beside the relevant
 CodinGame bot.
 
 ## What is deterministic
@@ -482,7 +543,8 @@ never inherit the original rank.
 Before publishing documentation or code that changes evidence paths:
 
 1. Run `./scripts/build-and-test.sh`.
-2. Run the rank-5 generator `--check` and verify the expected SHA-256.
+2. Run both the rank-4 and rank-5 generators in `--check` mode and verify their
+   expected SHA-256 values.
 3. With Emscripten 6.0.2, run `check_papersoccer_web` and
    `check_papersoccer_analysis_wasm` if shared or browser C++ changed.
 4. Run `web_summary.py --check` if benchmark inputs or presentation changed.
@@ -490,11 +552,14 @@ Before publishing documentation or code that changes evidence paths:
    referee, rules, submissions, tournament contract, artifact, or page changed.
 6. Run the Python import validation and model generator check if research code
    or dependencies changed.
-7. Confirm raw outputs remain under ignored `results/` and curated reports
-   remain tracked under `benchmarks/`.
+7. Confirm raw outputs remain in ignored paths and that only the explicit
+   `.gitignore` allowlists add curated campaign evidence under `results/`;
+   general benchmark reports remain tracked under `benchmarks/`.
 8. Recheck Markdown links from their containing file; paths inside `docs/`
    require `../` to reach repository-root artifacts.
 9. Review claims against [Experiments](experiments.md) and the specialized
    source records, preserving limitations and bot provenance.
-10. Validate the Game Review manifest and lock; require the complete gate only
-   after its one-shot test has actually finished.
+10. Treat the completed Game Review gate as a frozen record. Run full
+    `validate --require-complete` only with its exact source snapshot and
+    preserved raw shards; on current `main`, run the gate unit tests and review
+    the checked-in lock, compact result, and report instead.

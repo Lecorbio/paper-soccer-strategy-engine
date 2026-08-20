@@ -30,17 +30,23 @@ contract:
 The default height is `10`, while the field boundaries are rows 1 and 11 and
 the goal rows are 0 and 12.
 
-The authentic CodinGame submission used a different explicit contract:
-`OwnGoalsAllowed` and `MoverLoses`. That distinction is one reason its browser
-adaptation cannot inherit the contest result. See
+The historical `rank_5` CodinGame source behind `Rank5DerivedBot` used a
+different explicit contract: `OwnGoalsAllowed` and `MoverLoses`. That
+distinction is one reason its browser adaptation cannot inherit the contest
+result. The current `rank_4` platform snapshot is separate. See
 [Rank5DerivedBot](#rank5derivedbot).
 
 ## RandomBot
 
-`RandomBot` chooses uniformly from the authoritative legal-move order using a
-seeded generator. It is useful as a reproducible smoke opponent and as an
+`RandomBot` makes a seeded pseudo-random choice from the authoritative
+legal-move order. It is useful as a reproducible smoke opponent and as an
 exploration source, not as a strength baseline. A complete run is reproducible
 from the same starting state, seed, implementation, and played moves.
+
+The search implementations do not all use the same tree action. MCTS expands
+one physical edge at a time and reads `GameState::to_move` after every edge;
+alpha-beta consumes adversarial depth only when possession changes; and the
+complete-turn analyzer explicitly enumerates and returns whole possessions.
 
 ## Possession-aware alpha-beta
 
@@ -204,9 +210,7 @@ papersoccer::MctsConfig config{
     .rollout_policy = papersoccer::MctsRolloutPolicy::Tactical,
     .reuse_tree = true,
     .max_nodes = 65536,
-    .leaf_policy = papersoccer::MctsLeafPolicy::TacticalQuiescence,
-    .quiescence_max_depth = 8,
-    .quiescence_max_nodes = 256,
+    .leaf_policy = papersoccer::MctsLeafPolicy::RolloutOnly,
 };
 papersoccer::MctsBot bot(config);
 papersoccer::Move move = bot.choose_move(state);
@@ -336,8 +340,8 @@ confidence intervals.
 ## Rank5DerivedBot
 
 `Rank5DerivedBot — 50k demo profile` adapts complete-turn search from the
-maintained rank-5 source to the normal browser rules. It is not the authentic
-ranked entrant.
+immutable historical rank-5 source to the normal browser rules. It is neither
+the authentic rank-5 entrant nor the current rank-4 platform snapshot.
 
 | Property | Verified CodinGame `rank_5` | `Rank5DerivedBot` demo |
 | --- | --- | --- |

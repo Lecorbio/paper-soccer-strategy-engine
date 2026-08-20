@@ -5,10 +5,12 @@ latency experiments. CTest uses small budgets to validate accounting, legal
 moves, report schemas, and command behavior. Promotion decisions use explicit
 paired gates and retain negative results as well as successes.
 
-Raw local output belongs in the ignored `results/` directory. Curated, compact
-reports that support repository claims remain tracked under `benchmarks/`.
-Verified CodinGame artifacts and their historical results stay under
-`submissions/codingame/`; they are never moved into ignored output.
+Raw local output belongs in ignored `results/` paths. Curated, compact reports
+that support general benchmark claims remain tracked under `benchmarks/`, while
+the rank-4/Jacek hybrid campaign and selected fresh-arena evidence use explicit
+tracked allowlists under `results/rank_4_jacek_hybrid/` and
+`results/jacek_arena_bfm/`. Verified CodinGame source artifacts and their
+bot-specific historical ledgers stay under `submissions/codingame/`.
 
 For a reader-focused presentation of the current frozen four-bot result, see
 the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/).
@@ -282,8 +284,6 @@ profile scored 67.25% against fixed Rank5Derived (paired 95% interval
 64.12%–70.25%) and 61.38% against JacekInspired-20k (58.25%–64.38%) across
 the exactly-once 1,600-game test, with zero operational failures. See the
 [generated gate report](../benchmarks/game_review_gate/REPORT.md).
-This single sentence is the release-status field; replace it from the frozen
-test report without changing the method above.
 
 The frozen manifest, opening identities, selection/calibration lock, phase
 summaries, Wasm latency, compact result, and report live under
@@ -349,15 +349,23 @@ a separate MCTS measurement and does not measure quiescence or Rank5Derived.
 
 ## CodinGame evidence
 
-The verified historical result belongs to the authentic generated submission:
-version 26, agent `6561779`, submission `41015554`, rank 5 of 206 with score
-`42.42773147296124` after a completed 57-33 batch. The generated source SHA-256
-is `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`.
+The canonical current local snapshot associated with the platform result is the
+`rank_4` generated source:
+history version 56, agent `6604719`, submission `41114327`, rank 4 of 208 with
+score `44.29750553418035` after a completed 66-24 batch. Its maintained local
+source is 98,624 characters with SHA-256
+`5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9`.
+CodinGame does not expose a remote source digest, so the binding is the
+documented authenticated history/source fingerprint rather than a claimed
+remote SHA-256 measurement. See the
+[rank-4 record](../submissions/codingame/bots/rank_4/README.md) and
+[experiment history](../submissions/codingame/bots/rank_4/EXPERIMENTS.md).
 
-That record, later candidates, rejected experiments, public replay provenance,
-and timing checks are preserved in the
-[rank-5 README](../submissions/codingame/bots/rank_5/README.md) and its
-[experiment history](../submissions/codingame/bots/rank_5/EXPERIMENTS.md).
-The wider [submission archive](../submissions/codingame/README.md) records each
-separate challenger. Do not merge challenger or Rank5Derived measurements into
-the accepted submission's result.
+The immutable predecessor remains important for demo provenance: `rank_5`
+history version 26, agent `6561779`, submission `41015554`, ranked 5 of 206 with
+score `42.42773147296124` after a completed 57-33 batch. Its generated source
+SHA-256 is `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`.
+`Rank5DerivedBot` adapts that source—not `rank_4`—to different browser rules
+and fixed work, so its measurements cannot be assigned to either platform
+artifact. The [submission archive](../submissions/codingame/README.md) records
+the full lineage and every separate experiment.

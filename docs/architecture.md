@@ -14,8 +14,9 @@ flowchart LR
         CLI[Terminal CLI]
         Replay[Replay exporter]
         Arena[Native / Wasm arena]
-        Browser[Static browser UI]
+        Browser[Interactive game page]
         Leaderboard[Static bot leaderboard]
+        Benchmarks[Static benchmark overview]
     end
 
     Tournament[Serial tournament tooling] --> Referee[Native CodinGame referee]
@@ -23,6 +24,7 @@ flowchart LR
     Referee --> Core
     Tournament --> Frozen[Raw tournament + compact snapshot]
     Frozen --> Leaderboard
+    Study[Frozen flagship snapshot + charts] --> Benchmarks
 
     Browser --> LiveBridge[Gameplay Wasm bridge]
     Browser --> Worker[Classic Game Review worker]
@@ -48,8 +50,9 @@ flowchart LR
 The arrows describe dependencies, not separate rule implementations. Browser
 JavaScript schedules commands, renders snapshots, and handles interaction; C++
 owns legal moves, rebounds, terminal detection, bot state, and replay history.
-The leaderboard is a separate static publication surface: matches run offline,
-and the page only renders checked-in results.
+The leaderboard and benchmark overview are separate static publication
+surfaces: matches and analysis run offline, and those pages only render
+checked-in results.
 
 ## Public API and authoritative state
 
@@ -64,6 +67,7 @@ Stable public headers live in `include/papersoccer/`:
 | `bot.hpp` | Bot interface, configurations, factories, and search diagnostics |
 | `game_review.hpp` | Complete-turn analysis, exact endgame proofs, possession grading, review sessions, and DeepTurnSearch |
 | `arena.hpp` | Paired-match and shared-position report entrypoints |
+| `codingame_referee.hpp` | Standalone-submission process contract and transcript validation |
 | `web_game.hpp` | Versioned browser sessions, commands, and snapshots |
 | `debug.hpp` | Text rendering used by native tools |
 
@@ -101,6 +105,12 @@ API.
 
 ## CodinGame referee and leaderboard boundaries
 
+The canonical current local snapshot associated with the platform result is
+`rank_4`; `rank_5` is its immutable predecessor and remains the source of the
+separately named Rank5Derived demo adapter. The offline leaderboard includes
+both along with the other reviewed artifacts and does not reinterpret any
+historical platform rank.
+
 The CodinGame leaderboard deliberately exercises the generated standalone
 submissions rather than adapting their search code to the arena API. For each
 game, the native referee starts two fresh persistent processes, sends each
@@ -120,13 +130,15 @@ decision timings, outcomes, failure classifications, artifact identities, and
 runtime provenance are retained in the raw match records.
 
 Only entries in `benchmarks/codingame_leaderboard/roster.json` are runnable.
-The manifest covers every CMake-registered submission directory, stores the
-generated-source SHA-256 and documentation link, and collapses byte-identical
-artifacts into a canonical entrant. In particular, `selfplay_nn_v2` is an
-alias of `rank_4`, leaving 20 unique competitors. The runner invokes resolved
-executables directly with a clean environment and temporary working directory,
-bounds captured output, and cleans up the entire child process group. There is
-no browser upload, arbitrary command, or server-side execution interface.
+The frozen manifest stores each entrant's generated-source SHA-256 and
+documentation link and collapses byte-identical artifacts into a canonical
+entrant. The current registry has 23 submission targets: the unqualified
+`rank_4_jacek_hybrid` and `jacek_arena_bfm` artifacts are explicit
+non-entrants, while `selfplay_nn_v2` is an alias of `rank_4`, leaving the
+original 20 competitors. The runner invokes resolved executables directly with
+a clean environment and temporary working directory, bounds captured output,
+and cleans up the entire child process group. There is no browser upload,
+arbitrary command, or server-side execution interface.
 
 The frozen publication consists of 900 serial games: two complete
 color-swapped round robins followed by seven seeded color-swapped
@@ -229,15 +241,15 @@ path after a takeback.
 
 ## Rank5Derived integration boundary
 
-The authentic CodinGame artifact and the browser opponent are deliberately
-separate concepts:
+The historical `rank_5` CodinGame artifact and the browser opponent are
+deliberately separate concepts:
 
 - `submissions/codingame/bots/rank_5/` contains the verified contest source,
   generated submission, replay book, value model, and historical arena record.
 - `src/bots/rank5_derived/rank5_derived.cpp` is the only engine translation
-  unit that includes the maintained contest source. Its private opaque adapter
-  invokes the immutable `CompleteTurnSearch` without copying or changing the
-  ranked source.
+  unit that includes the immutable historical contest source. Its private
+  opaque adapter invokes the immutable `CompleteTurnSearch` without copying or
+  changing the ranked source.
 - Public `CompleteTurnAnalyzer` and `DeepTurnSearchBot` types reuse that opaque
   adapter under separately named analysis profiles. Configurable analysis can
   never identify itself as `Rank5DerivedBot`.
@@ -271,10 +283,12 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 │   │   ├── mcts/               MCTS and tactical proof search
 │   │   ├── alpha_beta/         Possession-aware alpha-beta
 │   │   ├── jacek_inspired/     Features, neural inference, and search adapter
-│   │   └── rank5_derived/      Fixed-work adapter over maintained search
+│   │   └── rank5_derived/      Fixed-work adapter over immutable rank-5 search
 │   ├── analysis/               Complete-turn review and exact endgame solver
 │   ├── arena/                  Runner, stable JSON report, and CLI
+│   ├── codingame/              Native process referee and protocol validation
 │   ├── cli/                    Interactive terminal frontend
+│   ├── opening_bank/           Replay-checked benchmark opening support
 │   ├── replay/                 Seeded replay exporter
 │   └── web/                    C++ browser sessions and two Wasm bridges
 ├── web/                        Static UIs, worker, clients, and checked-in Wasm
@@ -283,6 +297,10 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 │   ├── core/                   Rule and match behavior
 │   ├── bots/                   Bot correctness and determinism
 │   ├── arena/                  API and CLI report tests
+│   ├── codingame/              Submission, promotion, and referee tests
+│   ├── codingame_leaderboard/  Roster, schedule, rating, and publishing tests
+│   ├── flagship_study/         Frozen-study analysis and packaging tests
+│   ├── opening_bank/           Opening generation and replay validation
 │   ├── web/                    Session, JavaScript, UI, and Wasm tests
 │   ├── game_review_gate/       Frozen gate integrity and statistics tests
 │   └── fixtures/               Frozen regression paths
@@ -290,7 +308,7 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 ├── tools/                      Corpus, training, and gate helpers
 ├── submissions/codingame/      Contest bots, generators, and evidence
 ├── benchmarks/                 Curated compact benchmark reports and probes
-├── results/                    Ignored raw local experiment output
+├── results/                    Ignored raw output plus curated campaign evidence
 └── CMakeLists.txt              Targets and test registration
 ```
 
@@ -301,4 +319,4 @@ Further reading:
 - [Experiments](experiments.md)
 - [Reproducibility](reproducibility.md)
 - [CodinGame submission archive](../submissions/codingame/README.md)
-- [Jacek-inspired model provenance](../models/README.md)
+- [Model artifacts and provenance](../models/README.md)

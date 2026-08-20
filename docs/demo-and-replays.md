@@ -4,8 +4,10 @@ The [live GitHub Pages demo](https://lecorbio.github.io/paper-soccer-strategy-en
 is a static browser application backed by the same C++ rules and bot code as
 the native tools. It supports human-versus-bot games, takebacks, diagnostics,
 bot-versus-bot replay generation, and imported replay inspection.
-The separate **[Benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
-link opens a static overview of the frozen flagship study.
+The shared site navigation also opens the static
+**[Leaderboard](https://lecorbio.github.io/paper-soccer-strategy-engine/leaderboard/)**
+and **[Benchmarks](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
+pages without loading the gameplay module on either results page.
 
 ## Run the browser locally
 
@@ -27,8 +29,8 @@ if the browser refuses to create or load its classic worker.
 The app starts in **Play vs bot** mode:
 
 1. Choose `RandomBot`, `MctsBot`, `AlphaBetaBot`, `JacekInspiredBot`, or
-   `Rank5DerivedBot — 50k demo profile`. `Expert — DeepTurnSearch` is present
-   only when the frozen held-out gate supports that exact label.
+   `Rank5DerivedBot — 50k demo profile`. The completed frozen gate currently
+   enables `Expert — DeepTurnSearch` and binds it to `deep-400k`.
 2. Choose **Move first** to play as Player 1 and attack the top goal, or **Move
    second** to play as Player 2, let the bot open, and attack the bottom goal.
 3. Configure the opponent where applicable. MCTS exposes a seed and a fixed
@@ -52,9 +54,10 @@ diagnostics. Depending on the bot, these include MCTS visits and reuse,
 alpha-beta depth and pruning, neural model identity, or Rank5Derived
 complete-action and cached-edge details.
 
-The selected Expert profile, if admitted, is a locked 100k, 200k, or 400k
-`DeepTurnSearchBot`; it is not a configurable Rank5Derived profile and does not
-inherit the authentic contest rank. RandomBot remains the default opponent.
+The selected Expert profile is the locked 400k `DeepTurnSearchBot`, chosen from
+the preregistered 100k, 200k, and 400k candidates. It is not a configurable
+Rank5Derived profile and does not inherit an authentic contest rank. RandomBot
+remains the default opponent.
 
 ## Takebacks and exports
 
@@ -72,7 +75,10 @@ writes a `papersoccer.human-match.v1` document containing:
 - every recorded bot search; and
 - typed Rank5Derived provenance and complete-action diagnostics when used.
 
-The exported human match can be opened through the normal replay loader.
+The exported human match can be opened through the normal replay loader. An
+export taken before the game ends is explicitly marked as a truncated replay,
+so authoritative import can reconstruct the valid position without pretending
+that it is a terminal result.
 
 ## Review a finished game
 
@@ -93,7 +99,7 @@ The review controls provide:
 
 - **Fast preview**, the fixed depth-32, 50,000-node `fast-50k` profile;
 - **Deep refinement**, which produces Fast first and then analyzes with the
-  locked depth-32 100k, 200k, or 400k Deep profile;
+  selected depth-32, 400,000-node `deep-400k` profile;
 - possession-level progress and cancellation between synchronous searches;
 - one badge per complete possession while the ordinary edge controls remain
   available;
@@ -212,11 +218,12 @@ nodes. Jacek-inspired modes default to depth 6 and 20,000 nodes because every
 leaf evaluates the compact network.
 
 Player One uses the selected base seed and Player Two uses `base_seed + 1`.
-After each search move the CLI prints the relevant deterministic counters and
-timings: MCTS tree work and reuse, alpha-beta depth/pruning/transpositions, or
-the neural model hash and neural-search counters. Root scores are explicitly
+After each search move the CLI prints the relevant deterministic counters:
+MCTS tree work and reuse, alpha-beta depth/pruning/transpositions, or the neural
+model hash and neural-search counters. Root scores are explicitly
 Player-One-oriented and reported as unavailable if the first iteration did not
-complete.
+complete. Wall-clock timings are measured by the arena and browser diagnostics,
+not by the terminal CLI.
 
 The browser offers Rank5Derived as a fixed demo profile; the current terminal
 menu does not expose it.
