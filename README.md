@@ -25,7 +25,7 @@ submission that finished **4th of 208** and, separately, a preregistered
   export, and reversible “Try this line” analysis.
 - **[22-bot local leaderboard](benchmarks/codingame_leaderboard/README.md):**
   990 protocol-faithful games across all checked-in generated CodinGame
-  submissions, including `rank_4_jacek_hybrid` and `jacek_arena_bfm`.
+  submissions.
 
 ![A late-game Paper Soccer match against Expert DeepTurnSearchBot at move 33 with live search diagnostics](docs/assets/expert-game.png)
 
