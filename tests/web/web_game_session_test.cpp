@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "papersoccer/game_review.hpp"
 #include "papersoccer/rules.hpp"
 #include "papersoccer/web_game.hpp"
 
@@ -58,6 +59,9 @@ void snapshot_is_a_complete_versioned_view_of_the_cpp_session() {
           "The replay should serialize the full uint64 bot seed as a decimal string.");
   require(snapshot.find("\"moves\":[]") != std::string::npos,
           "A new session should embed an empty replay history.");
+  require(snapshot.find("\"status\":\"inProgress\",\"winner\":null,"
+                        "\"truncated\":true") != std::string::npos,
+          "An in-progress live snapshot should mark its embedded replay truncated.");
   require(snapshot.find("\"diagnostics\":{\"schema\":"
                         "\"papersoccer.bot-search-diagnostics.v1\"") !=
               std::string::npos,
@@ -187,7 +191,7 @@ void configured_bot_kind_is_used_and_serialized() {
           "The web snapshot should serialize every requested MCTS counter and timing field.");
 }
 
-void configured_alpha_beta_bot_is_used_and_serialized() {
+void configured_alpha_beta_bot_is_used_serialized_and_measured() {
   ps::BotConfig config;
   config.kind = ps::BotKind::AlphaBeta;
   config.seed = std::numeric_limits<std::uint64_t>::max();
@@ -216,8 +220,26 @@ void configured_alpha_beta_bot_is_used_and_serialized() {
   const ps::WebGameCommandResult result = session.play_bot(0);
   require(result.ok() && result.move.has_value() && result.move->to == expected.to,
           "The live web session should move with the configured AlphaBetaBot.");
-  require(session.bot_searches().empty(),
-          "Alpha-beta decisions should not be mislabeled as MCTS diagnostics.");
+  require(session.bot_searches().size() == 1,
+          "Each successful AlphaBetaBot decision should record one diagnostic.");
+  const ps::WebBotSearchDiagnostic &search = session.bot_searches().front();
+  require(search.requested_turn_depth == 1 &&
+              search.alpha_beta_stats.has_value() &&
+              search.alpha_beta_stats->nodes > 0 &&
+              search.alpha_beta_stats->completed_turn_depth == 1,
+          "AlphaBetaBot diagnostics should retain requested depth and measured work.");
+
+  const std::string after = session.snapshot_json();
+  require(after.find("\"searchType\":\"alphaBeta\"") != std::string::npos &&
+              after.find("\"requestedDepth\":1") != std::string::npos &&
+              after.find("\"completedDepth\":1") != std::string::npos &&
+              after.find("\"leafEvaluations\":") != std::string::npos &&
+              after.find("\"rootScoreValid\":true") != std::string::npos &&
+              after.find("\"decisionTimeNs\":") != std::string::npos,
+          "The browser snapshot should expose typed hand alpha-beta diagnostics.");
+  require(session.human_match_json().find(
+              "\"botSearches\":[{\"ply\":1") != std::string::npos,
+          "Human-match exports should retain AlphaBetaBot diagnostics.");
 }
 
 void configured_jacek_bot_is_used_serialized_and_measured() {
@@ -459,6 +481,60 @@ void diagnostics_survive_snapshot_reads_and_export_losslessly() {
               exported.find("\"maxTacticalDepth\":0") !=
                   std::string::npos,
           "Human-match export should wrap the standard replay, lossless config, and history.");
+}
+
+void live_replay_truncation_round_trips_to_game_review_contract() {
+  const auto require_review_accepts = [](const ps::Match &match,
+                                         bool truncated) {
+    ps::GameReviewConfig config;
+    config.fast_calibration = {
+        "web-session-roundtrip-fast-v1", "fast-50k", 0.0, 0.00001};
+    ps::GameReviewSession review(config, match.state().config);
+    for (const ps::PlayedMove &move : match.history()) {
+      review.append_move(ps::DeclaredReviewMove{
+          move.ply, move.player, move.from, move.to, move.extra_turn,
+          move.status_after});
+    }
+    review.finalize(ps::DeclaredReviewOutcome{
+        match.state().status, ps::winner(match.state()), truncated});
+    require(review.snapshot().finalized && !review.snapshot().cancelled,
+            "A live export should satisfy the authoritative review outcome contract.");
+  };
+
+  ps::WebGameSession active(ps::Player::One, 17);
+  require(active.play_human(0, 3).ok() &&
+              !ps::is_terminal(active.match().state()),
+          "The active-export fixture should remain in progress after one move.");
+  const std::string active_snapshot = active.snapshot_json();
+  const std::string active_export = active.human_match_json();
+  require(active_snapshot.find(
+              "\"status\":\"inProgress\",\"winner\":null,"
+              "\"truncated\":true") != std::string::npos &&
+              active_export.find(
+                  "\"status\":\"inProgress\",\"winner\":null,"
+                  "\"truncated\":true") != std::string::npos,
+          "In-progress snapshots and human-match exports should be reviewable truncations.");
+  require_review_accepts(active.match(), true);
+
+  ps::RulesConfig compact_rules{8, 1};
+  ps::WebGameSession terminal(ps::Player::One, 19, compact_rules);
+  const std::vector<ps::Move> moves = terminal.match().legal_moves();
+  std::size_t goal_move_id = 0;
+  while (goal_move_id < moves.size() && moves[goal_move_id].to.y != 0) {
+    ++goal_move_id;
+  }
+  require(goal_move_id < moves.size() &&
+              terminal.play_human(0, goal_move_id).ok() &&
+              ps::is_terminal(terminal.match().state()),
+          "The terminal-export fixture should finish with one legal goal move.");
+  const std::string terminal_snapshot = terminal.snapshot_json();
+  const std::string terminal_export = terminal.human_match_json();
+  require(terminal_snapshot.find("\"truncated\":false") !=
+                  std::string::npos &&
+              terminal_export.find("\"truncated\":false") !=
+                  std::string::npos,
+          "Terminal snapshots and human-match exports should not claim truncation.");
+  require_review_accepts(terminal.match(), false);
 }
 
 void bot_factory_rejects_unknown_kinds() {
@@ -874,8 +950,8 @@ int run_web_game_session_tests() {
        player_two_snapshot_assigns_the_bot_to_player_one},
       {"configured_bot_kind_is_used_and_serialized",
        configured_bot_kind_is_used_and_serialized},
-      {"configured_alpha_beta_bot_is_used_and_serialized",
-       configured_alpha_beta_bot_is_used_and_serialized},
+      {"configured_alpha_beta_bot_is_used_serialized_and_measured",
+       configured_alpha_beta_bot_is_used_serialized_and_measured},
       {"configured_jacek_bot_is_used_serialized_and_measured",
        configured_jacek_bot_is_used_serialized_and_measured},
       {"interrupted_jacek_search_does_not_claim_a_completed_root_score",
@@ -888,6 +964,8 @@ int run_web_game_session_tests() {
        rebound_bot_turns_record_separate_searches},
       {"diagnostics_survive_snapshot_reads_and_export_losslessly",
        diagnostics_survive_snapshot_reads_and_export_losslessly},
+      {"live_replay_truncation_round_trips_to_game_review_contract",
+       live_replay_truncation_round_trips_to_game_review_contract},
       {"bot_factory_rejects_unknown_kinds", bot_factory_rejects_unknown_kinds},
       {"stale_revision_is_rejected_without_advancing_the_bot_rng",
        stale_revision_is_rejected_without_advancing_the_bot_rng},

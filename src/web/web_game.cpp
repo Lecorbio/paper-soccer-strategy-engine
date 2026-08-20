@@ -239,6 +239,19 @@ std::optional<WebBotSearchDiagnostic> make_bot_search_diagnostic(
         mcts->last_search_stats(),
     };
   }
+  if (const auto *alpha_beta = dynamic_cast<const AlphaBetaBot *>(&bot)) {
+    return WebBotSearchDiagnostic{
+        played.ply,
+        played.player,
+        from,
+        chosen,
+        0,
+        elapsed_nanoseconds(start, end),
+        SearchStats{},
+        config.alpha_beta_depth,
+        alpha_beta->last_search_stats(),
+    };
+  }
   if (const auto *jacek = dynamic_cast<const JacekInspiredBot *>(&bot)) {
     return WebBotSearchDiagnostic{
         played.ply,
@@ -418,7 +431,7 @@ std::string WebGameSession::snapshot_json() const {
   }
 
   out << "],\"replay\":";
-  write_replay(out, state, match_.history(), false,
+  write_replay(out, state, match_.history(), !is_terminal(state),
                [this](std::ostream &replay_out, Player player) {
                  write_player(replay_out, player, human_player_, bot_config_);
                });
@@ -433,7 +446,8 @@ std::string WebGameSession::human_match_json() const {
   out.imbue(std::locale::classic());
   out << std::setprecision(17);
   out << "{\"schema\":\"papersoccer.human-match.v1\",\"replay\":";
-  write_replay(out, match_.state(), match_.history(), false,
+  write_replay(out, match_.state(), match_.history(),
+               !is_terminal(match_.state()),
                [this](std::ostream &replay_out, Player player) {
                  write_player(replay_out, player, human_player_, bot_config_);
                });

@@ -80,3 +80,22 @@ test("choosing Player 2 starts the bot's opening turn", () => {
   assert.match(appSource, /support\.humanPlayerForTurnOrder\(/);
   assert.match(appSource, /support\.scheduleOpeningBotTurn\(/);
 });
+
+test("depth-bot diagnostics distinguish hand and neural evaluation", () => {
+  assert.match(
+    appSource,
+    /const usesNeuralEvaluation = configuration\.kind === "JacekInspiredBot";/,
+  );
+  assert.match(
+    appSource,
+    /" · model SHA-256 " \+ configuration\.modelSha256\.slice\(0, 12\) \+ "…"/,
+  );
+  assert.match(
+    appSource,
+    /searchPending\.hidden = \(!usesMcts && !usesDepth && !usesRank5Profile &&/,
+  );
+  assert.match(
+    appSource,
+    /usesNeuralEvaluation \? " neural evaluations · " :\s*" hand evaluations · "/,
+  );
+});

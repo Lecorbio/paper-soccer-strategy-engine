@@ -4,9 +4,23 @@
   const EXPECTED_SCHEMA = "papersoccer.benchmark-summary.v1";
   const FAMILY_COLORS = ["#137c6a", "#2b70a1", "#cc6a18", "#9a4e77"];
 
-  function formatPercent(value, digits) {
-    const precision = digits === undefined ? 1 : digits;
-    return `${(Number(value) * 100).toFixed(precision)}%`;
+  function formatPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) {
+      throw new TypeError("Percentage must be a finite number in [0, 1].");
+    }
+
+    // Convert the proportion to percentage tenths, then round an exact halfway
+    // case toward the even neighbor. The tolerance only absorbs IEEE-754 noise
+    // introduced by decimal parsing and reverse-matchup subtraction.
+    const scaled = numeric * 1000;
+    const lower = Math.floor(scaled);
+    const fraction = scaled - lower;
+    const tieTolerance = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+    const roundedTenths = Math.abs(fraction - 0.5) <= tieTolerance
+      ? (Math.abs(lower % 2) === 0 ? lower : lower + 1)
+      : Math.round(scaled);
+    return `${(roundedTenths / 10).toFixed(1)}%`;
   }
 
   function formatInteger(value) {
@@ -22,9 +36,23 @@
     return `${Number(value).toFixed(1)} ms`;
   }
 
+  function matchupDisplay(matchup) {
+    return {
+      score: formatPercent(matchup.leftScore),
+      intervalLower: formatPercent(matchup.leftScoreLower),
+      intervalUpper: formatPercent(matchup.leftScoreUpper)
+    };
+  }
+
   function validationStrengthLabel(candidate) {
     const score = formatPercent(candidate.strength);
     return candidate.strengthIsReference ? `${score} defined reference` : score;
+  }
+
+  function validationIntervalLabel(candidate) {
+    return candidate.strengthLower === null
+      ? "Not observed"
+      : `${formatPercent(candidate.strengthLower)}–${formatPercent(candidate.strengthUpper)}`;
   }
 
   function invertMatchup(matchup) {
@@ -60,6 +88,12 @@
       return "Statistically unresolved";
     }
     return matchup.strongerId === matchup.leftId ? "Resolved lead" : "Resolved deficit";
+  }
+
+  function matchupAccessibleLabel(leftLabel, rightLabel, matchup) {
+    const display = matchupDisplay(matchup);
+    return `${leftLabel} against ${rightLabel}: ${display.score}, 95% interval ` +
+      `${display.intervalLower} to ${display.intervalUpper}. ${matchupStatus(matchup)}.`;
   }
 
   function statusClass(matchup) {
@@ -339,21 +373,19 @@
           continue;
         }
         const state = matchupStatus(matchup);
+        const display = matchupDisplay(matchup);
         const cell = createElement(doc, "td", `matchup-cell ${statusClass(matchup)}`);
-        cell.append(createElement(doc, "strong", "", formatPercent(matchup.leftScore)));
+        cell.append(createElement(doc, "strong", "", display.score));
         cell.append(createElement(doc, "span", "", state));
         cell.append(createElement(
           doc,
           "small",
           "matchup-ci",
-          `${formatPercent(matchup.leftScoreLower)}–${formatPercent(matchup.leftScoreUpper)}`
+          `${display.intervalLower}–${display.intervalUpper}`
         ));
         cell.setAttribute(
           "aria-label",
-          `${rowEntrant.shortLabel} against ${columnEntrant.shortLabel}: ` +
-            `${formatPercent(matchup.leftScore)}, 95% interval ` +
-            `${formatPercent(matchup.leftScoreLower)} to ` +
-            `${formatPercent(matchup.leftScoreUpper)}. ${state}.`
+          matchupAccessibleLabel(rowEntrant.shortLabel, columnEntrant.shortLabel, matchup)
         );
         row.append(cell);
       }
@@ -477,11 +509,7 @@
       legend.append(item);
     }
 
-    const accessibleSummary = candidates.map((candidate) =>
-      `${profileLabel(candidate)}: ${candidate.strengthIsReference ? "defined reference " : ""}` +
-      `${formatPercent(candidate.strength)}, ${formatLatency(candidate.p95LatencyMs)} p95, ` +
-      `${candidate.gateEligible ? "within" : "outside"} the gate` +
-      `${candidate.selected ? ", selected" : ""}`).join("; ");
+    const accessibleSummary = candidates.map(validationAccessibleSummary).join("; ");
     container.setAttribute("role", "img");
     container.setAttribute(
       "aria-label",
@@ -535,9 +563,7 @@
         doc,
         "td",
         "numeric-cell",
-        candidate.strengthLower === null
-          ? "Not observed"
-          : `${formatPercent(candidate.strengthLower)}–${formatPercent(candidate.strengthUpper)}`
+        validationIntervalLabel(candidate)
       );
       const latency = createElement(doc, "td", "numeric-cell", formatLatency(candidate.p95LatencyMs));
       const gate = createElement(doc, "td");
@@ -575,11 +601,14 @@
     return article;
   }
 
-  function renderTakeaways(doc, results) {
-    const container = doc.getElementById("takeaways");
-    if (!container) {
-      return;
-    }
+  function validationAccessibleSummary(candidate) {
+    return `${profileLabel(candidate)}: ${validationStrengthLabel(candidate)}, ` +
+      `${formatLatency(candidate.p95LatencyMs)} p95, ` +
+      `${candidate.gateEligible ? "within" : "outside"} the gate` +
+      `${candidate.selected ? ", selected" : ""}`;
+  }
+
+  function takeawayModels(results) {
     const leader = [...results.entrants].sort((left, right) =>
       right.bradleyTerry.estimate - left.bradleyTerry.estimate)[0];
     const unresolved = results.matchups.find((matchup) =>
@@ -591,35 +620,42 @@
 
     const unresolvedLeft = unresolved ? entrantById.get(unresolved.leftId) : null;
     const unresolvedRight = unresolved ? entrantById.get(unresolved.rightId) : null;
-    const cards = [
-      createTakeaway(
-        doc,
-        1,
-        `${leader.shortLabel} leads the model`,
-        `Its ${formatAbility(leader.bradleyTerry.estimate)} relative-strength estimate is ` +
+    const unresolvedDisplay = unresolved ? matchupDisplay(unresolved) : null;
+    return [
+      {
+        number: 1,
+        title: `${leader.shortLabel} leads the model`,
+        body: `Its ${formatAbility(leader.bradleyTerry.estimate)} relative-strength estimate is ` +
           "the highest in this four-bot field."
-      ),
-      createTakeaway(
-        doc,
-        2,
-        "The top direct matchup is unresolved",
-        unresolved
-          ? `${unresolvedLeft.shortLabel} scored ${formatPercent(unresolved.leftScore)} against ` +
-            `${unresolvedRight.shortLabel}; the ${formatPercent(unresolved.leftScoreLower)}–` +
-            `${formatPercent(unresolved.leftScoreUpper)} interval crosses 50%.`
+      },
+      {
+        number: 2,
+        title: "The top direct matchup is unresolved",
+        body: unresolved
+          ? `${unresolvedLeft.shortLabel} scored ${unresolvedDisplay.score} against ` +
+            `${unresolvedRight.shortLabel}; the ${unresolvedDisplay.intervalLower}–` +
+            `${unresolvedDisplay.intervalUpper} interval crosses 50%.`
           : "No statistically unresolved matchup was reported."
-      ),
-      createTakeaway(
-        doc,
-        3,
-        "The latency gate changes profile choice",
-        bestObservedCandidate
+      },
+      {
+        number: 3,
+        title: "The latency gate changes profile choice",
+        body: bestObservedCandidate
           ? `${profileLabel(bestObservedCandidate)} had the strongest observed selected validation score ` +
             `(${formatPercent(bestObservedCandidate.strength)}) at ` +
             `${formatLatency(bestObservedCandidate.p95LatencyMs)} p95.`
           : `Selected profiles had to stay within the ${results.study.latencyGateMs} ms p95 gate.`
-      )
+      }
     ];
+  }
+
+  function renderTakeaways(doc, results) {
+    const container = doc.getElementById("takeaways");
+    if (!container) {
+      return;
+    }
+    const cards = takeawayModels(results).map((card) =>
+      createTakeaway(doc, card.number, card.title, card.body));
     container.replaceChildren(...cards);
   }
 
@@ -749,9 +785,14 @@
     EXPECTED_SCHEMA,
     formatPercent,
     invertMatchup,
+    matchupAccessibleLabel,
+    matchupDisplay,
     matchupStatus,
     pairwiseLookup,
     paretoAxisModel,
+    takeawayModels,
+    validationAccessibleSummary,
+    validationIntervalLabel,
     validationStrengthLabel,
     render
   });

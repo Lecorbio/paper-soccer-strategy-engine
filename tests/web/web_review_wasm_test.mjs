@@ -13,7 +13,7 @@ const gameplay = await globalThis.PaperSoccer.ready;
 const review = globalThis.PaperSoccerGameReview;
 const analysisWasm = await analysisModule.default();
 const analysis = review.createCabiClient(analysisWasm);
-const { BotKind } = globalThis.PaperSoccer;
+const { BotKind, Player } = globalThis.PaperSoccer;
 
 function terminalReplay() {
   let generated = gameplay.startBotReplay(
@@ -92,6 +92,26 @@ test("the dedicated artifact exposes the complete review C ABI", () => {
   ]) {
     assert.equal(typeof analysis[method], "function");
   }
+});
+
+test("an unfinished gameplay export round-trips through authoritative review validation", () => {
+  const initial = gameplay.startGame("17", Player.One, BotKind.Random);
+  const moved = gameplay.playHuman(initial.sessionId, initial.revision, 0);
+  const exported = gameplay.humanMatch();
+
+  assert.equal(moved.state.status, "inProgress");
+  assert.equal(exported.schema, "papersoccer.human-match.v1");
+  assert.equal(exported.replay.truncated, true);
+  assert.equal(exported.replay.status, "inProgress");
+
+  const prepared = review.prepareReplay(exported);
+  const snapshot = review.populateSession(analysis, prepared, review.ReviewMode.Fast);
+  assert.equal(snapshot.finalized, true);
+  assert.equal(snapshot.cancelled, false);
+  assert.equal(snapshot.replayStatus, "inProgress");
+  assert.equal(snapshot.truncated, true);
+  assert.equal(snapshot.possessions.at(-1).truncated, false,
+    "ending at a possession boundary truncates the replay, not the possession");
 });
 
 test("the pre-lock candidate probe performs exactly one fresh complete-turn search", () => {

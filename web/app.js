@@ -1267,8 +1267,13 @@
     const usesMcts = configuration.kind === "MctsBot";
     const usesDepth = configuration.kind === "AlphaBetaBot" ||
       configuration.kind === "JacekInspiredBot";
+    const usesNeuralEvaluation = configuration.kind === "JacekInspiredBot";
     const usesRank5Profile = configuration.kind === "Rank5DerivedBot";
     const usesDeepProfile = configuration.kind === "DeepTurnSearchBot";
+    const modelIdentity = usesNeuralEvaluation &&
+      typeof configuration.modelSha256 === "string"
+      ? " · model SHA-256 " + configuration.modelSha256.slice(0, 12) + "…"
+      : "";
     activeBotConfiguration.textContent = configuration.kind +
       (usesRank5Profile || usesDeepProfile
         ? " — " + (usesRank5Profile ? "50k demo profile" : configuration.profile) +
@@ -1280,12 +1285,12 @@
         : usesDepth
           ? " · depth " + formatCount(configuration.depth) +
             " possession handoffs"
-          : "") + " · You: " + playerName(liveSnapshot.humanPlayer);
+          : "") + modelIdentity + " · You: " +
+      playerName(liveSnapshot.humanPlayer);
 
     const search = diagnostics.lastBotSearch;
     latestSearch.hidden = !search;
-    searchPending.hidden = (!usesMcts &&
-      configuration.kind !== "JacekInspiredBot" && !usesRank5Profile &&
+    searchPending.hidden = (!usesMcts && !usesDepth && !usesRank5Profile &&
       !usesDeepProfile) ||
       Boolean(search);
     if (!search) {
@@ -1298,7 +1303,9 @@
         formatCount(search.requestedDepth) + " · " +
         support.alphaBetaRootScoreText(search);
       searchShape.textContent = formatCount(search.nodes) + " nodes · " +
-        formatCount(search.leafEvaluations) + " neural evaluations · " +
+        formatCount(search.leafEvaluations) +
+        (usesNeuralEvaluation ? " neural evaluations · " :
+          " hand evaluations · ") +
         formatDecisionTime(search.decisionTimeNs);
       const indicators = [];
       if (search.budgetExhausted) {

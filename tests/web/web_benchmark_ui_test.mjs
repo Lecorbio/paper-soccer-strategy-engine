@@ -159,6 +159,8 @@ test("pairwise lookup preserves direct results and correctly inverts the reverse
   assertApproximately(reverse.leftScore, 1 - matchup.leftScore);
   assertApproximately(reverse.leftScoreLower, 1 - matchup.leftScoreUpper);
   assertApproximately(reverse.leftScoreUpper, 1 - matchup.leftScoreLower);
+  assert.equal("display" in matchup, false);
+  assert.equal("display" in reverse, false);
   assert.equal(reverse.pairs, matchup.pairs);
   assert.equal(reverse.games, matchup.games);
   assert.equal(reverse.classification, matchup.classification);
@@ -177,7 +179,32 @@ test("the neural and Rank5 result is presented as statistically unresolved", () 
   assertApproximately(unresolved.leftScore, 0.51375);
   assertApproximately(unresolved.leftScoreLower, 0.4825);
   assertApproximately(unresolved.leftScoreUpper, 0.545);
+  assert.deepEqual(renderer.matchupDisplay(unresolved), {
+    score: "51.4%",
+    intervalLower: "48.2%",
+    intervalUpper: "54.5%",
+  });
+  const reverse = renderer.pairwiseLookup(
+    results.matchups,
+    "rank5-fixed-50k",
+    "jacek-20k",
+  );
+  assert.deepEqual(renderer.matchupDisplay(reverse), {
+    score: "48.6%",
+    intervalLower: "45.5%",
+    intervalUpper: "51.8%",
+  });
   assert.equal(renderer.matchupStatus(unresolved), "Statistically unresolved");
+  assert.equal(
+    renderer.matchupAccessibleLabel("Neural alpha-beta", "Rank5Derived", unresolved),
+    "Neural alpha-beta against Rank5Derived: 51.4%, 95% interval " +
+      "48.2% to 54.5%. Statistically unresolved.",
+  );
+  assert.equal(
+    renderer.matchupAccessibleLabel("Rank5Derived", "Neural alpha-beta", reverse),
+    "Rank5Derived against Neural alpha-beta: 48.6%, 95% interval " +
+      "45.5% to 51.8%. Statistically unresolved.",
+  );
   assert.match(results.study.headline, /statistically unresolved/i);
   assert.match(
     `${benchmarkHtml}\n${benchmarkSource}`,
@@ -196,6 +223,7 @@ test("Rank5 validation strength is labeled as a defined reference", () => {
   assert.equal(rank5.validation.strength, 0.5);
   assert.equal(rank5.validation.strengthIsReference, true);
   assert.equal(rank5.validation.pairs, null);
+  assert.equal("display" in rank5.validation, false);
   assert.equal(
     renderer.validationStrengthLabel(rank5.validation),
     "50.0% defined reference",
@@ -206,10 +234,42 @@ test("Rank5 validation strength is labeled as a defined reference", () => {
     ),
     "55.5%",
   );
+  const alpha100 = results.validationCandidates.find((candidate) =>
+    candidate.id === "alpha-beta-100k");
+  assert.ok(alpha100);
+  assert.equal(alpha100.strengthUpper, 0.4825);
+  assert.equal(renderer.validationIntervalLabel(alpha100), "39.8%–48.2%");
+  assert.match(renderer.validationAccessibleSummary(alpha100), /44\.0%/);
   assert.match(
     `${benchmarkHtml}\n${benchmarkSource}\n${results.caveats.validationReference}`,
     /defined(?: common-opponent)? reference[^.]*not (?:an )?(?:independently )?observed/i,
   );
+});
+
+test("half-even percentage strings reach tables, takeaways, and accessible summaries", () => {
+  assert.equal(typeof renderer.formatPercent, "function");
+  assert.equal(renderer.formatPercent(0.4825), "48.2%");
+  assert.equal(renderer.formatPercent(0.4835), "48.4%");
+  assert.equal(renderer.formatPercent(0.4875), "48.8%");
+  assert.equal(renderer.formatPercent(1 - 0.4825), "51.8%");
+  assert.throws(() => renderer.formatPercent(Number.NaN), /finite number/);
+
+  assert.match(
+    benchmarkSource,
+    /const display = matchupDisplay\(matchup\);[\s\S]*?display\.score[\s\S]*?matchupAccessibleLabel/,
+  );
+  const cards = renderer.takeawayModels(results);
+  assert.equal(cards.length, 3);
+  assert.match(cards[1].body, /51\.4%/);
+  assert.match(cards[1].body, /48\.2%–54\.5%/);
+  assert.doesNotMatch(cards[1].body, /48\.3%/);
+  assert.match(cards[2].body, /55\.5%/);
+
+  const neural = results.validationCandidates.find((candidate) =>
+    candidate.id === "jacek-20k");
+  const accessible = renderer.validationAccessibleSummary(neural);
+  assert.match(accessible, /55\.5%/);
+  assert.doesNotMatch(accessible, /55\.499|55\.500/);
 });
 
 test("the Pareto plot uses aligned, readable axis scales", () => {

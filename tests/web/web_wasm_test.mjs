@@ -88,6 +88,7 @@ test("C++ snapshot contains the initial position, legal moves, and exact uint64 
     "18446744073709551615",
   );
   assert.equal(snapshot.replay.players.two.kind, "RandomBot");
+  assert.equal(snapshot.replay.truncated, true);
   assert.deepEqual(snapshot.diagnostics, {
     schema: "papersoccer.bot-search-diagnostics.v1",
     botConfiguration: {
@@ -330,8 +331,26 @@ test("live games expose and run the selected AlphaBetaBot depth", () => {
   const moved = gameEngine.playBot(initial.sessionId, initial.revision);
   assert.equal(moved.revision, 1);
   assert.equal(moved.replay.moves.length, 1);
-  assert.equal(moved.diagnostics.lastBotSearch, null);
-  assert.deepEqual(moved.diagnostics.botSearches, []);
+  const search = moved.diagnostics.lastBotSearch;
+  assert.equal(search.searchType, "alphaBeta");
+  assert.equal(search.requestedDepth, 1);
+  assert.equal(search.completedDepth, 1);
+  assert.equal(search.attemptedDepth, 1);
+  assert.ok(search.nodes > 0);
+  assert.equal(typeof search.leafEvaluations, "number");
+  assert.equal(typeof search.terminalNodes, "number");
+  assert.equal(typeof search.cutoffs, "number");
+  assert.equal(typeof search.transpositionProbes, "number");
+  assert.equal(typeof search.transpositionHits, "number");
+  assert.equal(typeof search.maxPhysicalPly, "number");
+  assert.equal(typeof search.rootScore, "number");
+  assert.equal(search.rootScoreValid, true);
+  assert.equal(typeof search.budgetExhausted, "boolean");
+  assert.deepEqual(moved.diagnostics.botSearches, [search]);
+
+  const exported = gameEngine.humanMatch();
+  assert.equal(exported.replay.truncated, true);
+  assert.deepEqual(exported.botSearches, [search]);
 });
 
 test("live AlphaBetaBot games default to depth 6", () => {
