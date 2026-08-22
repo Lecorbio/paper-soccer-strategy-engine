@@ -342,6 +342,28 @@ test("all pages use one stable research-site header", () => {
   assert.doesNotMatch(siteCss, /#fff0b8|#806215/);
 });
 
+test("all pages keep an accessible repository link fixed in view", () => {
+  for (const html of [gameHtml, leaderboardHtml, benchmarkHtml]) {
+    const links = Array.from(
+      html.matchAll(/<a class="github-link"[\s\S]*?<\/a>/g),
+      (match) => match[0],
+    );
+    assert.equal(links.length, 1);
+    assert.match(
+      links[0],
+      /href="https:\/\/github\.com\/Lecorbio\/paper-soccer-strategy-engine"/,
+    );
+    assert.match(links[0], /target="_blank" rel="noopener noreferrer"/);
+    assert.match(links[0], /aria-label="[^"]*GitHub[^"]*opens in a new tab[^"]*"/);
+    assert.match(links[0], /<svg[^>]*aria-hidden="true"[^>]*>/);
+    assert.match(links[0], /<span>GitHub<\/span>/);
+  }
+  assert.match(siteCss, /\.github-link\s*\{[^}]*position:\s*fixed/s);
+  assert.match(siteCss, /\.github-link\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(siteCss, /\.github-link:focus-visible\s*\{[^}]*outline:/s);
+  assert.match(siteCss, /env\(safe-area-inset-(?:right|bottom)\)/);
+});
+
 test("leaderboard page is a local classic-script view with accessible fallback states", () => {
   const scripts = Array.from(
     leaderboardHtml.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g),
