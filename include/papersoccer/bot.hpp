@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +20,7 @@ enum class BotKind {
   JacekInspired = 3,
   Rank5Derived = 4,
   DeepTurnSearch = 5,
+  JacekReplayBfm = 6,
 };
 
 std::string_view bot_kind_name(BotKind kind) noexcept;
@@ -251,6 +253,70 @@ class Rank5DerivedBot final : public Bot {
   void clear_cache() noexcept;
 };
 
+struct JacekReplayBfmConfig {
+  std::string model_path{};
+  std::uint64_t seed{RandomBot::default_seed()};
+  std::uint32_t max_time_ms{980};
+  std::size_t max_tree_nodes{1'000'000};
+  std::size_t max_actions{250};
+  std::size_t max_partial_paths{50'000};
+  double exploration{0.95};
+  double fpu{0.5};
+};
+
+struct JacekReplayBfmSearchStats {
+  std::uint64_t expansions{};
+  std::uint64_t generated_actions{};
+  std::uint64_t retained_actions{};
+  std::uint64_t neural_evaluations{};
+  std::uint64_t visits{};
+  std::uint64_t completed_actions{};
+  std::uint64_t duplicate_boundaries{};
+  std::uint64_t partial_paths{};
+  std::uint64_t fifo_extractions{};
+  std::uint64_t lifo_extractions{};
+  std::uint64_t tactical_proofs{};
+  std::uint64_t tactical_solutions{};
+  std::uint64_t truncations{};
+  std::size_t tree_nodes{};
+  std::uint32_t max_complete_turn_depth{};
+  float root_value{};
+  bool deadline_reached{};
+  bool tree_cap_reached{};
+  bool cached_continuation{};
+  std::size_t planned_action_length{};
+  std::size_t current_edge_index{};
+  std::size_t cached_moves_remaining{};
+  std::uint64_t searches{};
+};
+
+class JacekReplayBfmBot final : public Bot {
+ public:
+  explicit JacekReplayBfmBot(JacekReplayBfmConfig config);
+  ~JacekReplayBfmBot() override;
+
+  JacekReplayBfmBot(const JacekReplayBfmBot &) = delete;
+  JacekReplayBfmBot &operator=(const JacekReplayBfmBot &) = delete;
+  JacekReplayBfmBot(JacekReplayBfmBot &&) noexcept;
+  JacekReplayBfmBot &operator=(JacekReplayBfmBot &&) noexcept;
+
+  std::string_view name() const noexcept override;
+  Move choose_move(const GameState &state) override;
+  const JacekReplayBfmConfig &config() const noexcept;
+  const JacekReplayBfmSearchStats &last_search_stats() const noexcept;
+  std::string_view model_sha256() const noexcept;
+
+  static constexpr std::string_view feature_schema() noexcept {
+    return "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"
+           "mover-relative-rotate180:true-turn-distance+free-degree";
+  }
+  static std::string_view feature_schema_sha256() noexcept;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 struct BotConfig {
   BotKind kind{BotKind::Random};
   std::uint64_t seed{RandomBot::default_seed()};
@@ -260,6 +326,7 @@ struct BotConfig {
   std::size_t alpha_beta_transposition_table_entries{65'536};
   std::uint32_t alpha_beta_max_search_plies{12};
   std::uint32_t alpha_beta_max_time_ms{0};
+  JacekReplayBfmConfig jacek_replay_bfm{};
 };
 
 enum class MctsRolloutPolicy {

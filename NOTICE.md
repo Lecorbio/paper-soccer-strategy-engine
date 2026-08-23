@@ -31,7 +31,8 @@ licensed by this repository:
 
 ## QtPaperSoccer-derived architecture
 
-The `jacek_native_bfm` CodinGame research track is an independent adaptation
+The `jacek_native_bfm` CodinGame research track and the offline
+`JacekReplayBfmBot` architecture are independent adaptations
 of public architectural behavior in Jacek Dermont's
 [QtPaperSoccer](https://github.com/jdermont/QtPaperSoccer), pinned at commit
 `366d5304c09c2c820bd3ef4ea94624c034b8d955` (2026-03-08). The upstream project
@@ -41,7 +42,8 @@ provenance notice are retained in
 
 The repository's MIT license does not relicense Apache-licensed upstream
 portions. No upstream network checkpoint or unpublished CodinGame source is
-included.
+included. The replay BFM bootstrap weights are generated independently and
+are explicitly untrained.
 
 ## Emscripten-generated browser modules
 

@@ -1,0 +1,902 @@
+#!/usr/bin/env python3
+"""Offline replay-root normalization and leakage-safe teacher-row preparation.
+
+The source normalizer reads a frozen exclusion registry *before* either replay
+source.  It never performs network I/O and never treats observed replay moves
+as policy or value labels: replays identify legal training roots only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import hashlib
+import json
+import math
+import pathlib
+import sys
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+
+
+TOOL_DIR = pathlib.Path(__file__).resolve().parent
+if str(TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOL_DIR))
+import jacek_replay_features as features  # noqa: E402
+
+
+ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
+TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
+PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
+LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
+LIVE_REPLAY_SCHEMA = "papersoccer.codingame-live-replay.v1"
+EXCLUSION_SCHEMA = "papersoccer.live-replay-exclusions.v1"
+
+
+def canonical_json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: pathlib.Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def _read_json(path: pathlib.Path, expected_schema: str) -> tuple[dict, str]:
+    raw = path.read_bytes()
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid JSON source: {path}") from error
+    if not isinstance(value, dict) or value.get("schema") != expected_schema:
+        raise ValueError(f"unexpected schema in {path}")
+    return value, sha256_bytes(raw)
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _safe_repository_path(repository: pathlib.Path, relative: object) -> pathlib.Path:
+    if not isinstance(relative, str) or not relative:
+        raise ValueError("snapshot record path must be a nonempty string")
+    candidate = (repository / relative).resolve()
+    try:
+        candidate.relative_to(repository.resolve())
+    except ValueError as error:
+        raise ValueError("snapshot record escapes the repository") from error
+    return candidate
+
+
+def _display_path(path: pathlib.Path, repository: pathlib.Path) -> str:
+    try:
+        return path.resolve().relative_to(repository.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def _validate_turns(
+    turns: object, expected_winner: int, *, label: str
+) -> tuple[dict[str, object], ...]:
+    if not isinstance(turns, list) or not turns:
+        raise ValueError(f"{label} has no complete turns")
+    state = features.ReplayState()
+    normalized: list[dict[str, object]] = []
+    for turn_number, turn in enumerate(turns):
+        if not isinstance(turn, dict) or set(turn) != {"player_id", "action"}:
+            raise ValueError(f"{label} turn {turn_number} has invalid fields")
+        player = turn.get("player_id")
+        action = turn.get("action")
+        if isinstance(player, bool) or player not in (0, 1):
+            raise ValueError(f"{label} turn {turn_number} has invalid player")
+        if not isinstance(action, str):
+            raise ValueError(f"{label} turn {turn_number} has invalid action")
+        try:
+            features.apply_complete_turn(state, int(player), action)
+        except ValueError as error:
+            raise ValueError(f"{label} turn {turn_number}: {error}") from error
+        normalized.append({"player_id": int(player), "action": action})
+    if state.winner is None:
+        raise ValueError(f"{label} transcript is nonterminal")
+    if state.winner != expected_winner:
+        raise ValueError(f"{label} winner disagrees with transcript")
+    return tuple(normalized)
+
+
+def _exclusion_records(payload: dict) -> dict[int, dict]:
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError("exclusion registry records must be an array")
+    result: dict[int, dict] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("exclusion record must be an object")
+        game_id = record.get("game_id")
+        categories = record.get("categories")
+        if (
+            isinstance(game_id, bool)
+            or not isinstance(game_id, int)
+            or game_id <= 0
+            or not isinstance(categories, list)
+            or not all(isinstance(value, str) for value in categories)
+            or game_id in result
+        ):
+            raise ValueError("invalid or duplicate exclusion record")
+        result[game_id] = record
+    return result
+
+
+def _protected(record: dict | None) -> bool:
+    return bool(
+        record
+        and any(
+            str(category).startswith("protected_")
+            for category in record.get("categories", ())
+        )
+    )
+
+
+def _load_frozen_assignments(path: pathlib.Path) -> tuple[dict[str, str], str]:
+    payload, digest = _read_json(path, ROOT_SCHEMA)
+    body_sha = payload.get("body_sha256")
+    body = dict(payload)
+    body.pop("body_sha256", None)
+    if (
+        not isinstance(body_sha, str)
+        or sha256_bytes(canonical_json_bytes(body)) != body_sha
+        or payload.get("feature_schema") != features.FEATURE_SCHEMA
+    ):
+        raise ValueError("previous roots manifest provenance is invalid")
+    accepted = payload.get("accepted")
+    if not isinstance(accepted, list):
+        raise ValueError("previous roots manifest has no accepted records")
+    assignments: dict[str, str] = {}
+    for record in accepted:
+        if not isinstance(record, dict):
+            raise ValueError("previous roots record must be an object")
+        group, split = record.get("group_id"), record.get("split")
+        if (
+            not isinstance(group, str)
+            or not group
+            or split not in {"train", "validation", "test"}
+            or group in assignments
+        ):
+            raise ValueError("previous roots split assignment is malformed")
+        assignments[group] = split
+    return assignments, digest
+
+
+def _assignment_for_strata(
+    records: Sequence[dict],
+    frozen_assignments: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    splits = ("train", "validation", "test")
+    proportions = {"train": 0.8, "validation": 0.1, "test": 0.1}
+    by_stratum: dict[tuple[object, ...], list[str]] = defaultdict(list)
+    for record in records:
+        stratum = (
+            record["source"],
+            record["focus_player"],
+            record["winner"],
+            record["opponent_tier"],
+        )
+        by_stratum[stratum].append(record["group_id"])
+    assignment: dict[str, str] = {}
+    stratum_for_group: dict[str, tuple[object, ...]] = {}
+    stratum_counts: dict[tuple[object, ...], dict[str, int]] = {}
+    for stratum, groups in sorted(by_stratum.items(), key=lambda item: repr(item[0])):
+        ordered = sorted(
+            groups,
+            key=lambda group: (hashlib.sha256(group.encode()).digest(), group),
+        )
+        count = len(ordered)
+        quotas = {split: proportions[split] * count for split in splits}
+        counts = {split: math.floor(quotas[split]) for split in splits}
+        residual = count - sum(counts.values())
+        remainder_order = sorted(
+            splits,
+            key=lambda split: (
+                -(quotas[split] - counts[split]),
+                hashlib.sha256(f"{stratum!r}:{split}".encode()).digest(),
+            ),
+        )
+        for index in range(residual):
+            counts[remainder_order[index]] += 1
+        slots = [split for split in splits for _ in range(counts[split])]
+        slots.sort(
+            key=lambda split: hashlib.sha256(
+                f"{stratum!r}:{split}:{slots.count(split)}".encode()
+            ).digest()
+        )
+        for group, split in zip(ordered, slots):
+            assignment[group] = split
+            stratum_for_group[group] = stratum
+        stratum_counts[stratum] = counts
+
+    frozen = dict(frozen_assignments or {})
+    if any(split not in splits for split in frozen.values()):
+        raise ValueError("frozen split assignment is invalid")
+    frozen_groups = set(assignment) & set(frozen)
+    for group in frozen_groups:
+        old_split, frozen_split = assignment[group], frozen[group]
+        if old_split == frozen_split:
+            continue
+        stratum = stratum_for_group[group]
+        stratum_counts[stratum][old_split] -= 1
+        stratum_counts[stratum][frozen_split] += 1
+        assignment[group] = frozen_split
+
+    total = len(records)
+    if total == 0:
+        return assignment
+    if total >= 3:
+        train_target = min((8 * total) // 10, total - 2)
+        validation_target = max(1, (total - train_target) // 2)
+        targets = {
+            "train": train_target,
+            "validation": validation_target,
+            "test": total - train_target - validation_target,
+        }
+    else:
+        targets = {
+            "train": max(1, total - 1),
+            "validation": 0,
+            "test": 1 if total == 2 else 0,
+        }
+
+    totals = {
+        split: sum(value == split for value in assignment.values())
+        for split in splits
+    }
+    quotas_by_stratum = {
+        stratum: {
+            split: proportions[split] * len(groups)
+            for split in splits
+        }
+        for stratum, groups in by_stratum.items()
+    }
+    while totals != targets:
+        overfull = [split for split in splits if totals[split] > targets[split]]
+        underfull = [split for split in splits if totals[split] < targets[split]]
+        candidates = []
+        for group, source_split in assignment.items():
+            if source_split not in overfull or group in frozen_groups:
+                continue
+            stratum = stratum_for_group[group]
+            counts = stratum_counts[stratum]
+            quotas = quotas_by_stratum[stratum]
+            for destination_split in underfull:
+                old_error = sum(
+                    (counts[split] - quotas[split]) ** 2 for split in splits
+                )
+                new_error = sum(
+                    (
+                        counts[split]
+                        - (1 if split == source_split else 0)
+                        + (1 if split == destination_split else 0)
+                        - quotas[split]
+                    )
+                    ** 2
+                    for split in splits
+                )
+                candidates.append(
+                    (
+                        new_error - old_error,
+                        hashlib.sha256(
+                            f"{group}:{source_split}:{destination_split}".encode()
+                        ).digest(),
+                        group,
+                        source_split,
+                        destination_split,
+                    )
+                )
+        if not candidates:
+            raise RuntimeError("unable to rebalance whole-game split targets")
+        _, _, group, source_split, destination_split = min(candidates)
+        assignment[group] = destination_split
+        stratum = stratum_for_group[group]
+        stratum_counts[stratum][source_split] -= 1
+        stratum_counts[stratum][destination_split] += 1
+        totals[source_split] -= 1
+        totals[destination_split] += 1
+
+    dimensions = ("source", "focus_player", "winner", "opponent_tier")
+    eligible_values = {
+        dimension: {
+            value
+            for value, count in Counter(
+                record[dimension] for record in records
+            ).items()
+            if count >= len(splits)
+        }
+        for dimension in dimensions
+    }
+
+    def coverage_penalty() -> int:
+        return sum(
+            not any(
+                assignment[record["group_id"]] == split
+                and record[dimension] == value
+                for record in records
+            )
+            for dimension in dimensions
+            for value in eligible_values[dimension]
+            for split in splits
+        )
+
+    penalty = coverage_penalty()
+    while penalty:
+        candidates = []
+        groups = sorted(assignment)
+        for first_index, first in enumerate(groups):
+            if first in frozen_groups:
+                continue
+            for second in groups[first_index + 1 :]:
+                if second in frozen_groups:
+                    continue
+                first_split, second_split = assignment[first], assignment[second]
+                if first_split == second_split:
+                    continue
+                assignment[first], assignment[second] = second_split, first_split
+                candidate_penalty = coverage_penalty()
+                assignment[first], assignment[second] = first_split, second_split
+                if candidate_penalty >= penalty:
+                    continue
+                first_stratum, second_stratum = (
+                    stratum_for_group[first], stratum_for_group[second]
+                )
+                delta_error = 0.0
+                for stratum, source_split, destination_split in (
+                    (first_stratum, first_split, second_split),
+                    (second_stratum, second_split, first_split),
+                ):
+                    if first_stratum == second_stratum:
+                        continue
+                    counts = stratum_counts[stratum]
+                    quotas = quotas_by_stratum[stratum]
+                    old_error = sum(
+                        (counts[split] - quotas[split]) ** 2 for split in splits
+                    )
+                    new_error = sum(
+                        (
+                            counts[split]
+                            - (1 if split == source_split else 0)
+                            + (1 if split == destination_split else 0)
+                            - quotas[split]
+                        )
+                        ** 2
+                        for split in splits
+                    )
+                    delta_error += new_error - old_error
+                candidates.append(
+                    (
+                        candidate_penalty,
+                        delta_error,
+                        hashlib.sha256(f"coverage:{first}:{second}".encode()).digest(),
+                        first,
+                        second,
+                    )
+                )
+        if not candidates:
+            raise RuntimeError(
+                "unable to preserve source/color/outcome representation across splits"
+            )
+        candidate_penalty, _, _, first, second = min(candidates)
+        first_split, second_split = assignment[first], assignment[second]
+        assignment[first], assignment[second] = second_split, first_split
+        first_stratum, second_stratum = stratum_for_group[first], stratum_for_group[second]
+        if first_stratum != second_stratum:
+            stratum_counts[first_stratum][first_split] -= 1
+            stratum_counts[first_stratum][second_split] += 1
+            stratum_counts[second_stratum][second_split] -= 1
+            stratum_counts[second_stratum][first_split] += 1
+        penalty = candidate_penalty
+    return assignment
+
+
+def _accepted_record(
+    *,
+    source: str,
+    game_id: int,
+    focus_player: int,
+    winner: int,
+    opponent_tier: str,
+    turns: tuple[dict[str, object], ...],
+    source_sha256: str,
+) -> dict:
+    group_id = f"{source}:{game_id}"
+    return {
+        "game_id": game_id,
+        "group_id": group_id,
+        "root_group_id": group_id,
+        "source": source,
+        "focus_player": focus_player,
+        "winner": winner,
+        "opponent_tier": opponent_tier,
+        "turns": list(turns),
+        "source_record_sha256": source_sha256,
+    }
+
+
+def normalize_replay_sources(
+    *,
+    repository: pathlib.Path,
+    exclusion_path: pathlib.Path,
+    public_jacek_path: pathlib.Path,
+    live_snapshot_path: pathlib.Path,
+    previous_roots_path: pathlib.Path | None = None,
+) -> dict:
+    """Combine the two frozen sources after first binding exclusions."""
+
+    repository = repository.resolve()
+
+    # This ordering is a security property, not an incidental implementation
+    # detail: no candidate source is opened before the boundary is frozen.
+    exclusions, exclusion_sha = _read_json(exclusion_path, EXCLUSION_SCHEMA)
+    exclusion_by_id = _exclusion_records(exclusions)
+
+    frozen_assignments: dict[str, str] = {}
+    previous_roots_sha: str | None = None
+    if previous_roots_path is not None:
+        frozen_assignments, previous_roots_sha = _load_frozen_assignments(
+            previous_roots_path
+        )
+
+    public, public_sha = _read_json(public_jacek_path, PUBLIC_SCHEMA)
+    snapshot, snapshot_sha = _read_json(live_snapshot_path, LIVE_SNAPSHOT_SCHEMA)
+    if snapshot.get("exclusion_registry_sha256") != exclusion_sha:
+        raise ValueError("live snapshot was not built from the supplied exclusions")
+
+    accepted: list[dict] = []
+    excluded: list[dict] = []
+    rejected: list[dict] = []
+    seen_game_ids: set[int] = set()
+
+    public_records = public.get("records")
+    if not isinstance(public_records, list):
+        raise ValueError("public Jacek records must be an array")
+    for raw in public_records:
+        if not isinstance(raw, dict):
+            rejected.append({"source": "public-jacek", "reason": "non-object record"})
+            continue
+        game_id = raw.get("game_id")
+        try:
+            if isinstance(game_id, bool) or not isinstance(game_id, int) or game_id <= 0:
+                raise ValueError("invalid game id")
+            if _protected(exclusion_by_id.get(game_id)):
+                excluded.append(
+                    {
+                        "source": "public-jacek",
+                        "game_id": game_id,
+                        "reason": "protected-exclusion-registry",
+                    }
+                )
+                continue
+            if game_id in seen_game_ids:
+                excluded.append(
+                    {"source": "public-jacek", "game_id": game_id, "reason": "duplicate-game-id"}
+                )
+                continue
+            focus_player = raw.get("player_id")
+            won = raw.get("won")
+            if focus_player not in (0, 1) or not isinstance(won, bool):
+                raise ValueError("invalid focus player or result")
+            winner = int(focus_player) if won else 1 - int(focus_player)
+            turns = _validate_turns(
+                raw.get("turns"), winner, label=f"public game {game_id}"
+            )
+            record_sha = sha256_bytes(canonical_json_bytes(raw))
+            accepted.append(
+                _accepted_record(
+                    source="public-jacek",
+                    game_id=game_id,
+                    focus_player=int(focus_player),
+                    winner=winner,
+                    opponent_tier="public-unlocked",
+                    turns=turns,
+                    source_sha256=record_sha,
+                )
+            )
+            seen_game_ids.add(game_id)
+        except (KeyError, TypeError, ValueError) as error:
+            rejected.append(
+                {"source": "public-jacek", "game_id": game_id, "reason": str(error)}
+            )
+
+    # The historical public artifact exposes only an aggregate for records
+    # removed before it was frozen.  Preserve that fact instead of inventing
+    # game identities that are not present in the source.
+    excluded_locked = public.get("excluded_locked_games")
+    if not isinstance(excluded_locked, int) or excluded_locked < 0:
+        raise ValueError("public excluded_locked_games must be nonnegative")
+    if excluded_locked:
+        excluded.append(
+            {
+                "source": "public-jacek",
+                "game_id": None,
+                "count": excluded_locked,
+                "reason": "source-preexcluded-locked-games-aggregate",
+            }
+        )
+    structural = public.get("structurally_rejected")
+    if not isinstance(structural, list):
+        raise ValueError("public structurally_rejected must be an array")
+    for record in structural:
+        if isinstance(record, dict):
+            rejected.append({"source": "public-jacek", **record})
+        else:
+            rejected.append({"source": "public-jacek", "reason": "malformed source rejection"})
+
+    snapshot_records = snapshot.get("records")
+    if not isinstance(snapshot_records, list):
+        raise ValueError("live snapshot records must be an array")
+    for reference in snapshot_records:
+        game_id: object = None
+        try:
+            if not isinstance(reference, dict):
+                raise ValueError("live snapshot reference is not an object")
+            game_id = reference.get("game_id")
+            if isinstance(game_id, bool) or not isinstance(game_id, int) or game_id <= 0:
+                raise ValueError("invalid game id")
+            if _protected(exclusion_by_id.get(game_id)):
+                excluded.append(
+                    {
+                        "source": "own-live",
+                        "game_id": game_id,
+                        "reason": "protected-exclusion-registry",
+                    }
+                )
+                continue
+            if game_id in seen_game_ids:
+                excluded.append(
+                    {"source": "own-live", "game_id": game_id, "reason": "duplicate-game-id"}
+                )
+                continue
+            record_path = _safe_repository_path(repository, reference.get("record_path"))
+            record_sha = reference.get("record_sha256")
+            if (
+                not _valid_sha256(record_sha)
+                or record_path.suffix != ".json"
+                or record_path.stem != record_sha
+                or sha256_file(record_path) != record_sha
+            ):
+                raise ValueError("live record SHA-256 mismatch")
+            live, _ = _read_json(record_path, LIVE_REPLAY_SCHEMA)
+            if record_path.read_bytes() != canonical_json_bytes(live):
+                raise ValueError("live record is not canonical JSON")
+            replay = live.get("replay")
+            if not isinstance(replay, dict) or replay.get("game_id") != game_id:
+                raise ValueError("live replay identity mismatch")
+            winner = replay.get("winner_player_id")
+            if winner not in (0, 1):
+                raise ValueError("invalid live replay winner")
+            own_player = reference.get("own_player_id")
+            if own_player not in (0, 1):
+                raise ValueError("live replay has no owned player")
+            direct = reference.get("direct_experts")
+            tiers = []
+            if isinstance(direct, list):
+                for expert in direct:
+                    if isinstance(expert, dict) and isinstance(expert.get("strength_tier"), dict):
+                        tier = expert["strength_tier"].get("name")
+                        if isinstance(tier, str):
+                            tiers.append(tier)
+            opponent_tier = "+".join(sorted(set(tiers))) or "unranked-public"
+            turns = _validate_turns(
+                replay.get("turns"), int(winner), label=f"live game {game_id}"
+            )
+            accepted.append(
+                _accepted_record(
+                    source="own-live",
+                    game_id=game_id,
+                    focus_player=int(own_player),
+                    winner=int(winner),
+                    opponent_tier=opponent_tier,
+                    turns=turns,
+                    source_sha256=str(record_sha),
+                )
+            )
+            seen_game_ids.add(game_id)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            rejected.append(
+                {"source": "own-live", "game_id": game_id, "reason": str(error)}
+            )
+
+    accepted.sort(key=lambda record: (record["source"], record["game_id"]))
+    accepted_groups = {record["group_id"] for record in accepted}
+    missing_frozen = set(frozen_assignments) - accepted_groups
+    if missing_frozen:
+        raise ValueError(
+            "append-only replay source dropped frozen groups: "
+            + ", ".join(sorted(missing_frozen)[:5])
+        )
+    assignments = _assignment_for_strata(accepted, frozen_assignments)
+    for record in accepted:
+        record["split"] = assignments[record["group_id"]]
+    excluded.sort(key=lambda record: (record["source"], record.get("game_id") or -1))
+    rejected.sort(key=lambda record: (record["source"], record.get("game_id") or -1))
+    manifest = {
+        "schema": ROOT_SCHEMA,
+        "feature_schema": features.FEATURE_SCHEMA,
+        "tool_sha256": {
+            "normalizer": sha256_file(pathlib.Path(__file__)),
+            "features": sha256_file(pathlib.Path(features.__file__)),
+        },
+        "exclusion_boundary": {
+            "path": _display_path(exclusion_path, repository),
+            "sha256": exclusion_sha,
+            "read_before_candidate_sources": True,
+        },
+        "sources": [
+            {
+                "kind": "public-jacek",
+                "path": _display_path(public_jacek_path, repository),
+                "sha256": public_sha,
+            },
+            {
+                "kind": "own-live",
+                "path": _display_path(live_snapshot_path, repository),
+                "sha256": snapshot_sha,
+            },
+        ],
+        "split_policy": (
+            "whole-root-game 80/10/10 stratified by source, focus color, outcome, "
+            "and opponent tier; prior assignments are immutable when split_parent is "
+            "present; continuations and reflections inherit root_group_id"
+        ),
+        "split_parent": (
+            {
+                "path": _display_path(previous_roots_path, repository),
+                "sha256": previous_roots_sha,
+                "frozen_groups": len(frozen_assignments),
+            }
+            if previous_roots_path is not None
+            else None
+        ),
+        "accepted": accepted,
+        "excluded": excluded,
+        "structurally_rejected": rejected,
+        "counts": {
+            "accepted": len(accepted),
+            "excluded_records": len(excluded),
+            "source_preexcluded_aggregate": excluded_locked,
+            "structurally_rejected": len(rejected),
+            "split_games": {
+                split: sum(record["split"] == split for record in accepted)
+                for split in ("train", "validation", "test")
+            },
+        },
+    }
+    # Bind the decision body without creating a recursive self-hash.  The
+    # final file hash remains the authoritative artifact identity.
+    manifest["body_sha256"] = sha256_bytes(canonical_json_bytes(manifest))
+    return manifest
+
+
+@dataclasses.dataclass(frozen=True)
+class LabeledSample:
+    active: tuple[int, ...]
+    target: float
+    weight: float
+    group_id: str
+
+
+def _teacher_target(root_score: float, mover: int, proven_winner: int | None) -> float:
+    if proven_winner is not None:
+        return 1.0 if proven_winner == mover else -1.0
+    # Rank-4 reports an absolute Player-One score.  The value-only runtime is
+    # mover-relative, so Player Two roots must reverse that sign.
+    return (1.0 if mover == 0 else -1.0) * math.tanh(root_score / 12_000.0)
+
+
+def _prefix_state(prefix: object) -> features.ReplayState:
+    if not isinstance(prefix, list):
+        raise ValueError("teacher prefix must be an array of complete turns")
+    state = features.ReplayState()
+    for turn_number, turn in enumerate(prefix):
+        if not isinstance(turn, dict) or set(turn) != {"player_id", "action"}:
+            raise ValueError(f"teacher prefix turn {turn_number} is malformed")
+        player, action = turn["player_id"], turn["action"]
+        if isinstance(player, bool) or not isinstance(player, int) or player not in (0, 1):
+            raise ValueError(f"teacher prefix turn {turn_number} has invalid player")
+        if not isinstance(action, str):
+            raise ValueError(f"teacher prefix turn {turn_number} has invalid action")
+        features.apply_complete_turn(
+            state, player, action
+        )
+    if state.winner is not None:
+        raise ValueError("teacher prefix is terminal")
+    return state
+
+
+def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
+    if not isinstance(row, dict) or row.get("schema") != TEACHER_SCHEMA:
+        raise ValueError("unexpected teacher-row schema")
+    group_id = row.get("group_id")
+    if not isinstance(group_id, str) or not group_id:
+        raise ValueError("teacher group_id must be nonempty")
+    root_group_id = row.get("root_group_id", group_id)
+    if not isinstance(root_group_id, str) or not root_group_id:
+        raise ValueError("teacher root_group_id must be nonempty")
+    source = row.get("source")
+    if not isinstance(source, str) or not source:
+        raise ValueError("teacher source must be nonempty")
+    winner, mover = row.get("winner"), row.get("mover")
+    if (
+        isinstance(winner, bool)
+        or not isinstance(winner, int)
+        or winner not in (0, 1)
+        or isinstance(mover, bool)
+        or not isinstance(mover, int)
+        or mover not in (0, 1)
+    ):
+        raise ValueError("teacher winner and mover must be zero or one")
+    depth, nodes = row.get("completed_depth"), row.get("nodes")
+    if (
+        isinstance(depth, bool)
+        or not isinstance(depth, int)
+        or depth < 1
+        or isinstance(nodes, bool)
+        or not isinstance(nodes, int)
+        or nodes < 1
+    ):
+        raise ValueError("teacher rows require positive depth and node counts")
+    score = row.get("root_score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+        raise ValueError("teacher root_score must be finite")
+    proven = row.get("proven_winner")
+    if proven is not None and (
+        isinstance(proven, bool)
+        or not isinstance(proven, int)
+        or proven not in (0, 1)
+    ):
+        raise ValueError("proven_winner must be null, zero, or one")
+    weight = row.get("weight", 1.0)
+    if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not math.isfinite(float(weight)) or float(weight) <= 0.0:
+        raise ValueError("teacher weight must be finite and positive")
+    state = _prefix_state(row.get("prefix"))
+    if state.to_move != mover:
+        raise ValueError("teacher mover disagrees with replayed prefix")
+    teacher = _teacher_target(float(score), int(mover), proven)
+    outcome = 1.0 if winner == mover else -1.0
+    target = 0.75 * teacher + 0.25 * outcome
+    supplied = row.get("combined_target")
+    if supplied is not None and (
+        isinstance(supplied, bool)
+        or not isinstance(supplied, (int, float))
+        or not math.isfinite(float(supplied))
+        or abs(float(supplied) - target) > 1e-6
+    ):
+        raise ValueError("combined_target disagrees with the frozen target policy")
+    active = features.encode_active(state)
+    reflected = features.encode_active(state, reflected=True)
+    return (
+        LabeledSample(active, target, float(weight), root_group_id),
+        LabeledSample(reflected, target, float(weight), root_group_id),
+    )
+
+
+def load_teacher_rows(paths: Iterable[pathlib.Path]) -> list[LabeledSample]:
+    samples: list[LabeledSample] = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                samples.extend(sample_from_teacher_row(json.loads(line)))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{path}:{line_number}: {error}") from error
+    if not samples:
+        raise ValueError("teacher inputs contain no samples")
+    return samples
+
+
+def canonical_feature_fingerprint(active: Sequence[int]) -> bytes:
+    active = features.validate_active(active)
+    variants = (
+        active,
+        features.reflect_active(active),
+        features.rotate_active(active),
+        features.reflect_active(features.rotate_active(active)),
+    )
+    packed = [
+        b"".join(int(index).to_bytes(2, "little") for index in variant)
+        for variant in variants
+    ]
+    return hashlib.sha256(min(packed)).digest()
+
+
+def split_and_purge_samples(
+    samples: Sequence[LabeledSample],
+    assignments: Mapping[str, str],
+) -> tuple[
+    dict[str, list[LabeledSample]], dict[str, int], dict[str, int]
+]:
+    grouped = {"train": [], "validation": [], "test": []}
+    for sample in samples:
+        split = assignments.get(sample.group_id)
+        if split not in grouped:
+            raise ValueError(f"no frozen split for teacher group {sample.group_id}")
+        grouped[split].append(sample)
+    retained: dict[str, list[LabeledSample]] = {}
+    removed: dict[str, int] = {}
+    aggregated: dict[str, int] = {}
+    seen: set[bytes] = set()
+    for split in ("train", "validation", "test"):
+        rows = sorted(
+            grouped[split],
+            key=lambda sample: (sample.group_id, sample.active, sample.target),
+        )
+        eligible = [
+            sample
+            for sample in rows
+            if canonical_feature_fingerprint(sample.active) not in seen
+        ]
+        removed[split] = len(rows) - len(eligible)
+        by_orientation: dict[tuple[int, ...], list[LabeledSample]] = defaultdict(list)
+        for sample in eligible:
+            by_orientation[sample.active].append(sample)
+        kept = []
+        for active, observations in sorted(by_orientation.items()):
+            if len(observations) == 1:
+                kept.append(observations[0])
+                continue
+            total_weight = sum(observation.weight for observation in observations)
+            target = sum(
+                observation.target * observation.weight
+                for observation in observations
+            ) / total_weight
+            lineage = [
+                {
+                    "group_id": observation.group_id,
+                    "target": observation.target,
+                    "weight": observation.weight,
+                }
+                for observation in observations
+            ]
+            group_id = "aggregate:" + sha256_bytes(canonical_json_bytes(lineage))
+            kept.append(LabeledSample(active, target, total_weight, group_id))
+        retained[split] = kept
+        aggregated[split] = len(eligible) - len(kept)
+        seen.update(canonical_feature_fingerprint(sample.active) for sample in kept)
+    return retained, removed, aggregated
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repository", type=pathlib.Path, required=True)
+    parser.add_argument("--exclusions", type=pathlib.Path, required=True)
+    parser.add_argument("--public-jacek", type=pathlib.Path, required=True)
+    parser.add_argument("--live-snapshot", type=pathlib.Path, required=True)
+    parser.add_argument("--previous-roots", type=pathlib.Path)
+    parser.add_argument("--output", type=pathlib.Path, required=True)
+    arguments = parser.parse_args()
+    manifest = normalize_replay_sources(
+        repository=arguments.repository,
+        exclusion_path=arguments.exclusions,
+        public_jacek_path=arguments.public_jacek,
+        live_snapshot_path=arguments.live_snapshot,
+        previous_roots_path=arguments.previous_roots,
+    )
+    output = canonical_json_bytes(manifest)
+    arguments.output.parent.mkdir(parents=True, exist_ok=True)
+    arguments.output.write_bytes(output)
+    print(json.dumps(manifest["counts"], indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

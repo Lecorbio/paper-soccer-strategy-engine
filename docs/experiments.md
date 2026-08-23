@@ -68,6 +68,32 @@ Quiescence is configured independently with `--candidate-leaf-policy`,
 `--*-quiescence-max-nodes` limits. `--help` lists policy, reuse, iterations,
 node limits, exploration, rules, and sampling options.
 
+The offline Jacek replay BFM entrant requires the exact CodinGame rule profile
+and an external versioned checkpoint. A loader/search smoke run with the
+checked-in, explicitly untrained bootstrap checkpoint is:
+
+```bash
+./build/release/papersoccer_arena positions \
+  --rules codingame \
+  --positions 16 \
+  --candidate-kind jacek-replay-bfm \
+  --candidate-jacek-replay-model \
+    models/jacek_replay_bfm_development/jacek_replay_bfm.runtime \
+  --candidate-jacek-replay-max-time-ms 980 \
+  --candidate-jacek-replay-max-tree-nodes 1000000 \
+  --reference-kind random \
+  > results/jacek-replay-bfm-positions.json
+```
+
+That bootstrap verifies the binary contract and runtime path only; it is not a
+selected model and must not support a strength claim.
+
+Candidate and reference variants of the model, time, tree-node, retained-action,
+partial-path, exploration, and FPU options are available. Reports bind the
+feature schema in configuration and record the loaded model SHA-256 plus BFM
+action-generation, neural-evaluation, visit, tree, tactical, truncation,
+deadline, and cached-continuation diagnostics on every decision.
+
 ## Alpha-beta evaluations
 
 ### Initial smoke evaluation — July 16, 2026

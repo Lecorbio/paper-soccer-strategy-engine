@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "papersoccer/bot.hpp"
@@ -21,9 +23,11 @@ enum class ControllerKind {
   MctsBot,
   AlphaBetaBot,
   JacekInspiredBot,
+  JacekReplayBfmBot,
 };
 
 struct CliConfig {
+  ps::RulesConfig rules{};
   ControllerKind player_one{ControllerKind::Human};
   ControllerKind player_two{ControllerKind::Human};
   std::uint64_t base_seed{ps::RandomBot::default_seed()};
@@ -33,6 +37,7 @@ struct CliConfig {
   std::uint64_t alpha_beta_max_nodes{100'000};
   std::uint32_t jacek_depth{6};
   std::uint64_t jacek_max_nodes{20'000};
+  ps::JacekReplayBfmConfig jacek_replay_bfm{};
 };
 
 std::string player_to_string(ps::Player player) {
@@ -51,6 +56,8 @@ std::string controller_to_string(ControllerKind controller) {
       return "AlphaBetaBot";
     case ControllerKind::JacekInspiredBot:
       return "JacekInspiredBot";
+    case ControllerKind::JacekReplayBfmBot:
+      return "JacekReplayBfmBot";
   }
   return "Unknown";
 }
@@ -238,6 +245,67 @@ std::uint64_t prompt_search_max_nodes(const std::string &bot_name,
   }
 }
 
+std::string prompt_required_path(const std::string &label) {
+  while (true) {
+    const std::string path = prompt_line(label + ": ");
+    if (!path.empty()) {
+      return path;
+    }
+    std::cout << "A non-empty model path is required.\n";
+  }
+}
+
+std::uint32_t prompt_time_ms(std::uint32_t default_time_ms) {
+  while (true) {
+    const std::string input =
+        prompt_line("JacekReplayBfmBot time budget in milliseconds [" +
+                    std::to_string(default_time_ms) + "]: ");
+    if (input.empty()) {
+      return default_time_ms;
+    }
+    std::uint32_t parsed = default_time_ms;
+    if (parse_iterations(input, parsed)) {
+      return parsed;
+    }
+    std::cout << "Invalid time budget. Enter an integer greater than zero.\n";
+  }
+}
+
+std::size_t prompt_bfm_tree_nodes(std::size_t default_max_nodes) {
+  while (true) {
+    const std::string input =
+        prompt_line("JacekReplayBfmBot tree node budget [" +
+                    std::to_string(default_max_nodes) + "]: ");
+    if (input.empty()) {
+      return default_max_nodes;
+    }
+    std::uint64_t parsed = 0;
+    if (parse_node_budget(input, parsed) && parsed >= 2 &&
+        parsed <= 1'000'000) {
+      return static_cast<std::size_t>(parsed);
+    }
+    std::cout << "Invalid node budget. Enter an integer from 2 to 1000000.\n";
+  }
+}
+
+ps::RulesConfig prompt_rules() {
+  std::cout << "Select rules:\n";
+  std::cout << "  [1] Normal demo (opponent goal only; player to move loses)\n";
+  std::cout << "  [2] CodinGame (own goals allowed; mover loses)\n";
+  const std::size_t choice = prompt_choice("Rules: ", 2);
+  if (choice == 2) {
+    return ps::RulesConfig{8, 10, ps::GoalRule::OwnGoalsAllowed,
+                           ps::BlockedRule::MoverLoses};
+  }
+  return ps::RulesConfig{};
+}
+
+bool uses_codingame_rules(const ps::RulesConfig &rules) noexcept {
+  return rules.width == 8 && rules.height == 10 &&
+         rules.goal_rule == ps::GoalRule::OwnGoalsAllowed &&
+         rules.blocked_rule == ps::BlockedRule::MoverLoses;
+}
+
 bool uses_controller(const CliConfig &config, ControllerKind controller) {
   return config.player_one == controller || config.player_two == controller;
 }
@@ -259,9 +327,14 @@ CliConfig prompt_config() {
   std::cout << "  [13] MctsBot vs JacekInspiredBot\n";
   std::cout << "  [14] AlphaBetaBot vs JacekInspiredBot\n";
   std::cout << "  [15] JacekInspiredBot vs JacekInspiredBot\n";
+  std::cout << "  [16] Human vs JacekReplayBfmBot\n";
+  std::cout << "  [17] RandomBot vs JacekReplayBfmBot\n";
+  std::cout << "  [18] MctsBot vs JacekReplayBfmBot\n";
+  std::cout << "  [19] AlphaBetaBot vs JacekReplayBfmBot\n";
+  std::cout << "  [20] JacekReplayBfmBot vs JacekReplayBfmBot\n";
 
   CliConfig config;
-  const std::size_t mode = prompt_choice("Mode: ", 15);
+  const std::size_t mode = prompt_choice("Mode: ", 20);
   switch (mode) {
     case 1:
       break;
@@ -379,8 +452,60 @@ CliConfig prompt_config() {
       config.player_one = ControllerKind::JacekInspiredBot;
       config.player_two = ControllerKind::JacekInspiredBot;
       break;
+    case 16: {
+      const std::size_t side =
+          prompt_choice("Play as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one =
+          side == 1 ? ControllerKind::Human : ControllerKind::JacekReplayBfmBot;
+      config.player_two =
+          side == 1 ? ControllerKind::JacekReplayBfmBot : ControllerKind::Human;
+      break;
+    }
+    case 17: {
+      const std::size_t side = prompt_choice(
+          "JacekReplayBfmBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one = side == 1 ? ControllerKind::JacekReplayBfmBot
+                                    : ControllerKind::RandomBot;
+      config.player_two = side == 1 ? ControllerKind::RandomBot
+                                    : ControllerKind::JacekReplayBfmBot;
+      break;
+    }
+    case 18: {
+      const std::size_t side = prompt_choice(
+          "JacekReplayBfmBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one = side == 1 ? ControllerKind::JacekReplayBfmBot
+                                    : ControllerKind::MctsBot;
+      config.player_two = side == 1 ? ControllerKind::MctsBot
+                                    : ControllerKind::JacekReplayBfmBot;
+      break;
+    }
+    case 19: {
+      const std::size_t side = prompt_choice(
+          "JacekReplayBfmBot plays as: [1] Player 1, [2] Player 2: ", 2);
+      config.player_one = side == 1 ? ControllerKind::JacekReplayBfmBot
+                                    : ControllerKind::AlphaBetaBot;
+      config.player_two = side == 1 ? ControllerKind::AlphaBetaBot
+                                    : ControllerKind::JacekReplayBfmBot;
+      break;
+    }
+    case 20:
+      config.player_one = ControllerKind::JacekReplayBfmBot;
+      config.player_two = ControllerKind::JacekReplayBfmBot;
+      break;
     default:
       throw std::logic_error("unsupported CLI mode");
+  }
+
+  config.rules = prompt_rules();
+  if (uses_controller(config, ControllerKind::JacekInspiredBot) &&
+      uses_codingame_rules(config.rules)) {
+    throw std::invalid_argument(
+        "JacekInspiredBot requires the normal demo rules profile");
+  }
+  if (uses_controller(config, ControllerKind::JacekReplayBfmBot) &&
+      !uses_codingame_rules(config.rules)) {
+    throw std::invalid_argument(
+        "JacekReplayBfmBot requires the CodinGame rules profile");
   }
 
   if (uses_controller(config, ControllerKind::RandomBot)) {
@@ -401,6 +526,16 @@ CliConfig prompt_config() {
     config.jacek_depth = prompt_search_depth("JacekInspiredBot", 6);
     config.jacek_max_nodes =
         prompt_search_max_nodes("JacekInspiredBot", 20'000);
+  }
+  if (uses_controller(config, ControllerKind::JacekReplayBfmBot)) {
+    config.jacek_replay_bfm.model_path =
+        prompt_required_path("JacekReplayBfmBot checkpoint path");
+    config.jacek_replay_bfm.seed = prompt_seed("JacekReplayBfmBot base seed",
+                                               ps::RandomBot::default_seed());
+    config.jacek_replay_bfm.max_time_ms =
+        prompt_time_ms(config.jacek_replay_bfm.max_time_ms);
+    config.jacek_replay_bfm.max_tree_nodes =
+        prompt_bfm_tree_nodes(config.jacek_replay_bfm.max_tree_nodes);
   }
   return config;
 }
@@ -443,6 +578,11 @@ std::unique_ptr<ps::Bot> make_player_bot(const CliConfig &config,
       bot_config.alpha_beta_depth = config.jacek_depth;
       bot_config.alpha_beta_max_nodes = config.jacek_max_nodes;
       break;
+    case ControllerKind::JacekReplayBfmBot: {
+      ps::JacekReplayBfmConfig bfm = config.jacek_replay_bfm;
+      bfm.seed = bot_seed(config.jacek_replay_bfm.seed, player);
+      return std::make_unique<ps::JacekReplayBfmBot>(std::move(bfm));
+    }
   }
   return ps::make_bot(bot_config);
 }
@@ -464,21 +604,30 @@ int main() {
     config = prompt_config();
   } catch (const std::exception &error) {
     std::cout << "\n" << error.what() << ". Exiting.\n";
-    return 0;
+    return std::string_view(error.what()) == "input stream closed" ? 0 : 2;
   }
 
   std::unique_ptr<ps::Bot> player_one_bot;
   std::unique_ptr<ps::Bot> player_two_bot;
-  player_one_bot = make_player_bot(config, ps::Player::One);
-  player_two_bot = make_player_bot(config, ps::Player::Two);
+  try {
+    player_one_bot = make_player_bot(config, ps::Player::One);
+    player_two_bot = make_player_bot(config, ps::Player::Two);
+  } catch (const std::exception &error) {
+    std::cout << "\nCould not create controller: " << error.what()
+              << ". Exiting.\n";
+    return 2;
+  }
 
-  ps::GameState state = ps::make_initial_state();
+  ps::GameState state = ps::make_initial_state(config.rules);
   bool auto_print_board = true;
 
-  std::cout << "Paper Soccer CLI (Kurnik-style baseline)\n";
+  std::cout << "Paper Soccer CLI\n";
   std::cout << "Type 'h' for help. Auto-print is ON.\n";
   std::cout << "Player 1: " << controller_to_string(config.player_one) << "\n";
   std::cout << "Player 2: " << controller_to_string(config.player_two) << "\n";
+  std::cout << "Rules: "
+            << (uses_codingame_rules(config.rules) ? "CodinGame" : "Normal")
+            << "\n";
   if (config.player_one == ControllerKind::RandomBot ||
       config.player_two == ControllerKind::RandomBot) {
     std::cout << "RandomBot base seed: " << config.base_seed << "\n";
@@ -501,6 +650,28 @@ int main() {
               << config.jacek_max_nodes << "\n";
     std::cout << "JacekInspiredBot model SHA-256: "
               << ps::JacekInspiredBot::model_sha256() << "\n";
+  }
+  if (config.player_one == ControllerKind::JacekReplayBfmBot ||
+      config.player_two == ControllerKind::JacekReplayBfmBot) {
+    const ps::JacekReplayBfmBot *bfm = nullptr;
+    if (player_one_bot) {
+      bfm = dynamic_cast<const ps::JacekReplayBfmBot *>(player_one_bot.get());
+    }
+    if (bfm == nullptr && player_two_bot) {
+      bfm = dynamic_cast<const ps::JacekReplayBfmBot *>(player_two_bot.get());
+    }
+    std::cout << "JacekReplayBfmBot checkpoint: "
+              << config.jacek_replay_bfm.model_path << "\n";
+    std::cout << "JacekReplayBfmBot time budget: "
+              << config.jacek_replay_bfm.max_time_ms << " ms\n";
+    std::cout << "JacekReplayBfmBot tree node budget: "
+              << config.jacek_replay_bfm.max_tree_nodes << "\n";
+    if (bfm != nullptr) {
+      std::cout << "JacekReplayBfmBot model SHA-256: " << bfm->model_sha256()
+                << "\n";
+    }
+    std::cout << "JacekReplayBfmBot feature schema SHA-256: "
+              << ps::JacekReplayBfmBot::feature_schema_sha256() << "\n";
   }
 
   while (!ps::is_terminal(state)) {
@@ -545,6 +716,33 @@ int main() {
         }
         if (stats.expansion_saturated) {
           std::cout << ", tree saturated";
+        }
+        std::cout << "\n";
+      } else if (const auto *bfm =
+                     dynamic_cast<const ps::JacekReplayBfmBot *>(bot)) {
+        const ps::JacekReplayBfmSearchStats &stats =
+            bfm->last_search_stats();
+        std::cout << "Jacek replay BFM stats: expansions=" << stats.expansions
+                  << ", generated actions=" << stats.generated_actions
+                  << ", retained actions=" << stats.retained_actions
+                  << ", neural evaluations=" << stats.neural_evaluations
+                  << ", visits=" << stats.visits
+                  << ", tree nodes=" << stats.tree_nodes
+                  << ", complete-turn depth=" << stats.max_complete_turn_depth
+                  << ", tactical proofs=" << stats.tactical_proofs
+                  << ", tactical solutions=" << stats.tactical_solutions
+                  << ", truncations=" << stats.truncations
+                  << ", root value=" << stats.root_value;
+        if (stats.deadline_reached) {
+          std::cout << ", deadline reached";
+        }
+        if (stats.tree_cap_reached) {
+          std::cout << ", tree cap reached";
+        }
+        if (stats.cached_continuation) {
+          std::cout << ", cached continuation edge " << stats.current_edge_index
+                    << "/" << stats.planned_action_length << " ("
+                    << stats.cached_moves_remaining << " remaining)";
         }
         std::cout << "\n";
       } else {

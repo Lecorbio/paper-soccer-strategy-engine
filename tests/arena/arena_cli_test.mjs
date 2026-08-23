@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const arena = process.env.PAPERSOCCER_ARENA;
 assert.ok(arena, "PAPERSOCCER_ARENA must name the arena executable");
@@ -33,6 +34,10 @@ const RANK5_FRESH_COUNTERS = [
   "root_transposition_reuses",
   "max_action_edges",
 ];
+const jacekReplayModel = fileURLToPath(new URL(
+  "../../models/jacek_replay_bfm_bootstrap.runtime",
+  import.meta.url,
+));
 
 function runJson(arguments_) {
   return JSON.parse(execFileSync(arena, arguments_, { encoding: "utf8" }));
@@ -785,6 +790,114 @@ test("mode-specific options are rejected outside their mode", () => {
   assert.notEqual(warmup.status, 0);
   assert.match(warmup.stderr,
     /--warmup-decisions is only valid in matches mode/);
+});
+
+test("CodinGame rules and Jacek replay BFM integrate and fail closed", () => {
+  const report = runJson([
+    "positions",
+    "--rules", "codingame",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "random",
+    "--reference-kind", "random",
+  ]);
+  assert.equal(report.configuration.rules_profile, "codingame");
+  assert.deepEqual(report.configuration.rules, { width: 8, height: 10 });
+
+  const missingModel = spawnSync(arena, [
+    "positions",
+    "--rules", "codingame",
+    "--candidate-kind", "jacek-replay-bfm",
+  ], { encoding: "utf8" });
+  assert.notEqual(missingModel.status, 0);
+  assert.match(missingModel.stderr, /model path must not be empty/u);
+
+  const wrongRules = spawnSync(arena, [
+    "positions",
+    "--rules", "normal",
+    "--candidate-kind", "jacek-replay-bfm",
+    "--candidate-jacek-replay-model", "unused.runtime",
+  ], { encoding: "utf8" });
+  assert.notEqual(wrongRules.status, 0);
+  assert.match(wrongRules.stderr, /requires the 8x10 CodinGame rules profile/u);
+
+  const excessiveActions = spawnSync(arena, [
+    "positions",
+    "--rules", "codingame",
+    "--candidate-kind", "jacek-replay-bfm",
+    "--candidate-jacek-replay-model", "unused.runtime",
+    "--candidate-jacek-replay-max-actions", "251",
+  ], { encoding: "utf8" });
+  assert.notEqual(excessiveActions.status, 0);
+  assert.match(excessiveActions.stderr, /max actions must be between 1 and 250/u);
+
+  const tinyTree = spawnSync(arena, [
+    "positions",
+    "--rules", "codingame",
+    "--candidate-kind", "jacek-replay-bfm",
+    "--candidate-jacek-replay-model", "unused.runtime",
+    "--candidate-jacek-replay-max-tree-nodes", "1",
+  ], { encoding: "utf8" });
+  assert.notEqual(tinyTree.status, 0);
+  assert.match(tinyTree.stderr, /max tree nodes must be between 2 and 1000000/u);
+
+  const unknownRules = spawnSync(arena, [
+    "positions", "--rules", "kurnik",
+  ], { encoding: "utf8" });
+  assert.notEqual(unknownRules.status, 0);
+  assert.match(unknownRules.stderr, /--rules requires normal or codingame/u);
+
+  const bfmReport = runJson([
+    "positions",
+    "--rules", "codingame",
+    "--positions", "1",
+    "--generation-plies", "0",
+    "--candidate-kind", "jacek-replay-bfm",
+    "--candidate-jacek-replay-model", jacekReplayModel,
+    "--candidate-jacek-replay-max-time-ms", "20",
+    "--candidate-jacek-replay-max-tree-nodes", "128",
+    "--candidate-jacek-replay-max-actions", "16",
+    "--candidate-jacek-replay-max-partial-paths", "256",
+    "--candidate-jacek-replay-exploration", "0.5",
+    "--candidate-jacek-replay-fpu", "0.25",
+    "--reference-kind", "random",
+  ]);
+  assert.deepEqual(bfmReport.configuration.candidate, {
+    kind: "jacek-replay-bfm",
+    model_path: jacekReplayModel,
+    feature_schema:
+      "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:" +
+      "mover-relative-rotate180:true-turn-distance+free-degree",
+    feature_schema_sha256:
+      "9b8c1f03ce9c6ae91f90f31a9df7ed17e4815d4afe060def3d17e08af5326d66",
+    max_time_ms: 20,
+    max_tree_nodes: 128,
+    max_actions: 16,
+    max_partial_paths: 256,
+    exploration: 0.5,
+    fpu: 0.25,
+  });
+  const diagnostics =
+    bfmReport.positions[0].evaluations[0].jacek_replay_bfm;
+  assert.equal(diagnostics.model_sha256,
+    "02c7757443285cf6d10e971f25dee0869339d76e1d09bb9616ce5b83966cabf7");
+  assert.ok(diagnostics.generated_actions > 0);
+  assert.ok(diagnostics.retained_actions > 0);
+  assert.ok(diagnostics.neural_evaluations > 0);
+  assert.ok(diagnostics.tree_nodes > 0);
+  assert.equal(typeof diagnostics.deadline_reached, "boolean");
+  assert.equal(typeof diagnostics.cached_continuation, "boolean");
+
+  const summary = bfmReport.summary.candidate.jacek_replay_bfm;
+  assert.equal(summary.decisions, 1);
+  assert.equal(summary.fresh_root_searches, 1);
+  assert.equal(summary.cached_continuation_edges, 0);
+  assert.equal(summary.generated_actions_sum, diagnostics.generated_actions);
+  assert.equal(summary.retained_actions_sum, diagnostics.retained_actions);
+  assert.equal(summary.neural_evaluations_sum,
+    diagnostics.neural_evaluations);
+  assert.equal(summary.tree_nodes_sum, diagnostics.tree_nodes);
+  assert.equal(summary.fresh_root_timing.decisions, 1);
 });
 
 test("opening length must leave room below the total ply limit", () => {

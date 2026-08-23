@@ -77,6 +77,18 @@ void write_point(std::ostream &out, Point point) {
   out << "{\"x\":" << point.x << ",\"y\":" << point.y << '}';
 }
 
+std::string_view rules_profile_name(const RulesConfig &rules) noexcept {
+  if (rules.goal_rule == GoalRule::OpponentGoalOnly &&
+      rules.blocked_rule == BlockedRule::PlayerToMoveLoses) {
+    return "normal";
+  }
+  if (rules.goal_rule == GoalRule::OwnGoalsAllowed &&
+      rules.blocked_rule == BlockedRule::MoverLoses) {
+    return "codingame";
+  }
+  return "custom";
+}
+
 void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
   out << "{\"kind\":";
   write_string(out, kind_name(config.kind));
@@ -143,6 +155,21 @@ void write_bot_config(std::ostream &out, const ArenaBotConfig &config) {
           << ",\"replay_corrections\":false"
           << ",\"ranked_source_sha256\":";
       write_string(out, Rank5DerivedBot::original_sha256());
+      break;
+    }
+    case BotKind::JacekReplayBfm: {
+      const JacekReplayBfmConfig &bfm = config.jacek_replay_bfm;
+      out << ",\"model_path\":";
+      write_string(out, bfm.model_path);
+      out << ",\"feature_schema\":";
+      write_string(out, JacekReplayBfmBot::feature_schema());
+      out << ",\"feature_schema_sha256\":";
+      write_string(out, JacekReplayBfmBot::feature_schema_sha256());
+      out << ",\"max_time_ms\":" << bfm.max_time_ms
+          << ",\"max_tree_nodes\":" << bfm.max_tree_nodes
+          << ",\"max_actions\":" << bfm.max_actions
+          << ",\"max_partial_paths\":" << bfm.max_partial_paths
+          << ",\"exploration\":" << bfm.exploration << ",\"fpu\":" << bfm.fpu;
       break;
     }
   }
@@ -262,6 +289,42 @@ void write_rank5_derived_stats(std::ostream &out,
                             Rank5DerivedConfig::profile_max_nodes);
 }
 
+void write_jacek_replay_bfm_stats(std::ostream &out,
+                                  const JacekReplayBfmSearchStats &stats,
+                                  std::string_view model_sha256) {
+  out << "{\"model_sha256\":";
+  write_string(out, model_sha256);
+  out << ",\"feature_schema\":";
+  write_string(out, JacekReplayBfmBot::feature_schema());
+  out << ",\"feature_schema_sha256\":";
+  write_string(out, JacekReplayBfmBot::feature_schema_sha256());
+  out << ",\"expansions\":" << stats.expansions
+      << ",\"generated_actions\":" << stats.generated_actions
+      << ",\"retained_actions\":" << stats.retained_actions
+      << ",\"neural_evaluations\":" << stats.neural_evaluations
+      << ",\"visits\":" << stats.visits
+      << ",\"completed_actions\":" << stats.completed_actions
+      << ",\"duplicate_boundaries\":" << stats.duplicate_boundaries
+      << ",\"partial_paths\":" << stats.partial_paths
+      << ",\"fifo_extractions\":" << stats.fifo_extractions
+      << ",\"lifo_extractions\":" << stats.lifo_extractions
+      << ",\"tactical_proofs\":" << stats.tactical_proofs
+      << ",\"tactical_solutions\":" << stats.tactical_solutions
+      << ",\"truncations\":" << stats.truncations
+      << ",\"tree_nodes\":" << stats.tree_nodes
+      << ",\"max_complete_turn_depth\":" << stats.max_complete_turn_depth
+      << ",\"root_value\":" << stats.root_value << ",\"deadline_reached\":";
+  write_bool(out, stats.deadline_reached);
+  out << ",\"tree_cap_reached\":";
+  write_bool(out, stats.tree_cap_reached);
+  out << ",\"cached_continuation\":";
+  write_bool(out, stats.cached_continuation);
+  out << ",\"planned_action_length\":" << stats.planned_action_length
+      << ",\"current_edge_index\":" << stats.current_edge_index
+      << ",\"cached_moves_remaining\":" << stats.cached_moves_remaining
+      << ",\"search_ordinal_in_game\":" << stats.searches << '}';
+}
+
 void write_participant(std::ostream &out, const Participant &participant) {
   out << "{\"bot\":";
   write_string(out, entrant_name(participant.entrant));
@@ -307,6 +370,17 @@ void write_decision(std::ostream &out, const DecisionReport &decision) {
     out << ",\"deep_turn_search\":";
     write_complete_turn_stats(out, *decision.deep_turn_search_stats,
                               *decision.deep_turn_search_profile_nodes);
+  }
+  out << ",\"jacek_replay_bfm\":";
+  if (decision.jacek_replay_bfm_stats.has_value()) {
+    if (!decision.jacek_replay_bfm_model_sha256.has_value()) {
+      throw std::logic_error(
+          "JacekReplayBfm diagnostics are missing the model SHA-256");
+    }
+    write_jacek_replay_bfm_stats(out, *decision.jacek_replay_bfm_stats,
+                                 *decision.jacek_replay_bfm_model_sha256);
+  } else {
+    out << "null";
   }
   out << '}';
 }
@@ -464,6 +538,48 @@ void write_alpha_beta_summary(std::ostream &out,
   out << "}}";
 }
 
+void write_jacek_replay_bfm_summary(std::ostream &out,
+                                    const JacekReplayBfmSummary &summary) {
+  out << "{\"decisions\":" << summary.decisions
+      << ",\"fresh_root_searches\":" << summary.fresh_root_searches
+      << ",\"cached_continuation_edges\":" << summary.cached_continuation_edges
+      << ",\"expansions_sum\":" << summary.expansions_sum
+      << ",\"generated_actions_sum\":" << summary.generated_actions_sum
+      << ",\"retained_actions_sum\":" << summary.retained_actions_sum
+      << ",\"neural_evaluations_sum\":" << summary.neural_evaluations_sum
+      << ",\"visits_sum\":" << summary.visits_sum
+      << ",\"completed_actions_sum\":" << summary.completed_actions_sum
+      << ",\"duplicate_boundaries_sum\":" << summary.duplicate_boundaries_sum
+      << ",\"partial_paths_sum\":" << summary.partial_paths_sum
+      << ",\"fifo_extractions_sum\":" << summary.fifo_extractions_sum
+      << ",\"lifo_extractions_sum\":" << summary.lifo_extractions_sum
+      << ",\"tactical_proofs_sum\":" << summary.tactical_proofs_sum
+      << ",\"tactical_solutions_sum\":" << summary.tactical_solutions_sum
+      << ",\"truncations_sum\":" << summary.truncations_sum
+      << ",\"tree_nodes_sum\":" << summary.tree_nodes_sum
+      << ",\"tree_nodes_max\":" << summary.tree_nodes_max
+      << ",\"max_complete_turn_depth\":" << summary.max_complete_turn_depth
+      << ",\"minimum_root_value\":";
+  if (summary.minimum_root_value.has_value()) {
+    out << *summary.minimum_root_value;
+  } else {
+    out << "null";
+  }
+  out << ",\"maximum_root_value\":";
+  if (summary.maximum_root_value.has_value()) {
+    out << *summary.maximum_root_value;
+  } else {
+    out << "null";
+  }
+  out << ",\"deadline_reached_searches\":" << summary.deadline_reached_searches
+      << ",\"tree_cap_reached_searches\":" << summary.tree_cap_reached_searches
+      << ",\"fresh_root_timing\":";
+  write_timing(out, summary.fresh_root_timing);
+  out << ",\"all_edge_timing\":";
+  write_timing(out, summary.all_edge_timing);
+  out << '}';
+}
+
 void write_complete_turn_summary(std::ostream &out,
                                  const Rank5DerivedSummary &summary,
                                  std::uint64_t requested_nodes) {
@@ -572,6 +688,8 @@ void write_entrant_summary(std::ostream &out, Entrant entrant,
   write_mcts_summary(out, summarize_mcts(decisions));
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
+  out << ",\"jacek_replay_bfm\":";
+  write_jacek_replay_bfm_summary(out, summarize_jacek_replay_bfm(decisions));
   out << ",\"rank5_derived\":";
   write_complete_turn_summary(out, summarize_rank5_derived(decisions),
                               Rank5DerivedConfig::profile_max_nodes);
@@ -594,6 +712,8 @@ void write_position_entrant_summary(std::ostream &out, Entrant entrant,
   write_mcts_summary(out, summarize_mcts(decisions));
   out << ",\"alpha_beta\":";
   write_alpha_beta_summary(out, summarize_alpha_beta(decisions));
+  out << ",\"jacek_replay_bfm\":";
+  write_jacek_replay_bfm_summary(out, summarize_jacek_replay_bfm(decisions));
   out << ",\"rank5_derived\":";
   write_complete_turn_summary(out, summarize_rank5_derived(decisions),
                               Rank5DerivedConfig::profile_max_nodes);
@@ -733,7 +853,9 @@ std::string run_matches_json(const MatchesConfig &config) {
   out << ",\"timing_unit\":\"nanoseconds\","
          "\"configuration\":{\"rules\":{\"width\":"
       << config.rules.width << ",\"height\":" << config.rules.height
-      << "},\"base_seed\":";
+      << "},\"rules_profile\":";
+  write_string(out, rules_profile_name(config.rules));
+  out << ",\"base_seed\":";
   write_uint64_string(out, config.base_seed);
   out << ",\"seed_derivation\":\"splitmix64\""
       << ",\"seed_pairs\":" << config.seed_pairs
@@ -882,7 +1004,9 @@ std::string run_positions_json(const PositionsConfig &config) {
   out << ",\"timing_unit\":\"nanoseconds\","
          "\"configuration\":{\"rules\":{\"width\":"
       << config.rules.width << ",\"height\":" << config.rules.height
-      << "},\"base_seed\":";
+      << "},\"rules_profile\":";
+  write_string(out, rules_profile_name(config.rules));
+  out << ",\"base_seed\":";
   write_uint64_string(out, config.base_seed);
   out << ",\"seed_derivation\":\"splitmix64\""
       << ",\"position_count\":" << config.position_count
@@ -949,6 +1073,17 @@ std::string run_positions_json(const PositionsConfig &config) {
         out << ",\"deep_turn_search\":";
         write_complete_turn_stats(out, *evaluation.deep_turn_search_stats,
                                   *evaluation.deep_turn_search_profile_nodes);
+      }
+      out << ",\"jacek_replay_bfm\":";
+      if (evaluation.jacek_replay_bfm_stats.has_value()) {
+        if (!evaluation.jacek_replay_bfm_model_sha256.has_value()) {
+          throw std::logic_error(
+              "JacekReplayBfm evaluation is missing the model SHA-256");
+        }
+        write_jacek_replay_bfm_stats(out, *evaluation.jacek_replay_bfm_stats,
+                                     *evaluation.jacek_replay_bfm_model_sha256);
+      } else {
+        out << "null";
       }
       out << '}';
     }

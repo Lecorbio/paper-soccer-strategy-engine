@@ -21,6 +21,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  replay-training-contract:
+    name: Jacek replay training contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install pinned research dependency
+        run: python3 -m pip install -r requirements-research.txt
+
+      - name: Test feature, corpus, training, runtime, and promotion contracts
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+            tests.codingame.test_jacek_replay_features \
+            tests.codingame.test_jacek_replay_corpus \
+            tests.codingame.test_jacek_replay_training \
+            tests.codingame.test_jacek_replay_promotion \
+            tests.codingame.test_jacek_replay_workflow \
+            tests.codingame.test_jacek_replay_baseline \
+            tests.codingame.test_jacek_replay_tuning
+
   leaderboard-contract:
     name: Leaderboard contracts
     runs-on: ubuntu-latest
@@ -120,7 +142,7 @@ jobs:
         run: ./scripts/build-and-test.sh
 
   deploy:
-    needs: [leaderboard-contract, test-gcc, test-clang, test-sanitizers]
+    needs: [replay-training-contract, leaderboard-contract, test-gcc, test-clang, test-sanitizers]
     if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages

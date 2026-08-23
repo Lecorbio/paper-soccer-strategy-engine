@@ -130,6 +130,7 @@ On other systems, open `web/index.html` in a modern browser.
 - [Reproducibility and artifact checks](docs/reproducibility.md)
 - [CodinGame submission archive](submissions/codingame/README.md)
 - [Model artifacts and provenance](models/README.md)
+- [Offline Jacek replay BFM](docs/jacek-replay-bfm.md)
 
 ## License
 

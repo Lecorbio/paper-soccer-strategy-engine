@@ -201,15 +201,21 @@ Commands during a game are:
 - `q`: quit.
 
 The CLI prints the board automatically by default. It supports human, seeded
-RandomBot, MCTS, alpha-beta, and Jacek-inspired controllers in the following
-pairings:
+RandomBot, MCTS, alpha-beta, Jacek-inspired, and offline Jacek replay BFM
+controllers. It prompts for the normal-demo or CodinGame rule profile before
+creating the game. `JacekInspiredBot` remains normal-demo-only;
+`JacekReplayBfmBot` is CodinGame-only and additionally asks for its external
+checkpoint path, seed, 980 ms default time budget, and 1,000,000-node default
+tree bound. The supported pairings are:
 
 1. Human versus Human
 2. Human versus any supported bot
-3. RandomBot versus RandomBot, MCTS, alpha-beta, or Jacek-inspired
-4. MCTS versus MCTS, alpha-beta, or Jacek-inspired
-5. Alpha-beta versus Alpha-beta or Jacek-inspired
+3. RandomBot versus RandomBot, MCTS, alpha-beta, Jacek-inspired, or Jacek
+   replay BFM
+4. MCTS versus MCTS, alpha-beta, Jacek-inspired, or Jacek replay BFM
+5. Alpha-beta versus Alpha-beta, Jacek-inspired, or Jacek replay BFM
 6. Jacek-inspired versus Jacek-inspired
+7. Jacek replay BFM versus itself
 
 Mixed-controller modes ask which side uses which controller. RandomBot and
 MCTS modes ask for base seeds; MCTS also asks for a per-move iteration budget,

@@ -23,6 +23,12 @@ bool same_rules(const RulesConfig &left, const RulesConfig &right) noexcept {
          left.blocked_rule == right.blocked_rule;
 }
 
+bool is_codingame_rules(const RulesConfig &rules) noexcept {
+  return rules.width == 8 && rules.height == 10 &&
+         rules.goal_rule == GoalRule::OwnGoalsAllowed &&
+         rules.blocked_rule == BlockedRule::MoverLoses;
+}
+
 bool same_state(const GameState &left, const GameState &right) {
   return same_rules(left.config, right.config) && left.ball == right.ball &&
          left.to_move == right.to_move && left.status == right.status &&
@@ -86,6 +92,8 @@ std::string_view kind_name(BotKind kind) noexcept {
       return "rank5-derived";
     case BotKind::DeepTurnSearch:
       return "deep-turn-search";
+    case BotKind::JacekReplayBfm:
+      return "jacek-replay-bfm";
   }
   return "unknown";
 }
@@ -174,6 +182,40 @@ void validate_bot_config(const ArenaBotConfig &config) {
       (void)CompleteTurnAnalysisConfig::deep(
           config.complete_turn_max_nodes);
       return;
+    case BotKind::JacekReplayBfm: {
+      const JacekReplayBfmConfig &bfm = config.jacek_replay_bfm;
+      if (bfm.model_path.empty()) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm model path must not be empty");
+      }
+      if (bfm.max_time_ms == 0) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm max time must be greater than zero");
+      }
+      if (bfm.max_tree_nodes < 2 || bfm.max_tree_nodes > 1'000'000) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm max tree nodes must be between 2 and "
+            "1000000");
+      }
+      if (bfm.max_actions == 0 || bfm.max_actions > 250) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm max actions must be between 1 and 250");
+      }
+      if (bfm.max_partial_paths == 0 || bfm.max_partial_paths > 50'000) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm max partial paths must be between 1 and "
+            "50000");
+      }
+      if (!std::isfinite(bfm.exploration) || bfm.exploration < 0.0) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm exploration must be finite and non-negative");
+      }
+      if (!std::isfinite(bfm.fpu) || bfm.fpu < -1.0 || bfm.fpu > 1.0) {
+        throw std::invalid_argument(
+            "arena JacekReplayBfm FPU must be finite and between -1 and 1");
+      }
+      return;
+    }
   }
   throw std::invalid_argument("arena bot kind is unknown");
 }
@@ -183,6 +225,12 @@ void validate_common(const RulesConfig &rules, const ArenaBotConfig &candidate,
   validate_rules(rules);
   validate_bot_config(candidate);
   validate_bot_config(reference);
+  if ((candidate.kind == BotKind::JacekReplayBfm ||
+       reference.kind == BotKind::JacekReplayBfm) &&
+      !is_codingame_rules(rules)) {
+    throw std::invalid_argument(
+        "JacekReplayBfm requires the 8x10 CodinGame rules profile");
+  }
 }
 
 std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
@@ -221,6 +269,11 @@ std::unique_ptr<Bot> make_arena_bot(const ArenaBotConfig &config,
     case BotKind::DeepTurnSearch:
       return std::make_unique<DeepTurnSearchBot>(
           config.complete_turn_max_nodes);
+    case BotKind::JacekReplayBfm: {
+      JacekReplayBfmConfig bfm = config.jacek_replay_bfm;
+      bfm.seed = seed;
+      return std::make_unique<JacekReplayBfmBot>(std::move(bfm));
+    }
   }
   throw std::invalid_argument("arena bot kind is unknown");
 }
@@ -264,6 +317,20 @@ std::optional<std::uint64_t> deep_turn_search_profile_nodes(Bot &bot) {
   return std::nullopt;
 }
 
+std::optional<JacekReplayBfmSearchStats> jacek_replay_bfm_stats(Bot &bot) {
+  if (auto *bfm = dynamic_cast<JacekReplayBfmBot *>(&bot)) {
+    return bfm->last_search_stats();
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> jacek_replay_bfm_model_sha256(Bot &bot) {
+  if (auto *bfm = dynamic_cast<JacekReplayBfmBot *>(&bot)) {
+    return std::string(bfm->model_sha256());
+  }
+  return std::nullopt;
+}
+
 bool contains_move(const std::vector<Move> &moves, Move move) {
   return std::find(moves.begin(), moves.end(), move) != moves.end();
 }
@@ -297,7 +364,9 @@ DecisionReport choose_and_measure(Bot &bot, Entrant entrant, std::size_t ply,
                         alpha_beta_search_stats(bot),
                         rank5_derived_search_stats(bot),
                         deep_turn_search_stats(bot),
-                        deep_turn_search_profile_nodes(bot)};
+                        deep_turn_search_profile_nodes(bot),
+                        jacek_replay_bfm_stats(bot),
+                        jacek_replay_bfm_model_sha256(bot)};
 }
 
 GameReport play_game(std::size_t pair_index, std::size_t game_in_pair,
@@ -548,7 +617,9 @@ PositionEvaluation evaluate_position(const ArenaBotConfig &config, Entrant entra
                             decision.alpha_beta_stats,
                             decision.rank5_derived_stats,
                             decision.deep_turn_search_stats,
-                            decision.deep_turn_search_profile_nodes};
+                            decision.deep_turn_search_profile_nodes,
+                            decision.jacek_replay_bfm_stats,
+                            decision.jacek_replay_bfm_model_sha256};
 }
 
 std::uint64_t median_unsigned(std::vector<std::uint64_t> values) {
@@ -633,6 +704,12 @@ TimingSummary summarize_timing(
       node_throughput.push_back(
           static_cast<double>(decision->deep_turn_search_stats->nodes) *
           1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
+    } else if (decision->jacek_replay_bfm_stats.has_value() &&
+               !decision->jacek_replay_bfm_stats->cached_continuation &&
+               decision->elapsed_ns > 0) {
+      node_throughput.push_back(
+          static_cast<double>(decision->jacek_replay_bfm_stats->tree_nodes) *
+          1'000'000'000.0 / static_cast<double>(decision->elapsed_ns));
     }
   }
   std::sort(elapsed.begin(), elapsed.end());
@@ -707,6 +784,69 @@ AlphaBetaSummary summarize_alpha_beta(
     summary.budget_exhausted_searches += stats.budget_exhausted ? 1U : 0U;
     ++summary.completed_turn_depth_histogram[stats.completed_turn_depth];
     ++summary.attempted_turn_depth_histogram[stats.attempted_turn_depth];
+  }
+  return summary;
+}
+
+JacekReplayBfmSummary summarize_jacek_replay_bfm(
+    const std::vector<const DecisionReport *> &decisions) {
+  JacekReplayBfmSummary summary;
+  std::vector<const DecisionReport *> all_edges;
+  std::vector<const DecisionReport *> fresh_roots;
+  all_edges.reserve(decisions.size());
+  fresh_roots.reserve(decisions.size());
+  for (const DecisionReport *decision : decisions) {
+    if (!decision->jacek_replay_bfm_stats.has_value()) {
+      continue;
+    }
+    const JacekReplayBfmSearchStats &stats =
+        *decision->jacek_replay_bfm_stats;
+    ++summary.decisions;
+    all_edges.push_back(decision);
+    if (stats.cached_continuation) {
+      ++summary.cached_continuation_edges;
+    } else {
+      ++summary.fresh_root_searches;
+      fresh_roots.push_back(decision);
+    }
+    if (!stats.cached_continuation) {
+      summary.expansions_sum += stats.expansions;
+      summary.generated_actions_sum += stats.generated_actions;
+      summary.retained_actions_sum += stats.retained_actions;
+      summary.neural_evaluations_sum += stats.neural_evaluations;
+      summary.visits_sum += stats.visits;
+      summary.completed_actions_sum += stats.completed_actions;
+      summary.duplicate_boundaries_sum += stats.duplicate_boundaries;
+      summary.partial_paths_sum += stats.partial_paths;
+      summary.fifo_extractions_sum += stats.fifo_extractions;
+      summary.lifo_extractions_sum += stats.lifo_extractions;
+      summary.tactical_proofs_sum += stats.tactical_proofs;
+      summary.tactical_solutions_sum += stats.tactical_solutions;
+      summary.truncations_sum += stats.truncations;
+      summary.tree_nodes_sum += stats.tree_nodes;
+      summary.tree_nodes_max =
+          std::max(summary.tree_nodes_max, stats.tree_nodes);
+      summary.max_complete_turn_depth = std::max(
+          summary.max_complete_turn_depth, stats.max_complete_turn_depth);
+      summary.minimum_root_value =
+          summary.minimum_root_value.has_value()
+              ? std::min(*summary.minimum_root_value, stats.root_value)
+              : stats.root_value;
+      summary.maximum_root_value =
+          summary.maximum_root_value.has_value()
+              ? std::max(*summary.maximum_root_value, stats.root_value)
+              : stats.root_value;
+      summary.deadline_reached_searches += stats.deadline_reached ? 1U : 0U;
+      summary.tree_cap_reached_searches += stats.tree_cap_reached ? 1U : 0U;
+    }
+  }
+  summary.fresh_root_timing = summarize_timing(fresh_roots);
+  summary.all_edge_timing = summarize_timing(all_edges);
+  if (summary.decisions !=
+          summary.fresh_root_searches + summary.cached_continuation_edges ||
+      summary.fresh_root_timing.decisions != summary.fresh_root_searches ||
+      summary.all_edge_timing.decisions != summary.decisions) {
+    throw std::logic_error("inconsistent JacekReplayBfm arena summary");
   }
   return summary;
 }
@@ -847,10 +987,13 @@ std::vector<const DecisionReport *> decisions_for(
     const PositionEvaluation &evaluation =
         entrant == Entrant::Candidate ? position.candidate : position.reference;
     storage.push_back(DecisionReport{
-        1, entrant, position.state.to_move, position.state.ball, evaluation.move,
-        evaluation.elapsed_ns, evaluation.stats, evaluation.alpha_beta_stats,
-        evaluation.rank5_derived_stats, evaluation.deep_turn_search_stats,
-        evaluation.deep_turn_search_profile_nodes});
+        1, entrant, position.state.to_move, position.state.ball,
+        evaluation.move, evaluation.elapsed_ns, evaluation.stats,
+        evaluation.alpha_beta_stats, evaluation.rank5_derived_stats,
+        evaluation.deep_turn_search_stats,
+        evaluation.deep_turn_search_profile_nodes,
+        evaluation.jacek_replay_bfm_stats,
+        evaluation.jacek_replay_bfm_model_sha256});
   }
   std::vector<const DecisionReport *> result;
   result.reserve(storage.size());

@@ -21,6 +21,8 @@ std::string_view bot_kind_name(BotKind kind) noexcept {
       return "Rank5DerivedBot";
     case BotKind::DeepTurnSearch:
       return "DeepTurnSearchBot";
+    case BotKind::JacekReplayBfm:
+      return "JacekReplayBfmBot";
   }
   return "UnknownBot";
 }
@@ -62,6 +64,8 @@ std::unique_ptr<Bot> make_bot(const BotConfig &config) {
     case BotKind::DeepTurnSearch:
       return std::make_unique<DeepTurnSearchBot>(
           GameReviewConfig::locked(ReviewMode::Deep).deep_profile);
+    case BotKind::JacekReplayBfm:
+      return std::make_unique<JacekReplayBfmBot>(config.jacek_replay_bfm);
   }
   throw std::invalid_argument("unknown bot kind");
 }

@@ -28,6 +28,7 @@ struct ArenaBotConfig {
   std::size_t alpha_beta_transposition_table_entries{65'536};
   std::uint32_t alpha_beta_max_search_plies{12};
   std::uint64_t complete_turn_max_nodes{100'000};
+  JacekReplayBfmConfig jacek_replay_bfm{};
 };
 
 struct FrozenOpening {

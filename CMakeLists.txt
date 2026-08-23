@@ -88,6 +88,9 @@ add_library(papersoccer_core
   src/bots/jacek_inspired/jacek_features.cpp
   src/bots/jacek_inspired/jacek_inspired.cpp
   src/bots/jacek_inspired/jacek_neural.cpp
+  src/bots/jacek_replay_bfm/features.cpp
+  src/bots/jacek_replay_bfm/jacek_replay_bfm.cpp
+  src/bots/jacek_replay_bfm/model.cpp
   src/bots/mcts/mcts.cpp
   src/bots/mcts/tactical_search.cpp
   src/bots/rank5_derived/rank5_derived.cpp
@@ -157,6 +160,7 @@ add_executable(papersoccer_tests
   tests/analysis/game_review_test.cpp
   tests/bots/alpha_beta/alpha_beta_test.cpp
   tests/bots/jacek_inspired/jacek_inspired_test.cpp
+  tests/bots/jacek_replay_bfm/jacek_replay_bfm_test.cpp
   tests/bots/mcts/mcts_test.cpp
   tests/bots/rank5_derived/rank5_derived_test.cpp
   tests/bots/random/random_bot_test.cpp
@@ -305,6 +309,21 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_native_round2_activation)
     set_tests_properties(
       papersoccer_codingame_jacek_native_round2_activation_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME papersoccer_jacek_replay_training_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_replay_features
+              tests.codingame.test_jacek_replay_corpus
+              tests.codingame.test_jacek_replay_training
+              tests.codingame.test_jacek_replay_promotion
+              tests.codingame.test_jacek_replay_workflow
+              tests.codingame.test_jacek_replay_baseline
+              tests.codingame.test_jacek_replay_tuning)
+    set_tests_properties(
+      papersoccer_jacek_replay_training_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
@@ -800,6 +819,149 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(
     papersoccer_codingame_jacek_nn_teacher_sample_generator
     PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_replay_teacher
+    tools/jacek_replay_bfm_teacher.cpp)
+  target_include_directories(papersoccer_jacek_replay_teacher
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_replay_teacher
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_replay_continuations
+    tools/jacek_replay_continuations.cpp)
+  target_include_directories(papersoccer_jacek_replay_continuations
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_replay_continuations
+    PRIVATE papersoccer_core)
+  add_executable(papersoccer_jacek_replay_continuations_contract_test
+    tests/codingame/jacek_replay_continuations_contract_test.cpp)
+  target_include_directories(
+    papersoccer_jacek_replay_continuations_contract_test PRIVATE tools)
+  add_test(NAME papersoccer_jacek_replay_continuations_contract_test
+    COMMAND papersoccer_jacek_replay_continuations_contract_test)
+
+  add_executable(papersoccer_jacek_replay_comparison
+    tools/jacek_replay_bfm_comparison.cpp
+    tools/jacek_replay_bfm_rank4_control.cpp
+    tools/jacek_replay_bfm_neural_puct_control.cpp)
+  target_include_directories(papersoccer_jacek_replay_comparison
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4/submission.cpp"
+    PAPERSOCCER_JACEK_REPLAY_RANK4_CONTROL_SHA256)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/rank_4/bot.cpp"
+    PAPERSOCCER_JACEK_REPLAY_RANK4_ENGINE_SHA256)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/neural_puct/submission.cpp"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_CONTROL_SHA256)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/neural_puct/bot.cpp"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ENGINE_SHA256)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/jacek_replay_bfm_rank4_control.cpp"
+    PAPERSOCCER_JACEK_REPLAY_RANK4_ADAPTER_SHA256)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/jacek_replay_bfm_neural_puct_control.cpp"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ADAPTER_SHA256)
+  set(PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATHS
+    include/papersoccer/types.hpp
+    include/papersoccer/geometry.hpp
+    include/papersoccer/rules.hpp
+    src/core/geometry.cpp
+    src/core/rules.cpp
+    src/bots/mcts_internal.hpp)
+  set(PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_MATERIAL "")
+  foreach(PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATH IN LISTS
+      PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATHS)
+    file(SHA256
+      "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATH}"
+      PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_FILE_SHA256)
+    string(APPEND PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_MATERIAL
+      "${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATH}:${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_FILE_SHA256}\n")
+  endforeach()
+  string(SHA256 PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_SHA256
+    "${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_MATERIAL}")
+  set(PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATHS
+    include/papersoccer/bot.hpp
+    src/bots/bot.cpp
+    src/bots/jacek_replay_bfm/features.cpp
+    src/bots/jacek_replay_bfm/model.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm_internal.hpp)
+  set(PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_MATERIAL "")
+  foreach(PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATH IN LISTS
+      PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATHS)
+    file(SHA256
+      "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATH}"
+      PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_FILE_SHA256)
+    string(APPEND PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_MATERIAL
+      "${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATH}:${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_FILE_SHA256}\n")
+  endforeach()
+  string(SHA256 PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_SHA256
+    "${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_MATERIAL}")
+  set(PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATHS
+    tools/jacek_replay_bfm_comparison.cpp
+    tools/jacek_replay_bfm_gate_internal.hpp)
+  set(PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_MATERIAL "")
+  foreach(PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATH IN LISTS
+      PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATHS)
+    file(SHA256
+      "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATH}"
+      PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_FILE_SHA256)
+    string(APPEND PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_MATERIAL
+      "${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATH}:${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_FILE_SHA256}\n")
+  endforeach()
+  string(SHA256 PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_SHA256
+    "${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_MATERIAL}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    submissions/codingame/bots/rank_4/submission.cpp
+    submissions/codingame/bots/rank_4/bot.cpp
+    submissions/codingame/bots/neural_puct/submission.cpp
+    submissions/codingame/bots/neural_puct/bot.cpp
+    tools/jacek_replay_bfm_rank4_control.cpp
+    tools/jacek_replay_bfm_neural_puct_control.cpp
+    ${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_PATHS}
+    ${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_PATHS}
+    ${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_PATHS})
+  target_compile_definitions(papersoccer_jacek_replay_comparison PRIVATE
+    PAPERSOCCER_JACEK_REPLAY_RANK4_CONTROL_SHA256="${PAPERSOCCER_JACEK_REPLAY_RANK4_CONTROL_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_RANK4_ENGINE_SHA256="${PAPERSOCCER_JACEK_REPLAY_RANK4_ENGINE_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_CONTROL_SHA256="${PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_CONTROL_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ENGINE_SHA256="${PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ENGINE_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_RANK4_ADAPTER_SHA256="${PAPERSOCCER_JACEK_REPLAY_RANK4_ADAPTER_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ADAPTER_SHA256="${PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ADAPTER_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_SHA256="${PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_SHA256="${PAPERSOCCER_JACEK_REPLAY_CANDIDATE_SOURCE_SHA256}"
+    PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_SHA256="${PAPERSOCCER_JACEK_REPLAY_COMPARISON_SOURCE_SHA256}")
+  target_link_libraries(papersoccer_jacek_replay_comparison
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_replay_comparison_smoke
+    COMMAND papersoccer_jacek_replay_comparison
+      --model
+      ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime
+      --opponent rank4 --pairs 1 --opening-plies 0 --max-turns 20
+      --time-ms 1 --control-work 16 --tree-nodes 32)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME papersoccer_jacek_replay_tool_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_replay_tool_smoke.py
+        --repository ${CMAKE_CURRENT_SOURCE_DIR}
+        --teacher $<TARGET_FILE:papersoccer_jacek_replay_teacher>
+        --continuations $<TARGET_FILE:papersoccer_jacek_replay_continuations>
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime)
+    add_test(NAME papersoccer_jacek_replay_workflow_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_replay_workflow_smoke.py
+        --repository ${CMAKE_CURRENT_SOURCE_DIR}
+        --teacher $<TARGET_FILE:papersoccer_jacek_replay_teacher>
+        --continuations $<TARGET_FILE:papersoccer_jacek_replay_continuations>)
+  endif()
 
   add_executable(papersoccer_jacek_training_data
     tools/jacek_training_data.cpp)

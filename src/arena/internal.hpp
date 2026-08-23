@@ -70,6 +70,8 @@ struct DecisionReport {
   std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
   std::optional<CompleteTurnSearchStats> deep_turn_search_stats{};
   std::optional<std::uint64_t> deep_turn_search_profile_nodes{};
+  std::optional<JacekReplayBfmSearchStats> jacek_replay_bfm_stats{};
+  std::optional<std::string> jacek_replay_bfm_model_sha256{};
 };
 
 struct GameReport {
@@ -106,6 +108,8 @@ struct PositionEvaluation {
   std::optional<Rank5DerivedSearchStats> rank5_derived_stats{};
   std::optional<CompleteTurnSearchStats> deep_turn_search_stats{};
   std::optional<std::uint64_t> deep_turn_search_profile_nodes{};
+  std::optional<JacekReplayBfmSearchStats> jacek_replay_bfm_stats{};
+  std::optional<std::string> jacek_replay_bfm_model_sha256{};
 };
 
 struct PositionReport {
@@ -222,6 +226,34 @@ struct AlphaBetaSummary {
       attempted_turn_depth_histogram{};
 };
 
+struct JacekReplayBfmSummary {
+  std::size_t decisions{};
+  std::size_t fresh_root_searches{};
+  std::size_t cached_continuation_edges{};
+  std::uint64_t expansions_sum{};
+  std::uint64_t generated_actions_sum{};
+  std::uint64_t retained_actions_sum{};
+  std::uint64_t neural_evaluations_sum{};
+  std::uint64_t visits_sum{};
+  std::uint64_t completed_actions_sum{};
+  std::uint64_t duplicate_boundaries_sum{};
+  std::uint64_t partial_paths_sum{};
+  std::uint64_t fifo_extractions_sum{};
+  std::uint64_t lifo_extractions_sum{};
+  std::uint64_t tactical_proofs_sum{};
+  std::uint64_t tactical_solutions_sum{};
+  std::uint64_t truncations_sum{};
+  std::size_t tree_nodes_sum{};
+  std::size_t tree_nodes_max{};
+  std::uint32_t max_complete_turn_depth{};
+  std::optional<float> minimum_root_value{};
+  std::optional<float> maximum_root_value{};
+  std::size_t deadline_reached_searches{};
+  std::size_t tree_cap_reached_searches{};
+  TimingSummary fresh_root_timing{};
+  TimingSummary all_edge_timing{};
+};
+
 struct BootstrapInterval {
   std::uint64_t seed{};
   std::size_t samples{};
@@ -268,6 +300,8 @@ TimingSummary summarize_timing(
 MctsSummary summarize_mcts(
     const std::vector<const DecisionReport *> &decisions);
 AlphaBetaSummary summarize_alpha_beta(
+    const std::vector<const DecisionReport *> &decisions);
+JacekReplayBfmSummary summarize_jacek_replay_bfm(
     const std::vector<const DecisionReport *> &decisions);
 Rank5DerivedSummary summarize_rank5_derived(
     const std::vector<const DecisionReport *> &decisions);

@@ -7,6 +7,8 @@ and do not share a deployment identity.
 
 | Family | Role | Canonical documentation |
 | --- | --- | --- |
+| `jacek_replay_bfm_bootstrap.runtime` | Untrained external-model contract fixture for the offline `6301 -> 192 -> 32 -> 1` replay BFM | [`docs/jacek-replay-bfm.md`](../docs/jacek-replay-bfm.md) |
+| `jacek_replay_bfm_development/` | Trained, game-tested development checkpoint for the same replay BFM; stronger than the bootstrap but not promotion-qualified | [`docs/jacek-replay-bfm.md`](../docs/jacek-replay-bfm.md) |
 | `jacek_article_value_model.json` | Browser/native `JacekInspiredBot` under standard demo rules | The model card below |
 | `jacek_native_*` JSON and runtime files | Independently trained checkpoints, selections, and deployment descriptors for the CodinGame `jacek_native_bfm` research track | [`jacek_native_bfm/README.md`](../submissions/codingame/bots/jacek_native_bfm/README.md) and [`ROUND2_SELECTION.md`](../submissions/codingame/bots/jacek_native_bfm/ROUND2_SELECTION.md) |
 | `results/jacek_arena_bfm/models/` | Separate clean-room fresh-arena models; selected scratch-only 8k seed-101 identity `fresh-32x32-s101-778156217cbd`, offline and unqualified | [`jacek_arena_bfm/README.md`](../submissions/codingame/bots/jacek_arena_bfm/README.md) and [selection record](../results/jacek_arena_bfm/selection/c5e93f516fe6c754210a7a678af8c9f77c87879688afe8c4c836706664c8d6fe.json) |
@@ -17,6 +19,10 @@ activate it. The browser model described below is generated independently into
 `src/bots/jacek_inspired/jacek_neural_model.hpp`. The selected fresh-arena
 model likewise remains an offline campaign artifact; it failed the mandatory
 H62 and both-color strength requirements and was never uploaded.
+
+`models/jacek_replay_bfm_promoted/` is reserved for the atomic output of the
+replay campaign's `publish` command. It must not exist for an ineligible or
+incomplete campaign and never replaces the maintained Rank-4 submission.
 
 ## Jacek-inspired demo model
 

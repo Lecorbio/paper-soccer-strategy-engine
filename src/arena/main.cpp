@@ -49,10 +49,11 @@ void print_usage(std::ostream &out) {
       "  papersoccer_arena provenance\n\n"
       "Common options:\n"
       "  --seed N                         Base seed (default: 828927513140)\n"
+      "  --rules normal|codingame         Rule profile (default: normal)\n"
       "  --width N --height N             Board dimensions (default: 8x10)\n"
-      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search\n"
+      "  --candidate-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search|jacek-replay-bfm\n"
       "                                     Candidate bot (default: mcts)\n"
-      "  --reference-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search\n"
+      "  --reference-kind random|mcts|alpha-beta|jacek-inspired|rank5-derived|deep-turn-search|jacek-replay-bfm\n"
       "                                     Reference bot (default: mcts)\n"
       "  --candidate-iterations N         MCTS iterations (default: 2000)\n"
       "  --reference-iterations N         MCTS iterations (default: 2000)\n"
@@ -87,7 +88,22 @@ void print_usage(std::ostream &out) {
       "  --candidate-complete-turn-max-nodes N\n"
       "                                     DeepTurnSearch work: 100000, 200000, or 400000\n"
       "  --reference-complete-turn-max-nodes N\n"
-      "                                     DeepTurnSearch work: 100000, 200000, or 400000\n\n"
+      "                                     DeepTurnSearch work: 100000, 200000, or 400000\n"
+      "  --candidate-jacek-replay-model PATH\n"
+      "  --reference-jacek-replay-model PATH\n"
+      "                                     Required Jacek replay checkpoint\n"
+      "  --candidate-jacek-replay-max-time-ms N\n"
+      "  --reference-jacek-replay-max-time-ms N\n"
+      "  --candidate-jacek-replay-max-tree-nodes N\n"
+      "  --reference-jacek-replay-max-tree-nodes N\n"
+      "  --candidate-jacek-replay-max-actions N\n"
+      "  --reference-jacek-replay-max-actions N\n"
+      "  --candidate-jacek-replay-max-partial-paths N\n"
+      "  --reference-jacek-replay-max-partial-paths N\n"
+      "  --candidate-jacek-replay-exploration X\n"
+      "  --reference-jacek-replay-exploration X\n"
+      "  --candidate-jacek-replay-fpu X\n"
+      "  --reference-jacek-replay-fpu X\n\n"
       "Match options:\n"
       "  --pairs N                        Seed pairs / 2N games (default: 200)\n"
       "  --opening-plies N                Shared random opening length (default: 0)\n"
@@ -173,10 +189,29 @@ ps::BotKind parse_kind(std::string_view value, std::string_view option) {
   if (value == "deep-turn-search") {
     return ps::BotKind::DeepTurnSearch;
   }
+  if (value == "jacek-replay-bfm") {
+    return ps::BotKind::JacekReplayBfm;
+  }
   throw std::invalid_argument(std::string(option) +
                               " requires random, mcts, alpha-beta, "
                               "jacek-inspired, rank5-derived, or "
-                              "deep-turn-search");
+                              "deep-turn-search, or jacek-replay-bfm");
+}
+
+void apply_rules_profile(ps::RulesConfig &rules, std::string_view value,
+                         std::string_view option) {
+  if (value == "normal") {
+    rules.goal_rule = ps::GoalRule::OpponentGoalOnly;
+    rules.blocked_rule = ps::BlockedRule::PlayerToMoveLoses;
+    return;
+  }
+  if (value == "codingame") {
+    rules.goal_rule = ps::GoalRule::OwnGoalsAllowed;
+    rules.blocked_rule = ps::BlockedRule::MoverLoses;
+    return;
+  }
+  throw std::invalid_argument(std::string(option) +
+                              " requires normal or codingame");
 }
 
 ps::MctsRolloutPolicy parse_policy(std::string_view value,
@@ -244,6 +279,8 @@ CliConfig parse_cli(int argc, char **argv) {
 
     if (option == "--seed") {
       config.base_seed = parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--rules") {
+      apply_rules_profile(config.rules, value(), option);
     } else if (option == "--width") {
       config.rules.width = parse_dimension(value(), option);
     } else if (option == "--height") {
@@ -352,6 +389,44 @@ CliConfig parse_cli(int argc, char **argv) {
     } else if (option == "--reference-complete-turn-max-nodes") {
       config.reference.complete_turn_max_nodes =
           parse_unsigned<std::uint64_t>(value(), option);
+    } else if (option == "--candidate-jacek-replay-model") {
+      config.candidate.jacek_replay_bfm.model_path = value();
+    } else if (option == "--reference-jacek-replay-model") {
+      config.reference.jacek_replay_bfm.model_path = value();
+    } else if (option == "--candidate-jacek-replay-max-time-ms") {
+      config.candidate.jacek_replay_bfm.max_time_ms =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--reference-jacek-replay-max-time-ms") {
+      config.reference.jacek_replay_bfm.max_time_ms =
+          parse_unsigned<std::uint32_t>(value(), option);
+    } else if (option == "--candidate-jacek-replay-max-tree-nodes") {
+      config.candidate.jacek_replay_bfm.max_tree_nodes =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--reference-jacek-replay-max-tree-nodes") {
+      config.reference.jacek_replay_bfm.max_tree_nodes =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-jacek-replay-max-actions") {
+      config.candidate.jacek_replay_bfm.max_actions =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--reference-jacek-replay-max-actions") {
+      config.reference.jacek_replay_bfm.max_actions =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-jacek-replay-max-partial-paths") {
+      config.candidate.jacek_replay_bfm.max_partial_paths =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--reference-jacek-replay-max-partial-paths") {
+      config.reference.jacek_replay_bfm.max_partial_paths =
+          parse_unsigned<std::size_t>(value(), option);
+    } else if (option == "--candidate-jacek-replay-exploration") {
+      config.candidate.jacek_replay_bfm.exploration =
+          parse_double(value(), option);
+    } else if (option == "--reference-jacek-replay-exploration") {
+      config.reference.jacek_replay_bfm.exploration =
+          parse_double(value(), option);
+    } else if (option == "--candidate-jacek-replay-fpu") {
+      config.candidate.jacek_replay_bfm.fpu = parse_double(value(), option);
+    } else if (option == "--reference-jacek-replay-fpu") {
+      config.reference.jacek_replay_bfm.fpu = parse_double(value(), option);
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }

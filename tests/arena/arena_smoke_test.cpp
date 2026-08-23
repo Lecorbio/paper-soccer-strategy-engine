@@ -531,6 +531,56 @@ void invalid_alpha_beta_settings_and_unknown_kinds_are_rejected() {
       "arena should reject unknown bot kinds instead of treating them as MCTS");
 }
 
+void jacek_replay_bfm_requires_its_checkpoint_and_codingame_contract() {
+  arena::PositionsConfig missing_model;
+  missing_model.rules =
+      papersoccer::RulesConfig{8, 10, papersoccer::GoalRule::OwnGoalsAllowed,
+                               papersoccer::BlockedRule::MoverLoses};
+  missing_model.candidate.kind = papersoccer::BotKind::JacekReplayBfm;
+  missing_model.reference.kind = papersoccer::BotKind::Random;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(missing_model); },
+      "JacekReplayBfm should require an external checkpoint path");
+
+  arena::PositionsConfig wrong_rules = missing_model;
+  wrong_rules.rules = papersoccer::RulesConfig{};
+  wrong_rules.candidate.jacek_replay_bfm.model_path = "unused.runtime";
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(wrong_rules); },
+      "JacekReplayBfm should reject the normal demo rules");
+
+  arena::PositionsConfig invalid_limits = missing_model;
+  invalid_limits.candidate.jacek_replay_bfm.model_path = "unused.runtime";
+  invalid_limits.candidate.jacek_replay_bfm.max_actions = 251;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(invalid_limits); },
+      "JacekReplayBfm should enforce its retained-action bound");
+
+  invalid_limits = missing_model;
+  invalid_limits.candidate.jacek_replay_bfm.model_path = "unused.runtime";
+  invalid_limits.candidate.jacek_replay_bfm.max_tree_nodes = 1;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(invalid_limits); },
+      "JacekReplayBfm should reserve a root and one action node");
+
+  invalid_limits = missing_model;
+  invalid_limits.candidate.jacek_replay_bfm.model_path = "unused.runtime";
+  invalid_limits.candidate.jacek_replay_bfm.fpu = 1.01;
+  require_invalid_argument(
+      [&] { (void)arena::run_positions_json(invalid_limits); },
+      "JacekReplayBfm should reject an out-of-range FPU");
+
+  arena::PositionsConfig codingame_report;
+  codingame_report.rules = missing_model.rules;
+  codingame_report.position_count = 1;
+  codingame_report.generation_plies = 0;
+  codingame_report.candidate.kind = papersoccer::BotKind::Random;
+  codingame_report.reference.kind = papersoccer::BotKind::Random;
+  const std::string json = arena::run_positions_json(codingame_report);
+  require_contains(json, "\"rules_profile\":\"codingame\"",
+                   "arena reports should identify the CodinGame profile");
+}
+
 void invalid_opening_length_is_rejected() {
   arena::MatchesConfig config;
   config.opening_plies = 8;
@@ -571,6 +621,7 @@ int main() {
     frozen_openings_are_replayed_and_validated_programmatically();
     invalid_tactical_limits_and_policy_are_rejected();
     invalid_alpha_beta_settings_and_unknown_kinds_are_rejected();
+    jacek_replay_bfm_requires_its_checkpoint_and_codingame_contract();
     invalid_opening_length_is_rejected();
     build_provenance_is_machine_readable();
     std::cout << "[PASS] arena smoke test\n";
