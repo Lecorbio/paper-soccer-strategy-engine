@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 #include "papersoccer/types.hpp"
@@ -23,11 +24,15 @@ struct ControlDecision {
   float root_value{};
   bool deadline_reached{};
   bool cap_reached{};
+  bool replay_correction{};
 };
 
 ControlDecision choose_rank4_control(const GameState &state,
                                      const ControlConfig &config);
 ControlDecision choose_neural_puct_control(const GameState &state,
                                            const ControlConfig &config);
+ControlDecision choose_jacek_nn_control(const GameState &state,
+                                        std::string_view transcript,
+                                        const ControlConfig &config);
 
 }  // namespace papersoccer::jacek_replay_gate

@@ -39,17 +39,29 @@ using Clock = std::chrono::steady_clock;
 #ifndef PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_CONTROL_SHA256
 #error "neural PUCT control SHA-256 must be bound by the build"
 #endif
+#ifndef PAPERSOCCER_JACEK_REPLAY_JACEK_NN_CONTROL_SHA256
+#error "jacek_nn control SHA-256 must be bound by the build"
+#endif
 #ifndef PAPERSOCCER_JACEK_REPLAY_RANK4_ENGINE_SHA256
 #error "Rank-4 engine SHA-256 must be bound by the build"
 #endif
 #ifndef PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ENGINE_SHA256
 #error "neural PUCT engine SHA-256 must be bound by the build"
 #endif
+#ifndef PAPERSOCCER_JACEK_REPLAY_JACEK_NN_ENGINE_SHA256
+#error "jacek_nn engine SHA-256 must be bound by the build"
+#endif
 #ifndef PAPERSOCCER_JACEK_REPLAY_RANK4_ADAPTER_SHA256
 #error "Rank-4 adapter SHA-256 must be bound by the build"
 #endif
 #ifndef PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ADAPTER_SHA256
 #error "neural PUCT adapter SHA-256 must be bound by the build"
+#endif
+#ifndef PAPERSOCCER_JACEK_REPLAY_JACEK_NN_ADAPTER_SHA256
+#error "jacek_nn adapter SHA-256 must be bound by the build"
+#endif
+#ifndef PAPERSOCCER_JACEK_REPLAY_JACEK_NN_SOURCE_SHA256
+#error "jacek_nn source closure SHA-256 must be bound by the build"
 #endif
 #ifndef PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_SHA256
 #error "shared control core SHA-256 must be bound by the build"
@@ -61,10 +73,36 @@ using Clock = std::chrono::steady_clock;
 #error "comparison source SHA-256 must be bound by the build"
 #endif
 
-enum class Opponent { Rank4, NeuralPuct, Both };
+enum class Opponent {
+  Rank4,
+  NeuralPuct,
+  JacekNn,
+  JacekReplay,
+  Both,
+  Rank4AndJacekNn
+};
+
+std::string_view opponent_name(Opponent opponent) {
+  switch (opponent) {
+    case Opponent::Rank4:
+      return "rank4";
+    case Opponent::NeuralPuct:
+      return "neural-puct";
+    case Opponent::JacekNn:
+      return "jacek-nn";
+    case Opponent::JacekReplay:
+      return "jacek-replay";
+    case Opponent::Both:
+      return "both";
+    case Opponent::Rank4AndJacekNn:
+      return "rank4-jacek-nn";
+  }
+  throw std::logic_error("unknown opponent selection");
+}
 
 struct Options {
   std::string model_path;
+  std::string control_model_path;
   std::string output{"-"};
   std::string bank_path;
   std::string generate_bank_path;
@@ -73,6 +111,7 @@ struct Options {
   std::string bank_classification{"development"};
   Opponent opponent{Opponent::Both};
   std::size_t pairs{6};
+  std::size_t pair_offset{};
   std::size_t opening_plies{12};
   std::size_t max_turns{320};
   std::uint64_t seed{0x4A5242464D5631ULL};
@@ -88,6 +127,9 @@ struct Options {
   std::size_t opening_bank_minimum_physical_plies{};
   std::string comparison_executable_path{};
   std::string comparison_executable_sha256{};
+  std::string model_sha256{};
+  std::string control_model_sha256{};
+  std::string opening_bank_sha256{};
   std::vector<std::string> opening_state_identities{};
 };
 
@@ -103,6 +145,7 @@ struct Work {
   std::uint64_t neural_evaluations{};
   std::uint64_t deadlines{};
   std::uint64_t caps{};
+  std::uint64_t replay_corrections{};
   double milliseconds{};
   double maximum_ms{};
   std::vector<double> samples_ms{};
@@ -116,6 +159,7 @@ struct Game {
   std::size_t turns{};
   bool illegal{};
   std::string error;
+  std::string transcript;
   Work candidate;
   Work control;
 };
@@ -159,13 +203,16 @@ Options parse_options(int argc, char **argv) {
     if (option == "--help") {
       std::cout
           << "usage: papersoccer_jacek_replay_comparison --model PATH "
+             "[--control-model PATH] "
              "[--output PATH|-] "
              "[--bank opening.tsv] "
              "[--generate-bank opening.tsv] "
              "[--tuning-receipt tuning.json] "
              "[--baseline-receipt baseline.json] "
              "[--bank-classification development|final] "
-             "[--opponent rank4|neural-puct|both] [--pairs N] "
+             "[--opponent rank4|neural-puct|jacek-nn|jacek-replay|both|"
+             "rank4-jacek-nn] [--pairs N] "
+             "[--pair-offset N] "
              "[--opening-plies N] [--max-turns N] [--seed N] "
              "[--time-ms N] [--control-work N] [--tree-nodes N] "
              "[--control-tree-nodes N] [--max-actions N] "
@@ -174,6 +221,7 @@ Options parse_options(int argc, char **argv) {
     }
     const std::string value = required_value(index, argc, argv, option);
     if (option == "--model") options.model_path = value;
+    else if (option == "--control-model") options.control_model_path = value;
     else if (option == "--output") options.output = value;
     else if (option == "--bank") options.bank_path = value;
     else if (option == "--generate-bank") options.generate_bank_path = value;
@@ -190,10 +238,20 @@ Options parse_options(int argc, char **argv) {
     else if (option == "--opponent") {
       if (value == "rank4") options.opponent = Opponent::Rank4;
       else if (value == "neural-puct") options.opponent = Opponent::NeuralPuct;
+      else if (value == "jacek-nn") options.opponent = Opponent::JacekNn;
+      else if (value == "jacek-replay") {
+        options.opponent = Opponent::JacekReplay;
+      }
       else if (value == "both") options.opponent = Opponent::Both;
+      else if (value == "rank4-jacek-nn") {
+        options.opponent = Opponent::Rank4AndJacekNn;
+      }
       else throw std::invalid_argument("invalid opponent");
     } else if (option == "--pairs") {
       options.pairs = parse_unsigned<std::size_t>(value, option);
+    } else if (option == "--pair-offset") {
+      options.pair_offset =
+          parse_unsigned<std::size_t>(value, option, true);
     } else if (option == "--opening-plies") {
       options.opening_plies =
           parse_unsigned<std::size_t>(value, option, true);
@@ -226,6 +284,19 @@ Options parse_options(int argc, char **argv) {
   }
   if (!options.bank_path.empty() && !options.generate_bank_path.empty()) {
     throw std::invalid_argument("--bank and --generate-bank are exclusive");
+  }
+  if (options.opponent == Opponent::JacekReplay &&
+      options.control_model_path.empty()) {
+    throw std::invalid_argument(
+        "--control-model is required for the jacek-replay opponent");
+  }
+  if (options.opponent != Opponent::JacekReplay &&
+      !options.control_model_path.empty()) {
+    throw std::invalid_argument(
+        "--control-model requires the jacek-replay opponent");
+  }
+  if (options.bank_path.empty() && options.pair_offset != 0) {
+    throw std::invalid_argument("--pair-offset requires --bank");
   }
   return options;
 }
@@ -481,70 +552,97 @@ void generate_bank(const Options &options) {
 }
 
 void add_work(Work &target, std::uint64_t work, std::uint64_t evaluations,
-              bool deadline, bool cap, double milliseconds) {
+              bool deadline, bool cap, double milliseconds,
+              bool replay_correction = false) {
   ++target.decisions;
   target.work += work;
   target.neural_evaluations += evaluations;
   target.deadlines += deadline ? 1U : 0U;
   target.caps += cap ? 1U : 0U;
+  target.replay_corrections += replay_correction ? 1U : 0U;
   target.milliseconds += milliseconds;
   target.maximum_ms = std::max(target.maximum_ms, milliseconds);
   target.samples_ms.push_back(milliseconds);
 }
 
-void apply_complete_action(ps::GameState &state,
-                           const std::vector<ps::Move> &action) {
+std::string apply_complete_action(ps::GameState &state,
+                                  const std::vector<ps::Move> &action) {
   if (action.empty()) throw std::logic_error("engine returned an empty action");
   const ps::Player mover = state.to_move;
+  std::string encoded;
+  encoded.reserve(action.size());
   for (const ps::Move move : action) {
     if (ps::is_terminal(state) || state.to_move != mover) {
       throw std::logic_error("engine returned an overlong action");
     }
+    encoded.push_back(encode_opening_direction(state.ball, move.to));
     state = ps::apply_move(state, move);
   }
   if (!ps::is_terminal(state) && state.to_move == mover) {
     throw std::logic_error("engine stopped during a mandatory rebound");
   }
+  return encoded;
 }
 
-void choose_candidate(ps::JacekReplayBfmBot &bot, ps::GameState &state,
-                      Work &work) {
+std::string choose_candidate(ps::JacekReplayBfmBot &bot,
+                             ps::GameState &state, Work &work) {
   const ps::Player mover = state.to_move;
   const auto started = Clock::now();
   const ps::Move first = bot.choose_move(state);
   const ps::JacekReplayBfmSearchStats stats = bot.last_search_stats();
+  std::string encoded;
+  encoded.push_back(encode_opening_direction(state.ball, first.to));
   state = ps::apply_move(state, first);
   while (!ps::is_terminal(state) && state.to_move == mover) {
-    state = ps::apply_move(state, bot.choose_move(state));
+    const ps::Move move = bot.choose_move(state);
+    encoded.push_back(encode_opening_direction(state.ball, move.to));
+    state = ps::apply_move(state, move);
   }
   const double elapsed =
       std::chrono::duration<double, std::milli>(Clock::now() - started).count();
   add_work(work, stats.expansions + stats.partial_paths,
            stats.neural_evaluations, stats.deadline_reached,
            stats.tree_cap_reached, elapsed);
+  return encoded;
 }
 
-void choose_control(Opponent opponent, const gate::ControlConfig &config,
-                    ps::GameState &state, Work &work) {
+std::string choose_control(Opponent opponent,
+                           const gate::ControlConfig &config,
+                           ps::GameState &state,
+                           std::string_view transcript, Work &work) {
   const auto started = Clock::now();
-  const gate::ControlDecision decision =
-      opponent == Opponent::Rank4
-          ? gate::choose_rank4_control(state, config)
-          : gate::choose_neural_puct_control(state, config);
-  apply_complete_action(state, decision.action);
+  gate::ControlDecision decision;
+  if (opponent == Opponent::Rank4) {
+    decision = gate::choose_rank4_control(state, config);
+  } else if (opponent == Opponent::NeuralPuct) {
+    decision = gate::choose_neural_puct_control(state, config);
+  } else if (opponent == Opponent::JacekNn) {
+    decision = gate::choose_jacek_nn_control(state, transcript, config);
+  } else {
+    throw std::logic_error("aggregate opponent cannot play a game");
+  }
+  const std::string encoded = apply_complete_action(state, decision.action);
   const double elapsed =
       std::chrono::duration<double, std::milli>(Clock::now() - started).count();
   add_work(work, decision.work, decision.neural_evaluations,
-           decision.deadline_reached, decision.cap_reached, elapsed);
+           decision.deadline_reached, decision.cap_reached, elapsed,
+           decision.replay_correction);
+  return encoded;
+}
+
+void append_turn(std::string &transcript, std::string_view action) {
+  if (!transcript.empty()) transcript.push_back('/');
+  transcript.append(action);
 }
 
 Game play(const Opening &opening, Opponent opponent, int candidate_player,
           const Options &options) {
   Game result;
   result.opening = opening.id;
-  result.opponent = opponent == Opponent::Rank4 ? "rank4" : "neural-puct";
+  result.opponent = opponent_name(opponent);
   result.candidate_player = candidate_player;
   ps::GameState state = opening.state;
+  std::string transcript = opening.transcript;
   ps::JacekReplayBfmConfig candidate_config;
   candidate_config.model_path = options.model_path;
   candidate_config.seed = options.seed ^
@@ -556,6 +654,22 @@ Game play(const Opening &opening, Opponent opponent, int candidate_player,
   candidate_config.exploration = options.exploration;
   candidate_config.fpu = options.fpu;
   ps::JacekReplayBfmBot candidate(candidate_config);
+  if (candidate.model_sha256() != options.model_sha256) {
+    throw std::runtime_error("candidate model changed during comparison");
+  }
+  std::unique_ptr<ps::JacekReplayBfmBot> replay_control;
+  if (opponent == Opponent::JacekReplay) {
+    ps::JacekReplayBfmConfig reference_config = candidate_config;
+    reference_config.model_path = options.control_model_path;
+    reference_config.seed =
+        options.seed ^
+        (static_cast<std::uint64_t>(1 - candidate_player) << 63U);
+    replay_control =
+        std::make_unique<ps::JacekReplayBfmBot>(reference_config);
+    if (replay_control->model_sha256() != options.control_model_sha256) {
+      throw std::runtime_error("control model changed during comparison");
+    }
+  }
   gate::ControlConfig control;
   control.time_ms = options.time_ms;
   control.work_cap = options.control_work;
@@ -564,9 +678,18 @@ Game play(const Opening &opening, Opponent opponent, int candidate_player,
   try {
     while (!ps::is_terminal(state) && result.turns < options.max_turns) {
       if (player_id(state.to_move) == candidate_player) {
-        choose_candidate(candidate, state, result.candidate);
+        append_turn(transcript,
+                    choose_candidate(candidate, state, result.candidate));
       } else {
-        choose_control(opponent, control, state, result.control);
+        if (replay_control) {
+          append_turn(transcript,
+                      choose_candidate(*replay_control, state,
+                                       result.control));
+        } else {
+          append_turn(transcript,
+                      choose_control(opponent, control, state, transcript,
+                                     result.control));
+        }
       }
       ++result.turns;
     }
@@ -578,6 +701,7 @@ Game play(const Opening &opening, Opponent opponent, int candidate_player,
     result.error = error.what();
     result.winner = 1 - player_id(state.to_move);
   }
+  result.transcript = std::move(transcript);
   return result;
 }
 
@@ -618,6 +742,7 @@ void write_work(std::ostream &out, const Work &work) {
   out << "{\"decisions\":" << work.decisions << ",\"work\":" << work.work
       << ",\"neural_evaluations\":" << work.neural_evaluations
       << ",\"deadlines\":" << work.deadlines << ",\"caps\":" << work.caps
+      << ",\"replay_corrections\":" << work.replay_corrections
       << ",\"total_ms\":" << work.milliseconds
       << ",\"p99_ms\":" << p99
       << ",\"max_ms\":" << work.maximum_ms << '}';
@@ -654,6 +779,7 @@ void write_output(const Options &options, const std::vector<Game> &games) {
     candidate.neural_evaluations += game.candidate.neural_evaluations;
     candidate.deadlines += game.candidate.deadlines;
     candidate.caps += game.candidate.caps;
+    candidate.replay_corrections += game.candidate.replay_corrections;
     candidate.milliseconds += game.candidate.milliseconds;
     candidate.maximum_ms = std::max(candidate.maximum_ms,
                                     game.candidate.maximum_ms);
@@ -665,6 +791,7 @@ void write_output(const Options &options, const std::vector<Game> &games) {
     control.neural_evaluations += game.control.neural_evaluations;
     control.deadlines += game.control.deadlines;
     control.caps += game.control.caps;
+    control.replay_corrections += game.control.replay_corrections;
     control.milliseconds += game.control.milliseconds;
     control.maximum_ms = std::max(control.maximum_ms, game.control.maximum_ms);
     control.samples_ms.insert(control.samples_ms.end(),
@@ -675,12 +802,9 @@ void write_output(const Options &options, const std::vector<Game> &games) {
             << "{\"schema\":\"papersoccer.jacek-replay-bfm-comparison.v1\","
             << "\"model\":" << json_string(options.model_path)
             << ",\"model_sha256\":";
-  ps::JacekReplayBfmConfig config;
-  config.model_path = options.model_path;
-  config.max_time_ms = options.time_ms;
-  ps::JacekReplayBfmBot model(config);
-  std::cout << json_string(model.model_sha256())
+  std::cout << json_string(options.model_sha256)
             << ",\"configuration\":{\"pairs\":" << options.pairs
+            << ",\"pair_offset\":" << options.pair_offset
             << ",\"opening_source\":"
             << json_string(options.bank_path.empty() ? "generated"
                                                      : options.bank_path)
@@ -688,7 +812,7 @@ void write_output(const Options &options, const std::vector<Game> &games) {
   if (options.bank_path.empty()) {
     std::cout << "null";
   } else {
-    std::cout << json_string(sha256_file(options.bank_path));
+    std::cout << json_string(options.opening_bank_sha256);
   }
   std::cout << ",\"opening_state_identities\":[";
   for (std::size_t index = 0;
@@ -715,6 +839,14 @@ void write_output(const Options &options, const std::vector<Game> &games) {
               << ",\"baseline_receipt_sha256\":"
               << json_string(sha256_file(options.baseline_receipt_path));
   }
+  std::cout << ",\"control_model_path\":";
+  if (options.control_model_path.empty()) {
+    std::cout << "null,\"control_model_sha256\":null";
+  } else {
+    std::cout << json_string(options.control_model_path)
+              << ",\"control_model_sha256\":"
+              << json_string(options.control_model_sha256);
+  }
   std::cout << ",\"rank4_control_sha256\":"
             << json_string(PAPERSOCCER_JACEK_REPLAY_RANK4_CONTROL_SHA256)
             << ",\"rank4_engine_sha256\":"
@@ -725,11 +857,19 @@ void write_output(const Options &options, const std::vector<Game> &games) {
             << ",\"neural_puct_engine_sha256\":"
             << json_string(
                    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ENGINE_SHA256)
+            << ",\"jacek_nn_control_sha256\":"
+            << json_string(PAPERSOCCER_JACEK_REPLAY_JACEK_NN_CONTROL_SHA256)
+            << ",\"jacek_nn_engine_sha256\":"
+            << json_string(PAPERSOCCER_JACEK_REPLAY_JACEK_NN_ENGINE_SHA256)
             << ",\"rank4_adapter_sha256\":"
             << json_string(PAPERSOCCER_JACEK_REPLAY_RANK4_ADAPTER_SHA256)
             << ",\"neural_puct_adapter_sha256\":"
             << json_string(
                    PAPERSOCCER_JACEK_REPLAY_NEURAL_PUCT_ADAPTER_SHA256)
+            << ",\"jacek_nn_adapter_sha256\":"
+            << json_string(PAPERSOCCER_JACEK_REPLAY_JACEK_NN_ADAPTER_SHA256)
+            << ",\"jacek_nn_source_sha256\":"
+            << json_string(PAPERSOCCER_JACEK_REPLAY_JACEK_NN_SOURCE_SHA256)
             << ",\"shared_core_sha256\":"
             << json_string(PAPERSOCCER_JACEK_REPLAY_SHARED_CORE_SHA256)
             << ",\"candidate_source_sha256\":"
@@ -748,11 +888,7 @@ void write_output(const Options &options, const std::vector<Game> &games) {
             << ",\"time_ms\":" << options.time_ms
             << ",\"max_turns\":" << options.max_turns
             << ",\"opponent\":"
-            << json_string(options.opponent == Opponent::Both
-                               ? "both"
-                               : options.opponent == Opponent::Rank4
-                                     ? "rank4"
-                                     : "neural-puct")
+            << json_string(opponent_name(options.opponent))
             << ",\"candidate_tree_nodes\":" << options.tree_nodes
             << ",\"max_actions\":" << options.max_actions
             << ",\"max_partial_paths\":" << options.max_partial_paths
@@ -789,6 +925,11 @@ void write_output(const Options &options, const std::vector<Game> &games) {
     write_samples(std::cout, game.candidate.samples_ms);
     std::cout << ",\"control_ms\":";
     write_samples(std::cout, game.control.samples_ms);
+    std::cout << ",\"candidate_work\":";
+    write_work(std::cout, game.candidate);
+    std::cout << ",\"control_work\":";
+    write_work(std::cout, game.control);
+    std::cout << ",\"transcript\":" << json_string(game.transcript);
     std::cout << '}';
   }
   std::cout << "]}\n";
@@ -807,6 +948,14 @@ int main(int argc, char **argv) {
       generate_bank(options);
       return 0;
     }
+    options.model_sha256 = sha256_file(options.model_path);
+    if (!options.control_model_path.empty()) {
+      options.control_model_sha256 =
+          sha256_file(options.control_model_path);
+    }
+    if (!options.bank_path.empty()) {
+      options.opening_bank_sha256 = sha256_file(options.bank_path);
+    }
     std::ofstream output;
     std::streambuf *original_output = nullptr;
     if (options.output != "-") {
@@ -817,8 +966,22 @@ int main(int argc, char **argv) {
       original_output = std::cout.rdbuf(output.rdbuf());
     }
     std::vector<Opponent> opponents;
-    if (options.opponent != Opponent::NeuralPuct) opponents.push_back(Opponent::Rank4);
-    if (options.opponent != Opponent::Rank4) opponents.push_back(Opponent::NeuralPuct);
+    if (options.opponent == Opponent::Rank4 ||
+        options.opponent == Opponent::Both ||
+        options.opponent == Opponent::Rank4AndJacekNn) {
+      opponents.push_back(Opponent::Rank4);
+    }
+    if (options.opponent == Opponent::NeuralPuct ||
+        options.opponent == Opponent::Both) {
+      opponents.push_back(Opponent::NeuralPuct);
+    }
+    if (options.opponent == Opponent::JacekNn ||
+        options.opponent == Opponent::Rank4AndJacekNn) {
+      opponents.push_back(Opponent::JacekNn);
+    }
+    if (options.opponent == Opponent::JacekReplay) {
+      opponents.push_back(Opponent::JacekReplay);
+    }
     std::vector<Game> games;
     const std::vector<Opening> bank = options.bank_path.empty()
                                           ? std::vector<Opening>{}
@@ -826,14 +989,22 @@ int main(int argc, char **argv) {
                                                       options.bank_classification,
                                                       options.opening_bank_seed,
                                                       options.opening_bank_minimum_physical_plies);
-    if (!bank.empty() && bank.size() < options.pairs) {
-      throw std::invalid_argument("opening bank has fewer rows than --pairs");
+    if (!options.bank_path.empty() &&
+        sha256_file(options.bank_path) != options.opening_bank_sha256) {
+      throw std::runtime_error("opening bank changed while it was loaded");
+    }
+    if (!bank.empty() &&
+        (options.pair_offset > bank.size() ||
+         options.pairs > bank.size() - options.pair_offset)) {
+      throw std::invalid_argument(
+          "opening bank has fewer requested rows than --pair-offset + --pairs");
     }
     options.opening_state_identities.reserve(options.pairs);
     std::set<std::string> comparison_states;
     for (std::size_t pair = 0; pair < options.pairs; ++pair) {
-      const Opening opening = bank.empty() ? make_opening(pair, options)
-                                           : bank[pair];
+      const Opening opening =
+          bank.empty() ? make_opening(pair, options)
+                       : bank[options.pair_offset + pair];
       const std::string identity = state_identity(opening.state);
       if (!comparison_states.insert(identity).second) {
         throw std::invalid_argument(
@@ -844,6 +1015,18 @@ int main(int argc, char **argv) {
         games.push_back(play(opening, opponent, 0, options));
         games.push_back(play(opening, opponent, 1, options));
       }
+    }
+    if (sha256_file(options.model_path) != options.model_sha256) {
+      throw std::runtime_error("candidate model changed during comparison");
+    }
+    if (!options.control_model_path.empty() &&
+        sha256_file(options.control_model_path) !=
+            options.control_model_sha256) {
+      throw std::runtime_error("control model changed during comparison");
+    }
+    if (!options.bank_path.empty() &&
+        sha256_file(options.bank_path) != options.opening_bank_sha256) {
+      throw std::runtime_error("opening bank changed during comparison");
     }
     write_output(options, games);
     if (original_output != nullptr) {
