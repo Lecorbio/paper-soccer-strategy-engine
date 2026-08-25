@@ -27,6 +27,7 @@ import jacek_replay_features as features  # noqa: E402
 
 ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
+RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v2"
 SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v3"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
@@ -720,7 +721,7 @@ def target_policy_for_schema(schema: str) -> dict[str, object]:
             "outcome_frame": "mover-relative-terminal-winner",
         },
     }
-    if schema == TEACHER_SCHEMA:
+    if schema in {TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
         common["teacher_value"] = {
             "input_frame": "absolute-player-one-root-score",
             "transform": "mover-sign*tanh(root_score/12000)",
@@ -865,6 +866,148 @@ def _rank4_teacher_value(row: Mapping[str, object], mover: int) -> float:
     del depth, nodes
     score = _finite_number(row.get("root_score"), "teacher root_score")
     return _teacher_target(score, mover, _proven_winner(row.get("proven_winner")))
+
+
+_RANK4_TEACHER_FIELDS = {"kind", "source_sha256"}
+_RANK4_CONFIG_FIELDS = {
+    "max_nodes",
+    "max_time_ms",
+    "max_turn_depth",
+    "replay_value_blend_percent",
+    "teacher_residual_weight_percent",
+}
+_RANK4_STATS_COUNTERS = {
+    "attempted_depth",
+    "completed_depth",
+    "nodes",
+    "leaf_evaluations",
+    "terminal_nodes",
+    "completed_actions",
+}
+_RANK4_STATS_FIELDS = _RANK4_STATS_COUNTERS | {
+    "budget_exhausted",
+    "node_cap_reached",
+    "depth_cap_reached",
+    "deadline_reached",
+    "termination_reason",
+}
+
+
+def _rank4_fixed_work_teacher_value(
+    row: Mapping[str, object], mover: int
+) -> float:
+    teacher = row.get("teacher")
+    if not isinstance(teacher, dict) or set(teacher) != _RANK4_TEACHER_FIELDS:
+        raise ValueError("Rank-4 teacher identity is malformed")
+    if (
+        teacher.get("kind") != "rank4-fixed-work"
+        or not _valid_sha256(teacher.get("source_sha256"))
+    ):
+        raise ValueError("Rank-4 teacher identity is invalid")
+
+    configuration = row.get("search_config")
+    if (
+        not isinstance(configuration, dict)
+        or set(configuration) != _RANK4_CONFIG_FIELDS
+    ):
+        raise ValueError("Rank-4 teacher configuration is malformed")
+    max_nodes = _positive_uint(
+        configuration.get("max_nodes"), "Rank-4 max_nodes"
+    )
+    _positive_uint(
+        configuration.get("max_time_ms"),
+        "Rank-4 max_time_ms",
+        (1 << 32) - 1,
+    )
+    max_depth = _positive_uint(
+        configuration.get("max_turn_depth"),
+        "Rank-4 max_turn_depth",
+        32,
+    )
+    replay_blend = _uint(
+        configuration.get("replay_value_blend_percent"),
+        "Rank-4 replay_value_blend_percent",
+        100,
+    )
+    residual_weight = _uint(
+        configuration.get("teacher_residual_weight_percent"),
+        "Rank-4 teacher_residual_weight_percent",
+        100,
+    )
+    del replay_blend, residual_weight
+
+    stats = row.get("search_stats")
+    if not isinstance(stats, dict) or set(stats) != _RANK4_STATS_FIELDS:
+        raise ValueError("Rank-4 teacher statistics are malformed")
+    counters = {
+        field: _uint(stats.get(field), f"Rank-4 stats {field}")
+        for field in _RANK4_STATS_COUNTERS
+    }
+    for field in (
+        "budget_exhausted",
+        "node_cap_reached",
+        "depth_cap_reached",
+        "deadline_reached",
+    ):
+        if not isinstance(stats.get(field), bool):
+            raise ValueError(f"Rank-4 stats {field} must be boolean")
+
+    depth = _uint(row.get("completed_depth"), "teacher completed_depth", 32)
+    nodes = _positive_uint(row.get("nodes"), "teacher nodes")
+    if (
+        counters["completed_depth"] != depth
+        or counters["nodes"] != nodes
+        or nodes > max_nodes
+        or counters["attempted_depth"] < max(1, depth)
+        or counters["attempted_depth"] > max_depth
+        or counters["completed_actions"] == 0
+        or counters["completed_actions"] > nodes
+    ):
+        raise ValueError("Rank-4 teacher did not complete a usable root search")
+
+    deadline_reached = stats["deadline_reached"]
+    node_cap_reached = stats["node_cap_reached"]
+    depth_cap_reached = stats["depth_cap_reached"]
+    budget_exhausted = stats["budget_exhausted"]
+    if deadline_reached:
+        raise ValueError("Rank-4 teacher reached its deadline")
+    if budget_exhausted != node_cap_reached:
+        raise ValueError("Rank-4 teacher budget and node-cap flags disagree")
+    if node_cap_reached and nodes != max_nodes:
+        raise ValueError("Rank-4 teacher did not consume its exact node cap")
+    if depth_cap_reached != (depth == max_depth):
+        raise ValueError("Rank-4 teacher depth-cap flag is inconsistent")
+    if node_cap_reached and depth_cap_reached:
+        raise ValueError("Rank-4 teacher cannot reach both work caps")
+    expected_attempted_depth = depth + 1 if node_cap_reached else depth
+    if counters["attempted_depth"] != expected_attempted_depth:
+        raise ValueError("Rank-4 teacher iterative-depth state is inconsistent")
+    if depth == 0 and not node_cap_reached:
+        raise ValueError("Rank-4 teacher stopped within depth one without a node cap")
+
+    root_solved = row.get("root_solved")
+    if not isinstance(root_solved, bool):
+        raise ValueError("Rank-4 teacher root_solved must be boolean")
+    proven_winner = _proven_winner(row.get("proven_winner"))
+    if root_solved != (proven_winner is not None):
+        raise ValueError("Rank-4 teacher proof flag is inconsistent")
+    score = _finite_number(row.get("root_score"), "teacher root_score")
+    score_is_mate = abs(score) >= 1_000_000 - max_depth
+    score_winner = 0 if score > 0 else 1
+    expected_root_solved = score_is_mate and (
+        depth != 0 or score_winner == mover
+    )
+    if root_solved != expected_root_solved or (
+        root_solved and proven_winner != score_winner
+    ):
+        raise ValueError("Rank-4 teacher proof is not supported by its search")
+
+    expected_termination = "root-solved" if root_solved else "fixed-work-cap"
+    if stats.get("termination_reason") != expected_termination:
+        raise ValueError("Rank-4 teacher termination reason is inconsistent")
+    if not root_solved and not (node_cap_reached or depth_cap_reached):
+        raise ValueError("Rank-4 teacher did not complete its fixed work cap")
+    return _teacher_target(score, mover, proven_winner)
 
 
 _SEARCH_TEACHER_FIELDS = {
@@ -1027,14 +1170,19 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
 def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
     if not isinstance(row, dict) or row.get("schema") not in {
         TEACHER_SCHEMA,
+        RANK4_TEACHER_SCHEMA,
         SEARCH_TEACHER_SCHEMA,
     }:
         raise ValueError("unexpected teacher-row schema")
     schema = str(row["schema"])
     group_id, root_group_id, source, winner, mover, state, weight = _teacher_common(row)
-    if schema == TEACHER_SCHEMA:
-        teacher = _rank4_teacher_value(row, mover)
-        if row.get("position_id") is None:
+    if schema in {TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
+        teacher = (
+            _rank4_teacher_value(row, mover)
+            if schema == TEACHER_SCHEMA
+            else _rank4_fixed_work_teacher_value(row, mover)
+        )
+        if schema == TEACHER_SCHEMA and row.get("position_id") is None:
             position_id = None
             split = None
             campaign_id = None

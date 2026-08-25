@@ -308,17 +308,19 @@ class TinyAcceptanceFixture:
                         }}
                     else:
                         stats = {{
-                            'attempted_depth': 2, 'completed_depth': 1,
+                            'attempted_depth': 1, 'completed_depth': 0,
                             'nodes': nodes, 'leaf_evaluations': 1,
                             'terminal_nodes': 0, 'completed_actions': 1,
                             'budget_exhausted': True, 'node_cap_reached': True,
+                            'depth_cap_reached': False,
                             'deadline_reached': False,
+                            'termination_reason': 'fixed-work-cap',
                         }}
                         row = {{
                             **common, 'schema': {workflow.RANK4_TEACHER_SCHEMA!r},
                             'teacher': {{'kind': 'rank4-fixed-work',
                                         'source_sha256': {source_hash!r}}},
-                            'root_score': 100, 'completed_depth': 1,
+                            'root_score': 100, 'completed_depth': 0,
                             'nodes': nodes,
                             'search_config': {{
                                 'max_nodes': nodes, 'max_time_ms': args.time_ms,

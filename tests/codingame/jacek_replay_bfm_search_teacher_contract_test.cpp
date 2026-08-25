@@ -133,16 +133,16 @@ void invalid_work_and_identity_fail_closed() {
 
 void position_seed_is_repeatable_and_budget_bound() {
   const std::uint64_t first = teacher::derive_search_seed(
-      "selfsearch-pilot-20260825-v3", "position-17", 64'000U);
+      "selfsearch-pilot-20260825-v4", "position-17", 64'000U);
   require(first == teacher::derive_search_seed(
-                       "selfsearch-pilot-20260825-v3", "position-17",
+                       "selfsearch-pilot-20260825-v4", "position-17",
                        64'000U),
           "The same position search seed did not repeat.");
   require(first != teacher::derive_search_seed(
-                       "selfsearch-pilot-20260825-v3", "position-18",
+                       "selfsearch-pilot-20260825-v4", "position-18",
                        64'000U) &&
               first != teacher::derive_search_seed(
-                           "selfsearch-pilot-20260825-v3", "position-17",
+                           "selfsearch-pilot-20260825-v4", "position-17",
                            500'000U),
           "Position ID and fixed-work budget must both bind the search seed.");
   require(

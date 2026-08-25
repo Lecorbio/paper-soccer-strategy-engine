@@ -1700,7 +1700,11 @@ def _declared_target_policies(manifest: Mapping[str, object]) -> list[dict]:
         if (
             policy.get("schema") != corpus.TARGET_POLICY_SCHEMA
             or policy.get("teacher_schema")
-            not in {corpus.TEACHER_SCHEMA, corpus.SEARCH_TEACHER_SCHEMA}
+            not in {
+                corpus.TEACHER_SCHEMA,
+                corpus.RANK4_TEACHER_SCHEMA,
+                corpus.SEARCH_TEACHER_SCHEMA,
+            }
             or policy.get("mixture")
             != {
                 "teacher_weight": 0.75,

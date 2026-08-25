@@ -16,6 +16,12 @@ HEADER = (
     "winner\tmover\tprefix\n"
 )
 SHORT_WIN = "0/0/3/0/61/0/07"
+RANK4_FIXED_CAP_POSITION = (
+    "4/4/7/23/1/2/4/163635/27/457/41/24765/67/2/5050/21/47/23/21/"
+    "145075/46167/14/17/2505/47/23224/630750547/0/721/3606/1/3606/71/4/"
+    "72714/43/0/5443522301/77/0/632/3/1/3/5741/2255/461274606160505711/"
+    "432/3607"
+)
 ACTOR_MODES = (
     "incumbent-selfplay",
     "incumbent-p1-vs-rank4",
@@ -160,7 +166,7 @@ def run_rank4_teacher(executable: pathlib.Path) -> None:
     label = json.loads(first.stdout)
     source_hash = label.get("teacher", {}).get("source_sha256")
     if (
-        label.get("schema") != "papersoccer.jacek-replay-teacher.v1"
+        label.get("schema") != "papersoccer.jacek-replay-teacher.v2"
         or label.get("position_id") != "p0"
         or label.get("mover") != 0
         or not label.get("root_solved")
@@ -177,6 +183,56 @@ def run_rank4_teacher(executable: pathlib.Path) -> None:
     )
     if duplicate.returncode == 0 or duplicate.stdout:
         raise RuntimeError("Rank-4 teacher did not fail closed on duplicate IDs")
+
+    capped_row = (
+        "position:c1eb882b3646bfb79053eb6379dacd5100567eed0459b06dc181d417c0d92748"
+        "\town-live:898437522"
+        "\tselfsearch-game:cef40925f005f13ffa5e0c40e69f910ee025a6a6f7a1ecbcf5d44c096a7e0015"
+        "\tselfsearch-pilot-20260825-v3\ttrain\t0\t1\t"
+        f"{RANK4_FIXED_CAP_POSITION}\n"
+    )
+    capped_command = (
+        str(executable), "--campaign-id", "selfsearch-pilot-20260825-v3",
+        "--nodes", "32000", "--time-ms", "60000",
+    )
+    capped_first = subprocess.run(
+        capped_command, input=HEADER + capped_row, text=True,
+        capture_output=True, check=False,
+    )
+    capped_second = subprocess.run(
+        capped_command, input=HEADER + capped_row, text=True,
+        capture_output=True, check=False,
+    )
+    if capped_first.returncode != 0 or capped_first.stdout != capped_second.stdout:
+        raise RuntimeError(
+            "Rank-4 fixed-cap regression is not deterministic: "
+            f"{capped_first.stderr}"
+        )
+    capped = json.loads(capped_first.stdout)
+    capped_stats = capped.get("search_stats", {})
+    if (
+        capped.get("schema") != "papersoccer.jacek-replay-teacher.v2"
+        or capped.get("completed_depth") != 0
+        or capped.get("nodes") != 32_000
+        or capped.get("root_score") != 26_407
+        or capped.get("root_solved") is not False
+        or capped.get("proven_winner") is not None
+        or capped_stats.get("attempted_depth") != 1
+        or capped_stats.get("completed_actions") != 9_996
+        or capped_stats.get("budget_exhausted") is not True
+        or capped_stats.get("node_cap_reached") is not True
+        or capped_stats.get("depth_cap_reached") is not False
+        or capped_stats.get("deadline_reached") is not False
+        or capped_stats.get("termination_reason") != "fixed-work-cap"
+    ):
+        raise RuntimeError("Rank-4 fixed-cap regression label is invalid")
+
+    no_action = subprocess.run(
+        (*capped_command[:-4], "--nodes", "1", "--time-ms", "60000"),
+        input=HEADER + capped_row, text=True, capture_output=True, check=False,
+    )
+    if no_action.returncode == 0 or no_action.stdout:
+        raise RuntimeError("Rank-4 teacher accepted a cap without a searched action")
 
 
 def main() -> int:

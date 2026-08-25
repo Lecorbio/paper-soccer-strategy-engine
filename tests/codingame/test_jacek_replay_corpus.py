@@ -32,6 +32,53 @@ def write_json(path, value):
 
 class JacekReplayCorpusTests(unittest.TestCase):
     @staticmethod
+    def rank4_teacher_row(**overrides):
+        row = {
+            "schema": corpus.RANK4_TEACHER_SCHEMA,
+            "campaign_id": "selfsearch-pilot-fixture",
+            "position_id": "position:" + "4" * 64,
+            "root_group_id": "root:rank4",
+            "group_id": "continuation:rank4",
+            "source": "fixture-rank4",
+            "split": "train",
+            "winner": 0,
+            "prefix": [{"player_id": 0, "action": "0"}],
+            "mover": 1,
+            "teacher": {
+                "kind": "rank4-fixed-work",
+                "source_sha256": "5" * 64,
+            },
+            "search_config": {
+                "max_nodes": 32_000,
+                "max_time_ms": 60_000,
+                "max_turn_depth": 32,
+                "replay_value_blend_percent": 15,
+                "teacher_residual_weight_percent": 100,
+            },
+            "search_stats": {
+                "attempted_depth": 1,
+                "completed_depth": 0,
+                "nodes": 32_000,
+                "leaf_evaluations": 64,
+                "terminal_nodes": 9_922,
+                "completed_actions": 9_996,
+                "budget_exhausted": True,
+                "node_cap_reached": True,
+                "depth_cap_reached": False,
+                "deadline_reached": False,
+                "termination_reason": "fixed-work-cap",
+            },
+            "root_score": 26_407,
+            "completed_depth": 0,
+            "nodes": 32_000,
+            "root_solved": False,
+            "proven_winner": None,
+            "weight": 1.0,
+        }
+        row.update(overrides)
+        return row
+
+    @staticmethod
     def search_teacher_row(**overrides):
         row = {
             "schema": corpus.SEARCH_TEACHER_SCHEMA,
@@ -250,6 +297,86 @@ class JacekReplayCorpusTests(unittest.TestCase):
         self.assertEqual(sample.group_id, reflected.group_id)
         self.assertEqual(sample.group_id, "root:1")
 
+    def test_rank4_v2_accepts_only_proof_or_completed_fixed_work(self):
+        valid = self.rank4_teacher_row()
+        sample, _ = corpus.sample_from_teacher_row(valid)
+        expected = 0.75 * -math.tanh(26_407 / 12_000) - 0.25
+        self.assertAlmostEqual(sample.target, expected)
+
+        depth_capped = self.rank4_teacher_row(
+            search_config={**valid["search_config"], "max_turn_depth": 1},
+            search_stats={
+                **valid["search_stats"],
+                "completed_depth": 1,
+                "nodes": 100,
+                "completed_actions": 50,
+                "budget_exhausted": False,
+                "node_cap_reached": False,
+                "depth_cap_reached": True,
+            },
+            completed_depth=1,
+            nodes=100,
+        )
+        corpus.sample_from_teacher_row(depth_capped)
+
+        invalid_rows = (
+            self.rank4_teacher_row(
+                search_stats={**valid["search_stats"], "deadline_reached": True}
+            ),
+            self.rank4_teacher_row(
+                search_stats={**valid["search_stats"], "nodes": 31_999},
+                nodes=31_999,
+            ),
+            self.rank4_teacher_row(
+                search_stats={**valid["search_stats"], "completed_actions": 0}
+            ),
+            self.rank4_teacher_row(
+                search_stats={
+                    **valid["search_stats"], "completed_actions": 32_001
+                }
+            ),
+            self.rank4_teacher_row(
+                search_stats={**valid["search_stats"], "budget_exhausted": False}
+            ),
+            self.rank4_teacher_row(
+                search_stats={
+                    **valid["search_stats"],
+                    "budget_exhausted": False,
+                    "node_cap_reached": False,
+                }
+            ),
+            self.rank4_teacher_row(
+                root_score=999_999,
+                root_solved=True,
+                proven_winner=0,
+                search_stats={
+                    **valid["search_stats"],
+                    "termination_reason": "root-solved",
+                },
+            ),
+            self.rank4_teacher_row(root_score=-999_999),
+            self.rank4_teacher_row(
+                search_config={
+                    **valid["search_config"], "max_turn_depth": 1
+                },
+                search_stats={
+                    **valid["search_stats"],
+                    "completed_depth": 1,
+                    "depth_cap_reached": True,
+                },
+                completed_depth=1,
+            ),
+            {
+                key: value
+                for key, value in self.rank4_teacher_row().items()
+                if key != "position_id"
+            },
+        )
+        for row in invalid_rows:
+            with self.subTest(row=row):
+                with self.assertRaises(ValueError):
+                    corpus.sample_from_teacher_row(row)
+
     def test_proven_teacher_value_is_mover_relative(self):
         row = {
             "schema": corpus.TEACHER_SCHEMA,
@@ -335,8 +462,10 @@ class JacekReplayCorpusTests(unittest.TestCase):
 
     def test_target_policy_distinguishes_rank4_transform_from_direct_search(self):
         rank4 = corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)
+        rank4_v2 = corpus.target_policy_for_schema(corpus.RANK4_TEACHER_SCHEMA)
         search = corpus.target_policy_for_schema(corpus.SEARCH_TEACHER_SCHEMA)
         self.assertEqual(rank4["teacher_value"]["transform"], "mover-sign*tanh(root_score/12000)")
+        self.assertEqual(rank4_v2["teacher_value"], rank4["teacher_value"])
         self.assertEqual(search["teacher_value"]["transform"], "identity")
         self.assertEqual(rank4["mixture"], search["mixture"])
 

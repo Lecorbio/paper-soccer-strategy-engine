@@ -37,6 +37,14 @@ values must be finite in `[-1,1]`; solved values are emitted as exactly `+1`
 or `-1`.  The corpus parser deliberately rejects applying Rank-4's
 `tanh(root_score/12000)` transform to these values.
 
+`papersoccer.jacek-replay-teacher.v2` stores the self-search Rank-4
+fixed-work result without changing the canonical Rank-4 engine. A row may
+finish inside depth one only when it consumed the exact node cap and completed
+at least one searched root action. Every row records `root-solved` or
+`fixed-work-cap`, distinguishes node and depth caps, and rejects deadline,
+early-stop, zero-action, missing-lineage, and unsupported-proof results. The
+historical v1 Rank-4 schema retains its positive completed-depth requirement.
+
 Version 3 records the explicit search termination reason, resumable-frontier
 and progressive-widening counts, every complete-turn generation stop class,
 frontier health counters, and the maximum sampled frontier width. Complete-turn

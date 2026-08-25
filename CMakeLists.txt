@@ -1177,6 +1177,13 @@ if(NOT EMSCRIPTEN)
         $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
         --model
         ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
+    add_test(NAME papersoccer_jacek_selfsearch_rank4_teacher_parallel
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_rank4_teacher_parallel_test.py
+        --rank4-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_rank4_position_teacher>)
     add_test(NAME papersoccer_jacek_replay_comparison_extended_test
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/test_jacek_replay_comparison_extended.py

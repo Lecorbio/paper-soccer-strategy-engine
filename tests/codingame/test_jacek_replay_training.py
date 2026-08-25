@@ -220,15 +220,20 @@ class JacekReplayTrainingTests(unittest.TestCase):
             corpus.SEARCH_TEACHER_SCHEMA
         )
         rank4_policy = corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)
+        rank4_v2_policy = corpus.target_policy_for_schema(
+            corpus.RANK4_TEACHER_SCHEMA
+        )
         manifests = [
             {"provenance": {"target_policy": search_policy}},
             {"provenance": {"target_policy": rank4_policy}},
+            {"provenance": {"target_policy": rank4_v2_policy}},
             {"provenance": {}},
         ]
         metadata = training.target_metadata_from_shard_provenance(
-            manifests, ("new", "anchor", "selection-validation")
+            manifests,
+            ("new", "anchor", "rank4-new", "selection-validation"),
         )
-        self.assertEqual(len(metadata["declared_policies"]), 2)
+        self.assertEqual(len(metadata["declared_policies"]), 3)
         self.assertEqual(metadata["undeclared_roles"], ["selection-validation"])
         policies = {
             row["policy"]["teacher_schema"]: row["roles"]
@@ -236,6 +241,9 @@ class JacekReplayTrainingTests(unittest.TestCase):
         }
         self.assertEqual(policies[corpus.SEARCH_TEACHER_SCHEMA], ["new"])
         self.assertEqual(policies[corpus.TEACHER_SCHEMA], ["anchor"])
+        self.assertEqual(
+            policies[corpus.RANK4_TEACHER_SCHEMA], ["rank4-new"]
+        )
 
     def test_metrics_streams_bounded_batches(self):
         samples = training.tiny_fixture_samples()["train"]

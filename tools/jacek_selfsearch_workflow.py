@@ -35,9 +35,9 @@ from jacek_replay_workflow import (
 )
 
 
-AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v3"
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v3"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v3"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v4"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v4"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v4"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -51,7 +51,7 @@ CAMPAIGN_RECEIPT_SCHEMA = "papersoccer.jacek-selfsearch-chunk-receipt.v1"
 CAMPAIGN_SUMMARY_SCHEMA = "papersoccer.jacek-selfsearch-campaign-summary.v1"
 BUILD_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-release-build.v1"
 SEARCH_TEACHER_SCHEMA = corpus.SEARCH_TEACHER_SCHEMA
-RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
+RANK4_TEACHER_SCHEMA = corpus.RANK4_TEACHER_SCHEMA
 
 PILOT_OPENING_SEED = 2026082505
 FULL_OPENING_SEED = 2026082507
@@ -707,7 +707,7 @@ def _teacher_value(row: Mapping[str, object]) -> float:
         if proven is not None and value != (1.0 if proven == mover else -1.0):
             raise ValueError("search proof/value disagree")
         return value
-    if schema == RANK4_TEACHER_SCHEMA:
+    if schema in {corpus.TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
         if proven is not None:
             return 1.0 if proven == mover else -1.0
         score = row.get("root_score")
@@ -729,12 +729,17 @@ def load_labels(path: pathlib.Path, expected_schema: str) -> dict[str, dict]:
         position_id = row.get("position_id")
         if not isinstance(position_id, str) or position_id in labels:
             raise ValueError("label position IDs are missing or duplicate")
-        if expected_schema == SEARCH_TEACHER_SCHEMA:
+        if expected_schema in {SEARCH_TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
             try:
                 corpus.sample_from_teacher_row(row)
             except ValueError as error:
+                label_kind = (
+                    "search"
+                    if expected_schema == SEARCH_TEACHER_SCHEMA
+                    else "Rank-4"
+                )
                 raise ValueError(
-                    f"search label line {line_number} violates its teacher contract"
+                    f"{label_kind} label line {line_number} violates its teacher contract"
                 ) from error
         _teacher_value(row)
         labels[position_id] = row
@@ -1833,7 +1838,8 @@ def _validate_label_output(
                 or set(stats) != {
                     "attempted_depth", "completed_depth", "nodes",
                     "leaf_evaluations", "terminal_nodes", "completed_actions",
-                    "budget_exhausted", "node_cap_reached", "deadline_reached",
+                    "budget_exhausted", "node_cap_reached", "depth_cap_reached",
+                    "deadline_reached", "termination_reason",
                 }
                 or not isinstance(observed_nodes, int)
                 or not 0 < observed_nodes <= nodes
@@ -1842,17 +1848,36 @@ def _validate_label_output(
                 or stats.get("budget_exhausted") is not stats.get("node_cap_reached")
                 or row.get("completed_depth") != stats.get("completed_depth")
                 or not isinstance(stats.get("completed_depth"), int)
-                or stats.get("completed_depth", 0) <= 0
+                or stats.get("completed_depth", -1) < 0
                 or not isinstance(stats.get("attempted_depth"), int)
-                or stats.get("attempted_depth", 0) < stats.get("completed_depth", 0)
+                or stats.get("attempted_depth", 0)
+                < max(1, stats.get("completed_depth", 0))
                 or not isinstance(stats.get("completed_actions"), int)
                 or stats.get("completed_actions", 0) <= 0
                 or row.get("root_solved") != (row.get("proven_winner") is not None)
+                or stats.get("termination_reason")
+                != (
+                    "root-solved"
+                    if row.get("root_solved") is True
+                    else "fixed-work-cap"
+                )
+                or stats.get("depth_cap_reached")
+                is not (
+                    stats.get("completed_depth")
+                    == row.get("search_config", {}).get("max_turn_depth")
+                )
+                or (
+                    stats.get("node_cap_reached") is True
+                    and stats.get("nodes") != nodes
+                )
+                or (
+                    stats.get("completed_depth") == 0
+                    and stats.get("node_cap_reached") is not True
+                )
                 or not (
                     row.get("root_solved") is True
                     or stats.get("node_cap_reached") is True
-                    or stats.get("completed_depth")
-                    == row.get("search_config", {}).get("max_turn_depth")
+                    or stats.get("depth_cap_reached") is True
                 )
             ):
                 raise ValueError("Rank-4 teacher work binding is stale")

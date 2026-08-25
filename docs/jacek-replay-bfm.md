@@ -231,11 +231,14 @@ and never uses observed replay actions as model policy targets.
 
 Ordinary root scores are converted to mover-relative
 `tanh(player_sign * score / 12000)`. Proven values are +/-1, and the retained
-target is 75% teacher value plus 25% mover-relative final outcome. Positions
-where the teacher does not complete depth one are rejected rather than
-silently labelled neutral. Original replay boundaries use the 400k root
-budget; continuation labels use 32k in bulk and rerun the 10% closest-to-zero
-teacher values at 400k before packing.
+target is 75% teacher value plus 25% mover-relative final outcome. Legacy v1
+labels still require a completed depth. Self-search Rank-4 v2 labels may stop
+inside depth one only after consuming the exact node cap and completing at
+least one searched root action; they carry an explicit `fixed-work-cap`
+termination reason and never invent a proof. Deadline, early-stop, and
+zero-action results remain invalid. Original replay boundaries use the 400k
+root budget; continuation labels use 32k in bulk and rerun the 10% closest-to-
+zero teacher values at 400k before packing.
 
 Large corpora remain ignored under `results/`. A selected model may be copied
 to `models/` only after its manifest, runtime, fixed-seed metrics, and game

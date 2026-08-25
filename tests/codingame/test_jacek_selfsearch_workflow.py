@@ -97,6 +97,51 @@ def search_teacher_row(position_id: str, value: float) -> dict:
     }
 
 
+def rank4_teacher_row(position_id: str, score: int = 100) -> dict:
+    return {
+        "schema": workflow.RANK4_TEACHER_SCHEMA,
+        "campaign_id": "selfsearch-workflow-fixture",
+        "position_id": position_id,
+        "root_group_id": "r",
+        "group_id": "g",
+        "source": "s",
+        "split": "train",
+        "winner": 0,
+        "prefix": [],
+        "mover": 0,
+        "teacher": {
+            "kind": "rank4-fixed-work",
+            "source_sha256": "3" * 64,
+        },
+        "search_config": {
+            "max_nodes": 32_000,
+            "max_time_ms": 60_000,
+            "max_turn_depth": 32,
+            "replay_value_blend_percent": 15,
+            "teacher_residual_weight_percent": 100,
+        },
+        "search_stats": {
+            "attempted_depth": 1,
+            "completed_depth": 0,
+            "nodes": 32_000,
+            "leaf_evaluations": 1,
+            "terminal_nodes": 0,
+            "completed_actions": 1,
+            "budget_exhausted": True,
+            "node_cap_reached": True,
+            "depth_cap_reached": False,
+            "deadline_reached": False,
+            "termination_reason": "fixed-work-cap",
+        },
+        "root_score": score,
+        "completed_depth": 0,
+        "nodes": 32_000,
+        "root_solved": False,
+        "proven_winner": None,
+        "weight": 1.0,
+    }
+
+
 class SelfSearchWorkflowTests(unittest.TestCase):
     def test_campaign_output_requires_current_version_basename(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -312,22 +357,24 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                             'teacher': {{'kind': 'rank4-fixed-work',
                                         'source_sha256': '1' * 64}},
                             'root_score': 100,
-                            'completed_depth': 1, 'nodes': args.nodes,
+                            'completed_depth': 0, 'nodes': args.nodes,
                             'root_solved': False, 'proven_winner': None, 'weight': 1.0,
                             'search_config': {{'max_nodes': args.nodes,
                                               'max_time_ms': args.time_ms,
                                               'max_turn_depth': 32,
                                               'replay_value_blend_percent': 15,
                                               'teacher_residual_weight_percent': 100}},
-                            'search_stats': {{'attempted_depth': 2,
-                                             'completed_depth': 1,
+                            'search_stats': {{'attempted_depth': 1,
+                                             'completed_depth': 0,
                                              'nodes': args.nodes,
                                              'leaf_evaluations': 1,
                                              'terminal_nodes': 0,
                                              'completed_actions': 1,
                                              'budget_exhausted': True,
                                              'node_cap_reached': True,
-                                             'deadline_reached': False}},
+                                             'depth_cap_reached': False,
+                                             'deadline_reached': False,
+                                             'termination_reason': 'fixed-work-cap'}},
                         }}
                         print(json.dumps(row, separators=(',', ':')))
                     """
@@ -874,13 +921,9 @@ class SelfSearchWorkflowTests(unittest.TestCase):
             for index, value in enumerate((0.8, 0.1, -0.2, 0.4)):
                 search_rows.append(search_teacher_row(f"p{index}", value))
                 rank4_rows.append(
-                    {
-                        "schema": workflow.RANK4_TEACHER_SCHEMA,
-                        "position_id": f"p{index}",
-                        "mover": 0,
-                        "root_score": (-1 if index == 0 else 1) * 1_000,
-                        "proven_winner": None,
-                    }
+                    rank4_teacher_row(
+                        f"p{index}", (-1 if index == 0 else 1) * 1_000
+                    )
                 )
             search.write_text("".join(json.dumps(row) + "\n" for row in search_rows))
             rank4.write_text("".join(json.dumps(row) + "\n" for row in rank4_rows))
@@ -921,15 +964,7 @@ class SelfSearchWorkflowTests(unittest.TestCase):
             rank4 = root / "rank4.jsonl"
             rank4.write_text(
                 "".join(
-                    json.dumps(
-                        {
-                            "schema": workflow.RANK4_TEACHER_SCHEMA,
-                            "position_id": f"p{i}",
-                            "mover": 0,
-                            "root_score": 100,
-                            "proven_winner": None,
-                        }
-                    )
+                    json.dumps(rank4_teacher_row(f"p{i}"))
                     + "\n"
                     for i in range(4)
                 )
@@ -940,6 +975,15 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                     search_labels=search,
                     rank4_labels=rank4,
                 )
+
+    def test_rank4_loader_rejects_rows_without_completion_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            labels = pathlib.Path(directory) / "rank4.jsonl"
+            invalid = rank4_teacher_row("p0")
+            invalid.pop("search_stats")
+            labels.write_text(json.dumps(invalid) + "\n")
+            with self.assertRaisesRegex(ValueError, "teacher contract"):
+                workflow.load_labels(labels, workflow.RANK4_TEACHER_SCHEMA)
 
     def test_label_validation_binds_source_and_exact_frozen_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
