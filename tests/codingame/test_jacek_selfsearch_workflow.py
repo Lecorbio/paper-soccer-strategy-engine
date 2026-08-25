@@ -10,6 +10,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
+import jacek_replay_features as features  # noqa: E402
 import jacek_selfsearch_workflow as workflow  # noqa: E402
 
 
@@ -21,7 +22,108 @@ def write_json(path: pathlib.Path, value: object) -> None:
     path.write_bytes(workflow.canonical_json_bytes(value, pretty=True))
 
 
+def search_teacher_row(position_id: str, value: float) -> dict:
+    return {
+        "schema": workflow.SEARCH_TEACHER_SCHEMA,
+        "campaign_id": "selfsearch-workflow-fixture",
+        "position_id": position_id,
+        "root_group_id": "r",
+        "group_id": "g",
+        "source": "s",
+        "split": "train",
+        "winner": 0,
+        "prefix": [],
+        "mover": 0,
+        "teacher": {
+            "kind": "jacek_replay_bfm_search",
+            "source_sha256": "1" * 64,
+            "model_sha256": "2" * 64,
+            "feature_schema": features.FEATURE_SCHEMA,
+            "feature_schema_sha256": hashlib.sha256(
+                features.FEATURE_SCHEMA.encode()
+            ).hexdigest(),
+        },
+        "search_config": {
+            "seed": 7,
+            "max_time_ms": 60_000,
+            "max_tree_nodes": 64,
+            "max_actions": workflow.SEARCH_MAX_ACTIONS,
+            "max_partial_paths": workflow.SEARCH_MAX_PARTIAL_PATHS,
+            "exploration": 0.5,
+            "fpu": 0.5,
+        },
+        "search_stats": {
+            "expansions": 2,
+            "generated_actions": 8,
+            "retained_actions": 8,
+            "neural_evaluations": 4,
+            "visits": 63,
+            "completed_actions": 8,
+            "duplicate_boundaries": 0,
+            "partial_paths": 8,
+            "fifo_extractions": 0,
+            "lifo_extractions": 8,
+            "tactical_proofs": 0,
+            "tactical_solutions": 0,
+            "truncations": 1,
+            "generation_action_cap_stops": 1,
+            "generation_partial_cap_stops": 0,
+            "generation_deadline_stops": 0,
+            "materialization_deadline_stops": 0,
+            "generation_queue_drops": 0,
+            "generation_retention_drops": 0,
+            "generation_boundary_replacements": 0,
+            "generation_tactical_shortcuts": 0,
+            "generation_fallbacks": 0,
+            "progressive_widenings": 0,
+            "closed_unsolved_nodes": 0,
+            "closed_unsolved_nonexhaustive_nodes": 0,
+            "open_unexpanded_nodes": 8,
+            "implicit_action_frontiers": 0,
+            "max_open_children": 8,
+            "tree_nodes": 64,
+            "max_complete_turn_depth": 2,
+            "deadline_reached": False,
+            "tree_cap_reached": True,
+            "termination_reason": "fixed-work-cap",
+        },
+        "teacher_value": value,
+        "root_solved": False,
+        "proven_winner": None,
+        "weight": 1.0,
+    }
+
+
 class SelfSearchWorkflowTests(unittest.TestCase):
+    def test_campaign_output_requires_current_version_basename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            missing = root / "missing"
+            output = root / "selfsearch-auto-20260825-v1"
+            executables = workflow.CampaignExecutables(
+                continuation_generator=missing,
+                search_teacher=missing,
+                rank4_teacher=missing,
+                comparison=missing,
+                pack_tool=missing,
+                trainer=missing,
+            )
+            with self.assertRaisesRegex(ValueError, workflow.AUTO_CAMPAIGN_ID):
+                workflow.run_campaign(
+                    repository=root,
+                    expected_commit="1" * 40,
+                    evaluation_directory=root / "evaluation",
+                    canonical_campaign=root / "canonical",
+                    output=output,
+                    executables=executables,
+                    build_manifest=missing,
+                    resume=False,
+                    wait_for_evaluation=False,
+                    poll_seconds=1.0,
+                    skip_power_check=False,
+                )
+            self.assertFalse(output.exists())
+
     def test_evaluation_trigger_recursively_checks_reports_and_latency(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -758,7 +860,7 @@ class SelfSearchWorkflowTests(unittest.TestCase):
             positions.write_text(
                 "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix\n"
                 + "\n".join(
-                    f"p{i}\tr\tg\ts\ttrain\t0\t0\t0" for i in range(4)
+                    f"p{i}\tr\tg\ts\ttrain\t0\t0\t" for i in range(4)
                 )
                 + "\n"
             )
@@ -767,15 +869,7 @@ class SelfSearchWorkflowTests(unittest.TestCase):
             search_rows = []
             rank4_rows = []
             for index, value in enumerate((0.8, 0.1, -0.2, 0.4)):
-                search_rows.append(
-                    {
-                        "schema": workflow.SEARCH_TEACHER_SCHEMA,
-                        "position_id": f"p{index}",
-                        "mover": 0,
-                        "teacher_value": value,
-                        "proven_winner": None,
-                    }
-                )
+                search_rows.append(search_teacher_row(f"p{index}", value))
                 rank4_rows.append(
                     {
                         "schema": workflow.RANK4_TEACHER_SCHEMA,
@@ -805,6 +899,87 @@ class SelfSearchWorkflowTests(unittest.TestCase):
         self.assertEqual(manifest["selected"], 1)
         self.assertEqual(len(merged.decode().splitlines()), 4)
         self.assertIn('"teacher_value":0.9', merged.decode())
+
+    def test_hard_selection_rejects_search_rows_without_completion_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            positions = root / "positions.tsv"
+            positions.write_text(
+                "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix\n"
+                + "".join(f"p{i}\tr\tg\ts\ttrain\t0\t0\t\n" for i in range(4))
+            )
+            search = root / "search.jsonl"
+            invalid = search_teacher_row("p0", 0.2)
+            invalid.pop("search_stats")
+            rows = [invalid] + [
+                search_teacher_row(f"p{i}", 0.2) for i in range(1, 4)
+            ]
+            search.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            rank4 = root / "rank4.jsonl"
+            rank4.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "schema": workflow.RANK4_TEACHER_SCHEMA,
+                            "position_id": f"p{i}",
+                            "mover": 0,
+                            "root_score": 100,
+                            "proven_winner": None,
+                        }
+                    )
+                    + "\n"
+                    for i in range(4)
+                )
+            )
+            with self.assertRaisesRegex(ValueError, "teacher contract"):
+                workflow.select_hard_positions(
+                    positions_tsv=positions,
+                    search_labels=search,
+                    rank4_labels=rank4,
+                )
+
+    def test_label_validation_binds_source_and_exact_frozen_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            positions = root / "positions.tsv"
+            positions.write_text(
+                "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix\n"
+                "p0\tr\tg\ts\ttrain\t0\t0\t\n"
+            )
+            row = search_teacher_row("p0", 0.2)
+            row["search_config"]["seed"] = int.from_bytes(
+                hashlib.sha256(
+                    b"selfsearch-workflow-fixture\0p0\0" + b"64"
+                ).digest()[:8],
+                "big",
+            )
+            labels = root / "labels.jsonl"
+
+            def validate(candidate: dict) -> int:
+                labels.write_bytes(workflow.canonical_json_bytes(candidate))
+                return workflow._validate_label_output(
+                    output=labels,
+                    positions=positions,
+                    schema=workflow.SEARCH_TEACHER_SCHEMA,
+                    campaign_id="selfsearch-workflow-fixture",
+                    nodes=64,
+                    model_sha256="2" * 64,
+                    source_sha256="1" * 64,
+                )
+
+            self.assertEqual(validate(row), 1)
+            with self.assertRaisesRegex(ValueError, "lineage is stale"):
+                validate({**row, "source": "different-source"})
+            with self.assertRaisesRegex(ValueError, "lineage is stale"):
+                validate(
+                    {
+                        **row,
+                        "prefix": [
+                            {"player_id": 0, "action": "0"},
+                            {"player_id": 1, "action": "0"},
+                        ],
+                    }
+                )
 
     def test_game_chunk_merge_binds_each_frozen_plan_row_and_sources(self):
         with tempfile.TemporaryDirectory() as directory:

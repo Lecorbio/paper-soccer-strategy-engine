@@ -107,9 +107,9 @@ PROTECTED_TREE_EQUIVALENTS = (
         {
             "path": "submissions/codingame/bots/jacek_nn",
             "file_count": 35,
-            "total_bytes": 1_313_675,
+            "total_bytes": 1_313_669,
             "tree_sha256": (
-                "417a5ee6460e1f0adfb746424b4a3110fb67f6e8c7f92abfc942e5ec4f2ca716"
+                "bc931778d5ca4dc28e537a0c4d8e91fb04509eeac8b900a9762d5f693e0b3e7f"
             ),
             "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
         },
@@ -124,8 +124,8 @@ PROTECTED_TREE_EQUIVALENTS = (
 CONSOLIDATED_RANK4_TREE = {
     "path": "submissions/codingame/bots/rank_4",
     "file_count": 31,
-    "total_bytes": 7_098_403,
-    "tree_sha256": "90c24d377a24c045c0710240703a989f36f5a332aacc252acccfce2cf75be76e",
+    "total_bytes": 7_098_397,
+    "tree_sha256": "9182051277640cfd54e198f95f7f76d1fa84c6bf9b61e7f9d88f68dc0e32d686",
     "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
 }
 CONSOLIDATED_PREDECESSOR_PATH = "submissions/codingame/bots/selfplay_nn_v2"

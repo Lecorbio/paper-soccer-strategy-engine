@@ -35,8 +35,9 @@ from jacek_replay_workflow import (
 )
 
 
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v1"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v1"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v2"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v2"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v2"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -49,7 +50,7 @@ CAMPAIGN_STATUS_SCHEMA = "papersoccer.jacek-selfsearch-campaign-status.v1"
 CAMPAIGN_RECEIPT_SCHEMA = "papersoccer.jacek-selfsearch-chunk-receipt.v1"
 CAMPAIGN_SUMMARY_SCHEMA = "papersoccer.jacek-selfsearch-campaign-summary.v1"
 BUILD_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-release-build.v1"
-SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v1"
+SEARCH_TEACHER_SCHEMA = corpus.SEARCH_TEACHER_SCHEMA
 RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
 
 PILOT_OPENING_SEED = 2026082505
@@ -728,6 +729,13 @@ def load_labels(path: pathlib.Path, expected_schema: str) -> dict[str, dict]:
         position_id = row.get("position_id")
         if not isinstance(position_id, str) or position_id in labels:
             raise ValueError("label position IDs are missing or duplicate")
+        if expected_schema == SEARCH_TEACHER_SCHEMA:
+            try:
+                corpus.sample_from_teacher_row(row)
+            except ValueError as error:
+                raise ValueError(
+                    f"search label line {line_number} violates its teacher contract"
+                ) from error
         _teacher_value(row)
         labels[position_id] = row
     if not labels:
@@ -1736,13 +1744,20 @@ def _validate_label_output(
     for position_id, row in labels.items():
         corpus.sample_from_teacher_row(row)
         fields = position_by_id[position_id]
+        actions = fields[7].split("/") if fields[7] else []
+        expected_prefix = [
+            {"player_id": turn % 2, "action": action}
+            for turn, action in enumerate(actions)
+        ]
         if (
             row.get("campaign_id") != campaign_id
             or row.get("root_group_id") != fields[1]
             or row.get("group_id") != fields[2]
+            or row.get("source") != fields[3]
             or row.get("split") != fields[4]
             or row.get("winner") != int(fields[5])
             or row.get("mover") != int(fields[6])
+            or row.get("prefix") != expected_prefix
         ):
             raise ValueError("teacher label lineage is stale")
         if schema == SEARCH_TEACHER_SCHEMA:
@@ -1771,12 +1786,25 @@ def _validate_label_output(
                     "fpu": 0.5,
                 }
                 or stats.get("deadline_reached") is not False
+                or stats.get("generation_deadline_stops") != 0
+                or stats.get("materialization_deadline_stops") != 0
+                or stats.get("closed_unsolved_nodes") != 0
+                or stats.get("closed_unsolved_nonexhaustive_nodes") != 0
+                or not isinstance(stats.get("max_open_children"), int)
+                or stats.get("max_open_children", SEARCH_MAX_ACTIONS + 1)
+                > SEARCH_MAX_ACTIONS
                 or not isinstance(stats.get("max_complete_turn_depth"), int)
                 or stats.get("max_complete_turn_depth", 0) <= 0
                 or not isinstance(stats.get("completed_actions"), int)
                 or stats.get("completed_actions", 0) <= 0
                 or row.get("root_solved")
                 != (row.get("proven_winner") is not None)
+                or stats.get("termination_reason")
+                != (
+                    "root-solved"
+                    if row.get("root_solved") is True
+                    else "fixed-work-cap"
+                )
                 or (
                     row.get("root_solved") is False
                     and (
@@ -3496,6 +3524,10 @@ def run_campaign(
     evaluation_directory = evaluation_directory.resolve()
     canonical_campaign = canonical_campaign.resolve()
     output = output.resolve()
+    if output.name != AUTO_CAMPAIGN_ID:
+        raise ValueError(
+            f"campaign output directory must be named {AUTO_CAMPAIGN_ID}"
+        )
     output.mkdir(parents=True, exist_ok=True)
     status_path = output / "supervisor-status.json"
     lock_path = output / "supervisor.lock"
@@ -3572,7 +3604,7 @@ def run_campaign(
             )
             opening_exclusions = _evaluation_opening_banks(evaluation_directory)
             manager = GuardedStageManager(
-                output=output, campaign_id="selfsearch-auto-20260825-v1",
+                output=output, campaign_id=AUTO_CAMPAIGN_ID,
                 round_index=-1, resume=resume, environment=environment_identity(),
                 producer_guard=producer_guard,
             )
@@ -3800,7 +3832,7 @@ def run_campaign(
                 _status(status_path, "full-rejected", summary=str(summary_path),
                         summary_sha256=sha256(summary_path))
                 return summary
-            publication_directory = output / "promoted/selfsearch-full-20260825-v1"
+            publication_directory = output / "promoted" / FULL_CAMPAIGN_ID
             published_runtime = publication_directory / "jacek_replay_bfm.runtime"
             published_manifest = publication_directory / "jacek_replay_bfm.runtime.json"
             publication_receipt = publication_directory / "publication.json"

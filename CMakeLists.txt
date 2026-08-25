@@ -1176,7 +1176,7 @@ if(NOT EMSCRIPTEN)
         --search-teacher
         $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
         --model
-        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime)
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
     add_test(NAME papersoccer_jacek_replay_comparison_extended_test
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/test_jacek_replay_comparison_extended.py

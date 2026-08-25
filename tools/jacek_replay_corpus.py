@@ -27,7 +27,7 @@ import jacek_replay_features as features  # noqa: E402
 
 ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
-SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v1"
+SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v2"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
@@ -897,12 +897,28 @@ _SEARCH_STATS_COUNTERS = {
     "tactical_proofs",
     "tactical_solutions",
     "truncations",
+    "generation_action_cap_stops",
+    "generation_partial_cap_stops",
+    "generation_deadline_stops",
+    "materialization_deadline_stops",
+    "generation_queue_drops",
+    "generation_retention_drops",
+    "generation_boundary_replacements",
+    "generation_tactical_shortcuts",
+    "generation_fallbacks",
+    "progressive_widenings",
+    "closed_unsolved_nodes",
+    "closed_unsolved_nonexhaustive_nodes",
+    "open_unexpanded_nodes",
+    "implicit_action_frontiers",
+    "max_open_children",
     "tree_nodes",
 }
 _SEARCH_STATS_FIELDS = _SEARCH_STATS_COUNTERS | {
     "max_complete_turn_depth",
     "deadline_reached",
     "tree_cap_reached",
+    "termination_reason",
 }
 
 
@@ -961,6 +977,17 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
         raise ValueError("search deadline/tree-cap flags must be booleans")
     if deadline_reached:
         raise ValueError("search teacher reached its deadline")
+    if counters["generation_deadline_stops"] != 0 or (
+        counters["materialization_deadline_stops"] != 0
+    ):
+        raise ValueError("search teacher carries a deadline stop")
+    if (
+        counters["closed_unsolved_nodes"] != 0
+        or counters["closed_unsolved_nonexhaustive_nodes"] != 0
+    ):
+        raise ValueError("search teacher closed an unsolved frontier")
+    if counters["max_open_children"] > configuration["max_actions"]:
+        raise ValueError("search teacher exceeded its sampled frontier width")
     if (
         counters["tree_nodes"] == 0
         or counters["tree_nodes"] > max_tree_nodes
@@ -971,6 +998,10 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
     root_solved = row.get("root_solved")
     if not isinstance(root_solved, bool):
         raise ValueError("search teacher root_solved must be boolean")
+    termination_reason = stats.get("termination_reason")
+    expected_termination = "root-solved" if root_solved else "fixed-work-cap"
+    if termination_reason != expected_termination:
+        raise ValueError("search teacher termination reason is inconsistent")
     if not root_solved and (
         not tree_cap_reached
         or counters["tree_nodes"] != max_tree_nodes

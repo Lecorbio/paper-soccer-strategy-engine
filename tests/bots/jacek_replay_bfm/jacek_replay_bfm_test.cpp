@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -171,6 +172,37 @@ ps::GameState rotated_state(const ps::GameState &state) {
   return result;
 }
 
+ps::GameState replay_complete_turn_prefix(std::string_view prefix) {
+  static constexpr std::array<ps::Point, 8> deltas{{
+      {0, -1}, {1, -1}, {1, 0}, {1, 1},
+      {0, 1},  {-1, 1}, {-1, 0}, {-1, -1},
+  }};
+  ps::GameState state = ps::make_initial_state(codingame_rules());
+  std::size_t begin = 0U;
+  for (;;) {
+    const std::size_t end = prefix.find('/', begin);
+    const std::string_view action = prefix.substr(
+        begin, end == std::string_view::npos ? prefix.size() - begin
+                                             : end - begin);
+    require(!action.empty(), "Regression prefix contains an empty turn.");
+    const ps::Player mover = state.to_move;
+    for (const char direction : action) {
+      require(direction >= '0' && direction <= '7',
+              "Regression prefix contains an invalid direction.");
+      const ps::Point delta =
+          deltas[static_cast<std::size_t>(direction - '0')];
+      state = ps::apply_move(
+          state, ps::Move{{state.ball.x + delta.x, state.ball.y + delta.y}});
+    }
+    require(ps::is_terminal(state) || state.to_move != mover,
+            "Regression prefix contains an incomplete turn.");
+    if (end == std::string_view::npos) {
+      return state;
+    }
+    begin = end + 1U;
+  }
+}
+
 bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
                               const ps::JacekReplayBfmSearchStats &right) {
   return left.expansions == right.expansions &&
@@ -186,6 +218,30 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.tactical_proofs == right.tactical_proofs &&
          left.tactical_solutions == right.tactical_solutions &&
          left.truncations == right.truncations &&
+         left.generation_action_cap_stops ==
+             right.generation_action_cap_stops &&
+         left.generation_partial_cap_stops ==
+             right.generation_partial_cap_stops &&
+         left.generation_deadline_stops ==
+             right.generation_deadline_stops &&
+         left.materialization_deadline_stops ==
+             right.materialization_deadline_stops &&
+         left.generation_queue_drops == right.generation_queue_drops &&
+         left.generation_retention_drops ==
+             right.generation_retention_drops &&
+         left.generation_boundary_replacements ==
+             right.generation_boundary_replacements &&
+         left.generation_tactical_shortcuts ==
+             right.generation_tactical_shortcuts &&
+         left.generation_fallbacks == right.generation_fallbacks &&
+         left.progressive_widenings == right.progressive_widenings &&
+         left.closed_unsolved_nodes == right.closed_unsolved_nodes &&
+         left.closed_unsolved_nonexhaustive_nodes ==
+             right.closed_unsolved_nonexhaustive_nodes &&
+         left.open_unexpanded_nodes == right.open_unexpanded_nodes &&
+         left.implicit_action_frontiers ==
+             right.implicit_action_frontiers &&
+         left.max_open_children == right.max_open_children &&
          left.tree_nodes == right.tree_nodes &&
          left.max_complete_turn_depth == right.max_complete_turn_depth &&
          left.root_value == right.root_value &&
@@ -193,6 +249,7 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.proven_winner == right.proven_winner &&
          left.deadline_reached == right.deadline_reached &&
          left.tree_cap_reached == right.tree_cap_reached &&
+         left.termination == right.termination &&
          left.cached_continuation == right.cached_continuation &&
          left.planned_action_length == right.planned_action_length &&
          left.current_edge_index == right.current_edge_index &&
@@ -765,6 +822,83 @@ void analysis_api_is_stateless_seeded_rotatable_and_proof_explicit() {
           "requiring callers to infer a proof from the value magnitude.");
 }
 
+void nonexhaustive_root_progressively_widens_to_a_valid_label() {
+  const std::string source_dir = PAPERSOCCER_SOURCE_DIR;
+  if (source_dir.empty()) {
+    return;
+  }
+  const std::filesystem::path model =
+      std::filesystem::path(source_dir) / "models" /
+      "jacek_replay_bfm_development" / "jacek_replay_bfm.runtime";
+  ps::JacekReplayBfmConfig config;
+  config.model_path = model.string();
+  config.max_time_ms = 60'000U;
+  config.max_tree_nodes = 64'000U;
+  config.max_actions = 250U;
+  config.max_partial_paths = 50'000U;
+  config.exploration = 0.5;
+  config.fpu = 0.5;
+  ps::JacekReplayBfmBot bot(config);
+
+  // Preserved campaign position
+  // position:fc5350b1be0e9887a10b97bd5569a1251a9824cb4a4e9c6d7404471eeb4616e3
+  const ps::GameState state = replay_complete_turn_prefix(
+      "1/2/7/5/207/6/1/45/00/75/03/35/22/445/7/2/177/44/47/"
+      "2345/7/53/0/23/0/3/1/4/1/3/17/54/1/36350/00017/25/017/27/"
+      "035075/5433/00/35235663357/025766/752530/010/245021/"
+      "065052507117/723064534/17/7245201235/05223/63/00117");
+  require(!ps::is_terminal(state) && state.to_move == ps::Player::Two,
+          "The preserved regression prefix must end at a Player Two root.");
+
+  constexpr std::uint64_t seed = 11'313'244'602'099'372'890ULL;
+  const ps::JacekReplayBfmSearchStats first =
+      bot.analyze_position(state, seed);
+  const ps::JacekReplayBfmSearchStats repeated =
+      bot.analyze_position(state, seed);
+  require(first.root_solved &&
+              first.proven_winner == ps::Player::One &&
+              first.termination ==
+                  ps::JacekReplayBfmSearchTermination::RootSolved &&
+              !first.deadline_reached && !first.tree_cap_reached &&
+              first.progressive_widenings > 0U &&
+              first.max_open_children <= config.max_actions &&
+              first.closed_unsolved_nodes == 0U &&
+              same_capped_search_stats(first, repeated),
+          "A non-exhaustive root whose sampled actions all close must widen "
+          "deterministically until it has an explicit proof or fixed-work cap.");
+
+  ps::JacekReplayBfmConfig narrow_config = config;
+  narrow_config.max_tree_nodes = 200U;
+  narrow_config.max_actions = 1U;
+  ps::JacekReplayBfmBot narrow(narrow_config);
+  constexpr std::uint64_t cross_cap_seed =
+      11'703'771'591'024'012'692ULL;
+  const ps::JacekReplayBfmSearchStats narrow_stats =
+      narrow.analyze_position(state, cross_cap_seed);
+  require(!narrow_stats.root_solved &&
+              !narrow_stats.proven_winner.has_value() &&
+              narrow_stats.tree_cap_reached &&
+              narrow_stats.tree_nodes == narrow_config.max_tree_nodes &&
+              narrow_stats.termination ==
+                  ps::JacekReplayBfmSearchTermination::FixedWorkCap,
+          "A truncated one-action page must not become an exhaustive proof.");
+
+  ps::JacekReplayBfmConfig stalled_config = narrow_config;
+  stalled_config.max_partial_paths = 1U;
+  ps::JacekReplayBfmBot stalled(stalled_config);
+  const ps::JacekReplayBfmSearchStats stalled_stats =
+      stalled.analyze_position(state, cross_cap_seed);
+  require(!stalled_stats.root_solved &&
+              !stalled_stats.tree_cap_reached &&
+              !stalled_stats.deadline_reached &&
+              stalled_stats.tree_nodes < stalled_config.max_tree_nodes &&
+              stalled_stats.generation_partial_cap_stops > 0U &&
+              stalled_stats.termination ==
+                  ps::JacekReplayBfmSearchTermination::ExpansionFailed,
+          "A drained partial-path horizon must fail explicitly without "
+          "inventing fixed work or waiting for a deadline.");
+}
+
 void public_factory_and_rule_contract_fail_closed() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::BotConfig factory;
@@ -832,6 +966,8 @@ int run_jacek_replay_bfm_tests() {
        deadline_fallback_is_legal_and_bounded},
       {"analysis_api_is_stateless_seeded_rotatable_and_proof_explicit",
        analysis_api_is_stateless_seeded_rotatable_and_proof_explicit},
+      {"nonexhaustive_root_progressively_widens_to_a_valid_label",
+       nonexhaustive_root_progressively_widens_to_a_valid_label},
       {"public_factory_and_rule_contract_fail_closed",
        public_factory_and_rule_contract_fail_closed},
   };

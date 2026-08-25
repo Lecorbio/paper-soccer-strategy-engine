@@ -76,10 +76,26 @@ class JacekReplayCorpusTests(unittest.TestCase):
                 "tactical_proofs": 0,
                 "tactical_solutions": 0,
                 "truncations": 0,
+                "generation_action_cap_stops": 0,
+                "generation_partial_cap_stops": 0,
+                "generation_deadline_stops": 0,
+                "materialization_deadline_stops": 0,
+                "generation_queue_drops": 0,
+                "generation_retention_drops": 0,
+                "generation_boundary_replacements": 0,
+                "generation_tactical_shortcuts": 0,
+                "generation_fallbacks": 0,
+                "progressive_widenings": 0,
+                "closed_unsolved_nodes": 0,
+                "closed_unsolved_nonexhaustive_nodes": 0,
+                "open_unexpanded_nodes": 10,
+                "implicit_action_frontiers": 0,
+                "max_open_children": 19,
                 "tree_nodes": 64_000,
                 "max_complete_turn_depth": 5,
                 "deadline_reached": False,
                 "tree_cap_reached": True,
+                "termination_reason": "fixed-work-cap",
             },
             "teacher_value": 0.8,
             "root_solved": False,
@@ -273,6 +289,7 @@ class JacekReplayCorpusTests(unittest.TestCase):
                 "visits": 0,
                 "tree_nodes": 10,
                 "tree_cap_reached": False,
+                "termination_reason": "root-solved",
             },
         )
         sample, _ = corpus.sample_from_teacher_row(solved)
@@ -298,6 +315,15 @@ class JacekReplayCorpusTests(unittest.TestCase):
                     }
                 ),
                 "fixed work cap",
+            ),
+            (
+                self.search_teacher_row(
+                    search_stats={
+                        **self.search_teacher_row()["search_stats"],
+                        "termination_reason": "closed-unsolved-root",
+                    }
+                ),
+                "termination reason",
             ),
         ):
             with self.subTest(message=message):
