@@ -55,12 +55,13 @@ gates, and is explicitly not a promoted checkpoint.
 ## Search
 
 One tree edge is one legal complete turn, including every mandatory rebound.
-The generator retains at most 250 unique resulting boundary states. It uses
-nine LIFO deque extractions followed by one FIFO extraction, mover-canonical
-seeded neighbour shuffling, a bounded tactical witness pass, and explicit
-goal-path probes. Immediate wins, forced cutoffs, safe handoffs, opponent
-immediate goals, and own goals are ordered separately. The retained-action
-limit is also the enumeration limit; proven wins from the tactical pre-pass
+Each generator page retains at most 250 unique resulting boundary states. A
+bounded-memory deterministic DFS cursor persists the current rebound path and
+next sibling at every depth, so later pages resume without replaying or
+dropping partial turns. It uses mover-canonical seeded neighbour shuffling, a
+bounded first-page tactical witness pass, and explicit goal-path probes.
+Immediate wins, forced cutoffs, safe handoffs, opponent immediate goals, and
+own goals are ordered separately. Proven wins from the tactical pre-pass
 return immediately instead of filling an irrelevant ordinary action sample.
 
 New children receive the neural value immediately. Frontier selection uses
@@ -68,8 +69,9 @@ UCT-style best-first minimax, values are overwritten by minimax backup, and
 the final root choice adds a visit term. Siblings reuse a parent first-layer
 accumulator and apply only changed sparse feature rows. Only root children
 retain returnable action transcripts. The default native profile is one
-thread, a 980 ms total decision budget, 1,000,000 tree nodes, 50,000 partial paths
-per expansion, `C=0.95`, and `FPU=0.5`. The returned turn is validated through
+thread, a 980 ms total decision budget, 1,000,000 tree nodes, and 50,000 newly
+entered partial-turn prefixes per resumable page, with `C=0.95` and `FPU=0.5`.
+The returned turn is validated through
 the authoritative rules engine and cached one edge at a time for the public
 `Bot` interface. The configured time is a total decision budget; the search
 reserves up to 25 ms of it for tree destruction, validation, and cache setup.

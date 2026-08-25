@@ -30,19 +30,22 @@ Frozen position TSV columns are:
 position_id  root_group_id  group_id  source  split  winner  mover  prefix
 ```
 
-`papersoccer.jacek-replay-search-teacher.v2` stores the direct mover-relative
+`papersoccer.jacek-replay-search-teacher.v3` stores the direct mover-relative
 `teacher_value`, the exact model/source/configuration identity, full search
 statistics, `root_solved`, and an optional absolute `proven_winner`.  Unsolved
 values must be finite in `[-1,1]`; solved values are emitted as exactly `+1`
 or `-1`.  The corpus parser deliberately rejects applying Rank-4's
 `tanh(root_score/12000)` transform to these values.
 
-Version 2 records the explicit search termination reason, progressive-widening
-count, every complete-turn generation stop class, frontier health counters,
-and the maximum sampled frontier width.  Accepted rows must terminate with
-`root-solved` or `fixed-work-cap`; deadline and prematurely closed-frontier
-counters fail closed.  The teacher's separate `--audit-terminations` mode
-emits only `papersoccer.jacek-replay-search-termination-audit.v1` diagnostics
+Version 3 records the explicit search termination reason, resumable-frontier
+and progressive-widening counts, every complete-turn generation stop class,
+frontier health counters, and the maximum sampled frontier width. Complete-turn
+pages preserve a bounded deterministic DFS cursor across both action and
+partial-work caps; no partial turn is dropped or replayed. Accepted rows must
+terminate with `root-solved` or `fixed-work-cap`; deadline and prematurely
+closed-frontier counters fail closed. The teacher's separate
+`--audit-terminations` mode
+emits only `papersoccer.jacek-replay-search-termination-audit.v2` diagnostics
 and cannot be consumed as teacher labels.
 
 Every generated game, position, label chunk, merge, pack, seed checkpoint,

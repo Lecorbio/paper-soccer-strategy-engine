@@ -300,6 +300,9 @@ struct JacekReplayBfmSearchStats {
   std::uint64_t generation_boundary_replacements{};
   std::uint64_t generation_tactical_shortcuts{};
   std::uint64_t generation_fallbacks{};
+  std::uint64_t generation_frontier_resumptions{};
+  std::uint64_t generation_zero_action_resumptions{};
+  std::uint64_t generation_max_frontier_depth{};
   std::uint64_t progressive_widenings{};
   std::uint64_t closed_unsolved_nodes{};
   std::uint64_t closed_unsolved_nonexhaustive_nodes{};

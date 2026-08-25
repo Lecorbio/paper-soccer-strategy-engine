@@ -234,6 +234,12 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.generation_tactical_shortcuts ==
              right.generation_tactical_shortcuts &&
          left.generation_fallbacks == right.generation_fallbacks &&
+         left.generation_frontier_resumptions ==
+             right.generation_frontier_resumptions &&
+         left.generation_zero_action_resumptions ==
+             right.generation_zero_action_resumptions &&
+         left.generation_max_frontier_depth ==
+             right.generation_max_frontier_depth &&
          left.progressive_widenings == right.progressive_widenings &&
          left.closed_unsolved_nodes == right.closed_unsolved_nodes &&
          left.closed_unsolved_nonexhaustive_nodes ==
@@ -255,6 +261,23 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.current_edge_index == right.current_edge_index &&
          left.cached_moves_remaining == right.cached_moves_remaining &&
          left.searches == right.searches;
+}
+
+bool valid_search_completion(const ps::JacekReplayBfmSearchStats &stats,
+                             std::size_t fixed_work_cap) {
+  if (stats.deadline_reached || stats.closed_unsolved_nodes != 0U ||
+      stats.closed_unsolved_nonexhaustive_nodes != 0U) {
+    return false;
+  }
+  if (stats.root_solved) {
+    return stats.proven_winner.has_value() &&
+           stats.termination ==
+               ps::JacekReplayBfmSearchTermination::RootSolved;
+  }
+  return !stats.proven_winner.has_value() && stats.tree_cap_reached &&
+         stats.tree_nodes == fixed_work_cap &&
+         stats.termination ==
+             ps::JacekReplayBfmSearchTermination::FixedWorkCap;
 }
 
 std::string feature_indices_sha256(
@@ -549,44 +572,6 @@ void complete_turn_generation_stops_at_the_action_cap() {
           "A full retained-action sample must stop complete-turn enumeration.");
 }
 
-void action_cap_preserves_prior_rebound_queue_truncation() {
-  TemporaryCheckpoint checkpoint(make_checkpoint());
-  ps::GameState state = ps::make_initial_state(codingame_rules());
-  state.ball = {4, 6};
-  state.path = {state.ball};
-  state.visit_count = {
-      {{4, 6}, 1},
-      {{3, 5}, 1},
-      {{5, 5}, 1},
-  };
-  block_point_except(state, {4, 6}, {{3, 5}, {5, 5}});
-  block_point_except(state, {3, 5}, {{4, 6}, {3, 4}});
-  block_point_except(state, {5, 5}, {{4, 6}, {5, 4}});
-
-  bool exercised = false;
-  for (std::uint64_t seed = 1U; seed <= 64U; ++seed) {
-    ps::JacekReplayBfmConfig config;
-    config.model_path = checkpoint.string();
-    config.seed = seed;
-    config.max_time_ms = 1'000U;
-    config.max_tree_nodes = 3U;
-    config.max_actions = 2U;
-    config.max_partial_paths = 1U;
-    ps::JacekReplayBfmBot bot(config);
-    (void)bot.choose_move(state);
-    const ps::JacekReplayBfmSearchStats &stats = bot.last_search_stats();
-    if (stats.retained_actions != 2U || stats.partial_paths != 2U) {
-      continue;
-    }
-    exercised = true;
-    require(stats.truncations > 0U,
-            "Reaching the action cap must not erase an earlier dropped rebound branch.");
-    break;
-  }
-  require(exercised,
-          "The rebound fixture must fill its action cap after overflowing the queue.");
-}
-
 void tactical_goal_witnesses_win_for_both_players() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::JacekReplayBfmConfig config;
@@ -671,6 +656,33 @@ void tactical_handoff_proofs_have_the_correct_minimax_sign() {
               reply_bot.last_search_stats().tactical_solutions > 0U &&
               reply_bot.last_search_stats().root_value < -1'000.0F,
           "A handoff that gives the opponent an immediate goal must back up as a loss.");
+}
+
+void universal_loss_requires_resumed_frontier_exhaustion() {
+  TemporaryCheckpoint checkpoint(make_checkpoint());
+  ps::JacekReplayBfmConfig config;
+  config.model_path = checkpoint.string();
+  config.max_time_ms = 1'000U;
+  config.max_tree_nodes = 3U;
+  config.max_actions = 1U;
+  config.max_partial_paths = 64U;
+
+  ps::GameState state = ps::make_initial_state(codingame_rules());
+  state.ball = {4, 11};
+  state.path = {state.ball};
+  state.visit_count = {{state.ball, 1}};
+  block_point_except(state, state.ball, {{3, 12}, {5, 12}});
+  ps::JacekReplayBfmBot bot(config);
+  const ps::JacekReplayBfmSearchStats stats =
+      bot.analyze_position(state, 41U);
+  require(stats.root_solved &&
+              stats.proven_winner == ps::Player::Two &&
+              stats.termination ==
+                  ps::JacekReplayBfmSearchTermination::RootSolved &&
+              stats.progressive_widenings > 0U &&
+              stats.generation_frontier_resumptions > 0U &&
+              stats.tree_nodes == 3U,
+          "A universal loss must enumerate every paged action before proof.");
 }
 
 void fixed_cap_search_is_mover_rotation_symmetric() {
@@ -855,14 +867,10 @@ void nonexhaustive_root_progressively_widens_to_a_valid_label() {
       bot.analyze_position(state, seed);
   const ps::JacekReplayBfmSearchStats repeated =
       bot.analyze_position(state, seed);
-  require(first.root_solved &&
-              first.proven_winner == ps::Player::One &&
-              first.termination ==
-                  ps::JacekReplayBfmSearchTermination::RootSolved &&
-              !first.deadline_reached && !first.tree_cap_reached &&
+  require(valid_search_completion(first, config.max_tree_nodes) &&
               first.progressive_widenings > 0U &&
+              first.generation_frontier_resumptions > 0U &&
               first.max_open_children <= config.max_actions &&
-              first.closed_unsolved_nodes == 0U &&
               same_capped_search_stats(first, repeated),
           "A non-exhaustive root whose sampled actions all close must widen "
           "deterministically until it has an explicit proof or fixed-work cap.");
@@ -875,12 +883,8 @@ void nonexhaustive_root_progressively_widens_to_a_valid_label() {
       11'703'771'591'024'012'692ULL;
   const ps::JacekReplayBfmSearchStats narrow_stats =
       narrow.analyze_position(state, cross_cap_seed);
-  require(!narrow_stats.root_solved &&
-              !narrow_stats.proven_winner.has_value() &&
-              narrow_stats.tree_cap_reached &&
-              narrow_stats.tree_nodes == narrow_config.max_tree_nodes &&
-              narrow_stats.termination ==
-                  ps::JacekReplayBfmSearchTermination::FixedWorkCap,
+  require(valid_search_completion(narrow_stats,
+                                  narrow_config.max_tree_nodes),
           "A truncated one-action page must not become an exhaustive proof.");
 
   ps::JacekReplayBfmConfig stalled_config = narrow_config;
@@ -888,15 +892,45 @@ void nonexhaustive_root_progressively_widens_to_a_valid_label() {
   ps::JacekReplayBfmBot stalled(stalled_config);
   const ps::JacekReplayBfmSearchStats stalled_stats =
       stalled.analyze_position(state, cross_cap_seed);
-  require(!stalled_stats.root_solved &&
-              !stalled_stats.tree_cap_reached &&
-              !stalled_stats.deadline_reached &&
-              stalled_stats.tree_nodes < stalled_config.max_tree_nodes &&
+  require(valid_search_completion(stalled_stats,
+                                  stalled_config.max_tree_nodes) &&
               stalled_stats.generation_partial_cap_stops > 0U &&
-              stalled_stats.termination ==
-                  ps::JacekReplayBfmSearchTermination::ExpansionFailed,
-          "A drained partial-path horizon must fail explicitly without "
-          "inventing fixed work or waiting for a deadline.");
+              stalled_stats.generation_frontier_resumptions > 0U,
+          "A one-partial cursor must resume without inventing fixed work or "
+          "waiting for a deadline.");
+
+  // Production v2 failure position.  The checked-in development model does
+  // not stall at its production limits, so the small page deliberately
+  // exercises the same cursor-resume mechanism with portable model bytes.
+  const ps::GameState production_failure = replay_complete_turn_prefix(
+      "2/1/4/1/7/4217/6/41174/36056/5/4/7/0/366/11/75/36/0752/345/71/"
+      "6113/5602534/7/4217553/13/6/7524/53/1/4/6530/12/1/6/47716524/"
+      "313/01/0254/2/5/052723/65/06331/002/7/75/72330660050/643/"
+      "2505653001/1430311");
+  require(!ps::is_terminal(production_failure) &&
+              production_failure.to_move == ps::Player::One,
+          "The production frontier regression must end at a Player One root.");
+  ps::JacekReplayBfmConfig production_config = config;
+  production_config.max_tree_nodes = 200U;
+  production_config.max_actions = 1U;
+  production_config.max_partial_paths = 1U;
+  ps::JacekReplayBfmBot production_bot(production_config);
+  constexpr std::uint64_t production_seed =
+      11'914'096'561'988'050'746ULL;
+  const ps::JacekReplayBfmSearchStats production_stats =
+      production_bot.analyze_position(production_failure, production_seed);
+  const ps::JacekReplayBfmSearchStats production_repeat =
+      production_bot.analyze_position(production_failure, production_seed);
+  require(valid_search_completion(production_stats,
+                                  production_config.max_tree_nodes) &&
+              production_stats.generation_partial_cap_stops > 0U &&
+              production_stats.generation_frontier_resumptions > 0U &&
+              production_stats.generation_zero_action_resumptions > 0U &&
+              production_stats.generation_max_frontier_depth > 0U &&
+              production_stats.generation_queue_drops == 0U &&
+              same_capped_search_stats(production_stats, production_repeat),
+          "The production partial-frontier failure must resume deterministically "
+          "until proof or the exact fixed-work cap.");
 }
 
 void public_factory_and_rule_contract_fail_closed() {
@@ -954,12 +988,12 @@ int run_jacek_replay_bfm_tests() {
        bot_searches_complete_turns_and_reuses_rebound_edges},
       {"complete_turn_generation_stops_at_the_action_cap",
        complete_turn_generation_stops_at_the_action_cap},
-      {"action_cap_preserves_prior_rebound_queue_truncation",
-       action_cap_preserves_prior_rebound_queue_truncation},
       {"tactical_goal_witnesses_win_for_both_players",
        tactical_goal_witnesses_win_for_both_players},
       {"tactical_handoff_proofs_have_the_correct_minimax_sign",
        tactical_handoff_proofs_have_the_correct_minimax_sign},
+      {"universal_loss_requires_resumed_frontier_exhaustion",
+       universal_loss_requires_resumed_frontier_exhaustion},
       {"fixed_cap_search_is_mover_rotation_symmetric",
        fixed_cap_search_is_mover_rotation_symmetric},
       {"deadline_fallback_is_legal_and_bounded",

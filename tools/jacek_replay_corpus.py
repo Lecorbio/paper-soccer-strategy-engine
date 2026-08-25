@@ -27,7 +27,7 @@ import jacek_replay_features as features  # noqa: E402
 
 ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
-SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v2"
+SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v3"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
@@ -906,6 +906,9 @@ _SEARCH_STATS_COUNTERS = {
     "generation_boundary_replacements",
     "generation_tactical_shortcuts",
     "generation_fallbacks",
+    "generation_frontier_resumptions",
+    "generation_zero_action_resumptions",
+    "generation_max_frontier_depth",
     "progressive_widenings",
     "closed_unsolved_nodes",
     "closed_unsolved_nonexhaustive_nodes",
@@ -981,6 +984,13 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
         counters["materialization_deadline_stops"] != 0
     ):
         raise ValueError("search teacher carries a deadline stop")
+    if counters["generation_queue_drops"] != 0:
+        raise ValueError("search teacher dropped a partial frontier")
+    if (
+        counters["fifo_extractions"] != 0
+        or counters["lifo_extractions"] != counters["partial_paths"]
+    ):
+        raise ValueError("search teacher resumable frontier counters disagree")
     if (
         counters["closed_unsolved_nodes"] != 0
         or counters["closed_unsolved_nonexhaustive_nodes"] != 0

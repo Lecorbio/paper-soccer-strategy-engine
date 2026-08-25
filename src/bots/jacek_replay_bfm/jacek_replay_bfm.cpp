@@ -31,7 +31,6 @@ using PositionKey = detail::PositionKey;
 constexpr std::size_t kMaximumActions = 250;
 constexpr std::size_t kMaximumPartialPaths = 50'000;
 constexpr std::size_t kMaximumTreeNodes = 1'000'000;
-constexpr std::size_t kFifoPeriod = 10;
 constexpr std::size_t kProofPaths = 64;
 constexpr float kMateScore = 10'000.0F;
 
@@ -323,6 +322,9 @@ struct GeneratorStats {
   std::uint64_t boundary_replacements{};
   std::uint64_t tactical_shortcuts{};
   std::uint64_t fallbacks{};
+  std::uint64_t frontier_resumptions{};
+  std::uint64_t zero_action_resumptions{};
+  std::uint64_t max_frontier_depth{};
   bool deadline_reached{};
 };
 
@@ -344,6 +346,7 @@ struct GenerationResult {
   std::vector<BoundaryReplacement> replacements{};
   GeneratorStats stats{};
   bool exhaustive{};
+  bool frontier_resumable{};
 };
 
 bool position_key_less(PositionKey left, PositionKey right) noexcept {
@@ -352,33 +355,74 @@ bool position_key_less(PositionKey left, PositionKey right) noexcept {
 }
 
 class CompleteTurnGenerator {
+ private:
+  struct Partial {
+    SearchPosition position;
+    std::vector<Move> moves;
+  };
+
+  struct TraversalFrame {
+    std::array<std::uint8_t, detail::kMaximumMoves> slots{};
+    std::uint8_t count{};
+    std::uint8_t next{};
+    bool initialized{};
+  };
+
+  enum class TraversalStatus {
+    Action,
+    Exhausted,
+    PartialCap,
+    Deadline,
+  };
+
+  enum class RetainResult {
+    Retained,
+    Duplicate,
+    Full,
+  };
+
+  struct TraversalStep {
+    TraversalStatus status{TraversalStatus::Exhausted};
+    std::optional<Partial> action{};
+    bool count_completed{true};
+  };
+
  public:
   CompleteTurnGenerator(std::shared_ptr<const SearchTopology> topology,
                         const SearchPosition &root,
                         detail::ReplayBfmFeatureEncoder &canonicalizer,
-                        std::size_t max_actions,
                         std::size_t max_partial_paths,
                         SearchClock::time_point deadline,
-                        std::uint64_t seed,
-                        std::vector<BoundaryReference> existing)
+                        std::uint64_t seed)
       : topology_(std::move(topology)), root_(root),
         canonicalizer_(canonicalizer),
-        max_actions_(max_actions), max_partial_paths_(max_partial_paths),
-        deadline_(deadline), seed_(seed), tactics_(topology_),
-        existing_(std::move(existing)) {
+        max_partial_paths_(max_partial_paths), deadline_(deadline),
+        seed_(seed), tactics_(topology_), traversal_position_(root_) {}
+
+  GenerationResult run(std::size_t max_actions,
+                       std::vector<BoundaryReference> existing) {
+    max_actions_ = max_actions;
+    existing_ = std::move(existing);
     std::sort(existing_.begin(), existing_.end(),
               [](const BoundaryReference &left,
                  const BoundaryReference &right) {
                 return position_key_less(left.key, right.key);
               });
-  }
+    retained_.clear();
+    retention_drops_ = 0U;
 
-  GenerationResult run() {
     GenerationResult output;
     output.actions.reserve(max_actions_);
-    retain_goal_path(output, root_.to_move());
-    retain_goal_path(output, opponent(root_.to_move()));
-    retain_witnesses(output);
+    output.stats.max_frontier_depth = traversal_frames_.size();
+    if (traversal_started_ && !traversal_complete_) {
+      ++output.stats.frontier_resumptions;
+    }
+    if (!tactical_complete_) {
+      retain_goal_path(output, root_.to_move());
+      retain_goal_path(output, opponent(root_.to_move()));
+      retain_witnesses(output);
+      tactical_complete_ = true;
+    }
 
     // Either class is a complete proof for the mover: an immediate goal wins
     // now, while a forced cutoff hands the ball to an opponent that cannot
@@ -404,76 +448,34 @@ class CompleteTurnGenerator {
       ++output.stats.truncations;
       ++output.stats.tactical_shortcuts;
       output.stats.deadline_reached = deadline_reached_;
+      existing_.clear();
+      retained_.clear();
       return output;
     }
 
-    std::deque<Partial> pending;
-    pending.push_back(Partial{root_, {}});
     bool truncated = false;
     bool action_cap_stopped = false;
-    while (!pending.empty()) {
-      // The action budget is a generation bound, not merely a retention
-      // bound.  Continuing to enumerate after it is full can visit tens of
-      // thousands of complete turns only to discard every one of them.  The
-      // tactical pre-pass above has already retained goal and handoff
-      // witnesses, so the seeded traversal can stop at the first full,
-      // deterministic action sample.
-      if (output.stats.partial_paths != 0U &&
-          output.actions.size() >= max_actions_) {
-        action_cap_stopped = true;
-        truncated = true;
-        break;
-      }
-      if (output.stats.partial_paths >= max_partial_paths_ || expired()) {
-        if (output.stats.partial_paths >= max_partial_paths_) {
-          ++output.stats.partial_cap_stops;
-        } else {
-          ++output.stats.deadline_stops;
-        }
-        output.stats.deadline_reached = deadline_reached_;
-        truncated = true;
-        break;
-      }
-      ++output.stats.partial_paths;
-      Partial partial = [&]() {
-        if (output.stats.partial_paths % kFifoPeriod == 0U) {
-          ++output.stats.fifo_extractions;
-          Partial result = std::move(pending.front());
-          pending.pop_front();
-          return result;
-        }
-        ++output.stats.lifo_extractions;
-        Partial result = std::move(pending.back());
-        pending.pop_back();
-        return result;
-      }();
-
-      std::array<std::uint8_t, detail::kMaximumMoves> slots{};
-      const std::uint8_t count = partial.position.legal_slots(slots);
-      shuffle(slots, count, partial.position);
-      for (std::uint8_t index = 0; index < count; ++index) {
-        Partial child = partial;
-        child.moves.push_back(child.position.move_for_slot(slots[index]));
-        child.position.make_move(slots[index]);
-        if (child.position.is_terminal() ||
-            child.position.to_move() != root_.to_move()) {
-          retain(output, std::move(child));
-          if (output.actions.size() >= max_actions_) {
-            const bool action_truncated =
-                index + 1U < count || !pending.empty();
-            if (action_truncated) {
-              action_cap_stopped = true;
-            }
-            truncated = truncated || action_truncated;
-            break;
-          }
-        } else if (pending.size() < max_partial_paths_) {
-          pending.push_back(std::move(child));
-        } else {
-          ++output.stats.queue_drops;
+    while (!truncated) {
+      TraversalStep step = next_action(output.stats);
+      if (step.status == TraversalStatus::Action) {
+        const RetainResult retained =
+            retain(output, std::move(*step.action), false,
+                   step.count_completed);
+        if (retained == RetainResult::Full) {
+          action_cap_stopped = true;
           truncated = true;
         }
+        continue;
       }
+      if (step.status == TraversalStatus::PartialCap) {
+        ++output.stats.partial_cap_stops;
+        truncated = true;
+      } else if (step.status == TraversalStatus::Deadline) {
+        ++output.stats.deadline_stops;
+        output.stats.deadline_reached = true;
+        truncated = true;
+      }
+      break;
     }
 
     if (output.actions.empty() && existing_.empty()) {
@@ -500,24 +502,27 @@ class CompleteTurnGenerator {
           }
           return left.encoded < right.encoded;
         });
-    truncated = truncated || cap_discarded_;
     output.stats.action_cap_stops = action_cap_stopped ? 1U : 0U;
     output.stats.retention_drops = retention_drops_;
-    output.exhaustive = pending.empty() && !truncated;
+    output.exhaustive =
+        traversal_complete_ && !deferred_action_.has_value() && !truncated;
+    output.frontier_resumable =
+        !output.exhaustive && output.stats.partial_cap_stops != 0U &&
+        !output.stats.deadline_reached;
+    if (output.actions.empty() && output.frontier_resumable) {
+      ++output.stats.zero_action_resumptions;
+    }
     output.stats.deadline_reached =
         output.stats.deadline_reached || deadline_reached_;
     if (truncated) {
       ++output.stats.truncations;
     }
+    existing_.clear();
+    retained_.clear();
     return output;
   }
 
  private:
-  struct Partial {
-    SearchPosition position;
-    std::vector<Move> moves;
-  };
-
   std::shared_ptr<const SearchTopology> topology_;
   SearchPosition root_;
   detail::ReplayBfmFeatureEncoder &canonicalizer_;
@@ -526,10 +531,16 @@ class CompleteTurnGenerator {
   SearchClock::time_point deadline_{};
   std::uint64_t seed_{};
   TacticalAnalyzer tactics_;
+  SearchPosition traversal_position_;
+  std::vector<Move> traversal_moves_{};
+  std::vector<TraversalFrame> traversal_frames_{};
+  std::optional<Partial> deferred_action_{};
   std::vector<BoundaryReference> existing_{};
   std::vector<PositionKey> retained_{};
+  bool tactical_complete_{};
+  bool traversal_started_{};
+  bool traversal_complete_{};
   bool deadline_reached_{};
-  bool cap_discarded_{};
   std::uint64_t retention_drops_{};
 
   bool expired() {
@@ -537,6 +548,68 @@ class CompleteTurnGenerator {
       deadline_reached_ = true;
     }
     return deadline_reached_;
+  }
+
+  TraversalStep next_action(GeneratorStats &stats) {
+    if (deferred_action_.has_value()) {
+      Partial action = std::move(*deferred_action_);
+      deferred_action_.reset();
+      return {TraversalStatus::Action, std::move(action), false};
+    }
+    if (traversal_complete_) {
+      return {TraversalStatus::Exhausted, std::nullopt};
+    }
+    if (!traversal_started_) {
+      traversal_started_ = true;
+      traversal_frames_.push_back(TraversalFrame{});
+    }
+
+    for (;;) {
+      if (expired()) {
+        return {TraversalStatus::Deadline, std::nullopt};
+      }
+      if (traversal_frames_.empty()) {
+        traversal_complete_ = true;
+        return {TraversalStatus::Exhausted, std::nullopt};
+      }
+
+      TraversalFrame &frame = traversal_frames_.back();
+      if (!frame.initialized) {
+        if (stats.partial_paths >= max_partial_paths_) {
+          return {TraversalStatus::PartialCap, std::nullopt};
+        }
+        ++stats.partial_paths;
+        ++stats.lifo_extractions;
+        frame.count = traversal_position_.legal_slots(frame.slots);
+        shuffle(frame.slots, frame.count, traversal_position_);
+        frame.initialized = true;
+        stats.max_frontier_depth = std::max<std::uint64_t>(
+            stats.max_frontier_depth, traversal_frames_.size());
+      }
+
+      if (frame.next >= frame.count) {
+        traversal_frames_.pop_back();
+        if (traversal_frames_.empty()) {
+          traversal_complete_ = true;
+          return {TraversalStatus::Exhausted, std::nullopt};
+        }
+        traversal_position_.unmake_move();
+        traversal_moves_.pop_back();
+        continue;
+      }
+
+      const std::uint8_t slot = frame.slots[frame.next++];
+      traversal_moves_.push_back(traversal_position_.move_for_slot(slot));
+      traversal_position_.make_move(slot);
+      if (traversal_position_.is_terminal() ||
+          traversal_position_.to_move() != root_.to_move()) {
+        Partial result{traversal_position_, traversal_moves_};
+        traversal_position_.unmake_move();
+        traversal_moves_.pop_back();
+        return {TraversalStatus::Action, std::move(result)};
+      }
+      traversal_frames_.push_back(TraversalFrame{});
+    }
   }
 
   void shuffle(std::array<std::uint8_t, detail::kMaximumMoves> &slots,
@@ -587,8 +660,10 @@ class CompleteTurnGenerator {
     return TacticalClass::SafeHandoff;
   }
 
-  void retain(GenerationResult &output, Partial partial) {
-    ++output.stats.completed_actions;
+  RetainResult retain(GenerationResult &output, Partial partial,
+                      bool replace_when_full = true,
+                      bool count_completed = true) {
+    output.stats.completed_actions += count_completed ? 1U : 0U;
     const PositionKey key = partial.position.position_key();
     auto existing = std::lower_bound(
         existing_.begin(), existing_.end(), key,
@@ -620,7 +695,7 @@ class CompleteTurnGenerator {
             replacement->encoded = std::move(encoded);
           }
         }
-        return;
+        return RetainResult::Duplicate;
       }
       ++existing;
     }
@@ -636,7 +711,12 @@ class CompleteTurnGenerator {
         output.actions[index].result = std::move(partial.position);
         output.actions[index].encoded = std::move(encoded);
       }
-      return;
+      return RetainResult::Duplicate;
+    }
+
+    if (output.actions.size() >= max_actions_ && !replace_when_full) {
+      deferred_action_ = std::move(partial);
+      return RetainResult::Full;
     }
 
     const TacticalClass tactical = classify(partial.position);
@@ -646,7 +726,7 @@ class CompleteTurnGenerator {
     if (output.actions.size() < max_actions_) {
       retained_.push_back(key);
       output.actions.push_back(std::move(candidate));
-      return;
+      return RetainResult::Retained;
     }
 
     const auto worse = [](const CompleteTurnAction &left,
@@ -667,8 +747,8 @@ class CompleteTurnGenerator {
       retained_[worst] = key;
       output.actions[worst] = std::move(candidate);
     }
-    cap_discarded_ = true;
     ++retention_drops_;
+    return RetainResult::Retained;
   }
 
   void retain_goal_path(GenerationResult &output, Player goal_owner) {
@@ -843,6 +923,7 @@ class BestFirstMinimaxSearch {
     bool exhaustive{};
     bool closed{};
     std::string action_key{};
+    std::unique_ptr<CompleteTurnGenerator> action_frontier{};
 
     Node(SearchPosition state, std::size_t parent_index,
          std::vector<Move> action, TacticalClass classification,
@@ -917,6 +998,11 @@ class BestFirstMinimaxSearch {
     stats_.generation_boundary_replacements += source.boundary_replacements;
     stats_.generation_tactical_shortcuts += source.tactical_shortcuts;
     stats_.generation_fallbacks += source.fallbacks;
+    stats_.generation_frontier_resumptions += source.frontier_resumptions;
+    stats_.generation_zero_action_resumptions +=
+        source.zero_action_resumptions;
+    stats_.generation_max_frontier_depth = std::max(
+        stats_.generation_max_frontier_depth, source.max_frontier_depth);
     stats_.deadline_reached =
         stats_.deadline_reached || source.deadline_reached;
   }
@@ -931,9 +1017,9 @@ class BestFirstMinimaxSearch {
       return false;
     }
     // A truncated complete-turn page leaves an implicit action frontier.  It
-    // becomes selectable only after every materialized child drains; replay
-    // the same seeded order while filtering exact historical boundaries to
-    // materialize the next deterministic page of real tree nodes.
+    // becomes selectable only after every materialized child drains; resume
+    // its saved DFS cursor to materialize the next deterministic page of real
+    // tree nodes without replaying or dropping partial turns.
     const bool widening = nodes_[index].expanded;
     if (widening &&
         std::any_of(nodes_[index].children.begin(),
@@ -953,12 +1039,14 @@ class BestFirstMinimaxSearch {
                             nodes_[child].action_key});
     }
     const std::size_t remaining = config_.max_tree_nodes - nodes_.size();
-    CompleteTurnGenerator generator(
-        topology_, nodes_[index].position, encoder_,
-        std::min(config_.max_actions, remaining),
-        config_.max_partial_paths, deadline_, config_.seed,
-        std::move(existing));
-    GenerationResult generated = generator.run();
+    if (!nodes_[index].action_frontier) {
+      nodes_[index].action_frontier =
+          std::make_unique<CompleteTurnGenerator>(
+              topology_, nodes_[index].position, encoder_,
+              config_.max_partial_paths, deadline_, config_.seed);
+    }
+    GenerationResult generated = nodes_[index].action_frontier->run(
+        std::min(config_.max_actions, remaining), std::move(existing));
     if (widening) {
       ++stats_.progressive_widenings;
     }
@@ -979,7 +1067,7 @@ class BestFirstMinimaxSearch {
       }
       ++stats_.expansions;
       stats_.tree_nodes = nodes_.size();
-      return generated.exhaustive;
+      return generated.exhaustive || generated.frontier_resumable;
     }
 
     const Player child_perspective = opponent(nodes_[index].perspective);
@@ -1091,6 +1179,9 @@ class BestFirstMinimaxSearch {
     node.value = best;
     node.solved = proven_win || all_solved;
     node.closed = node.solved || (node.exhaustive && all_closed);
+    if (node.solved || node.exhaustive) {
+      node.action_frontier.reset();
+    }
   }
 
   std::optional<std::vector<std::size_t>> select_path() const {

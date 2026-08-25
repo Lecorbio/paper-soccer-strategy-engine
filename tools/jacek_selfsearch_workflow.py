@@ -35,9 +35,9 @@ from jacek_replay_workflow import (
 )
 
 
-AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v2"
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v2"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v2"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v3"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v3"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v3"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"

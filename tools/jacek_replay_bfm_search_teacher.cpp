@@ -34,9 +34,9 @@ namespace papersoccer::jacek_replay_search_teacher {
 namespace {
 
 constexpr std::string_view kSchema =
-    "papersoccer.jacek-replay-search-teacher.v2";
+    "papersoccer.jacek-replay-search-teacher.v3";
 constexpr std::string_view kTerminationAuditSchema =
-    "papersoccer.jacek-replay-search-termination-audit.v1";
+    "papersoccer.jacek-replay-search-termination-audit.v2";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
@@ -412,6 +412,12 @@ void write_search_stats(std::ostream &out,
       << ",\"generation_tactical_shortcuts\":"
       << stats.generation_tactical_shortcuts
       << ",\"generation_fallbacks\":" << stats.generation_fallbacks
+      << ",\"generation_frontier_resumptions\":"
+      << stats.generation_frontier_resumptions
+      << ",\"generation_zero_action_resumptions\":"
+      << stats.generation_zero_action_resumptions
+      << ",\"generation_max_frontier_depth\":"
+      << stats.generation_max_frontier_depth
       << ",\"progressive_widenings\":" << stats.progressive_widenings
       << ",\"closed_unsolved_nodes\":" << stats.closed_unsolved_nodes
       << ",\"closed_unsolved_nonexhaustive_nodes\":"
@@ -590,6 +596,9 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
   if (stats.closed_unsolved_nodes != 0U ||
       stats.closed_unsolved_nonexhaustive_nodes != 0U) {
     throw std::runtime_error("search teacher closed an unsolved frontier");
+  }
+  if (stats.generation_queue_drops != 0U) {
+    throw std::runtime_error("search teacher dropped a partial frontier");
   }
   if (stats.max_complete_turn_depth == 0U) {
     throw std::runtime_error(

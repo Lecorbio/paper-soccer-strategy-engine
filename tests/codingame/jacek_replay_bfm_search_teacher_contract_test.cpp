@@ -95,6 +95,12 @@ void invalid_work_and_identity_fail_closed() {
       [&] { teacher::direct_teacher_value(invalid, ps::Player::One); },
       "A closed unsolved frontier was accepted as fixed work.");
 
+  invalid = complete_unsolved(0.0F);
+  invalid.generation_queue_drops = 1U;
+  require_rejected(
+      [&] { teacher::direct_teacher_value(invalid, ps::Player::One); },
+      "A dropped partial frontier was accepted as fixed work.");
+
   invalid = complete_unsolved(1.0001F);
   require_rejected(
       [&] { teacher::direct_teacher_value(invalid, ps::Player::One); },
@@ -127,18 +133,24 @@ void invalid_work_and_identity_fail_closed() {
 
 void position_seed_is_repeatable_and_budget_bound() {
   const std::uint64_t first = teacher::derive_search_seed(
-      "selfsearch-pilot-20260825-v2", "position-17", 64'000U);
+      "selfsearch-pilot-20260825-v3", "position-17", 64'000U);
   require(first == teacher::derive_search_seed(
-                       "selfsearch-pilot-20260825-v2", "position-17",
+                       "selfsearch-pilot-20260825-v3", "position-17",
                        64'000U),
           "The same position search seed did not repeat.");
   require(first != teacher::derive_search_seed(
-                       "selfsearch-pilot-20260825-v2", "position-18",
+                       "selfsearch-pilot-20260825-v3", "position-18",
                        64'000U) &&
               first != teacher::derive_search_seed(
-                           "selfsearch-pilot-20260825-v2", "position-17",
+                           "selfsearch-pilot-20260825-v3", "position-17",
                            500'000U),
           "Position ID and fixed-work budget must both bind the search seed.");
+  require(
+      teacher::derive_search_seed(
+          "selfsearch-pilot-20260825-v2",
+          "position:7ec5e5e233cbefe3cd0b1ee05eb64f1830030c357330353adade61bc8e2097ac",
+          64'000U) == 5'574'964'850'576'697'603ULL,
+      "The production partial-frontier regression seed changed.");
 }
 
 }  // namespace
