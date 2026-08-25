@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -98,6 +99,60 @@ def main() -> int:
         ]
         if outputs[0] != outputs[1] or outputs[0] != outputs[2]:
             raise RuntimeError("search-teacher output changed with worker count")
+
+        timed = subprocess.run(
+            (
+                str(arguments.search_teacher),
+                "--model", str(arguments.model),
+                "--model-sha256", workflow.sha256(arguments.model),
+                "--campaign-id", "selfsearch-search-teacher-timed-rejection",
+                "--tree-nodes", "16", "--time-ms", "1",
+                "--max-actions", str(workflow.SEARCH_MAX_ACTIONS),
+                "--max-partial-paths", str(workflow.SEARCH_MAX_PARTIAL_PATHS),
+                "--exploration", "0.5", "--fpu", "0.5",
+            ),
+            input=(
+                "position_id\troot_group_id\tgroup_id\tsource\tsplit\t"
+                "winner\tmover\tprefix\n"
+                "position-zero-visit\troot-zero-visit\tgame-zero-visit\t"
+                "fixture\ttrain\t0\t0\t\n"
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if (
+            timed.returncode == 0
+            or timed.stdout
+            or "require --time-ms 0" not in timed.stderr
+        ):
+            raise RuntimeError(
+                "fixed-work search labels accepted an internal wall-clock limit"
+            )
+
+        zero_visit = subprocess.run(
+            (
+                str(arguments.search_teacher),
+                "--model", str(arguments.model),
+                "--model-sha256", workflow.sha256(arguments.model),
+                "--campaign-id", "selfsearch-search-teacher-zero-visit",
+                "--tree-nodes", "2", "--time-ms", "0",
+                "--max-actions", str(workflow.SEARCH_MAX_ACTIONS),
+                "--max-partial-paths", str(workflow.SEARCH_MAX_PARTIAL_PATHS),
+                "--exploration", "0.5", "--fpu", "0.5",
+            ),
+            input=(
+                "position_id\troot_group_id\tgroup_id\tsource\tsplit\t"
+                "winner\tmover\tprefix\n"
+                "position-zero-visit\troot-zero-visit\tgame-zero-visit\t"
+                "fixture\ttrain\t0\t0\t\n"
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if zero_visit.returncode == 0 or zero_visit.stdout:
+            raise RuntimeError("search teacher accepted a zero-visit fixed cap")
 
         widening_positions = root / "widening-positions.tsv"
         widening_positions.write_text(

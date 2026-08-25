@@ -35,9 +35,9 @@ from jacek_replay_workflow import (
 )
 
 
-AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v4"
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v4"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v4"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v5"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v5"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v5"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -61,7 +61,8 @@ MINIMUM_FREE_BYTES = 12 * 1024**3
 POSITION_CHUNK_GAMES = 25
 SEARCH_MAX_ACTIONS = 250
 SEARCH_MAX_PARTIAL_PATHS = 50_000
-SEARCH_SAFETY_MS = 60_000
+FIXED_WORK_TIME_MS = 0
+LABEL_PROCESS_IDLE_TIMEOUT_SECONDS = 15 * 60
 
 _CAMPAIGN_LOCK_FD: int | None = None
 
@@ -1736,6 +1737,67 @@ def _position_rows(path: pathlib.Path) -> tuple[str, list[str], list[str]]:
     return lines[0], lines[1:], ids
 
 
+def _run_label_teacher(
+    *, command: Sequence[str], source, destination,
+    pass_fds: tuple[int, ...], idle_timeout_seconds: float,
+    context: str, expected_position_ids: Sequence[str],
+) -> subprocess.CompletedProcess:
+    """Run one streaming label chunk with an external no-progress watchdog."""
+
+    if not math.isfinite(idle_timeout_seconds) or idle_timeout_seconds <= 0:
+        raise ValueError("label process idle timeout must be positive")
+    process = subprocess.Popen(
+        command,
+        stdin=source,
+        stdout=destination,
+        stderr=subprocess.PIPE,
+        pass_fds=pass_fds,
+    )
+    observed_bytes = os.fstat(destination.fileno()).st_size
+    last_progress = time.monotonic()
+    try:
+        while True:
+            elapsed = time.monotonic() - last_progress
+            remaining = idle_timeout_seconds - elapsed
+            if remaining <= 0:
+                process.kill()
+                _, stderr = process.communicate()
+                detail = stderr.decode("utf-8", "replace").strip()
+                message = (
+                    f"{context} made no label-output progress for "
+                    f"{idle_timeout_seconds:g} seconds; process killed "
+                    "without output or receipt"
+                )
+                with pathlib.Path(destination.name).open("rb") as partial:
+                    completed_rows = sum(1 for line in partial if line.endswith(b"\n"))
+                if completed_rows < len(expected_position_ids):
+                    message += (
+                        "; next position_id="
+                        + expected_position_ids[completed_rows]
+                    )
+                if detail:
+                    message += f": {detail}"
+                raise RuntimeError(message)
+            try:
+                returncode = process.wait(timeout=min(1.0, remaining))
+            except subprocess.TimeoutExpired:
+                current_bytes = os.fstat(destination.fileno()).st_size
+                if current_bytes != observed_bytes:
+                    observed_bytes = current_bytes
+                    last_progress = time.monotonic()
+                continue
+            stderr = process.stderr.read() if process.stderr is not None else b""
+            return subprocess.CompletedProcess(
+                command, returncode, stdout=None, stderr=stderr
+            )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if process.stderr is not None:
+            process.stderr.close()
+
+
 def _validate_label_output(
     *, output: pathlib.Path, positions: pathlib.Path, schema: str,
     campaign_id: str, nodes: int, model_sha256: str | None,
@@ -1783,7 +1845,7 @@ def _validate_label_output(
                 != hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).hexdigest()
                 or configuration != {
                     "seed": expected_seed,
-                    "max_time_ms": SEARCH_SAFETY_MS,
+                    "max_time_ms": FIXED_WORK_TIME_MS,
                     "max_tree_nodes": nodes,
                     "max_actions": SEARCH_MAX_ACTIONS,
                     "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS,
@@ -1830,7 +1892,7 @@ def _validate_label_output(
                 }
                 or configuration != {
                     "max_nodes": nodes,
-                    "max_time_ms": SEARCH_SAFETY_MS,
+                    "max_time_ms": FIXED_WORK_TIME_MS,
                     "max_turn_depth": 32,
                     "replay_value_blend_percent": 15,
                     "teacher_residual_weight_percent": 100,
@@ -1890,14 +1952,42 @@ def run_label_chunks(
     schema: str, campaign_id: str, nodes: int, workers: int,
     source_sha256: str,
     model: pathlib.Path | None = None, chunk_games: int = POSITION_CHUNK_GAMES,
+    process_idle_timeout_seconds: float = LABEL_PROCESS_IDLE_TIMEOUT_SECONDS,
 ) -> dict:
     header, rows, position_ids = _position_rows(positions)
     chunk_root = manager.output / "label-chunks" / stage_name
     receipt_root = manager.receipts / f"{stage_ordinal:02d}-{stage_name}-chunks"
     producer = artifact_snapshot(teacher)
     model_hash = sha256(model) if model is not None else None
+    if schema not in {SEARCH_TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
+        raise ValueError("position teacher schema is unsupported")
+    if (schema == SEARCH_TEACHER_SCHEMA) != (model is not None):
+        raise ValueError("search labels require one model and Rank-4 labels none")
     if chunk_games <= 0:
         raise ValueError("position teacher chunk game count must be positive")
+    if (
+        not math.isfinite(process_idle_timeout_seconds)
+        or process_idle_timeout_seconds <= 0
+    ):
+        raise ValueError("position teacher idle timeout must be positive")
+    teacher_configuration = (
+        {
+            "max_time_ms": FIXED_WORK_TIME_MS,
+            "max_tree_nodes": nodes,
+            "max_actions": SEARCH_MAX_ACTIONS,
+            "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS,
+            "exploration": 0.5,
+            "fpu": 0.5,
+        }
+        if schema == SEARCH_TEACHER_SCHEMA
+        else {
+            "max_time_ms": FIXED_WORK_TIME_MS,
+            "max_nodes": nodes,
+            "max_turn_depth": 32,
+            "replay_value_blend_percent": 15,
+            "teacher_residual_weight_percent": 100,
+        }
+    )
     grouped_by_game: dict[str, list[str]] = {}
     for row in rows:
         group_id = row.split("\t")[2]
@@ -1923,6 +2013,8 @@ def run_label_chunks(
             "stage": stage_name, "chunk_ordinal": ordinal, "row_begin": row_begin,
             "rows": len(chunk_data), "games": min(chunk_games, len(grouped) - ordinal * chunk_games),
             "nodes": nodes,
+            "teacher_configuration": teacher_configuration,
+            "process_idle_timeout_seconds": process_idle_timeout_seconds,
             "producer": producer, "model": artifact_snapshot(model) if model else None,
             "source_sha256": source_sha256,
             "input": artifact_snapshot(chunk_input),
@@ -1959,31 +2051,48 @@ def run_label_chunks(
             command = [
                 str(teacher), "--model", str(model), "--model-sha256", str(model_hash),
                 "--campaign-id", campaign_id, "--tree-nodes", str(nodes),
-                "--time-ms", str(SEARCH_SAFETY_MS), "--max-actions", str(SEARCH_MAX_ACTIONS),
+                "--time-ms", str(FIXED_WORK_TIME_MS), "--max-actions", str(SEARCH_MAX_ACTIONS),
                 "--max-partial-paths", str(SEARCH_MAX_PARTIAL_PATHS),
                 "--exploration", "0.5", "--fpu", "0.5",
             ]
         else:
             command = [
                 str(teacher), "--campaign-id", campaign_id, "--nodes", str(nodes),
-                "--time-ms", str(SEARCH_SAFETY_MS),
+                "--time-ms", str(FIXED_WORK_TIME_MS),
             ]
-        with chunk_input.open("rb") as source, tempfile.NamedTemporaryFile(
-            dir=chunk_output.parent, prefix=f".{chunk_output.name}.", delete=False
-        ) as destination:
-            temporary = pathlib.Path(destination.name)
-            pass_fds = (
-                () if _CAMPAIGN_LOCK_FD is None else (_CAMPAIGN_LOCK_FD,)
-            )
-            completed = subprocess.run(command, stdin=source, stdout=destination,
-                                       stderr=subprocess.PIPE, check=False,
-                                       pass_fds=pass_fds)
+        temporary: pathlib.Path | None = None
         try:
+            with chunk_input.open("rb") as source, tempfile.NamedTemporaryFile(
+                dir=chunk_output.parent,
+                prefix=f".{chunk_output.name}.",
+                delete=False,
+            ) as destination:
+                temporary = pathlib.Path(destination.name)
+                pass_fds = (
+                    () if _CAMPAIGN_LOCK_FD is None else (_CAMPAIGN_LOCK_FD,)
+                )
+                completed = _run_label_teacher(
+                    command=command,
+                    source=source,
+                    destination=destination,
+                    pass_fds=pass_fds,
+                    idle_timeout_seconds=process_idle_timeout_seconds,
+                    context=f"{stage_name} chunk {item[0]}",
+                    expected_position_ids=_position_rows(chunk_input)[2],
+                )
             if completed.returncode != 0:
-                raise RuntimeError(completed.stderr.decode("utf-8", "replace"))
+                detail = completed.stderr.decode("utf-8", "replace").strip()
+                message = (
+                    f"{stage_name} chunk {item[0]} teacher exited "
+                    f"with code {completed.returncode}"
+                )
+                if detail:
+                    message += f": {detail}"
+                raise RuntimeError(message)
             os.replace(temporary, chunk_output)
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         count = _validate_label_output(
             output=chunk_output, positions=chunk_input, schema=schema,
             campaign_id=campaign_id, nodes=nodes, model_sha256=model_hash,
@@ -2843,7 +2952,9 @@ def run_phase(
             ordinal=ordinal, name=name,
             configuration={
                 "nodes": nodes, "workers": 10, "chunk_games": 25,
-                "safety_ms": SEARCH_SAFETY_MS,
+                "fixed_work_time_ms": FIXED_WORK_TIME_MS,
+                "label_process_idle_timeout_seconds":
+                    LABEL_PROCESS_IDLE_TIMEOUT_SECONDS,
                 "max_actions": SEARCH_MAX_ACTIONS if model else None,
                 "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS if model else None,
                 "exploration": 0.5 if model else None,

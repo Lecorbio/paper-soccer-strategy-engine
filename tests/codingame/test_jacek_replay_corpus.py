@@ -50,7 +50,7 @@ class JacekReplayCorpusTests(unittest.TestCase):
             },
             "search_config": {
                 "max_nodes": 32_000,
-                "max_time_ms": 60_000,
+                "max_time_ms": 0,
                 "max_turn_depth": 32,
                 "replay_value_blend_percent": 15,
                 "teacher_residual_weight_percent": 100,
@@ -102,7 +102,7 @@ class JacekReplayCorpusTests(unittest.TestCase):
             },
             "search_config": {
                 "seed": 7,
-                "max_time_ms": 60_000,
+                "max_time_ms": 0,
                 "max_tree_nodes": 64_000,
                 "max_actions": 1_000_000,
                 "max_partial_paths": 1_000_000,
@@ -297,7 +297,7 @@ class JacekReplayCorpusTests(unittest.TestCase):
         self.assertEqual(sample.group_id, reflected.group_id)
         self.assertEqual(sample.group_id, "root:1")
 
-    def test_rank4_v2_accepts_only_proof_or_completed_fixed_work(self):
+    def test_rank4_fixed_work_accepts_only_proof_or_completed_cap(self):
         valid = self.rank4_teacher_row()
         sample, _ = corpus.sample_from_teacher_row(valid)
         expected = 0.75 * -math.tanh(26_407 / 12_000) - 0.25
@@ -320,6 +320,9 @@ class JacekReplayCorpusTests(unittest.TestCase):
         corpus.sample_from_teacher_row(depth_capped)
 
         invalid_rows = (
+            self.rank4_teacher_row(
+                search_config={**valid["search_config"], "max_time_ms": 1}
+            ),
             self.rank4_teacher_row(
                 search_stats={**valid["search_stats"], "deadline_reached": True}
             ),
@@ -427,6 +430,15 @@ class JacekReplayCorpusTests(unittest.TestCase):
 
         for broken, message in (
             ({**solved, "teacher_value": 1.0}, "disagrees"),
+            (
+                self.search_teacher_row(
+                    search_config={
+                        **self.search_teacher_row()["search_config"],
+                        "max_time_ms": 1,
+                    }
+                ),
+                "max_time_ms zero",
+            ),
             (
                 self.search_teacher_row(
                     search_stats={

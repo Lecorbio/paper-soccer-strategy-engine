@@ -778,6 +778,31 @@ void deadline_fallback_is_legal_and_bounded() {
           "A one-millisecond deadline must return a prompt legal fallback.");
 }
 
+void zero_time_disables_the_internal_deadline() {
+  TemporaryCheckpoint checkpoint(make_checkpoint());
+  ps::JacekReplayBfmConfig config;
+  config.model_path = checkpoint.string();
+  config.max_time_ms = 0U;
+  config.max_tree_nodes = 47U;
+  config.max_actions = 5U;
+  config.max_partial_paths = 11U;
+  config.exploration = 0.5;
+  config.fpu = 0.5;
+  ps::JacekReplayBfmBot bot(config);
+  const ps::GameState state = ps::make_initial_state(codingame_rules());
+  const ps::JacekReplayBfmSearchStats first =
+      bot.analyze_position(state, 31U);
+  const ps::JacekReplayBfmSearchStats repeated =
+      bot.analyze_position(state, 31U);
+  require(!first.deadline_reached &&
+              first.generation_deadline_stops == 0U &&
+              first.materialization_deadline_stops == 0U &&
+              valid_search_completion(first, config.max_tree_nodes) &&
+              same_capped_search_stats(first, repeated),
+          "A zero time budget must disable wall-clock termination while "
+          "preserving deterministic proof-or-fixed-cap completion.");
+}
+
 void analysis_api_is_stateless_seeded_rotatable_and_proof_explicit() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::JacekReplayBfmConfig config;
@@ -998,6 +1023,8 @@ int run_jacek_replay_bfm_tests() {
        fixed_cap_search_is_mover_rotation_symmetric},
       {"deadline_fallback_is_legal_and_bounded",
        deadline_fallback_is_legal_and_bounded},
+      {"zero_time_disables_the_internal_deadline",
+       zero_time_disables_the_internal_deadline},
       {"analysis_api_is_stateless_seeded_rotatable_and_proof_explicit",
        analysis_api_is_stateless_seeded_rotatable_and_proof_explicit},
       {"nonexhaustive_root_progressively_widens_to_a_valid_label",

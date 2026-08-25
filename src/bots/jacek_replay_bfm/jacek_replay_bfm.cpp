@@ -846,10 +846,13 @@ class BestFirstMinimaxSearch {
       : config_(config), model_(model),
         topology_(std::make_shared<SearchTopology>(state.config)),
         root_(topology_, state), encoder_(topology_),
-        deadline_(SearchClock::now() +
-                  std::chrono::milliseconds(
-                      config.max_time_ms -
-                      finalization_reserve_ms(config.max_time_ms))) {
+        deadline_(
+            config.max_time_ms == 0U
+                ? SearchClock::time_point::max()
+                : SearchClock::now() +
+                      std::chrono::milliseconds(
+                          config.max_time_ms -
+                          finalization_reserve_ms(config.max_time_ms))) {
     nodes_.reserve(std::min<std::size_t>(config_.max_tree_nodes, 4096U));
   }
 
@@ -1301,8 +1304,7 @@ void validate_action(const GameState &state,
 }
 
 JacekReplayBfmConfig validate_config(JacekReplayBfmConfig config) {
-  if (config.model_path.empty() || config.max_time_ms == 0U ||
-      config.max_tree_nodes < 2U ||
+  if (config.model_path.empty() || config.max_tree_nodes < 2U ||
       config.max_tree_nodes > kMaximumTreeNodes ||
       config.max_actions == 0U || config.max_actions > kMaximumActions ||
       config.max_partial_paths == 0U ||

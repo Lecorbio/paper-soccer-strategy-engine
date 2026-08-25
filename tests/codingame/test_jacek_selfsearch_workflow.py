@@ -45,7 +45,7 @@ def search_teacher_row(position_id: str, value: float) -> dict:
         },
         "search_config": {
             "seed": 7,
-            "max_time_ms": 60_000,
+            "max_time_ms": 0,
             "max_tree_nodes": 64,
             "max_actions": workflow.SEARCH_MAX_ACTIONS,
             "max_partial_paths": workflow.SEARCH_MAX_PARTIAL_PATHS,
@@ -115,7 +115,7 @@ def rank4_teacher_row(position_id: str, score: int = 100) -> dict:
         },
         "search_config": {
             "max_nodes": 32_000,
-            "max_time_ms": 60_000,
+            "max_time_ms": 0,
             "max_turn_depth": 32,
             "replay_value_blend_percent": 15,
             "teacher_residual_weight_percent": 100,
@@ -147,7 +147,7 @@ class SelfSearchWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             missing = root / "missing"
-            output = root / "selfsearch-auto-20260825-v1"
+            output = root / "selfsearch-auto-20260825-v4"
             executables = workflow.CampaignExecutables(
                 continuation_generator=missing,
                 search_teacher=missing,
@@ -445,6 +445,98 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                     workers=2,
                     source_sha256="1" * 64,
                 )
+
+    def test_label_idle_watchdog_leaves_no_output_or_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            positions = root / "positions.tsv"
+            positions.write_text(
+                "position_id\troot_group_id\tgroup_id\tsource\tsplit\t"
+                "winner\tmover\tprefix\n"
+                "p0\tr0\tg0\ts\ttrain\t0\t0\t\n"
+                "p1\tr1\tg1\ts\ttrain\t0\t0\t\n"
+            )
+            teacher = root / "stream-then-hang.py"
+            teacher.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!{sys.executable}
+                    import argparse, json, sys, time
+                    parser = argparse.ArgumentParser()
+                    parser.add_argument('--campaign-id', required=True)
+                    parser.add_argument('--nodes', type=int, required=True)
+                    parser.add_argument('--time-ms', type=int, required=True)
+                    args = parser.parse_args()
+                    fields = sys.stdin.read().splitlines()[1].split('\\t')
+                    row = {{
+                        'schema': {workflow.RANK4_TEACHER_SCHEMA!r},
+                        'campaign_id': args.campaign_id,
+                        'position_id': fields[0], 'root_group_id': fields[1],
+                        'group_id': fields[2], 'source': fields[3],
+                        'split': fields[4], 'winner': int(fields[5]),
+                        'mover': int(fields[6]), 'prefix': [],
+                        'teacher': {{'kind': 'rank4-fixed-work',
+                                    'source_sha256': '1' * 64}},
+                        'search_config': {{
+                            'max_nodes': args.nodes,
+                            'max_time_ms': args.time_ms,
+                            'max_turn_depth': 32,
+                            'replay_value_blend_percent': 15,
+                            'teacher_residual_weight_percent': 100,
+                        }},
+                        'search_stats': {{
+                            'attempted_depth': 1, 'completed_depth': 0,
+                            'nodes': args.nodes, 'leaf_evaluations': 1,
+                            'terminal_nodes': 0, 'completed_actions': 1,
+                            'budget_exhausted': True,
+                            'node_cap_reached': True,
+                            'depth_cap_reached': False,
+                            'deadline_reached': False,
+                            'termination_reason': 'fixed-work-cap',
+                        }},
+                        'root_score': 100, 'completed_depth': 0,
+                        'nodes': args.nodes, 'root_solved': False,
+                        'proven_winner': None, 'weight': 1.0,
+                    }}
+                    print(json.dumps(row, separators=(',', ':')), flush=True)
+                    time.sleep(60)
+                    """
+                )
+            )
+            teacher.chmod(0o755)
+            output_root = root / "attempt"
+            output_root.mkdir()
+            manager = workflow.StageManager(
+                output=output_root,
+                campaign_id=workflow.PILOT_CAMPAIGN_ID,
+                round_index=0,
+                resume=False,
+                environment={"fixture": True},
+            )
+            labels = output_root / "labels.jsonl"
+            with self.assertRaisesRegex(RuntimeError, "next position_id=p1"):
+                workflow.run_label_chunks(
+                    manager=manager,
+                    stage_ordinal=4,
+                    stage_name="rank4-watchdog",
+                    positions=positions,
+                    output=labels,
+                    teacher=teacher,
+                    schema=workflow.RANK4_TEACHER_SCHEMA,
+                    campaign_id=workflow.PILOT_CAMPAIGN_ID,
+                    nodes=64,
+                    workers=1,
+                    source_sha256="1" * 64,
+                    process_idle_timeout_seconds=2.0,
+                )
+            chunk_root = output_root / "label-chunks/rank4-watchdog"
+            receipt = output_root / (
+                "receipts/04-rank4-watchdog-chunks/chunk-000000.json"
+            )
+            self.assertFalse(labels.exists())
+            self.assertFalse((chunk_root / "chunk-000000.jsonl").exists())
+            self.assertFalse(receipt.exists())
+            self.assertEqual(list(chunk_root.glob(".chunk-000000.jsonl.*")), [])
 
     def test_game_chunks_separate_plan_outputs_resume_and_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

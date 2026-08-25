@@ -34,7 +34,7 @@ namespace papersoccer::jacek_replay_search_teacher {
 namespace {
 
 constexpr std::string_view kSchema =
-    "papersoccer.jacek-replay-search-teacher.v3";
+    "papersoccer.jacek-replay-search-teacher.v4";
 constexpr std::string_view kTerminationAuditSchema =
     "papersoccer.jacek-replay-search-termination-audit.v2";
 constexpr std::string_view kHeader =
@@ -44,7 +44,7 @@ struct Options {
   std::string model_path;
   std::string model_sha256;
   std::string campaign_id;
-  std::uint32_t max_time_ms{60'000U};
+  std::uint32_t max_time_ms{};
   std::size_t max_tree_nodes{64'000U};
   std::size_t max_actions{250U};
   std::size_t max_partial_paths{50'000U};
@@ -130,6 +130,20 @@ UInt parse_unsigned(std::string_view raw, std::string_view label) {
   return result;
 }
 
+template <typename UInt>
+UInt parse_nonnegative_unsigned(std::string_view raw,
+                                std::string_view label) {
+  UInt result{};
+  const auto [end, error] =
+      std::from_chars(raw.data(), raw.data() + raw.size(), result);
+  if (raw.empty() || error != std::errc{} ||
+      end != raw.data() + raw.size()) {
+    throw std::invalid_argument(std::string(label) +
+                                " must be a nonnegative integer");
+  }
+  return result;
+}
+
 double parse_double(std::string_view raw, std::string_view label) {
   std::string owned(raw);
   char *end = nullptr;
@@ -181,7 +195,7 @@ Options parse_options(int argc, char **argv) {
           parse_unsigned<std::size_t>(value, option);
     } else if (option == "--time-ms") {
       options.max_time_ms =
-          parse_unsigned<std::uint32_t>(value, option);
+          parse_nonnegative_unsigned<std::uint32_t>(value, option);
     } else if (option == "--max-actions") {
       options.max_actions = parse_unsigned<std::size_t>(value, option);
     } else if (option == "--max-partial-paths") {
@@ -207,6 +221,11 @@ Options parse_options(int argc, char **argv) {
       options.max_partial_paths > 50'000U || options.exploration < 0.0 ||
       options.fpu < -1.0 || options.fpu > 1.0) {
     throw std::invalid_argument("invalid search-teacher configuration");
+  }
+  if ((!options.audit_terminations && options.max_time_ms != 0U) ||
+      (options.audit_terminations && options.max_time_ms > 60'000U)) {
+    throw std::invalid_argument(
+        "fixed-work labels require --time-ms 0; audits allow at most 60000");
   }
   return options;
 }
@@ -446,7 +465,8 @@ void write_termination_audit(
   std::optional<float> teacher_value;
   std::string contract_error;
   try {
-    teacher_value = direct_teacher_value(stats, record.state.to_move);
+    teacher_value = direct_teacher_value(
+        stats, record.state.to_move, options.max_tree_nodes);
     teacher_contract_valid = true;
   } catch (const std::exception &error) {
     contract_error = error.what();
@@ -529,22 +549,6 @@ void write_label(std::ostream &out, const Options &options,
   out << ",\"weight\":1.0}\n";
 }
 
-std::vector<Label> analyze(const Options &options,
-                           std::vector<PositionRecord> records,
-                           const ps::JacekReplayBfmBot &bot) {
-  std::vector<Label> labels;
-  labels.reserve(records.size());
-  for (PositionRecord &record : records) {
-    const std::uint64_t seed = derive_search_seed(
-        options.campaign_id, record.position_id, options.max_tree_nodes);
-    const ps::JacekReplayBfmSearchStats stats =
-        bot.analyze_position(record.state, seed);
-    const float value = direct_teacher_value(stats, record.state.to_move);
-    labels.push_back(Label{std::move(record), seed, stats, value});
-  }
-  return labels;
-}
-
 }  // namespace
 
 std::uint64_t derive_search_seed(std::string_view campaign_id,
@@ -586,7 +590,8 @@ void validate_model_identity(std::string_view actual_sha256,
 }
 
 float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
-                           ps::Player mover) {
+                           ps::Player mover,
+                           std::size_t expected_tree_nodes) {
   if (stats.deadline_reached ||
       stats.termination == ps::JacekReplayBfmSearchTermination::Deadline ||
       stats.generation_deadline_stops != 0U ||
@@ -603,6 +608,10 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
   if (stats.max_complete_turn_depth == 0U) {
     throw std::runtime_error(
         "search teacher did not complete a root search depth");
+  }
+  if (stats.completed_actions == 0U) {
+    throw std::runtime_error(
+        "search teacher completed no usable root actions");
   }
   if (!std::isfinite(stats.root_value)) {
     throw std::runtime_error("search teacher produced a non-finite value");
@@ -625,7 +634,7 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
     }
     return expected;
   }
-  if (!stats.tree_cap_reached ||
+  if (!stats.tree_cap_reached || stats.tree_nodes != expected_tree_nodes ||
       stats.termination !=
           ps::JacekReplayBfmSearchTermination::FixedWorkCap) {
     throw std::runtime_error(
@@ -633,6 +642,10 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
         std::string(ps::jacek_replay_bfm_search_termination_name(
             stats.termination)) +
         " is not a proof or completed fixed-work cap");
+  }
+  if (stats.visits == 0U) {
+    throw std::runtime_error(
+        "unsolved search teacher completed no root visits");
   }
   if (stats.proven_winner.has_value()) {
     throw std::runtime_error(
@@ -665,29 +678,42 @@ int run(int argc, char **argv, std::istream &input, std::ostream &output) {
   std::vector<PositionRecord> records = read_records(input);
   if (options.audit_terminations) {
     for (const PositionRecord &record : records) {
+      try {
+        const std::uint64_t seed = derive_search_seed(
+            options.campaign_id, record.position_id, options.max_tree_nodes);
+        const ps::JacekReplayBfmSearchStats stats =
+            bot.analyze_position(record.state, seed);
+        write_termination_audit(
+            output, options, record, seed, stats, bot.model_sha256());
+        output.flush();
+        if (!output) {
+          throw std::runtime_error(
+              "could not write search-termination audit row");
+        }
+      } catch (const std::exception &error) {
+        throw std::runtime_error(record.position_id + ": " + error.what());
+      }
+    }
+    return 0;
+  }
+  for (PositionRecord &record : records) {
+    const std::string position_id = record.position_id;
+    try {
       const std::uint64_t seed = derive_search_seed(
           options.campaign_id, record.position_id, options.max_tree_nodes);
       const ps::JacekReplayBfmSearchStats stats =
           bot.analyze_position(record.state, seed);
-      write_termination_audit(
-          output, options, record, seed, stats, bot.model_sha256());
+      const float value = direct_teacher_value(
+          stats, record.state.to_move, options.max_tree_nodes);
+      const Label label{std::move(record), seed, stats, value};
+      write_label(output, options, label, bot.model_sha256());
+      output.flush();
+      if (!output) {
+        throw std::runtime_error("could not write search-teacher row");
+      }
+    } catch (const std::exception &error) {
+      throw std::runtime_error(position_id + ": " + error.what());
     }
-    output.flush();
-    if (!output) {
-      throw std::runtime_error(
-          "could not write complete search-termination audit");
-    }
-    return 0;
-  }
-  const std::vector<Label> labels =
-      analyze(options, std::move(records), bot);
-  for (const Label &label : labels) {
-    write_label(output, options, label, bot.model_sha256());
-  }
-  output.flush();
-  if (!output) {
-    throw std::runtime_error(
-        "could not write complete search-teacher output");
   }
   return 0;
 }

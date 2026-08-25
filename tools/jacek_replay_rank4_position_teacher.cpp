@@ -27,14 +27,14 @@ namespace teacher = papersoccer::jacek_replay_rank4_position_teacher_engine;
 
 namespace {
 
-constexpr std::string_view kSchema = "papersoccer.jacek-replay-teacher.v2";
+constexpr std::string_view kSchema = "papersoccer.jacek-replay-teacher.v3";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
 struct Options {
   std::string campaign_id;
   std::uint64_t nodes{32'000U};
-  std::uint32_t time_ms{60'000U};
+  std::uint32_t time_ms{};
 };
 
 struct PositionRow {
@@ -81,6 +81,20 @@ UInt parse_unsigned(std::string_view raw, std::string_view label) {
   return value;
 }
 
+template <typename UInt>
+UInt parse_nonnegative_unsigned(std::string_view raw,
+                                std::string_view label) {
+  UInt value{};
+  const auto [end, error] =
+      std::from_chars(raw.data(), raw.data() + raw.size(), value);
+  if (raw.empty() || error != std::errc{} ||
+      end != raw.data() + raw.size()) {
+    throw std::invalid_argument(std::string(label) +
+                                " requires a nonnegative integer");
+  }
+  return value;
+}
+
 std::string require_value(int &index, int argc, char **argv,
                           std::string_view option) {
   if (++index >= argc) {
@@ -107,13 +121,14 @@ Options parse_options(int argc, char **argv) {
     } else if (option == "--nodes") {
       options.nodes = parse_unsigned<std::uint64_t>(value, option);
     } else if (option == "--time-ms") {
-      options.time_ms = parse_unsigned<std::uint32_t>(value, option);
+      options.time_ms =
+          parse_nonnegative_unsigned<std::uint32_t>(value, option);
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }
   }
   require_text(options.campaign_id, "--campaign-id");
-  if (options.nodes > teacher::kMaximumNodes || options.time_ms > 60'000U) {
+  if (options.nodes > teacher::kMaximumNodes || options.time_ms != 0U) {
     throw std::invalid_argument("invalid Rank-4 teacher configuration");
   }
   return options;
@@ -380,6 +395,11 @@ int main(int argc, char **argv) {
     for (const PositionRow &row : rows) {
       try {
         label(row, options, std::cout);
+        std::cout.flush();
+        if (!std::cout) {
+          throw std::runtime_error(
+              "could not write complete Rank-4 teacher row");
+        }
       } catch (const std::exception &error) {
         throw std::runtime_error(row.position_id + ": " + error.what());
       }

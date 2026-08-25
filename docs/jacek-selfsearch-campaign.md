@@ -30,14 +30,14 @@ Frozen position TSV columns are:
 position_id  root_group_id  group_id  source  split  winner  mover  prefix
 ```
 
-`papersoccer.jacek-replay-search-teacher.v3` stores the direct mover-relative
+`papersoccer.jacek-replay-search-teacher.v4` stores the direct mover-relative
 `teacher_value`, the exact model/source/configuration identity, full search
 statistics, `root_solved`, and an optional absolute `proven_winner`.  Unsolved
 values must be finite in `[-1,1]`; solved values are emitted as exactly `+1`
 or `-1`.  The corpus parser deliberately rejects applying Rank-4's
 `tanh(root_score/12000)` transform to these values.
 
-`papersoccer.jacek-replay-teacher.v2` stores the self-search Rank-4
+`papersoccer.jacek-replay-teacher.v3` stores the self-search Rank-4
 fixed-work result without changing the canonical Rank-4 engine. A row may
 finish inside depth one only when it consumed the exact node cap and completed
 at least one searched root action. Every row records `root-solved` or
@@ -45,7 +45,13 @@ at least one searched root action. Every row records `root-solved` or
 early-stop, zero-action, missing-lineage, and unsupported-proof results. The
 historical v1 Rank-4 schema retains its positive completed-depth requirement.
 
-Version 3 records the explicit search termination reason, resumable-frontier
+Both fixed-work teachers record `max_time_ms: 0`: wall-clock time cannot alter
+a training label. A separate 900-second no-output watchdog supervises each
+streaming chunk process. If a producer hangs or crashes, its temporary output
+is deleted and no receipt is written; the watchdog never turns partial work
+into a label.
+
+Version 4 records the explicit search termination reason, resumable-frontier
 and progressive-widening counts, every complete-turn generation stop class,
 frontier health counters, and the maximum sampled frontier width. Complete-turn
 pages preserve a bounded deterministic DFS cursor across both action and

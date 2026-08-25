@@ -27,8 +27,8 @@ import jacek_replay_features as features  # noqa: E402
 
 ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
-RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v2"
-SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v3"
+RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v3"
+SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v4"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
@@ -914,11 +914,13 @@ def _rank4_fixed_work_teacher_value(
     max_nodes = _positive_uint(
         configuration.get("max_nodes"), "Rank-4 max_nodes"
     )
-    _positive_uint(
+    max_time_ms = _uint(
         configuration.get("max_time_ms"),
         "Rank-4 max_time_ms",
         (1 << 32) - 1,
     )
+    if max_time_ms != 0:
+        raise ValueError("Rank-4 fixed-work labels require max_time_ms zero")
     max_depth = _positive_uint(
         configuration.get("max_turn_depth"),
         "Rank-4 max_turn_depth",
@@ -1091,7 +1093,13 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
     ):
         raise ValueError("search teacher configuration is malformed")
     _uint(configuration.get("seed"), "search seed")
-    _positive_uint(configuration.get("max_time_ms"), "search max_time_ms", (1 << 32) - 1)
+    max_time_ms = _uint(
+        configuration.get("max_time_ms"),
+        "search max_time_ms",
+        (1 << 32) - 1,
+    )
+    if max_time_ms != 0:
+        raise ValueError("search fixed-work labels require max_time_ms zero")
     max_tree_nodes = _positive_uint(
         configuration.get("max_tree_nodes"), "search max_tree_nodes"
     )

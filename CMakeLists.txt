@@ -1177,6 +1177,18 @@ if(NOT EMSCRIPTEN)
         $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
         --model
         ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
+    add_test(NAME papersoccer_jacek_selfsearch_search_teacher_deadline_regression
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_search_teacher_deadline_regression_test.py
+        --search-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
+    set_tests_properties(
+      papersoccer_jacek_selfsearch_search_teacher_deadline_regression
+      PROPERTIES LABELS "long" RUN_SERIAL TRUE TIMEOUT 3600)
     add_test(NAME papersoccer_jacek_selfsearch_rank4_teacher_parallel
       COMMAND ${CMAKE_COMMAND} -E env
         PYTHONDONTWRITEBYTECODE=1
