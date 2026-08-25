@@ -53,6 +53,48 @@ class JacekReplayFeatureTests(unittest.TestCase):
             features.reflect_active(active),
         )
 
+    def test_horizontal_reflection_matches_mirrored_game_geometry(self):
+        """Reflection is x -> WIDTH-x, including directions and used edges."""
+
+        original = features.ReplayState()
+        mirrored = features.ReplayState()
+        direction_reflection = str.maketrans("01234567", "07654321")
+        canonical_segment = lambda first, second: tuple(  # noqa: E731
+            sorted((first, second), key=lambda point: (point[1], point[0]))
+        )
+        prefix = ("0", "0", "3", "0", "61", "0")
+        for action in prefix:
+            mover = original.to_move
+            self.assertEqual(mirrored.to_move, mover)
+            features.apply_complete_turn(original, mover, action)
+            features.apply_complete_turn(
+                mirrored, mover, action.translate(direction_reflection)
+            )
+            self.assertEqual(
+                mirrored.ball, features.reflect_point(original.ball)
+            )
+            self.assertEqual(
+                mirrored.used_segments,
+                {
+                    canonical_segment(
+                        features.reflect_point(first),
+                        features.reflect_point(second),
+                    )
+                    for first, second in original.used_segments
+                },
+            )
+            self.assertEqual(
+                mirrored.visit_count,
+                {
+                    features.reflect_point(point): count
+                    for point, count in original.visit_count.items()
+                },
+            )
+            self.assertEqual(
+                features.encode_active(mirrored),
+                features.reflect_active(features.encode_active(original)),
+            )
+
     def test_player_two_is_canonicalized_by_rotation(self):
         player_two_state = features.ReplayState()
         features.apply_complete_turn(player_two_state, 0, "0")

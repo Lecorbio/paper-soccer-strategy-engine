@@ -23,6 +23,10 @@
 #error "PAPERSOCCER_CODINGAME_FAKE_BOT must name the fake bot executable"
 #endif
 
+#ifndef PAPERSOCCER_SANITIZERS_ENABLED
+#define PAPERSOCCER_SANITIZERS_ENABLED 0
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -432,7 +436,9 @@ void direct_exit_is_detected_while_descendant_holds_pipes() {
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - started);
   require_forfeit(json, "left", "right", "crash");
-  require(elapsed < std::chrono::milliseconds(500),
+  constexpr auto direct_exit_bound = std::chrono::milliseconds(
+      PAPERSOCCER_SANITIZERS_ENABLED ? 5'000 : 500);
+  require(elapsed < direct_exit_bound,
           "direct exit must not wait for descendant-held pipe EOF");
 
   std::ifstream pid_input(directory.path() / "holder.pid");

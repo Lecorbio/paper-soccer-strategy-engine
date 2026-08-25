@@ -2674,7 +2674,10 @@ def run_phase(
         producer_guard=producer_guard,
     )
     workflow_source = pathlib.Path(__file__).resolve()
-    python = pathlib.Path(sys.executable).resolve()
+    # Keep a virtual-environment launcher path intact.  Resolving its symlink
+    # selects the base interpreter and silently drops the research dependencies
+    # (notably NumPy) installed only in the campaign venv.
+    python = pathlib.Path(os.path.abspath(sys.executable))
     plan_json = output / "game-plan.json"
     plan_tsv = output / "game-plan.tsv"
     games_tsv = output / "games.tsv"
@@ -2731,7 +2734,7 @@ def run_phase(
             "actors": {
                 key: spec.configuration[key]
                 for key in (
-                    "bfm_actor_tree_nodes", "rank4_actor_nodes", "jace_nn_actor_nodes",
+                    "bfm_actor_tree_nodes", "rank4_actor_nodes", "jacek_nn_actor_nodes",
                     "exploration", "fpu", "early_exploration_percent",
                     "early_exploration_turns",
                 )

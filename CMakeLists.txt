@@ -326,6 +326,17 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     set_tests_properties(
       papersoccer_jacek_replay_training_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(
+      NAME papersoccer_jacek_selfsearch_workflow_acceptance_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_jacek_selfsearch_acceptance)
+    set_tests_properties(
+      papersoccer_jacek_selfsearch_workflow_acceptance_smoke PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      TIMEOUT 120
+      LABELS "selfsearch;acceptance")
   endif()
 
   add_test(
@@ -388,7 +399,8 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(papersoccer_codingame_referee_test
     PRIVATE papersoccer_codingame_referee_support)
   target_compile_definitions(papersoccer_codingame_referee_test PRIVATE
-    PAPERSOCCER_CODINGAME_FAKE_BOT="$<TARGET_FILE:papersoccer_codingame_referee_fake_bot>")
+    PAPERSOCCER_CODINGAME_FAKE_BOT="$<TARGET_FILE:papersoccer_codingame_referee_fake_bot>"
+    PAPERSOCCER_SANITIZERS_ENABLED=$<BOOL:${PAPERSOCCER_ENABLE_SANITIZERS}>)
   add_dependencies(papersoccer_codingame_referee_test
     papersoccer_codingame_referee_fake_bot)
   add_test(NAME papersoccer_codingame_referee_test
