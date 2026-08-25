@@ -2,7 +2,7 @@
 
 ## Controls and objective
 
-Work continued on `codex/selfplay-nn-v2`, whose requested starting commit was
+Work continued on `selfplay-nn-v2`, whose requested starting commit was
 `4ebb6ffb00acaa04937ecb0235fad885044e9762`. The branch already contained the
 completed v2 experiment at `522e13d83311caa2e0660f4cb23503d43ddf522b`
 before this challenger was added. The protected controls remain unchanged:

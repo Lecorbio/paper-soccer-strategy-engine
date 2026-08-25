@@ -3,7 +3,7 @@
 ## Immutable controls
 
 Work began from commit `4ebb6ffb00acaa04937ecb0235fad885044e9762` on
-branch `codex/selfplay-nn-v2`. The two controls remain separate and unchanged:
+branch `selfplay-nn-v2`. The two controls remain separate and unchanged:
 
 | Bot | Agent | Complete arena result |
 | --- | ---: | --- |

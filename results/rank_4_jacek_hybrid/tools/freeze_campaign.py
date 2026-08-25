@@ -616,8 +616,8 @@ def create_manifest(opening_tool: pathlib.Path, preregistered_at: str) -> tuple[
         },
         "repository": {
             "commit_at_freeze": SOURCE_COMMIT,
-            "worktree_branch_at_freeze": "codex/jacek-arena-bfm-campaign",
-            "campaign_branch_created_after_t0": "codex/rank4-jacek-hybrid-36h",
+            "worktree_branch_at_freeze": "jacek-arena-bfm-campaign",
+            "campaign_branch_created_after_t0": "rank4-jacek-hybrid-36h",
             "note": "The commit is the clean HEAD at T0; hybrid work is intentionally uncommitted after it.",
         },
         "control": {

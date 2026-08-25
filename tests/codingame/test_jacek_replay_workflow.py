@@ -27,7 +27,7 @@ def make_round(directory, round_index, previous=None):
     actual_repository = workflow.repository_identity(ROOT)
     fixture_repository = {
         **actual_repository,
-        "branch": "codex/canonical-fixture",
+        "branch": "campaign/canonical-fixture",
         "clean": True,
         "status_sha256": hashlib.sha256(b"").hexdigest(),
     }
@@ -511,7 +511,7 @@ class JacekReplayWorkflowLineageTests(unittest.TestCase):
         actual = workflow.repository_identity(ROOT)
         self.repository_record = {
             **actual,
-            "branch": "codex/canonical-fixture",
+            "branch": "campaign/canonical-fixture",
             "clean": True,
             "status_sha256": hashlib.sha256(b"").hexdigest(),
         }
