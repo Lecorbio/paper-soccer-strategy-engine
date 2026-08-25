@@ -69,10 +69,9 @@ PROTECTED_ROOTS = (
 # The original recursive T0 snapshot of ``results/jacek_arena_bfm`` included
 # 13 intentionally gitignored scratch files that existed in the freezing
 # worktree.  They cannot exist in a clean checkout.  Preserve that original
-# identity as canonical while accepting exactly the complete Git-tracked
-# subset captured at the same commit.  This is deliberately an all-or-nothing
-# alternate tree identity: modified files, partial scratch trees, and any extra
-# file still fail closed.
+# identity as canonical while accepting exact, audited Git-tracked successor
+# trees. This is deliberately an all-or-nothing identity list: modified files,
+# partial scratch trees, and any extra file still fail closed.
 PROTECTED_TREE_EQUIVALENTS = (
     (
         {
@@ -107,9 +106,49 @@ PROTECTED_TREE_EQUIVALENTS = (
         {
             "path": "submissions/codingame/bots/jacek_nn",
             "file_count": 35,
-            "total_bytes": 1_313_675,
+            "total_bytes": 1_313_669,
             "tree_sha256": (
-                "417a5ee6460e1f0adfb746424b4a3110fb67f6e8c7f92abfc942e5ec4f2ca716"
+                "bc931778d5ca4dc28e537a0c4d8e91fb04509eeac8b900a9762d5f693e0b3e7f"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
+    (
+        {
+            "path": "benchmarks/flagship_study",
+            "file_count": 44,
+            "total_bytes": 146_223_641,
+            "tree_sha256": (
+                "9f943bf96f4f0a40c5412f25d3a8cf156d348ea2709a6a8cd33bdc1460cd63f3"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "benchmarks/flagship_study",
+            "file_count": 56,
+            "total_bytes": 146_862_551,
+            "tree_sha256": (
+                "e6d01fee1048647b312cd0f88e63330e0b531f2f11c12646af8bfe6a073e3dbd"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
+    (
+        {
+            "path": "benchmarks/game_review_gate",
+            "file_count": 27,
+            "total_bytes": 5_703_678,
+            "tree_sha256": (
+                "2cbd39a7733ca725325be92008743a08af26118c2077917494a8b4344011ea5f"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "benchmarks/game_review_gate",
+            "file_count": 29,
+            "total_bytes": 5_877_116,
+            "tree_sha256": (
+                "91ff435a28581b44bec37f320a341bba188c02212dc377b0bcfb45c68b3dae33"
             ),
             "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
         },
@@ -124,8 +163,8 @@ PROTECTED_TREE_EQUIVALENTS = (
 CONSOLIDATED_RANK4_TREE = {
     "path": "submissions/codingame/bots/rank_4",
     "file_count": 31,
-    "total_bytes": 7_098_403,
-    "tree_sha256": "90c24d377a24c045c0710240703a989f36f5a332aacc252acccfce2cf75be76e",
+    "total_bytes": 7_098_397,
+    "tree_sha256": "9182051277640cfd54e198f95f7f76d1fa84c6bf9b61e7f9d88f68dc0e32d686",
     "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
 }
 CONSOLIDATED_PREDECESSOR_PATH = "submissions/codingame/bots/selfplay_nn_v2"

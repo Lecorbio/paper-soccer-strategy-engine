@@ -148,6 +148,17 @@ class ManifestValidationTests(unittest.TestCase):
                     studylib.sha256_file(path),
                 )
 
+    def test_hash_pinned_lineage_attachments_are_retained(self) -> None:
+        for relative, expected in (
+            (studylib.V4_PREDECESSOR_MANIFEST_PATH,
+             studylib.V4_PREDECESSOR_MANIFEST_SHA256),
+            (studylib.V4_FAILURE_RECORD_PATH,
+             studylib.V4_FAILURE_RECORD_SHA256),
+        ):
+            path = REPOSITORY / relative
+            self.assertTrue(path.is_file(), relative)
+            self.assertEqual(studylib.sha256_file(path), expected)
+
     def test_legacy_failure_attachment_is_optional_but_exact_when_present(self) -> None:
         published = studylib.load_json(
             REPOSITORY / "benchmarks/flagship_study/manifest.json"

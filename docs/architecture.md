@@ -3,7 +3,7 @@
 Paper Soccer Strategy Engine keeps one C++20 rules model behind every frontend.
 The CLI, arena, replay exporter, native CodinGame referee, and browser session
 layer all operate on the same `GameState`, geometry, move-validation, and bot
-APIs. This avoids a common failure mode in game-AI projects: benchmarking one
+APIs. This avoids a common failure mode in strategy-engine projects: benchmarking one
 implementation while users play against another.
 
 ## System flow

@@ -1155,7 +1155,6 @@ def _require_live_gate_source_clean(context: ManifestContext) -> None:
     }
     allowed_untracked.update(
         {
-            (context.repository / "AGENTS.md").resolve(),
             (context.repository / "matches.json").resolve(),
         }
     )

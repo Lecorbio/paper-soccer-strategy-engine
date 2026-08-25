@@ -10,7 +10,7 @@ import unittest
 import zipfile
 from unittest import mock
 
-from benchmarks.flagship_study import package_release
+from benchmarks.flagship_study import package_release, studylib
 
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -215,6 +215,8 @@ def _repository(root: pathlib.Path) -> pathlib.Path:
         )
     _write(root / package_release.REPORT_PATH, "# Fixture report\n")
     _write(root / package_release.RELEASE_NOTES_PATH, "# Fixture release notes\n")
+    for relative in package_release.LINEAGE_ATTACHMENT_PATHS:
+        _write(root / relative, f"fixture lineage attachment: {relative}\n")
     for index, relative in enumerate(package_release.CHART_PATHS):
         _write(root / relative, f"<svg data-index=\"{index}\"></svg>\n")
     _write(
@@ -241,6 +243,9 @@ def _generated_summaries(repository: pathlib.Path) -> dict[str, str]:
 
 
 class ReleasePackagingTest(unittest.TestCase):
+    def test_release_and_lineage_use_one_record_tag(self) -> None:
+        self.assertEqual(package_release.SOURCE_TAG, studylib.V4_AUDIT_TAG)
+
     def test_release_notes_cover_results_provenance_and_reproduction(self) -> None:
         notes = (REPOSITORY_ROOT / package_release.RELEASE_NOTES_PATH).read_text(
             encoding="utf-8"
@@ -398,6 +403,27 @@ class ReleasePackagingTest(unittest.TestCase):
                     repository,
                     repository / "results/releases/flagship-study-v4",
                 )
+
+    def test_record_tag_verification_includes_lineage_attachments(self) -> None:
+        source_hashes = {
+            str(relative): f"{index + 1:064x}"
+            for index, relative in enumerate(package_release.TAG_IMMUTABLE_PATHS)
+        }
+        with mock.patch.object(
+            package_release, "_git", return_value="a" * 40 + "\n"
+        ), mock.patch.object(
+            package_release,
+            "_git_blob_sha256",
+            side_effect=lambda _repository, _tag, relative: source_hashes[
+                str(relative)
+            ],
+        ) as tagged_hash:
+            package_release._verify_source_tag(pathlib.Path("/repository"), source_hashes)
+
+        self.assertEqual(
+            [call.args[2] for call in tagged_hash.call_args_list],
+            list(package_release.TAG_IMMUTABLE_PATHS),
+        )
 
     def test_symlinked_input_is_rejected_even_when_target_is_regular(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

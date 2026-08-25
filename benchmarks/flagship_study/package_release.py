@@ -46,6 +46,10 @@ DECISION_PATHS = tuple(
     STUDY_ROOT / f"data/{phase}.json"
     for phase in ("development", "validation", "test")
 )
+LINEAGE_ATTACHMENT_PATHS = (
+    STUDY_ROOT / "V3_VALIDATION_FAILURE.md",
+    STUDY_ROOT / "superseded/manifest-b7553a24.json",
+)
 SUMMARY_JSON_PATH = STUDY_ROOT / "summary/summary.json"
 PAIRWISE_CSV_PATH = STUDY_ROOT / "summary/pairwise.csv"
 CONFIGURATIONS_CSV_PATH = STUDY_ROOT / "summary/configurations.csv"
@@ -62,7 +66,12 @@ SUMMARY_PATHS = (
     CONFIGURATIONS_CSV_PATH,
 )
 CORE_ARCHIVE_PATHS = (*CORE_SOURCE_PATHS, *SUMMARY_PATHS)
-TAG_IMMUTABLE_PATHS = (MANIFEST_PATH, SELECTION_PATH, *DECISION_PATHS)
+TAG_IMMUTABLE_PATHS = (
+    MANIFEST_PATH,
+    SELECTION_PATH,
+    *DECISION_PATHS,
+    *LINEAGE_ATTACHMENT_PATHS,
+)
 
 
 class PackagingError(RuntimeError):
@@ -321,7 +330,11 @@ def _read_inputs(
     verify_source_tag: bool,
 ) -> ReleaseInputs:
     repository = repository.resolve()
-    all_sources = (*CORE_ARCHIVE_PATHS, *DECISION_PATHS)
+    all_sources = (
+        *CORE_ARCHIVE_PATHS,
+        *DECISION_PATHS,
+        *LINEAGE_ATTACHMENT_PATHS,
+    )
     _validate_source_paths(repository, all_sources)
 
     source_hashes = {

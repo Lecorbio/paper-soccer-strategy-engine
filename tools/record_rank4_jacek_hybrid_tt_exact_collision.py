@@ -40,7 +40,7 @@ GENERATED_OVERLAY_PATH = (
 GENERATED_OVERLAY_SCHEMA = (
     "rank4-jacek-hybrid-tt-exact-collision-generated-v19-development-overlay-v1"
 )
-# Filled by the root agent immediately after the overlay-only Plan commit.
+# Filled by the campaign coordinator immediately after the overlay-only Plan commit.
 GENERATED_PLAN_COMMIT = "ee7b01066134ba7c32aeeb9468d72105f4fae4b2"
 GENERATED_OVERLAY_SHA256 = (
     "f9474c8bac2d9692928083377d876d22a1722c88a198c2523fad39dd8db76e91"
