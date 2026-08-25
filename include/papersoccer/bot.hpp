@@ -281,6 +281,8 @@ struct JacekReplayBfmSearchStats {
   std::size_t tree_nodes{};
   std::uint32_t max_complete_turn_depth{};
   float root_value{};
+  bool root_solved{};
+  std::optional<Player> proven_winner{};
   bool deadline_reached{};
   bool tree_cap_reached{};
   bool cached_continuation{};
@@ -302,6 +304,10 @@ class JacekReplayBfmBot final : public Bot {
 
   std::string_view name() const noexcept override;
   Move choose_move(const GameState &state) override;
+  // Runs a fresh search with a per-position seed without changing the
+  // complete-action cache or last_search_stats().
+  JacekReplayBfmSearchStats analyze_position(
+      const GameState &state, std::uint64_t seed) const;
   const JacekReplayBfmConfig &config() const noexcept;
   const JacekReplayBfmSearchStats &last_search_stats() const noexcept;
   std::string_view model_sha256() const noexcept;

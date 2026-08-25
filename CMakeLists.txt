@@ -320,6 +320,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_replay_training
               tests.codingame.test_jacek_replay_promotion
               tests.codingame.test_jacek_replay_workflow
+              tests.codingame.test_jacek_selfsearch_workflow
               tests.codingame.test_jacek_replay_baseline
               tests.codingame.test_jacek_replay_tuning)
     set_tests_properties(
@@ -827,12 +828,150 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(papersoccer_jacek_replay_teacher
     PRIVATE papersoccer_core)
 
+  function(papersoccer_hash_source_closure OUTPUT_VARIABLE)
+    set(PAPERSOCCER_SOURCE_CLOSURE_MATERIAL "")
+    foreach(PAPERSOCCER_SOURCE_CLOSURE_PATH IN ITEMS ${ARGN})
+      file(SHA256
+        "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_SOURCE_CLOSURE_PATH}"
+        PAPERSOCCER_SOURCE_CLOSURE_FILE_SHA256)
+      string(APPEND PAPERSOCCER_SOURCE_CLOSURE_MATERIAL
+        "${PAPERSOCCER_SOURCE_CLOSURE_PATH}:${PAPERSOCCER_SOURCE_CLOSURE_FILE_SHA256}\n")
+    endforeach()
+    string(SHA256 PAPERSOCCER_SOURCE_CLOSURE_SHA256
+      "${PAPERSOCCER_SOURCE_CLOSURE_MATERIAL}")
+    set(${OUTPUT_VARIABLE} "${PAPERSOCCER_SOURCE_CLOSURE_SHA256}"
+      PARENT_SCOPE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ARGN})
+  endfunction()
+
+  set(PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_PATHS
+    include/papersoccer/types.hpp
+    include/papersoccer/geometry.hpp
+    include/papersoccer/rules.hpp
+    src/bots/mcts_internal.hpp
+    src/core/geometry.cpp
+    src/core/rules.cpp
+    submissions/codingame/bots/rank_4/replay_book.hpp
+    submissions/codingame/bots/rank_4/replay_value_model.hpp
+    submissions/codingame/bots/rank_4/teacher_residual_model.hpp
+    submissions/codingame/bots/rank_4/bot.cpp)
+  papersoccer_hash_source_closure(
+    PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256
+    ${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_PATHS})
+
+  set(PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS
+    include/papersoccer/types.hpp
+    include/papersoccer/geometry.hpp
+    include/papersoccer/rules.hpp
+    src/bots/mcts_internal.hpp
+    src/core/geometry.cpp
+    src/core/rules.cpp
+    submissions/codingame/bots/jacek_nn/replay_book.hpp
+    submissions/codingame/bots/jacek_nn/replay_value_model.hpp
+    submissions/codingame/bots/jacek_nn/teacher_residual_model.hpp
+    submissions/codingame/bots/jacek_nn/bot.cpp)
+  papersoccer_hash_source_closure(
+    PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256
+    ${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS})
+
+  set(PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_PATHS
+    include/papersoccer/bot.hpp
+    src/bots/bot.cpp
+    src/bots/jacek_replay_bfm/features.cpp
+    src/bots/jacek_replay_bfm/model.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm_internal.hpp
+    tools/jacek_replay_continuations.cpp
+    tools/jacek_replay_continuations_internal.hpp
+    ${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_PATHS}
+    ${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS})
+  papersoccer_hash_source_closure(
+    PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_SHA256
+    ${PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_PATHS})
+
+  set(PAPERSOCCER_SELFSEARCH_RANK4_TEACHER_SOURCE_PATHS
+    ${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_PATHS}
+    tools/jacek_replay_rank4_position_teacher.cpp)
+  papersoccer_hash_source_closure(
+    PAPERSOCCER_SELFSEARCH_RANK4_TEACHER_SOURCE_SHA256
+    ${PAPERSOCCER_SELFSEARCH_RANK4_TEACHER_SOURCE_PATHS})
+
+  add_executable(papersoccer_jacek_replay_rank4_position_teacher
+    tools/jacek_replay_rank4_position_teacher.cpp)
+  target_include_directories(papersoccer_jacek_replay_rank4_position_teacher
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+  target_link_libraries(papersoccer_jacek_replay_rank4_position_teacher
+    PRIVATE papersoccer_core)
+  target_compile_definitions(
+    papersoccer_jacek_replay_rank4_position_teacher PRIVATE
+    PAPERSOCCER_JACEK_REPLAY_RANK4_POSITION_TEACHER_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_RANK4_TEACHER_SOURCE_SHA256}")
+
+  set(PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATHS
+    include/papersoccer/bot.hpp
+    include/papersoccer/types.hpp
+    include/papersoccer/geometry.hpp
+    include/papersoccer/rules.hpp
+    src/bots/bot.cpp
+    src/bots/mcts_internal.hpp
+    src/bots/jacek_replay_bfm/features.cpp
+    src/bots/jacek_replay_bfm/model.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm.cpp
+    src/bots/jacek_replay_bfm/jacek_replay_bfm_internal.hpp
+    src/core/geometry.cpp
+    src/core/rules.cpp
+    tools/jacek_replay_bfm_search_teacher.cpp
+    tools/jacek_replay_bfm_search_teacher_internal.hpp)
+  set(PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_MATERIAL "")
+  foreach(PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATH IN LISTS
+      PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATHS)
+    file(SHA256
+      "${CMAKE_CURRENT_SOURCE_DIR}/${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATH}"
+      PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_FILE_SHA256)
+    string(APPEND PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_MATERIAL
+      "${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATH}:${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_FILE_SHA256}\n")
+  endforeach()
+  string(SHA256 PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256
+    "${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_MATERIAL}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_PATHS})
+
+  add_executable(papersoccer_jacek_replay_search_teacher
+    tools/jacek_replay_bfm_search_teacher.cpp)
+  target_include_directories(papersoccer_jacek_replay_search_teacher
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools")
+  target_compile_definitions(papersoccer_jacek_replay_search_teacher PRIVATE
+    PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256="${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256}")
+  target_link_libraries(papersoccer_jacek_replay_search_teacher
+    PRIVATE papersoccer_core)
+
+  add_executable(papersoccer_jacek_replay_search_teacher_contract_test
+    tests/codingame/jacek_replay_bfm_search_teacher_contract_test.cpp
+    tools/jacek_replay_bfm_search_teacher.cpp)
+  target_include_directories(
+    papersoccer_jacek_replay_search_teacher_contract_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools")
+  target_compile_definitions(
+    papersoccer_jacek_replay_search_teacher_contract_test PRIVATE
+    PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_NO_MAIN=1
+    PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256="${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256}")
+  target_link_libraries(
+    papersoccer_jacek_replay_search_teacher_contract_test
+    PRIVATE papersoccer_core)
+  add_test(NAME papersoccer_jacek_replay_search_teacher_contract_test
+    COMMAND papersoccer_jacek_replay_search_teacher_contract_test)
+
   add_executable(papersoccer_jacek_replay_continuations
     tools/jacek_replay_continuations.cpp)
   target_include_directories(papersoccer_jacek_replay_continuations
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
   target_link_libraries(papersoccer_jacek_replay_continuations
     PRIVATE papersoccer_core)
+  target_compile_definitions(papersoccer_jacek_replay_continuations PRIVATE
+    PAPERSOCCER_JACEK_SELFSEARCH_CONTINUATION_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_SHA256}"
+    PAPERSOCCER_JACEK_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256}"
+    PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256}")
   add_executable(papersoccer_jacek_replay_continuations_contract_test
     tests/codingame/jacek_replay_continuations_contract_test.cpp)
   target_include_directories(
@@ -1007,6 +1146,25 @@ if(NOT EMSCRIPTEN)
   add_test(NAME papersoccer_jacek_replay_jacek_nn_control_test
     COMMAND papersoccer_jacek_replay_jacek_nn_control_test)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME papersoccer_jacek_selfsearch_actor_tools_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_actor_tools_smoke.py
+        --continuations $<TARGET_FILE:papersoccer_jacek_replay_continuations>
+        --rank4-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_rank4_position_teacher>
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime)
+    add_test(NAME papersoccer_jacek_selfsearch_search_teacher_parallel
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_search_teacher_parallel_test.py
+        --search-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime)
     add_test(NAME papersoccer_jacek_replay_comparison_extended_test
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/test_jacek_replay_comparison_extended.py

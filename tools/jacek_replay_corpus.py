@@ -27,6 +27,8 @@ import jacek_replay_features as features  # noqa: E402
 
 ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
+SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v1"
+TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
 LIVE_REPLAY_SCHEMA = "papersoccer.codingame-live-replay.v1"
@@ -687,11 +689,52 @@ def normalize_replay_sources(
 
 
 @dataclasses.dataclass(frozen=True)
+class TeacherLineage:
+    schema: str
+    position_id: str | None
+    group_id: str
+    root_group_id: str
+    source: str
+    split: str | None
+    campaign_id: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class LabeledSample:
     active: tuple[int, ...]
     target: float
     weight: float
     group_id: str
+    lineages: tuple[TeacherLineage, ...] = ()
+
+
+def target_policy_for_schema(schema: str) -> dict[str, object]:
+    """Describe target construction without conflating teacher value frames."""
+
+    common: dict[str, object] = {
+        "schema": TARGET_POLICY_SCHEMA,
+        "teacher_schema": schema,
+        "mixture": {
+            "teacher_weight": 0.75,
+            "outcome_weight": 0.25,
+            "outcome_frame": "mover-relative-terminal-winner",
+        },
+    }
+    if schema == TEACHER_SCHEMA:
+        common["teacher_value"] = {
+            "input_frame": "absolute-player-one-root-score",
+            "transform": "mover-sign*tanh(root_score/12000)",
+            "proof": "absolute-proven-winner-to-mover-relative-exact-sign",
+        }
+    elif schema == SEARCH_TEACHER_SCHEMA:
+        common["teacher_value"] = {
+            "input_frame": "mover-relative-value",
+            "transform": "identity",
+            "proof": "explicit-root-solved-and-absolute-proven-winner",
+        }
+    else:
+        raise ValueError("unsupported teacher schema for target policy")
+    return common
 
 
 def _teacher_target(root_score: float, mover: int, proven_winner: int | None) -> float:
@@ -700,6 +743,29 @@ def _teacher_target(root_score: float, mover: int, proven_winner: int | None) ->
     # Rank-4 reports an absolute Player-One score.  The value-only runtime is
     # mover-relative, so Player Two roots must reverse that sign.
     return (1.0 if mover == 0 else -1.0) * math.tanh(root_score / 12_000.0)
+
+
+def _direct_teacher_target(
+    teacher_value: float,
+    mover: int,
+    root_solved: bool,
+    proven_winner: int | None,
+) -> float:
+    if not -1.0 <= teacher_value <= 1.0:
+        raise ValueError("search teacher_value must be in [-1, 1]")
+    if root_solved:
+        if proven_winner not in (0, 1):
+            raise ValueError("a solved search root requires an explicit proven_winner")
+        expected = 1.0 if proven_winner == mover else -1.0
+        if teacher_value != expected:
+            raise ValueError(
+                "solved search teacher_value disagrees with proven_winner"
+            )
+    elif proven_winner is not None:
+        raise ValueError("an unsolved search root cannot declare a proven_winner")
+    # Search-teacher values are already mover-relative.  Applying Rank-4's
+    # sign conversion or tanh normalization here would corrupt the target.
+    return teacher_value
 
 
 def _prefix_state(prefix: object) -> features.ReplayState:
@@ -722,18 +788,58 @@ def _prefix_state(prefix: object) -> features.ReplayState:
     return state
 
 
-def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
-    if not isinstance(row, dict) or row.get("schema") != TEACHER_SCHEMA:
-        raise ValueError("unexpected teacher-row schema")
-    group_id = row.get("group_id")
-    if not isinstance(group_id, str) or not group_id:
-        raise ValueError("teacher group_id must be nonempty")
-    root_group_id = row.get("root_group_id", group_id)
-    if not isinstance(root_group_id, str) or not root_group_id:
-        raise ValueError("teacher root_group_id must be nonempty")
-    source = row.get("source")
-    if not isinstance(source, str) or not source:
-        raise ValueError("teacher source must be nonempty")
+def _nonempty_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a nonempty string")
+    return value
+
+
+def _uint(value: object, label: str, maximum: int = (1 << 64) - 1) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+        or value > maximum
+    ):
+        raise ValueError(f"{label} must be an unsigned integer")
+    return value
+
+
+def _positive_uint(
+    value: object, label: str, maximum: int = (1 << 64) - 1
+) -> int:
+    result = _uint(value, label, maximum)
+    if result == 0:
+        raise ValueError(f"{label} must be positive")
+    return result
+
+
+def _finite_number(value: object, label: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(f"{label} must be finite")
+    return float(value)
+
+
+def _proven_winner(value: object) -> int | None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or value not in (0, 1)
+    ):
+        raise ValueError("proven_winner must be null, zero, or one")
+    return value
+
+
+def _teacher_common(
+    row: Mapping[str, object]
+) -> tuple[str, str, str, int, int, features.ReplayState, float]:
+    group_id = _nonempty_string(row.get("group_id"), "teacher group_id")
+    root_group_id = _nonempty_string(
+        row.get("root_group_id", group_id), "teacher root_group_id"
+    )
+    source = _nonempty_string(row.get("source"), "teacher source")
     winner, mover = row.get("winner"), row.get("mover")
     if (
         isinstance(winner, bool)
@@ -744,33 +850,172 @@ def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
         or mover not in (0, 1)
     ):
         raise ValueError("teacher winner and mover must be zero or one")
-    depth, nodes = row.get("completed_depth"), row.get("nodes")
-    if (
-        isinstance(depth, bool)
-        or not isinstance(depth, int)
-        or depth < 1
-        or isinstance(nodes, bool)
-        or not isinstance(nodes, int)
-        or nodes < 1
-    ):
-        raise ValueError("teacher rows require positive depth and node counts")
-    score = row.get("root_score")
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(float(score)):
-        raise ValueError("teacher root_score must be finite")
-    proven = row.get("proven_winner")
-    if proven is not None and (
-        isinstance(proven, bool)
-        or not isinstance(proven, int)
-        or proven not in (0, 1)
-    ):
-        raise ValueError("proven_winner must be null, zero, or one")
-    weight = row.get("weight", 1.0)
-    if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not math.isfinite(float(weight)) or float(weight) <= 0.0:
-        raise ValueError("teacher weight must be finite and positive")
+    weight = _finite_number(row.get("weight", 1.0), "teacher weight")
+    if weight <= 0.0:
+        raise ValueError("teacher weight must be positive")
     state = _prefix_state(row.get("prefix"))
     if state.to_move != mover:
         raise ValueError("teacher mover disagrees with replayed prefix")
-    teacher = _teacher_target(float(score), int(mover), proven)
+    return group_id, root_group_id, source, winner, mover, state, weight
+
+
+def _rank4_teacher_value(row: Mapping[str, object], mover: int) -> float:
+    depth = _positive_uint(row.get("completed_depth"), "teacher completed_depth")
+    nodes = _positive_uint(row.get("nodes"), "teacher nodes")
+    del depth, nodes
+    score = _finite_number(row.get("root_score"), "teacher root_score")
+    return _teacher_target(score, mover, _proven_winner(row.get("proven_winner")))
+
+
+_SEARCH_TEACHER_FIELDS = {
+    "kind",
+    "source_sha256",
+    "model_sha256",
+    "feature_schema",
+    "feature_schema_sha256",
+}
+_SEARCH_CONFIG_FIELDS = {
+    "seed",
+    "max_time_ms",
+    "max_tree_nodes",
+    "max_actions",
+    "max_partial_paths",
+    "exploration",
+    "fpu",
+}
+_SEARCH_STATS_COUNTERS = {
+    "expansions",
+    "generated_actions",
+    "retained_actions",
+    "neural_evaluations",
+    "visits",
+    "completed_actions",
+    "duplicate_boundaries",
+    "partial_paths",
+    "fifo_extractions",
+    "lifo_extractions",
+    "tactical_proofs",
+    "tactical_solutions",
+    "truncations",
+    "tree_nodes",
+}
+_SEARCH_STATS_FIELDS = _SEARCH_STATS_COUNTERS | {
+    "max_complete_turn_depth",
+    "deadline_reached",
+    "tree_cap_reached",
+}
+
+
+def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
+    teacher = row.get("teacher")
+    if not isinstance(teacher, dict) or set(teacher) != _SEARCH_TEACHER_FIELDS:
+        raise ValueError("search teacher identity is malformed")
+    if teacher.get("kind") != "jacek_replay_bfm_search":
+        raise ValueError("search teacher kind is invalid")
+    for field in ("source_sha256", "model_sha256", "feature_schema_sha256"):
+        if not _valid_sha256(teacher.get(field)):
+            raise ValueError(f"search teacher {field} is invalid")
+    if (
+        teacher.get("feature_schema") != features.FEATURE_SCHEMA
+        or teacher.get("feature_schema_sha256")
+        != hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).hexdigest()
+    ):
+        raise ValueError("search teacher feature schema identity is invalid")
+
+    configuration = row.get("search_config")
+    if (
+        not isinstance(configuration, dict)
+        or set(configuration) != _SEARCH_CONFIG_FIELDS
+    ):
+        raise ValueError("search teacher configuration is malformed")
+    _uint(configuration.get("seed"), "search seed")
+    _positive_uint(configuration.get("max_time_ms"), "search max_time_ms", (1 << 32) - 1)
+    max_tree_nodes = _positive_uint(
+        configuration.get("max_tree_nodes"), "search max_tree_nodes"
+    )
+    _positive_uint(configuration.get("max_actions"), "search max_actions")
+    _positive_uint(
+        configuration.get("max_partial_paths"), "search max_partial_paths"
+    )
+    exploration = _finite_number(configuration.get("exploration"), "search exploration")
+    fpu = _finite_number(configuration.get("fpu"), "search fpu")
+    if exploration < 0.0 or not -1.0 <= fpu <= 1.0:
+        raise ValueError("search exploration or FPU is outside its valid range")
+
+    stats = row.get("search_stats")
+    if not isinstance(stats, dict) or set(stats) != _SEARCH_STATS_FIELDS:
+        raise ValueError("search teacher statistics are malformed")
+    counters = {
+        field: _uint(stats.get(field), f"search stats {field}")
+        for field in _SEARCH_STATS_COUNTERS
+    }
+    depth = _positive_uint(
+        stats.get("max_complete_turn_depth"),
+        "search stats max_complete_turn_depth",
+        (1 << 32) - 1,
+    )
+    del depth
+    deadline_reached = stats.get("deadline_reached")
+    tree_cap_reached = stats.get("tree_cap_reached")
+    if not isinstance(deadline_reached, bool) or not isinstance(tree_cap_reached, bool):
+        raise ValueError("search deadline/tree-cap flags must be booleans")
+    if deadline_reached:
+        raise ValueError("search teacher reached its deadline")
+    if (
+        counters["tree_nodes"] == 0
+        or counters["tree_nodes"] > max_tree_nodes
+        or counters["completed_actions"] == 0
+    ):
+        raise ValueError("search teacher did not complete a usable root search")
+
+    root_solved = row.get("root_solved")
+    if not isinstance(root_solved, bool):
+        raise ValueError("search teacher root_solved must be boolean")
+    if not root_solved and (
+        not tree_cap_reached
+        or counters["tree_nodes"] != max_tree_nodes
+        or counters["visits"] == 0
+    ):
+        raise ValueError("unsolved search teacher did not consume its fixed work cap")
+    value = _finite_number(row.get("teacher_value"), "search teacher_value")
+    return _direct_teacher_target(
+        value, mover, root_solved, _proven_winner(row.get("proven_winner"))
+    )
+
+
+def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
+    if not isinstance(row, dict) or row.get("schema") not in {
+        TEACHER_SCHEMA,
+        SEARCH_TEACHER_SCHEMA,
+    }:
+        raise ValueError("unexpected teacher-row schema")
+    schema = str(row["schema"])
+    group_id, root_group_id, source, winner, mover, state, weight = _teacher_common(row)
+    if schema == TEACHER_SCHEMA:
+        teacher = _rank4_teacher_value(row, mover)
+        if row.get("position_id") is None:
+            position_id = None
+            split = None
+            campaign_id = None
+        else:
+            position_id = _nonempty_string(
+                row.get("position_id"), "Rank-4 position_id"
+            )
+            split = row.get("split")
+            if split not in {"train", "validation", "test"}:
+                raise ValueError("Rank-4 position teacher split is invalid")
+            campaign_id = _nonempty_string(
+                row.get("campaign_id"), "Rank-4 position teacher campaign_id"
+            )
+    else:
+        position_id = _nonempty_string(row.get("position_id"), "search position_id")
+        split = row.get("split")
+        if split not in {"train", "validation", "test"}:
+            raise ValueError("search teacher split is invalid")
+        campaign_id = _nonempty_string(
+            row.get("campaign_id"), "search teacher campaign_id"
+        )
+        teacher = _search_teacher_value(row, mover)
     outcome = 1.0 if winner == mover else -1.0
     target = 0.75 * teacher + 0.25 * outcome
     supplied = row.get("combined_target")
@@ -783,9 +1028,18 @@ def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
         raise ValueError("combined_target disagrees with the frozen target policy")
     active = features.encode_active(state)
     reflected = features.encode_active(state, reflected=True)
+    lineage = TeacherLineage(
+        schema=schema,
+        position_id=position_id,
+        group_id=group_id,
+        root_group_id=root_group_id,
+        source=source,
+        split=split,
+        campaign_id=campaign_id,
+    )
     return (
-        LabeledSample(active, target, float(weight), root_group_id),
-        LabeledSample(reflected, target, float(weight), root_group_id),
+        LabeledSample(active, target, weight, root_group_id, (lineage,)),
+        LabeledSample(reflected, target, weight, root_group_id, (lineage,)),
     )
 
 
@@ -830,6 +1084,14 @@ def split_and_purge_samples(
         split = assignments.get(sample.group_id)
         if split not in grouped:
             raise ValueError(f"no frozen split for teacher group {sample.group_id}")
+        if any(
+            lineage.root_group_id != sample.group_id
+            or (lineage.split is not None and lineage.split != split)
+            for lineage in sample.lineages
+        ):
+            raise ValueError(
+                f"teacher lineage disagrees with frozen split for {sample.group_id}"
+            )
         grouped[split].append(sample)
     retained: dict[str, list[LabeledSample]] = {}
     removed: dict[str, int] = {}
@@ -868,7 +1130,14 @@ def split_and_purge_samples(
                 for observation in observations
             ]
             group_id = "aggregate:" + sha256_bytes(canonical_json_bytes(lineage))
-            kept.append(LabeledSample(active, target, total_weight, group_id))
+            lineages = tuple(
+                item
+                for observation in observations
+                for item in observation.lineages
+            )
+            kept.append(
+                LabeledSample(active, target, total_weight, group_id, lineages)
+            )
         retained[split] = kept
         aggregated[split] = len(eligible) - len(kept)
         seen.update(canonical_feature_fingerprint(sample.active) for sample in kept)

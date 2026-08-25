@@ -26,6 +26,12 @@ import jacek_replay_features as features  # noqa: E402
 SPLITS = ("train", "validation", "test")
 
 
+def _target_policies_for_schemas(schemas: set[str]) -> list[dict]:
+    if not schemas:
+        raise ValueError("teacher samples have no target-policy lineage")
+    return [corpus.target_policy_for_schema(schema) for schema in sorted(schemas)]
+
+
 def load_roots(path: pathlib.Path) -> dict:
     try:
         manifest = json.loads(path.read_bytes())
@@ -278,6 +284,13 @@ def pack_teacher_rows(
     roots = load_roots(roots_path)
     assignments = frozen_assignments(roots)
     samples = corpus.load_teacher_rows(teacher_paths)
+    target_policies = _target_policies_for_schemas(
+        {
+            lineage.schema
+            for sample in samples
+            for lineage in sample.lineages
+        }
+    )
     retained, removed, aggregated = corpus.split_and_purge_samples(
         samples, assignments
     )
@@ -305,6 +318,7 @@ def pack_teacher_rows(
             provenance={
                 "roots_manifest_sha256": root_sha,
                 "teacher_jsonl_sha256": teacher_hashes,
+                "target_policies": target_policies,
                 "tool_sha256": tool_hashes,
                 "reflection_augmentation": True,
                 "deduplication_policy": (
@@ -326,6 +340,7 @@ def pack_teacher_rows(
         "roots_manifest": str(roots_path),
         "roots_manifest_sha256": root_sha,
         "teacher_jsonl_sha256": teacher_hashes,
+        "target_policies": target_policies,
         "tool_sha256": tool_hashes,
         "input_samples_after_reflection": len(samples),
         "cross_split_canonical_rows_removed": removed,
@@ -373,6 +388,7 @@ def pack_teacher_rows_streaming(
     prior_removed = {split: 0 for split in SPLITS}
     accepted = {split: 0 for split in SPLITS}
     aggregated = {split: 0 for split in SPLITS}
+    teacher_schemas: set[str] = set()
     with tempfile.TemporaryDirectory(
         dir=output_directory, prefix=".jacek-replay-sqlite."
     ) as temporary_name:
@@ -431,6 +447,21 @@ def pack_teacher_rows_streaming(
                         raise ValueError(
                             f"no frozen split for teacher group {sample.group_id}"
                         )
+                    if any(
+                        lineage.root_group_id != sample.group_id
+                        or (
+                            lineage.split is not None
+                            and lineage.split != assigned
+                        )
+                        for lineage in sample.lineages
+                    ):
+                        raise ValueError(
+                            "teacher lineage disagrees with frozen split for "
+                            f"{sample.group_id}"
+                        )
+                    teacher_schemas.update(
+                        lineage.schema for lineage in sample.lineages
+                    )
                     split_index = SPLITS.index(assigned)
                     fingerprint = corpus.canonical_feature_fingerprint(sample.active)
                     connection.execute(
@@ -507,9 +538,11 @@ def pack_teacher_rows_streaming(
                 )
                 aggregated[split] = accepted[split] - removed[split] - unique
 
+            target_policies = _target_policies_for_schemas(teacher_schemas)
             provenance = {
                 "roots_manifest_sha256": root_sha,
                 "teacher_jsonl_sha256": teacher_hashes,
+                "target_policies": target_policies,
                 "tool_sha256": tool_hashes,
                 "reflection_augmentation": True,
                 "packing": "sqlite-streaming-bounded-memory-v1",
@@ -545,6 +578,7 @@ def pack_teacher_rows_streaming(
         "roots_manifest": str(roots_path),
         "roots_manifest_sha256": root_sha,
         "teacher_jsonl_sha256": teacher_hashes,
+        "target_policies": target_policies,
         "tool_sha256": tool_hashes,
         "input_samples_after_reflection": sum(accepted.values()),
         "cross_split_canonical_rows_removed": removed,

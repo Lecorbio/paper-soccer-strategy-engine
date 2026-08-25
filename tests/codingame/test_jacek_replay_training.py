@@ -121,6 +121,122 @@ class JacekReplayTrainingTests(unittest.TestCase):
         self.assertAlmostEqual(loss, 0.1640625)
         self.assertTrue(np.allclose(gradient, [0.0, 0.1875]))
 
+    def test_mixed_batches_have_exact_quotas_and_deterministic_cycling(self):
+        fixture = self._tiny_datasets()["train"]
+        new = training.Dataset.from_active(
+            fixture.active_rows(range(5)),
+            fixture.targets[:5],
+            fixture.weights[:5],
+            tuple(f"new:{index}" for index in range(5)),
+        )
+        anchor = training.Dataset.from_active(
+            fixture.active_rows(range(3)),
+            fixture.targets[:3],
+            fixture.weights[:3],
+            tuple(f"anchor:{index}" for index in range(3)),
+        )
+        mixed = training.MixedTraining(new, anchor, 3, 1)
+        first = training.mixed_epoch_batches(
+            mixed, batch_size=4, seed=17, epoch=1
+        )
+        second = training.mixed_epoch_batches(
+            mixed, batch_size=4, seed=17, epoch=1
+        )
+        self.assertEqual(len(first), 2)
+        self.assertTrue(all(len(rows) == 3 and len(anchors) == 1
+                            for rows, anchors in first))
+        self.assertEqual(
+            [[rows.tolist(), anchors.tolist()] for rows, anchors in first],
+            [[rows.tolist(), anchors.tolist()] for rows, anchors in second],
+        )
+        self.assertEqual(set(np.concatenate([rows for rows, _ in first])), set(range(5)))
+        self.assertEqual(len(np.concatenate([rows for _, rows in first])), 2)
+
+        # Targets differ between matched arms, but batch row order must not.
+        other_new = training.Dataset(
+            new.indptr,
+            new.indices,
+            -new.targets,
+            new.weights,
+            new.group_ids,
+        )
+        other = training.mixed_epoch_batches(
+            training.MixedTraining(other_new, anchor, 3, 1),
+            batch_size=4,
+            seed=17,
+            epoch=1,
+        )
+        self.assertEqual(
+            [[rows.tolist(), anchors.tolist()] for rows, anchors in first],
+            [[rows.tolist(), anchors.tolist()] for rows, anchors in other],
+        )
+
+    def test_mixed_training_uses_explicit_common_selection_validation(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4)),
+            datasets["train"].targets[:4],
+            datasets["train"].weights[:4],
+            tuple(f"new:{index}" for index in range(4)),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4, 8)),
+            datasets["train"].targets[4:8],
+            datasets["train"].weights[4:8],
+            tuple(f"anchor:{index}" for index in range(4)),
+        )
+        validation = datasets["validation"]
+        selected, report = training.train_three_seeds(
+            {},
+            seeds=(31, 32, 33),
+            epochs=1,
+            patience=1,
+            batch_size=4,
+            mixed_training=training.MixedTraining(new, anchor, 2, 2),
+            selection_validation=validation,
+        )
+        self.assertEqual(selected["w1"].shape, (6301, 192))
+        self.assertEqual(
+            report["batching"],
+            {
+                "kind": "deterministic-two-stream-cycling-v1",
+                "new_rows_per_batch": 2,
+                "anchor_rows_per_batch": 2,
+                "epoch_length": "new-stream-covered-once-anchor-sampled",
+                "row_order": "new-then-anchor",
+            },
+        )
+        self.assertEqual(
+            report["selection_validation"]["kind"],
+            "explicit-common-adjudicator",
+        )
+        self.assertTrue(all(
+            seed_report["validation"]["samples"] == len(validation)
+            for seed_report in report["seed_reports"]
+        ))
+
+    def test_target_metadata_is_derived_from_shard_provenance(self):
+        search_policy = corpus.target_policy_for_schema(
+            corpus.SEARCH_TEACHER_SCHEMA
+        )
+        rank4_policy = corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)
+        manifests = [
+            {"provenance": {"target_policy": search_policy}},
+            {"provenance": {"target_policy": rank4_policy}},
+            {"provenance": {}},
+        ]
+        metadata = training.target_metadata_from_shard_provenance(
+            manifests, ("new", "anchor", "selection-validation")
+        )
+        self.assertEqual(len(metadata["declared_policies"]), 2)
+        self.assertEqual(metadata["undeclared_roles"], ["selection-validation"])
+        policies = {
+            row["policy"]["teacher_schema"]: row["roles"]
+            for row in metadata["declared_policies"]
+        }
+        self.assertEqual(policies[corpus.SEARCH_TEACHER_SCHEMA], ["new"])
+        self.assertEqual(policies[corpus.TEACHER_SCHEMA], ["anchor"])
+
     def test_metrics_streams_bounded_batches(self):
         samples = training.tiny_fixture_samples()["train"]
         dataset = training.Dataset.from_active(
@@ -230,6 +346,10 @@ class JacekReplayTrainingTests(unittest.TestCase):
                 output_directory=root / "shards",
             )
             self.assertEqual(set(report["tool_sha256"]), {"pack", "corpus", "features"})
+            self.assertEqual(
+                report["target_policies"],
+                [corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)],
+            )
             self.assertEqual(
                 report["same_orientation_rows_aggregated"],
                 {"train": 1, "validation": 1, "test": 1},

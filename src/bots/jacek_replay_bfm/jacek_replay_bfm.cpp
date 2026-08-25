@@ -975,6 +975,15 @@ class BestFirstMinimaxSearch {
       }
     }
     stats_.root_value = root.value;
+    stats_.root_solved = root.solved;
+    if (root.solved) {
+      if (!std::isfinite(root.value) || root.value == 0.0F) {
+        throw std::logic_error(
+            "Jacek replay BFM solved root has no finite winner sign");
+      }
+      stats_.proven_winner =
+          root.value > 0.0F ? root_.to_move() : opponent(root_.to_move());
+    }
     stats_.tree_nodes = nodes_.size();
     return SearchResult{nodes_[best].incoming_action, stats_};
   }
@@ -1079,6 +1088,26 @@ class JacekReplayBfmBot::Impl {
     return move;
   }
 
+  JacekReplayBfmSearchStats analyze_position(
+      const GameState &state, std::uint64_t seed) const {
+    if (!supports_rules(state.config)) {
+      throw std::invalid_argument(
+          "JacekReplayBfmBot requires 8x10 CodinGame rules");
+    }
+    if (is_terminal(state)) {
+      throw std::invalid_argument(
+          "JacekReplayBfmBot cannot analyze a terminal state");
+    }
+
+    JacekReplayBfmConfig analysis_config = config_;
+    analysis_config.seed = seed;
+    BestFirstMinimaxSearch search(state, analysis_config, model_);
+    SearchResult result = search.run();
+    validate_action(state, result.action);
+    result.stats.planned_action_length = result.action.size();
+    return result.stats;
+  }
+
   const JacekReplayBfmConfig &config() const noexcept { return config_; }
   const JacekReplayBfmSearchStats &stats() const noexcept {
     return last_stats_;
@@ -1117,6 +1146,11 @@ std::string_view JacekReplayBfmBot::name() const noexcept {
 
 Move JacekReplayBfmBot::choose_move(const GameState &state) {
   return impl_->choose_move(state);
+}
+
+JacekReplayBfmSearchStats JacekReplayBfmBot::analyze_position(
+    const GameState &state, std::uint64_t seed) const {
+  return impl_->analyze_position(state, seed);
 }
 
 const JacekReplayBfmConfig &JacekReplayBfmBot::config() const noexcept {

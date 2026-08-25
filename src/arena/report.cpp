@@ -313,7 +313,15 @@ void write_jacek_replay_bfm_stats(std::ostream &out,
       << ",\"truncations\":" << stats.truncations
       << ",\"tree_nodes\":" << stats.tree_nodes
       << ",\"max_complete_turn_depth\":" << stats.max_complete_turn_depth
-      << ",\"root_value\":" << stats.root_value << ",\"deadline_reached\":";
+      << ",\"root_value\":" << stats.root_value << ",\"root_solved\":";
+  write_bool(out, stats.root_solved);
+  out << ",\"proven_winner\":";
+  if (stats.proven_winner.has_value()) {
+    write_string(out, player_name(*stats.proven_winner));
+  } else {
+    out << "null";
+  }
+  out << ",\"deadline_reached\":";
   write_bool(out, stats.deadline_reached);
   out << ",\"tree_cap_reached\":";
   write_bool(out, stats.tree_cap_reached);

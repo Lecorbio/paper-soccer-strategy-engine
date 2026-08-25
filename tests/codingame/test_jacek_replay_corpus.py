@@ -31,6 +31,64 @@ def write_json(path, value):
 
 
 class JacekReplayCorpusTests(unittest.TestCase):
+    @staticmethod
+    def search_teacher_row(**overrides):
+        row = {
+            "schema": corpus.SEARCH_TEACHER_SCHEMA,
+            "campaign_id": "selfsearch-pilot-fixture",
+            "position_id": "position:" + "1" * 64,
+            "root_group_id": "root:search",
+            "group_id": "continuation:search",
+            "source": "fixture-search",
+            "split": "train",
+            "winner": 0,
+            "prefix": [{"player_id": 0, "action": "0"}],
+            "mover": 1,
+            "teacher": {
+                "kind": "jacek_replay_bfm_search",
+                "source_sha256": "2" * 64,
+                "model_sha256": "3" * 64,
+                "feature_schema": features.FEATURE_SCHEMA,
+                "feature_schema_sha256": hashlib.sha256(
+                    features.FEATURE_SCHEMA.encode()
+                ).hexdigest(),
+            },
+            "search_config": {
+                "seed": 7,
+                "max_time_ms": 60_000,
+                "max_tree_nodes": 64_000,
+                "max_actions": 1_000_000,
+                "max_partial_paths": 1_000_000,
+                "exploration": 0.5,
+                "fpu": 0.5,
+            },
+            "search_stats": {
+                "expansions": 10,
+                "generated_actions": 20,
+                "retained_actions": 19,
+                "neural_evaluations": 8,
+                "visits": 63_999,
+                "completed_actions": 8,
+                "duplicate_boundaries": 1,
+                "partial_paths": 2,
+                "fifo_extractions": 3,
+                "lifo_extractions": 4,
+                "tactical_proofs": 0,
+                "tactical_solutions": 0,
+                "truncations": 0,
+                "tree_nodes": 64_000,
+                "max_complete_turn_depth": 5,
+                "deadline_reached": False,
+                "tree_cap_reached": True,
+            },
+            "teacher_value": 0.8,
+            "root_solved": False,
+            "proven_winner": None,
+            "weight": 1.0,
+        }
+        row.update(overrides)
+        return row
+
     def make_sources(self, directory):
         repository = pathlib.Path(directory)
         exclusions_path = repository / "exclusions.json"
@@ -188,6 +246,77 @@ class JacekReplayCorpusTests(unittest.TestCase):
         }
         sample, _ = corpus.sample_from_teacher_row(row)
         self.assertEqual(sample.target, 0.5)  # .75 proven win + .25 game loss
+
+    def test_search_teacher_value_is_already_mover_relative_and_keeps_lineage(self):
+        sample, reflected = corpus.sample_from_teacher_row(
+            self.search_teacher_row()
+        )
+        # The mover eventually loses: .75 * direct 0.8 + .25 * -1.
+        self.assertAlmostEqual(sample.target, 0.35)
+        self.assertEqual(reflected.active, features.reflect_active(sample.active))
+        self.assertEqual(sample.group_id, "root:search")
+        self.assertEqual(sample.lineages, reflected.lineages)
+        lineage = sample.lineages[0]
+        self.assertEqual(lineage.position_id, "position:" + "1" * 64)
+        self.assertEqual(lineage.group_id, "continuation:search")
+        self.assertEqual(lineage.root_group_id, "root:search")
+        self.assertEqual(lineage.split, "train")
+        self.assertEqual(lineage.campaign_id, "selfsearch-pilot-fixture")
+
+    def test_search_teacher_requires_explicit_consistent_proof_and_fixed_work(self):
+        solved = self.search_teacher_row(
+            teacher_value=-1.0,
+            root_solved=True,
+            proven_winner=0,
+            search_stats={
+                **self.search_teacher_row()["search_stats"],
+                "visits": 0,
+                "tree_nodes": 10,
+                "tree_cap_reached": False,
+            },
+        )
+        sample, _ = corpus.sample_from_teacher_row(solved)
+        self.assertEqual(sample.target, -1.0)
+
+        for broken, message in (
+            ({**solved, "teacher_value": 1.0}, "disagrees"),
+            (
+                self.search_teacher_row(
+                    search_stats={
+                        **self.search_teacher_row()["search_stats"],
+                        "deadline_reached": True,
+                    }
+                ),
+                "deadline",
+            ),
+            (
+                self.search_teacher_row(
+                    search_stats={
+                        **self.search_teacher_row()["search_stats"],
+                        "tree_nodes": 63_999,
+                        "tree_cap_reached": False,
+                    }
+                ),
+                "fixed work cap",
+            ),
+        ):
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    corpus.sample_from_teacher_row(broken)
+
+    def test_target_policy_distinguishes_rank4_transform_from_direct_search(self):
+        rank4 = corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)
+        search = corpus.target_policy_for_schema(corpus.SEARCH_TEACHER_SCHEMA)
+        self.assertEqual(rank4["teacher_value"]["transform"], "mover-sign*tanh(root_score/12000)")
+        self.assertEqual(search["teacher_value"]["transform"], "identity")
+        self.assertEqual(rank4["mixture"], search["mixture"])
+
+    def test_search_teacher_declared_split_must_match_frozen_root_split(self):
+        samples = corpus.sample_from_teacher_row(self.search_teacher_row())
+        with self.assertRaisesRegex(ValueError, "lineage disagrees"):
+            corpus.split_and_purge_samples(
+                samples, {"root:search": "validation"}
+            )
 
     def test_cross_split_purge_recognizes_reflection_and_rotation(self):
         active = features.encode_active(features.ReplayState())

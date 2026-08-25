@@ -330,6 +330,124 @@ class Dataset:
         )
 
 
+def concatenate_datasets(datasets: Sequence[Dataset]) -> Dataset:
+    """Concatenate datasets in caller order without changing row identity."""
+
+    if not datasets or any(len(dataset) == 0 for dataset in datasets):
+        raise ValueError("dataset concatenation requires nonempty inputs")
+    total_rows = sum(len(dataset) for dataset in datasets)
+    indptr = np.empty(total_rows + 1, dtype=np.int64)
+    indptr[0] = 0
+    row_offset = 0
+    active_offset = 0
+    for dataset in datasets:
+        rows = len(dataset)
+        indptr[row_offset + 1 : row_offset + rows + 1] = (
+            dataset.indptr[1:] + active_offset
+        )
+        row_offset += rows
+        active_offset += len(dataset.indices)
+    return Dataset(
+        indptr,
+        np.concatenate([dataset.indices for dataset in datasets]).astype(
+            np.uint16, copy=False
+        ),
+        np.concatenate([dataset.targets for dataset in datasets]).astype(
+            np.float32, copy=False
+        ),
+        np.concatenate([dataset.weights for dataset in datasets]).astype(
+            np.float32, copy=False
+        ),
+        np.concatenate([dataset.group_ids for dataset in datasets]).astype(
+            np.uint64, copy=False
+        ),
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class MixedTraining:
+    new: Dataset
+    anchor: Dataset
+    new_rows_per_batch: int
+    anchor_rows_per_batch: int
+
+    def validate(self, batch_size: int) -> None:
+        if len(self.new) == 0 or len(self.anchor) == 0:
+            raise ValueError("mixed training streams must be nonempty")
+        for value, label in (
+            (self.new_rows_per_batch, "new_rows_per_batch"),
+            (self.anchor_rows_per_batch, "anchor_rows_per_batch"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{label} must be a positive integer")
+        if self.new_rows_per_batch + self.anchor_rows_per_batch != batch_size:
+            raise ValueError("mixed training row quotas must sum to batch_size")
+
+
+def _cycled_rows(
+    count: int, total: int, *, seed: int, epoch: int, stream: str
+) -> np.ndarray:
+    output = np.empty(total, dtype=np.int64)
+    offset = 0
+    cycle = 0
+    while offset < total:
+        material = f"{seed}:{epoch}:{stream}:{cycle}".encode("utf-8")
+        cycle_seed = int.from_bytes(hashlib.sha256(material).digest()[:8], "little")
+        order = np.random.default_rng(cycle_seed).permutation(count)
+        take = min(count, total - offset)
+        output[offset : offset + take] = order[:take]
+        offset += take
+        cycle += 1
+    return output
+
+
+def mixed_epoch_batches(
+    training: MixedTraining, *, batch_size: int, seed: int, epoch: int
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    """Return exact, deterministic two-stream batches for one epoch.
+
+    An epoch visits every new row once before deterministic padding.  The
+    canonical anchor is sampled from independently seeded permutations and
+    cycles only when the requested anchor quota exhausts it.  This prevents a
+    much larger anchor corpus from multiplying the amount of new-data work in
+    every epoch while preserving the exact frozen batch composition.
+    """
+
+    training.validate(batch_size)
+    if epoch <= 0:
+        raise ValueError("mixed training epoch must be positive")
+    batch_count = math.ceil(
+        len(training.new) / training.new_rows_per_batch
+    )
+    new_rows = _cycled_rows(
+        len(training.new),
+        batch_count * training.new_rows_per_batch,
+        seed=seed,
+        epoch=epoch,
+        stream="new",
+    )
+    anchor_rows = _cycled_rows(
+        len(training.anchor),
+        batch_count * training.anchor_rows_per_batch,
+        seed=seed,
+        epoch=epoch,
+        stream="anchor",
+    )
+    return tuple(
+        (
+            new_rows[
+                index * training.new_rows_per_batch :
+                (index + 1) * training.new_rows_per_batch
+            ],
+            anchor_rows[
+                index * training.anchor_rows_per_batch :
+                (index + 1) * training.anchor_rows_per_batch
+            ],
+        )
+        for index in range(batch_count)
+    )
+
+
 def _dataset_identity(dataset: Dataset) -> dict:
     digest = hashlib.sha256()
     arrays = {
@@ -358,8 +476,8 @@ def _dataset_identity(dataset: Dataset) -> dict:
 
 def _dataset_identities(datasets: Mapping[str, Dataset]) -> dict[str, dict]:
     return {
-        split: _dataset_identity(datasets[split])
-        for split in ("train", "validation", "test")
+        split: _dataset_identity(dataset)
+        for split, dataset in sorted(datasets.items())
     }
 
 
@@ -558,21 +676,21 @@ class AdamW:
             parameter -= self.learning_rate * first / (np.sqrt(second) + 1e-8)
 
 
-def train_batch(
+def _apply_training_batch(
     parameters: Mapping[str, np.ndarray],
     optimizer: AdamW,
-    dataset: Dataset,
-    rows: np.ndarray,
+    active: Sequence[np.ndarray],
+    targets: np.ndarray,
+    weights: np.ndarray,
     *,
     huber_delta: float,
 ) -> float:
-    active = dataset.active_rows(rows)
     prediction, cache = forward(parameters, active)
     first_pre, first, second_pre, second, output_pre = cache
     loss, output_gradient = _weighted_huber(
         prediction,
-        dataset.targets[rows],
-        dataset.weights[rows],
+        targets,
+        weights,
         huber_delta,
     )
     output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
@@ -595,6 +713,58 @@ def train_batch(
             gradient *= scale
     optimizer.update(parameters, gradients)
     return loss
+
+
+def train_batch(
+    parameters: Mapping[str, np.ndarray],
+    optimizer: AdamW,
+    dataset: Dataset,
+    rows: np.ndarray,
+    *,
+    huber_delta: float,
+) -> float:
+    return _apply_training_batch(
+        parameters,
+        optimizer,
+        dataset.active_rows(rows),
+        dataset.targets[rows],
+        dataset.weights[rows],
+        huber_delta=huber_delta,
+    )
+
+
+def train_mixed_batch(
+    parameters: Mapping[str, np.ndarray],
+    optimizer: AdamW,
+    training: MixedTraining,
+    new_rows: np.ndarray,
+    anchor_rows: np.ndarray,
+    *,
+    huber_delta: float,
+) -> float:
+    if (
+        len(new_rows) != training.new_rows_per_batch
+        or len(anchor_rows) != training.anchor_rows_per_batch
+    ):
+        raise ValueError("mixed training batch does not match its exact row quotas")
+    active = (
+        *training.new.active_rows(new_rows),
+        *training.anchor.active_rows(anchor_rows),
+    )
+    targets = np.concatenate(
+        (training.new.targets[new_rows], training.anchor.targets[anchor_rows])
+    )
+    weights = np.concatenate(
+        (training.new.weights[new_rows], training.anchor.weights[anchor_rows])
+    )
+    return _apply_training_batch(
+        parameters,
+        optimizer,
+        active,
+        targets,
+        weights,
+        huber_delta=huber_delta,
+    )
 
 
 def metrics(
@@ -635,27 +805,45 @@ def train_seed(
     batch_size: int,
     learning_rate: float,
     weight_decay: float,
+    mixed_training: MixedTraining | None = None,
 ) -> tuple[dict[str, np.ndarray], dict]:
     parameters = initialize(seed)
     optimizer = AdamW(parameters, learning_rate, weight_decay)
     rng = np.random.default_rng(seed ^ 0xD1B54A32D192ED03)
+    if mixed_training is not None:
+        mixed_training.validate(batch_size)
     best: dict[str, np.ndarray] | None = None
     best_epoch = 0
     best_key = (float("inf"), 0.0, 0.0)
     history = []
     for epoch in range(1, epochs + 1):
-        order = rng.permutation(len(datasets["train"]))
         losses = []
-        for start in range(0, len(order), batch_size):
-            losses.append(
-                train_batch(
-                    parameters,
-                    optimizer,
-                    datasets["train"],
-                    order[start : start + batch_size],
-                    huber_delta=0.25,
+        if mixed_training is None:
+            order = rng.permutation(len(datasets["train"]))
+            for start in range(0, len(order), batch_size):
+                losses.append(
+                    train_batch(
+                        parameters,
+                        optimizer,
+                        datasets["train"],
+                        order[start : start + batch_size],
+                        huber_delta=0.25,
+                    )
                 )
-            )
+        else:
+            for new_rows, anchor_rows in mixed_epoch_batches(
+                mixed_training, batch_size=batch_size, seed=seed, epoch=epoch
+            ):
+                losses.append(
+                    train_mixed_batch(
+                        parameters,
+                        optimizer,
+                        mixed_training,
+                        new_rows,
+                        anchor_rows,
+                        huber_delta=0.25,
+                    )
+                )
         validation = metrics(parameters, datasets["validation"])
         key = (
             validation["weighted_huber"],
@@ -822,8 +1010,12 @@ def _training_producer_identity() -> dict[str, str]:
 
 
 def _seed_training_configuration(
-    training_arguments: Mapping[str, int | float],
+    training_arguments: Mapping[str, int | float | str],
 ) -> dict:
+    new_rows = int(training_arguments.get("new_rows_per_batch", 0))
+    anchor_rows = int(training_arguments.get("anchor_rows_per_batch", 0))
+    if (new_rows == 0) != (anchor_rows == 0):
+        raise ValueError("mixed batch configuration is incomplete")
     return {
         "architecture": {
             "dimensions": [
@@ -847,6 +1039,20 @@ def _seed_training_configuration(
         "loss": {"name": "weighted-huber", "delta": 0.25},
         "metrics_batch_size": 4_096,
         "augmentation": "reflection rows inherit root game split",
+        "batching": (
+            {
+                "kind": "deterministic-two-stream-cycling-v1",
+                "new_rows_per_batch": new_rows,
+                "anchor_rows_per_batch": anchor_rows,
+                "epoch_length": "new-stream-covered-once-anchor-sampled",
+                "row_order": "new-then-anchor",
+            }
+            if new_rows
+            else {"kind": "single-stream-permutation-v1"}
+        ),
+        "selection_validation": training_arguments.get(
+            "selection_validation", "legacy-validation-split"
+        ),
     }
 
 
@@ -1063,7 +1269,8 @@ def _load_seed_checkpoint(
 def _train_seed_and_report(
     datasets: Mapping[str, Dataset],
     seed: int,
-    training_arguments: Mapping[str, int | float],
+    training_arguments: Mapping[str, int | float | str],
+    mixed_training: MixedTraining | None = None,
     checkpoint_directory: pathlib.Path | None = None,
     receipt_binding: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict, dict | None]:
@@ -1081,6 +1288,7 @@ def _train_seed_and_report(
         batch_size=int(training_arguments["batch_size"]),
         learning_rate=float(training_arguments["learning_rate"]),
         weight_decay=float(training_arguments["weight_decay"]),
+        mixed_training=mixed_training,
     )
     report["checkpoint"] = runtime_bytes(candidate)[1]
     publication = None
@@ -1094,23 +1302,27 @@ def _train_seed_and_report(
 
 
 _SEED_WORKER_DATASETS: Mapping[str, Dataset] | None = None
-_SEED_WORKER_ARGUMENTS: Mapping[str, int | float] | None = None
+_SEED_WORKER_ARGUMENTS: Mapping[str, int | float | str] | None = None
+_SEED_WORKER_MIXED_TRAINING: MixedTraining | None = None
 _SEED_WORKER_CHECKPOINT_DIRECTORY: pathlib.Path | None = None
 _SEED_WORKER_RECEIPT_BINDING: Mapping[str, object] | None = None
 
 
 def _initialize_seed_worker(
     datasets: Mapping[str, Dataset],
-    training_arguments: Mapping[str, int | float],
+    training_arguments: Mapping[str, int | float | str],
+    mixed_training: MixedTraining | None,
     checkpoint_directory: pathlib.Path | None,
     receipt_binding: Mapping[str, object] | None,
 ) -> None:
     """Install one read-only dataset copy per long-lived worker process."""
 
     global _SEED_WORKER_DATASETS, _SEED_WORKER_ARGUMENTS
+    global _SEED_WORKER_MIXED_TRAINING
     global _SEED_WORKER_CHECKPOINT_DIRECTORY, _SEED_WORKER_RECEIPT_BINDING
     _SEED_WORKER_DATASETS = datasets
     _SEED_WORKER_ARGUMENTS = training_arguments
+    _SEED_WORKER_MIXED_TRAINING = mixed_training
     _SEED_WORKER_CHECKPOINT_DIRECTORY = checkpoint_directory
     _SEED_WORKER_RECEIPT_BINDING = receipt_binding
 
@@ -1124,6 +1336,7 @@ def _train_seed_worker(
         _SEED_WORKER_DATASETS,
         seed,
         _SEED_WORKER_ARGUMENTS,
+        _SEED_WORKER_MIXED_TRAINING,
         _SEED_WORKER_CHECKPOINT_DIRECTORY,
         _SEED_WORKER_RECEIPT_BINDING,
     )
@@ -1132,7 +1345,8 @@ def _train_seed_worker(
 def _train_seeds_parallel(
     datasets: Mapping[str, Dataset],
     seeds: Sequence[int],
-    training_arguments: Mapping[str, int | float],
+    training_arguments: Mapping[str, int | float | str],
+    mixed_training: MixedTraining | None,
     seed_workers: int,
     checkpoint_directory: pathlib.Path | None,
     receipt_binding: Mapping[str, object] | None,
@@ -1147,6 +1361,7 @@ def _train_seeds_parallel(
         initargs=(
             datasets,
             training_arguments,
+            mixed_training,
             checkpoint_directory,
             receipt_binding,
         ),
@@ -1187,8 +1402,9 @@ def _train_seeds_parallel(
 
 def _checkpoint_receipt_binding(
     datasets: Mapping[str, Dataset],
-    training_arguments: Mapping[str, int | float],
+    training_arguments: Mapping[str, int | float | str],
     input_shard_identities: Sequence[Mapping[str, object]],
+    mixed_training: MixedTraining | None = None,
 ) -> dict:
     try:
         normalized_shards = json.loads(
@@ -1205,6 +1421,14 @@ def _checkpoint_receipt_binding(
         "inputs": {
             "feature_schema": features.FEATURE_SCHEMA,
             "datasets": _dataset_identities(datasets),
+            "training_streams": (
+                {
+                    "new": _dataset_identity(mixed_training.new),
+                    "anchor": _dataset_identity(mixed_training.anchor),
+                }
+                if mixed_training is not None
+                else None
+            ),
             "shards": normalized_shards,
         },
         "producer": _training_producer_identity(),
@@ -1265,6 +1489,8 @@ def train_three_seeds(
     seed_checkpoint_directory: pathlib.Path | None = None,
     resume_seeds: bool = False,
     input_shard_identities: Sequence[Mapping[str, object]] = (),
+    mixed_training: MixedTraining | None = None,
+    selection_validation: Dataset | None = None,
 ) -> tuple[dict[str, np.ndarray], dict]:
     if len(seeds) != 3 or len(set(seeds)) != 3:
         raise ValueError("the frozen training campaign requires exactly three seeds")
@@ -1274,7 +1500,23 @@ def train_three_seeds(
         or seed_workers <= 0
     ):
         raise ValueError("seed_workers must be a positive integer")
-    if set(datasets) != {"train", "validation", "test"} or any(
+    datasets = dict(datasets)
+    if selection_validation is not None:
+        if len(selection_validation) == 0:
+            raise ValueError("selection validation dataset must be nonempty")
+        datasets["validation"] = selection_validation
+    if mixed_training is not None:
+        mixed_training.validate(batch_size)
+        datasets["train"] = concatenate_datasets(
+            (mixed_training.new, mixed_training.anchor)
+        )
+        if "validation" not in datasets or len(datasets["validation"]) == 0:
+            raise ValueError(
+                "mixed training requires a separate nonempty selection validation"
+            )
+        if reveal_test and ("test" not in datasets or len(datasets["test"]) == 0):
+            raise ValueError("test reveal requires a nonempty test dataset")
+    elif set(datasets) != {"train", "validation", "test"} or any(
         len(dataset) == 0 for dataset in datasets.values()
     ):
         raise ValueError("training, validation, and test datasets must be nonempty")
@@ -1283,12 +1525,23 @@ def train_three_seeds(
         raise ValueError("training seeds must fit uint64")
     if resume_seeds and seed_checkpoint_directory is None:
         raise ValueError("resume_seeds requires seed_checkpoint_directory")
-    training_arguments: dict[str, int | float] = {
+    training_arguments: dict[str, int | float | str] = {
         "epochs": epochs,
         "patience": patience,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
+        "new_rows_per_batch": (
+            mixed_training.new_rows_per_batch if mixed_training is not None else 0
+        ),
+        "anchor_rows_per_batch": (
+            mixed_training.anchor_rows_per_batch if mixed_training is not None else 0
+        ),
+        "selection_validation": (
+            "explicit-common-adjudicator"
+            if selection_validation is not None
+            else "dataset-validation-split"
+        ),
     }
     receipt_binding = None
     completed: dict[
@@ -1297,7 +1550,7 @@ def train_three_seeds(
     if seed_checkpoint_directory is not None:
         seed_checkpoint_directory = seed_checkpoint_directory.resolve()
         receipt_binding = _checkpoint_receipt_binding(
-            datasets, training_arguments, input_shard_identities
+            datasets, training_arguments, input_shard_identities, mixed_training
         )
         completed = _prepare_seed_checkpoints(
             seed_checkpoint_directory,
@@ -1313,6 +1566,7 @@ def train_three_seeds(
                     datasets,
                     seed,
                     training_arguments,
+                    mixed_training,
                     seed_checkpoint_directory,
                     receipt_binding,
                 )
@@ -1323,6 +1577,7 @@ def train_three_seeds(
                 datasets,
                 pending_seeds,
                 training_arguments,
+                mixed_training,
                 seed_workers,
                 seed_checkpoint_directory,
                 receipt_binding,
@@ -1366,6 +1621,11 @@ def train_three_seeds(
         },
         "loss": {"name": "weighted-huber", "delta": 0.25},
         "augmentation": "reflection rows inherit root game split",
+        "batching": _seed_training_configuration(training_arguments)["batching"],
+        "selection_validation": {
+            "kind": training_arguments["selection_validation"],
+            "dataset": _dataset_identity(datasets["validation"]),
+        },
     }
     if seed_checkpoint_directory is not None:
         publications = [result[2] for result in seed_results]
@@ -1423,10 +1683,88 @@ def _parse_seed_workers(value: str) -> int:
     return workers
 
 
+def _declared_target_policies(manifest: Mapping[str, object]) -> list[dict]:
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, dict):
+        return []
+    declared = provenance.get("target_policies")
+    if declared is None:
+        single = provenance.get("target_policy")
+        declared = [] if single is None else [single]
+    if not isinstance(declared, list) or any(
+        not isinstance(policy, dict) for policy in declared
+    ):
+        raise ValueError("shard target policy provenance is malformed")
+    policies = []
+    for policy in declared:
+        if (
+            policy.get("schema") != corpus.TARGET_POLICY_SCHEMA
+            or policy.get("teacher_schema")
+            not in {corpus.TEACHER_SCHEMA, corpus.SEARCH_TEACHER_SCHEMA}
+            or policy.get("mixture")
+            != {
+                "teacher_weight": 0.75,
+                "outcome_weight": 0.25,
+                "outcome_frame": "mover-relative-terminal-winner",
+            }
+            or not isinstance(policy.get("teacher_value"), dict)
+        ):
+            raise ValueError("shard target policy provenance is invalid")
+        policies.append(json.loads(canonical_json_bytes(policy)))
+    return policies
+
+
+def target_metadata_from_shard_provenance(
+    manifests: Sequence[Mapping[str, object]], roles: Sequence[str]
+) -> dict:
+    if len(manifests) != len(roles):
+        raise ValueError("source shard roles do not align with manifests")
+    declarations: dict[bytes, dict[str, object]] = {}
+    undeclared_roles: set[str] = set()
+    for manifest, role in zip(manifests, roles, strict=True):
+        policies = _declared_target_policies(manifest)
+        if not policies:
+            undeclared_roles.add(role)
+        for policy in policies:
+            key = canonical_json_bytes(policy)
+            record = declarations.setdefault(
+                key, {"roles": set(), "policy": policy}
+            )
+            record["roles"].add(role)
+    bound_policies = [
+        {
+            "roles": sorted(record["roles"]),
+            "policy": record["policy"],
+        }
+        for _, record in sorted(declarations.items())
+    ]
+    return {
+        "policy_provenance": "source-shard-manifest-provenance",
+        "declared_policies": bound_policies,
+        "undeclared_roles": sorted(undeclared_roles),
+        "loss": "weighted-huber-delta-0.25",
+        "policy_head": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("shard_manifests", nargs="*", type=pathlib.Path)
     parser.add_argument("--pack-report", type=pathlib.Path)
+    parser.add_argument(
+        "--new-shard-manifest", action="append", type=pathlib.Path, default=[]
+    )
+    parser.add_argument(
+        "--anchor-shard-manifest", action="append", type=pathlib.Path, default=[]
+    )
+    parser.add_argument(
+        "--selection-validation-manifest",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+    )
+    parser.add_argument("--new-rows-per-batch", type=int)
+    parser.add_argument("--anchor-rows-per-batch", type=int)
     parser.add_argument("--output-directory", type=pathlib.Path, required=True)
     parser.add_argument("--tiny-fixture", action="store_true")
     parser.add_argument("--bootstrap-only", action="store_true")
@@ -1449,18 +1787,62 @@ def main() -> int:
         help="evaluate the protected test split after final validation selection",
     )
     arguments = parser.parse_args()
+    mixed_values = (
+        arguments.new_shard_manifest,
+        arguments.anchor_shard_manifest,
+        arguments.selection_validation_manifest,
+        arguments.new_rows_per_batch,
+        arguments.anchor_rows_per_batch,
+    )
+    mixed_requested = any(
+        bool(value) if isinstance(value, list) else value is not None
+        for value in mixed_values
+    )
+    if mixed_requested and (
+        not arguments.new_shard_manifest
+        or not arguments.anchor_shard_manifest
+        or not arguments.selection_validation_manifest
+        or arguments.new_rows_per_batch is None
+        or arguments.anchor_rows_per_batch is None
+    ):
+        parser.error(
+            "mixed training requires new, anchor, and selection-validation "
+            "manifests plus both per-batch row quotas"
+        )
+    if mixed_requested and (
+        arguments.shard_manifests
+        or arguments.pack_report
+        or arguments.tiny_fixture
+        or arguments.bootstrap_only
+    ):
+        parser.error("mixed training cannot be combined with legacy training inputs")
+    if mixed_requested and arguments.reveal_test:
+        parser.error("mixed training has no protected test input to reveal")
+    if mixed_requested and (
+        arguments.new_rows_per_batch <= 0
+        or arguments.anchor_rows_per_batch <= 0
+        or arguments.new_rows_per_batch + arguments.anchor_rows_per_batch
+        != arguments.batch_size
+    ):
+        parser.error("mixed per-batch row quotas must be positive and sum to batch size")
     if arguments.bootstrap_only and (
         arguments.tiny_fixture
         or arguments.shard_manifests
         or arguments.pack_report
         or arguments.seed_checkpoint_directory
         or arguments.resume_seeds
+        or mixed_requested
     ):
         parser.error("--bootstrap-only does not accept training or checkpoint inputs")
     if arguments.resume_seeds and arguments.seed_checkpoint_directory is None:
         parser.error("--resume-seeds requires --seed-checkpoint-directory")
     training_inputs = sum(
-        (arguments.tiny_fixture, bool(arguments.shard_manifests), bool(arguments.pack_report))
+        (
+            arguments.tiny_fixture,
+            bool(arguments.shard_manifests),
+            bool(arguments.pack_report),
+            mixed_requested,
+        )
     )
     if not arguments.bootstrap_only and training_inputs != 1:
         parser.error(
@@ -1486,6 +1868,9 @@ def main() -> int:
         source_manifests: list[dict] = []
         runtime_name = "jacek_replay_bfm_bootstrap.runtime"
     else:
+        mixed_training = None
+        selection_validation = None
+        source_roles: list[str]
         if arguments.tiny_fixture:
             fixture = tiny_fixture_samples()
             shard_directory = arguments.output_directory / "tiny-shards"
@@ -1498,6 +1883,7 @@ def main() -> int:
                 )[1]
                 for split in ("train", "validation", "test")
             ]
+            source_roles = ["legacy"] * len(manifests)
         elif arguments.pack_report:
             try:
                 pack_report = json.loads(arguments.pack_report.read_bytes())
@@ -1510,14 +1896,49 @@ def main() -> int:
                 ]
             except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
                 parser.error(f"invalid --pack-report: {error}")
+            source_roles = ["legacy"] * len(manifests)
+        elif mixed_requested:
+            new_manifests = arguments.new_shard_manifest
+            anchor_manifests = arguments.anchor_shard_manifest
+            validation_manifests = arguments.selection_validation_manifest
+            manifests = [*new_manifests, *anchor_manifests, *validation_manifests]
+            source_roles = (
+                ["new"] * len(new_manifests)
+                + ["anchor"] * len(anchor_manifests)
+                + ["selection-validation"] * len(validation_manifests)
+            )
         else:
             manifests = arguments.shard_manifests
+            source_roles = ["legacy"] * len(manifests)
         loaded = [load_csr_shard(path) for path in manifests]
         validate_shard_collection(loaded)
-        datasets = {
-            split: combine_shards([shard for shard in loaded if shard.split == split])
-            for split in ("train", "validation", "test")
-        }
+        if mixed_requested:
+            new_count = len(arguments.new_shard_manifest)
+            anchor_count = len(arguments.anchor_shard_manifest)
+            new_shards = loaded[:new_count]
+            anchor_shards = loaded[new_count : new_count + anchor_count]
+            validation_shards = loaded[new_count + anchor_count :]
+            if any(shard.split != "train" for shard in (*new_shards, *anchor_shards)):
+                parser.error("new and anchor shard manifests must have split=train")
+            if any(shard.split != "validation" for shard in validation_shards):
+                parser.error("selection validation manifests must have split=validation")
+            new_dataset = combine_shards(new_shards)
+            anchor_dataset = combine_shards(anchor_shards)
+            selection_validation = combine_shards(validation_shards)
+            mixed_training = MixedTraining(
+                new_dataset,
+                anchor_dataset,
+                arguments.new_rows_per_batch,
+                arguments.anchor_rows_per_batch,
+            )
+            datasets = {"validation": selection_validation}
+        else:
+            datasets = {
+                split: combine_shards(
+                    [shard for shard in loaded if shard.split == split]
+                )
+                for split in ("train", "validation", "test")
+            }
         del loaded
         source_manifests = [json.loads(path.read_bytes()) for path in manifests]
         selected, training_report = train_three_seeds(
@@ -1533,6 +1954,8 @@ def main() -> int:
             seed_checkpoint_directory=arguments.seed_checkpoint_directory,
             resume_seeds=arguments.resume_seeds,
             input_shard_identities=_shard_identities(manifests),
+            mixed_training=mixed_training,
+            selection_validation=selection_validation,
         )
         runtime_name = "jacek_replay_bfm.runtime"
 
@@ -1552,12 +1975,12 @@ def main() -> int:
             "activations": ["square-leaky-0.01", "leaky-relu-0.01", "tanh"],
             "payload_layout": "w1-input-major,w2-input-major,w3",
         },
-        "target": {
-            "teacher": (
-                "absolute-player-one rank4 tanh(root_score/12000), then "
-                "mover-relative; proven values +/-1"
-            ),
-            "mixture": "75%-teacher+25%-mover-relative-game-outcome",
+        "target": target_metadata_from_shard_provenance(
+            source_manifests, source_roles
+        ) if not arguments.bootstrap_only else {
+            "policy_provenance": "bootstrap-has-no-training-targets",
+            "declared_policies": [],
+            "undeclared_roles": [],
             "loss": "weighted-huber-delta-0.25",
             "policy_head": False,
         },

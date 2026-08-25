@@ -541,7 +541,7 @@ def validate_test_reveal_contract(model_manifest: dict, round_index: int) -> Non
 
 
 def validate_embedded_stage_receipts(
-    workflow_path: pathlib.Path, receipt: dict
+    workflow_path: pathlib.Path, receipt: dict, *, offline: bool = False
 ) -> None:
     execution = receipt.get("execution")
     configuration = receipt.get("configuration", {})
@@ -553,12 +553,11 @@ def validate_embedded_stage_receipts(
     closure_hash = execution.get("candidate_search_source_closure_sha256")
     repository = execution.get("repository")
     release_build = execution.get("release_build")
-    if (
+    common_invalid = (
         execution.get("campaign_id") != configuration.get("campaign_id")
         or execution.get("resumable_stage_receipt_schema")
         != STAGE_RECEIPT_SCHEMA
         or not isinstance(environment, dict)
-        or environment != environment_identity()
         or not isinstance(feature_encoder, dict)
         or not isinstance(feature_encoder.get("path"), str)
         or not pathlib.Path(feature_encoder["path"]).is_file()
@@ -566,11 +565,41 @@ def validate_embedded_stage_receipts(
         or not pathlib.Path(repository_path).is_dir()
         or not isinstance(repository, dict)
         or repository.get("path") != str(pathlib.Path(repository_path).resolve())
-        or repository_identity(pathlib.Path(repository_path)) != repository
-        or _current_release_build_identity(release_build) != release_build
         or artifact_snapshot(pathlib.Path(feature_encoder.get("path", "")))
         != feature_encoder
         or not isinstance(closure_hash, str)
+        or not isinstance(release_build, dict)
+    )
+    if common_invalid:
+        raise ValueError("canonical workflow execution provenance is stale")
+    if offline:
+        head, tree = repository.get("head"), repository.get("tree")
+        inspected = subprocess.run(
+            ["git", "-C", repository_path, "rev-parse", f"{head}^{{tree}}"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        recorded_build_files = [
+            release_build.get("cmake_cache"),
+            *release_build.get("binaries", {}).values(),
+        ]
+        if (
+            repository.get("clean") is not True
+            or not isinstance(head, str)
+            or not isinstance(tree, str)
+            or inspected.returncode != 0
+            or inspected.stdout.strip() != tree
+            or any(
+                not isinstance(record, dict)
+                or not isinstance(record.get("path"), str)
+                or artifact_snapshot(pathlib.Path(record["path"])) != record
+                for record in recorded_build_files
+            )
+        ):
+            raise ValueError("canonical historical execution provenance is stale")
+    elif (
+        environment != environment_identity()
+        or repository_identity(pathlib.Path(repository_path)) != repository
+        or _current_release_build_identity(release_build) != release_build
         or source_closure_sha256(pathlib.Path(repository_path)) != closure_hash
     ):
         raise ValueError("canonical workflow execution provenance is stale")
@@ -750,7 +779,8 @@ def _canonical_entry(receipt_path: pathlib.Path, receipt: dict) -> dict:
 
 
 def validate_canonical_workflow_chain(
-    receipt_path: pathlib.Path, expected_round: int | None = None
+    receipt_path: pathlib.Path, expected_round: int | None = None,
+    *, offline: bool = False,
 ) -> dict:
     """Validate a canonical receipt and every file-backed ancestor round."""
 
@@ -948,7 +978,7 @@ def validate_canonical_workflow_chain(
         if sha256(previous_path) != previous.get("sha256"):
             raise ValueError("canonical previous-workflow hash is stale")
         previous_validation = validate_canonical_workflow_chain(
-            previous_path, round_index - 1
+            previous_path, round_index - 1, offline=offline
         )
         ancestors = previous_validation["entries"]
         if declared_ancestors != ancestors:
@@ -1035,7 +1065,7 @@ def validate_canonical_workflow_chain(
         != (ancestors[-1]["workflow_sha256"] if ancestors else None)
     ):
         raise ValueError("canonical model ancestry differs from workflow ancestry")
-    validate_embedded_stage_receipts(receipt_path, receipt)
+    validate_embedded_stage_receipts(receipt_path, receipt, offline=offline)
     return {
         "receipt": receipt,
         "entry": entry,

@@ -189,6 +189,8 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.tree_nodes == right.tree_nodes &&
          left.max_complete_turn_depth == right.max_complete_turn_depth &&
          left.root_value == right.root_value &&
+         left.root_solved == right.root_solved &&
+         left.proven_winner == right.proven_winner &&
          left.deadline_reached == right.deadline_reached &&
          left.tree_cap_reached == right.tree_cap_reached &&
          left.cached_continuation == right.cached_continuation &&
@@ -707,6 +709,62 @@ void deadline_fallback_is_legal_and_bounded() {
           "A one-millisecond deadline must return a prompt legal fallback.");
 }
 
+void analysis_api_is_stateless_seeded_rotatable_and_proof_explicit() {
+  TemporaryCheckpoint checkpoint(make_checkpoint());
+  ps::JacekReplayBfmConfig config;
+  config.model_path = checkpoint.string();
+  config.max_time_ms = 1'000U;
+  config.max_tree_nodes = 47U;
+  config.max_actions = 5U;
+  config.max_partial_paths = 11U;
+  config.exploration = 0.5;
+  config.fpu = 0.5;
+  ps::JacekReplayBfmBot bot(config);
+
+  ps::GameState player_one = ps::make_initial_state(codingame_rules());
+  player_one = ps::apply_move(player_one, ps::Move{{4, 5}});
+  player_one = ps::apply_move(player_one, ps::Move{{5, 4}});
+  const ps::GameState player_two = rotated_state(player_one);
+  const std::uint64_t seed = 0xbb67ae8584caa73bULL;
+  const ps::JacekReplayBfmSearchStats first =
+      bot.analyze_position(player_one, seed);
+  const ps::JacekReplayBfmSearchStats repeated =
+      bot.analyze_position(player_one, seed);
+  const ps::JacekReplayBfmSearchStats rotated =
+      bot.analyze_position(player_two, seed);
+  require(first.tree_cap_reached && !first.root_solved &&
+              !first.proven_winner.has_value() &&
+              same_capped_search_stats(first, repeated) &&
+              same_capped_search_stats(first, rotated) &&
+              bot.last_search_stats().tree_nodes == 0U,
+          "Stateless analysis must reuse one model, honor its per-position "
+          "seed, rotate exactly, and leave move-cache diagnostics untouched.");
+
+  ps::JacekReplayBfmConfig proof_config = config;
+  proof_config.max_tree_nodes = 2U;
+  proof_config.max_actions = 1U;
+  proof_config.max_partial_paths = 128U;
+  ps::JacekReplayBfmBot proof_bot(proof_config);
+  ps::GameState cutoff = ps::make_initial_state(codingame_rules());
+  cutoff.ball = {4, 6};
+  cutoff.path = {cutoff.ball};
+  cutoff.visit_count = {{{4, 6}, 1}, {{4, 4}, 1}};
+  block_point_except(cutoff, {4, 6}, {{4, 5}});
+  block_point_except(cutoff, {4, 5}, {{4, 6}, {4, 4}});
+  block_point_except(cutoff, {4, 4}, {{4, 5}});
+  const ps::JacekReplayBfmSearchStats one_proof =
+      proof_bot.analyze_position(cutoff, 29U);
+  const ps::JacekReplayBfmSearchStats two_proof =
+      proof_bot.analyze_position(rotated_state(cutoff), 29U);
+  require(one_proof.root_solved &&
+              one_proof.proven_winner == ps::Player::One &&
+              one_proof.root_value > 1'000.0F && two_proof.root_solved &&
+              two_proof.proven_winner == ps::Player::Two &&
+              two_proof.root_value == one_proof.root_value,
+          "Solved roots must expose an explicit absolute winner rather than "
+          "requiring callers to infer a proof from the value magnitude.");
+}
+
 void public_factory_and_rule_contract_fail_closed() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::BotConfig factory;
@@ -772,6 +830,8 @@ int run_jacek_replay_bfm_tests() {
        fixed_cap_search_is_mover_rotation_symmetric},
       {"deadline_fallback_is_legal_and_bounded",
        deadline_fallback_is_legal_and_bounded},
+      {"analysis_api_is_stateless_seeded_rotatable_and_proof_explicit",
+       analysis_api_is_stateless_seeded_rotatable_and_proof_explicit},
       {"public_factory_and_rule_contract_fail_closed",
        public_factory_and_rule_contract_fail_closed},
   };

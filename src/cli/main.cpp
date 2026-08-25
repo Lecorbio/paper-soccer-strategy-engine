@@ -733,6 +733,13 @@ int main() {
                   << ", tactical solutions=" << stats.tactical_solutions
                   << ", truncations=" << stats.truncations
                   << ", root value=" << stats.root_value;
+        if (stats.root_solved) {
+          std::cout << ", root solved";
+          if (stats.proven_winner.has_value()) {
+            std::cout << ", proven winner="
+                      << player_to_string(*stats.proven_winner);
+          }
+        }
         if (stats.deadline_reached) {
           std::cout << ", deadline reached";
         }
