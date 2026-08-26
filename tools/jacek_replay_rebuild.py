@@ -343,9 +343,64 @@ def validate_opening_banks(record: Mapping[str, object]) -> None:
         raise ValueError("rebuild opening-bank configuration changed")
 
 
+def _sealed_feature_fingerprints(
+    manifest_paths: Sequence[pathlib.Path],
+) -> set[bytes]:
+    """Read only sparse feature identities; protected targets stay unopened."""
+
+    import numpy as np
+    import jacek_replay_corpus as replay_corpus
+    import jacek_replay_features as replay_features
+
+    fingerprints: set[bytes] = set()
+    for raw_path in manifest_paths:
+        path = raw_path.resolve()
+        manifest = load_json(path, "sealed feature-identity shard")
+        npz_name = manifest.get("npz")
+        npz_sha256 = manifest.get("npz_sha256")
+        if (
+            path.suffix != ".json"
+            or sha256_file(path) != path.stem
+            or manifest.get("schema")
+            != "papersoccer.jacek-replay-csr-shard.v1"
+            or manifest.get("feature_schema") != replay_features.FEATURE_SCHEMA
+            or not isinstance(npz_name, str)
+            or pathlib.PurePath(npz_name).name != npz_name
+            or not isinstance(npz_sha256, str)
+        ):
+            raise ValueError("sealed feature-identity manifest changed")
+        npz_path = path.parent / npz_name
+        if sha256_file(npz_path) != npz_sha256 or npz_path.stem != npz_sha256:
+            raise ValueError("sealed feature-identity NPZ changed")
+        with np.load(npz_path, allow_pickle=False) as archive:
+            if not {"indptr", "indices"}.issubset(archive.files):
+                raise ValueError("sealed sparse feature identity is incomplete")
+            indptr = np.asarray(archive["indptr"])
+            indices = np.asarray(archive["indices"])
+        rows = int(manifest.get("samples", -1))
+        if (
+            indptr.dtype != np.dtype("<i8")
+            or indices.dtype != np.dtype("<u2")
+            or indptr.shape != (rows + 1,)
+            or int(indptr[0]) != 0
+            or int(indptr[-1]) != len(indices)
+            or len(indices) != int(manifest.get("active_features", -1))
+        ):
+            raise ValueError("sealed sparse feature-identity contract changed")
+        for row in range(rows):
+            start, end = int(indptr[row]), int(indptr[row + 1])
+            fingerprints.add(
+                replay_corpus.canonical_feature_fingerprint(
+                    indices[start:end].tolist()
+                )
+            )
+    return fingerprints
+
+
 def freeze_blind_holdout(
     *, candidate_positions: pathlib.Path, training_input_receipt: pathlib.Path,
     excluded_shards: Sequence[pathlib.Path],
+    excluded_sealed_shards: Sequence[pathlib.Path] = (),
     excluded_positions: Sequence[pathlib.Path],
     excluded_roots: Sequence[pathlib.Path], output_directory: pathlib.Path,
 ) -> dict[str, object]:
@@ -371,6 +426,46 @@ def freeze_blind_holdout(
         excluded_position_tsvs=tuple(path.resolve() for path in excluded_positions),
         excluded_root_manifests=tuple(path.resolve() for path in excluded_roots),
     )
+    sealed_paths = tuple(path.resolve() for path in excluded_sealed_shards)
+    if sealed_paths:
+        sealed_fingerprints = _sealed_feature_fingerprints(sealed_paths)
+        selected_roots = {
+            str(record["root_group_id"])
+            for record in manifest["selection"]["groups"]
+        }
+        candidate_rows = retention.load_position_rows(
+            candidate_positions.resolve(), required_split=retention.TEACHER_SPLIT
+        )
+        selected_fingerprints = {
+            row.canonical_fingerprint
+            for row in candidate_rows
+            if row.root_group_id in selected_roots
+        }
+        overlap = selected_fingerprints & sealed_fingerprints
+        if overlap or len(selected_fingerprints) != 12_000:
+            raise ValueError(
+                "blind holdout overlaps sealed canonical-test feature identities"
+            )
+        body = dict(manifest)
+        body.pop("body_sha256", None)
+        body["inputs"] = {
+            **body["inputs"],
+            "excluded_sealed_identity_shards": [
+                retention.artifact_snapshot(path) for path in sealed_paths
+            ],
+        }
+        body["sealed_identity_exclusion"] = {
+            "policy": "feature-indices-only-targets-and-weights-unopened",
+            "canonical_fingerprints": len(sealed_fingerprints),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                b"".join(sorted(sealed_fingerprints))
+            ).hexdigest(),
+            "selected_overlap": 0,
+        }
+        manifest = {
+            **body,
+            "body_sha256": sha256_bytes(canonical_json_bytes(body)),
+        }
     if output_positions.exists() or output_manifest.exists():
         if (
             not output_positions.is_file()
@@ -403,7 +498,7 @@ def freeze_holdout_from_corpus(
 
     corpus = rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
     validate_holdout_candidate_pool(candidate_positions, candidate_manifest)
-    shards = set(corpus.protected_test_manifest_paths)
+    shards: set[pathlib.Path] = set()
     for arm in ("search", "rank4"):
         shards.update(corpus.training_manifest_paths(arm))
         shards.update(corpus.anchor_manifest_paths(arm))
@@ -413,6 +508,9 @@ def freeze_holdout_from_corpus(
         candidate_positions=candidate_positions,
         training_input_receipt=corpus_manifest,
         excluded_shards=tuple(sorted(shards)),
+        excluded_sealed_shards=tuple(
+            sorted(corpus.protected_test_manifest_paths)
+        ),
         excluded_positions=(
             (v5_campaign / "pilot/positions.tsv").resolve(),
             (v6_campaign / "pilot/positions.tsv").resolve(),
@@ -1089,7 +1187,6 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     )
     freeze, rows = retention.load_freeze(positions_path, freeze_path)
     expected_shards = {
-        *corpus.protected_test_manifest_paths,
         *corpus.training_manifest_paths("search"),
         *corpus.training_manifest_paths("rank4"),
         *corpus.anchor_manifest_paths("search"),
@@ -1101,17 +1198,55 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
         for record in freeze.get("inputs", {}).get("excluded_shards", [])
         if isinstance(record, dict) and isinstance(record.get("path"), str)
     }
+    sealed_shard_records = freeze.get("inputs", {}).get(
+        "excluded_sealed_identity_shards", []
+    )
+    if not isinstance(sealed_shard_records, list):
+        raise ValueError("sealed holdout exclusion shard list is malformed")
+    observed_sealed_shards = {
+        pathlib.Path(record["path"]).resolve()
+        for record in sealed_shard_records
+        if isinstance(record, dict) and isinstance(record.get("path"), str)
+    }
+    expected_sealed_shards = {
+        path.resolve() for path in corpus.protected_test_manifest_paths
+    }
+    sealed_fingerprints = _sealed_feature_fingerprints(
+        tuple(sorted(expected_sealed_shards))
+    )
+    sealed_exclusion = freeze.get("sealed_identity_exclusion")
     excluded_positions = freeze.get("inputs", {}).get("excluded_positions", [])
     excluded_roots = freeze.get("inputs", {}).get("excluded_roots", [])
     if (
         freeze.get("timing", {}).get("training_inputs_frozen_by")
         != retention.artifact_snapshot(corpus_path)
         or freeze.get("inputs", {}).get("candidate_positions")
-        != retention.artifact_snapshot(positions_path)
+        != retention.artifact_snapshot(candidate_positions_path)
         or candidate_manifest.get("generator")
         != build["binaries"]["holdout_generator"]
         or len(rows) != 12_000
         or observed_shards != {path.resolve() for path in expected_shards}
+        or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("path"), str)
+            or retention.artifact_snapshot(pathlib.Path(record["path"]))
+            != record
+            for record in sealed_shard_records
+        )
+        or observed_sealed_shards != expected_sealed_shards
+        or not isinstance(sealed_exclusion, dict)
+        or sealed_exclusion
+        != {
+            "policy": "feature-indices-only-targets-and-weights-unopened",
+            "canonical_fingerprints": len(sealed_fingerprints),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                b"".join(sorted(sealed_fingerprints))
+            ).hexdigest(),
+            "selected_overlap": 0,
+        }
+        or any(
+            row.canonical_fingerprint in sealed_fingerprints for row in rows
+        )
         or not isinstance(excluded_positions, list)
         or len(excluded_positions) != 2
         or {
