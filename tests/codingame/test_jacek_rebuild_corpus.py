@@ -15,12 +15,14 @@ import jacek_replay_features as features  # noqa: E402
 try:
     import numpy as np
     import jacek_rebuild_corpus as rebuild
+    import jacek_replay_rebuild as rebuild_workflow
     import jacek_replay_train as training
 except ModuleNotFoundError as error:
     if error.name != "numpy":
         raise
     np = None
     rebuild = None
+    rebuild_workflow = None
     training = None
 
 
@@ -346,6 +348,33 @@ class JacekRebuildCorpusTests(unittest.TestCase):
             forged_path.write_bytes(payload)
             with self.assertRaisesRegex(ValueError, "row selection changed"):
                 rebuild.validate_rebuild_manifest(
+                    forged_path, expected_canonical_counts=FIXTURE_COUNTS
+                )
+
+    def test_shallow_runtime_loader_binds_deep_receipt_and_generated_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            path, manifest = self.freeze(root)
+            loaded = rebuild_workflow.load_frozen_rebuild_corpus(
+                path, expected_canonical_counts=FIXTURE_COUNTS
+            )
+            self.assertEqual(loaded.manifest, manifest)
+
+            forged = json.loads(json.dumps(manifest))
+            selection = forged["deduplicated"]["search"]["selection"]
+            selection["sources"][0]["retained_row_indices"] = [2]
+            forged["deduplicated"]["search"]["selection_sha256"] = hashlib.sha256(
+                rebuild.canonical_json_bytes(selection)
+            ).hexdigest()
+            forged.pop("body_sha256")
+            forged["body_sha256"] = hashlib.sha256(
+                rebuild.canonical_json_bytes(forged)
+            ).hexdigest()
+            payload = rebuild.canonical_json_bytes(forged)
+            forged_path = path.parent / f"{hashlib.sha256(payload).hexdigest()}.json"
+            forged_path.write_bytes(payload)
+            with self.assertRaisesRegex(ValueError, "provenance changed"):
+                rebuild_workflow.load_frozen_rebuild_corpus(
                     forged_path, expected_canonical_counts=FIXTURE_COUNTS
                 )
 

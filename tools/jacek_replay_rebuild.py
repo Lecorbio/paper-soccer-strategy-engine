@@ -397,6 +397,188 @@ def _sealed_feature_fingerprints(
     return fingerprints
 
 
+def load_frozen_rebuild_corpus(
+    manifest_path: pathlib.Path,
+    *, expected_canonical_counts: Mapping[str, int] | None = None,
+) -> object:
+    """Load a once-deep-validated corpus through immutable hash contracts."""
+
+    import jacek_rebuild_corpus as rebuild_corpus
+    import jacek_replay_features as replay_features
+
+    path = manifest_path.resolve()
+    manifest, raw = rebuild_corpus._read_canonical_json(
+        path, "frozen rebuild corpus manifest"
+    )
+    expected_counts = rebuild_corpus._normalized_expected_counts(
+        expected_canonical_counts
+    )
+    if (
+        manifest.get("schema") != rebuild_corpus.MANIFEST_SCHEMA
+        or manifest.get("feature_schema") != replay_features.FEATURE_SCHEMA
+        or path.suffix != ".json"
+        or path.stem != sha256_bytes(raw)
+        or manifest.get("canonical_count_contract") != expected_counts
+        or manifest.get("producer") != rebuild_corpus._producer_identity()
+    ):
+        raise ValueError("frozen rebuild corpus identity changed")
+    rebuild_corpus._verify_body_sha256(manifest)
+    base = path.parent
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, dict) or set(inputs) != set(
+        rebuild_corpus._INPUT_SPECS
+    ):
+        raise ValueError("frozen rebuild corpus input roles changed")
+    for key, (campaign, channel, role) in rebuild_corpus._INPUT_SPECS.items():
+        identities = inputs.get(key)
+        if not isinstance(identities, list) or not identities:
+            raise ValueError("frozen rebuild corpus input role is empty")
+        for identity in identities:
+            if not isinstance(identity, dict):
+                raise ValueError("frozen rebuild corpus input identity is malformed")
+            observed = rebuild_corpus._sealed_source_identity(
+                rebuild_corpus._resolve_bound_path(
+                    base, identity.get("manifest_path"), "frozen source manifest"
+                ),
+                base,
+                campaign=campaign,
+                channel=channel,
+                role=role,
+            )
+            if observed != identity:
+                raise ValueError("frozen rebuild corpus source identity changed")
+    for role in ("train", "validation", "test"):
+        rows = sum(
+            int(identity["rows"])
+            for identity in inputs[f"canonical_{role}"]
+        )
+        if rows != expected_counts[role]:
+            raise ValueError("frozen canonical corpus count changed")
+
+    deduplicated = manifest.get("deduplicated")
+    if not isinstance(deduplicated, dict) or set(deduplicated) != {
+        "search", "rank4", "adjudicator"
+    }:
+        raise ValueError("frozen deduplicated corpus roles changed")
+    generated: dict[str, dict[str, object]] = {}
+    for channel in ("search", "rank4", "adjudicator"):
+        record = deduplicated[channel]
+        if not isinstance(record, dict) or set(record) != {
+            "selection", "selection_sha256", "shard"
+        }:
+            raise ValueError("frozen deduplicated corpus record shape changed")
+        selection = record["selection"]
+        selection_sha256 = record["selection_sha256"]
+        shard_identity = record["shard"]
+        expected_role = "validation" if channel == "adjudicator" else "train"
+        input_keys = [f"v6_{channel}_validation", f"v5_{channel}_validation"] if (
+            channel == "adjudicator"
+        ) else [f"v6_{channel}_train", f"v5_{channel}_train"]
+        if (
+            not isinstance(selection, dict)
+            or not isinstance(shard_identity, dict)
+            or selection_sha256
+            != sha256_bytes(canonical_json_bytes(selection))
+            or selection.get("schema") != rebuild_corpus.DEDUPLICATION_SCHEMA
+            or selection.get("channel") != channel
+            or selection.get("role") != expected_role
+            or selection.get("campaign_precedence") != ["v6", "v5"]
+            or selection.get("equivalence")
+            != "canonical-rotate-reflection-feature-fingerprint"
+            or selection.get("tie_break")
+            != "manifest-sha256-then-manifest-path-then-row-index"
+            or selection.get("input_rows")
+            != sum(
+                int(identity["rows"])
+                for input_key in input_keys for identity in inputs[input_key]
+            )
+            or selection.get("discarded_rows")
+            != selection.get("input_rows") - selection.get("retained_rows")
+            or shard_identity.get("rows") != selection.get("retained_rows")
+        ):
+            raise ValueError("frozen deduplication selection semantics changed")
+        observed_shard = rebuild_corpus._sealed_source_identity(
+            rebuild_corpus._resolve_bound_path(
+                base,
+                shard_identity.get("manifest_path"),
+                "frozen generated manifest",
+            ),
+            base,
+            campaign="rebuild",
+            channel=channel,
+            role=expected_role,
+        )
+        if observed_shard != shard_identity:
+            raise ValueError("frozen generated shard identity changed")
+        generated_manifest = load_json(
+            rebuild_corpus._resolve_bound_path(
+                base, shard_identity["manifest_path"], "generated manifest"
+            ),
+            "frozen generated shard manifest",
+        )
+        expected_provenance = {
+            "schema": rebuild_corpus.DEDUPLICATION_SCHEMA,
+            "channel": channel,
+            "role": expected_role,
+            "campaign_precedence": ["v6", "v5"],
+            "selection_sha256": selection_sha256,
+            "canonical_fingerprints_sha256": selection.get(
+                "canonical_fingerprints_sha256"
+            ),
+            "producer": manifest["producer"],
+        }
+        if generated_manifest.get("provenance") != expected_provenance:
+            raise ValueError("frozen generated shard provenance changed")
+        generated[channel] = dict(shard_identity)
+    if manifest.get("interfaces") != rebuild_corpus._interfaces(inputs, generated):
+        raise ValueError("frozen rebuild training interfaces changed")
+    protected = manifest.get("protected_test")
+    if protected != {
+        "manifest_paths": rebuild_corpus._manifest_paths(
+            inputs["canonical_test"]
+        ),
+        "rows": expected_counts["test"],
+        "selection_eligible": False,
+        "training_eligible": False,
+    }:
+        raise ValueError("frozen protected-test interface changed")
+    leakage = manifest.get("leakage")
+    roles = leakage.get("roles") if isinstance(leakage, dict) else None
+    expected_train_rows = expected_counts["train"] + int(
+        generated["search"]["rows"]
+    ) + int(generated["rank4"]["rows"])
+    expected_validation_rows = expected_counts["validation"] + int(
+        generated["adjudicator"]["rows"]
+    )
+    if (
+        not isinstance(roles, dict)
+        or leakage.get("policy")
+        != "train-validation-fingerprint-and-root-isolation;"
+        "canonical-test-sealed-by-upstream-workflow-provenance"
+        or leakage.get("verified") is not True
+        or roles.get("test")
+        != {
+            "rows_bound": expected_counts["test"],
+            "sealed": True,
+            "isolation_evidence": "canonical-workflow-provenance",
+            "arrays_decoded": False,
+        }
+        or roles.get("train", {}).get("rows_scanned") != expected_train_rows
+        or roles.get("validation", {}).get("rows_scanned")
+        != expected_validation_rows
+        or any(
+            not isinstance(roles.get(role, {}).get(field), int)
+            or roles[role][field] <= 0
+            for role in ("train", "validation")
+            for field in (
+                "unique_canonical_fingerprints", "unique_root_groups"
+            )
+        )
+    ):
+        raise ValueError("frozen rebuild leakage proof changed")
+    return rebuild_corpus.RebuildCorpus(path, manifest)
+
+
 def freeze_blind_holdout(
     *, candidate_positions: pathlib.Path, training_input_receipt: pathlib.Path,
     excluded_shards: Sequence[pathlib.Path],
@@ -496,7 +678,7 @@ def freeze_holdout_from_corpus(
 ) -> dict[str, object]:
     import jacek_rebuild_corpus as rebuild_corpus
 
-    corpus = rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
+    corpus = load_frozen_rebuild_corpus(corpus_manifest)
     validate_holdout_candidate_pool(candidate_positions, candidate_manifest)
     shards: set[pathlib.Path] = set()
     for arm in ("search", "rank4"):
@@ -1024,7 +1206,7 @@ def freeze_rebuild_inputs(
     ).is_file():
         raise ValueError("rebuild repository is not a Git checkout")
     corpus = load_json(corpus_manifest, "rebuild corpus manifest")
-    rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
+    load_frozen_rebuild_corpus(corpus_manifest)
     validate_rebuild_build_manifest(build_manifest)
     matrix = load_json(matrix_manifest, "rebuild matrix")
     validate_matrix(matrix)
@@ -1135,7 +1317,7 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
         ):
             raise ValueError(f"frozen rebuild {label} binding is stale")
     corpus_path = pathlib.Path(body["corpus"]["path"])
-    corpus = rebuild_corpus.validate_rebuild_manifest(corpus_path)
+    corpus = load_frozen_rebuild_corpus(corpus_path)
     validate_matrix(load_json(pathlib.Path(body["matrix"]["path"]), "rebuild matrix"))
     validate_opening_banks(
         load_json(pathlib.Path(body["opening_banks"]["path"]), "rebuild banks")
@@ -2712,7 +2894,7 @@ def run_recovery_phase(
     import jacek_rebuild_corpus as rebuild_corpus
     import jacek_replay_recovery as recovery
 
-    corpus = rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
+    corpus = load_frozen_rebuild_corpus(corpus_manifest)
     if not specs:
         raise ValueError("recovery phase has no candidate specifications")
     if workers <= 0:
@@ -2867,7 +3049,7 @@ def run_residual_phase(
     import jacek_rebuild_corpus as rebuild_corpus
     import jacek_replay_recovery as recovery
 
-    corpus = rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
+    corpus = load_frozen_rebuild_corpus(corpus_manifest)
     datasets = {
         arm: recovery.prepare_recovery_datasets(
             new_manifests=corpus.training_manifest_paths(arm),
@@ -3116,7 +3298,7 @@ def run_scratch_pretraining(
     import jacek_rebuild_corpus as rebuild_corpus
     import jacek_replay_train as training
 
-    corpus = rebuild_corpus.validate_rebuild_manifest(corpus_manifest)
+    corpus = load_frozen_rebuild_corpus(corpus_manifest)
     launch = _scratch_launch_receipt(
         corpus_manifest=corpus_manifest,
         comparison=comparison,
@@ -4172,9 +4354,7 @@ def validate_phase_screen(
     phase = phase_screen.get("phase")
     matrix = load_json(pathlib.Path(inputs["matrix"]["path"]), "rebuild matrix")
     validate_matrix(matrix)
-    corpus = rebuild_corpus.validate_rebuild_manifest(
-        pathlib.Path(inputs["corpus"]["path"])
-    )
+    corpus = load_frozen_rebuild_corpus(pathlib.Path(inputs["corpus"]["path"]))
     incumbent = pathlib.Path(inputs["incumbent_runtime"]["path"])
     comparison = pathlib.Path(inputs["comparison"]["path"])
     banks = load_json(pathlib.Path(inputs["opening_banks"]["path"]), "rebuild banks")
@@ -4462,7 +4642,7 @@ def validate_selected_candidate_lineage(
         != artifact_snapshot(_candidate_runtime_path(candidate, "rank4"))
     ):
         raise ValueError("selected candidate runtime was substituted")
-    corpus = rebuild_corpus.validate_rebuild_manifest(inputs_path)
+    corpus = load_frozen_rebuild_corpus(inputs_path)
     incumbent = pathlib.Path(inputs["incumbent_runtime"]["path"])
     phase = str(candidate.get("phase", candidate.get("specification", {}).get("phase", "")))
     matrix = load_json(pathlib.Path(inputs["matrix"]["path"]), "rebuild matrix")
@@ -5056,9 +5236,7 @@ def validate_qualification_receipt(path: pathlib.Path) -> dict[str, object]:
     ):
         raise ValueError("rebuild qualification substituted selected runtimes")
 
-    corpus = rebuild_corpus.validate_rebuild_manifest(
-        pathlib.Path(inputs["corpus"]["path"])
-    )
+    corpus = load_frozen_rebuild_corpus(pathlib.Path(inputs["corpus"]["path"]))
     incumbent = pathlib.Path(inputs["incumbent_runtime"]["path"])
     canonical_path = _qualification_artifact(
         qualification.get("canonical_test"), "canonical test"
@@ -5216,9 +5394,7 @@ def qualify_selected_candidate(
     teacher = pathlib.Path(inputs["rank4_teacher"]["path"])
     frozen_positions = pathlib.Path(inputs["blind_holdout_positions"]["path"])
     freeze_manifest = pathlib.Path(inputs["blind_holdout"]["path"])
-    corpus = rebuild_corpus.validate_rebuild_manifest(
-        pathlib.Path(inputs["corpus"]["path"])
-    )
+    corpus = load_frozen_rebuild_corpus(pathlib.Path(inputs["corpus"]["path"]))
     banks = load_json(
         pathlib.Path(inputs["opening_banks"]["path"]), "rebuild opening banks"
     )

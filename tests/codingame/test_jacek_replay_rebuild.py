@@ -174,7 +174,9 @@ class ReplayRebuildTests(unittest.TestCase):
                 return_value=fixture["inputs"],
             ),
             mock.patch.object(rebuild, "validate_selected_candidate_lineage"),
-            mock.patch("jacek_rebuild_corpus.validate_rebuild_manifest", return_value=corpus),
+            mock.patch.object(
+                rebuild, "load_frozen_rebuild_corpus", return_value=corpus
+            ),
             mock.patch("jacek_selfsearch_workflow.anchor_metrics", return_value=fixture["canonical_metrics"]),
             mock.patch.object(rebuild, "_validate_qualification_holdout", return_value={"pass": True}),
             mock.patch.object(rebuild, "validate_opening_banks"),
