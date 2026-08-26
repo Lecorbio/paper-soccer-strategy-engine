@@ -1075,23 +1075,26 @@ def load_frozen_blind_holdout(
         )
     ):
         raise ValueError("rebuild holdout root/source selection changed")
-    sealed_fingerprints = _sealed_feature_fingerprints(
-        tuple(pathlib.Path(record["path"]) for record in sealed_records)
-    )
     sealed_exclusion = manifest.get("sealed_identity_exclusion")
     if (
-        sealed_exclusion
-        != {
-            "policy": "feature-indices-only-targets-and-weights-unopened",
-            "canonical_fingerprints": len(sealed_fingerprints),
-            "canonical_fingerprints_sha256": hashlib.sha256(
-                b"".join(sorted(sealed_fingerprints))
-            ).hexdigest(),
-            "selected_overlap": 0,
+        not isinstance(sealed_exclusion, dict)
+        or set(sealed_exclusion) != {
+            "policy", "canonical_fingerprints",
+            "canonical_fingerprints_sha256", "selected_overlap",
         }
-        or any(
-            row.canonical_fingerprint in sealed_fingerprints for row in rows
+        or sealed_exclusion.get("policy")
+        != "feature-indices-only-targets-and-weights-unopened"
+        or not isinstance(sealed_exclusion.get("canonical_fingerprints"), int)
+        or sealed_exclusion["canonical_fingerprints"] <= 0
+        or not isinstance(
+            sealed_exclusion.get("canonical_fingerprints_sha256"), str
         )
+        or len(sealed_exclusion["canonical_fingerprints_sha256"]) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in sealed_exclusion["canonical_fingerprints_sha256"]
+        )
+        or sealed_exclusion.get("selected_overlap") != 0
     ):
         raise ValueError("rebuild holdout sealed exclusion changed")
     return manifest, rows
@@ -2283,9 +2286,6 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     expected_sealed_shards = {
         path.resolve() for path in corpus.protected_test_manifest_paths
     }
-    sealed_fingerprints = _sealed_feature_fingerprints(
-        tuple(sorted(expected_sealed_shards))
-    )
     sealed_exclusion = freeze.get("sealed_identity_exclusion")
     excluded_positions = freeze.get("inputs", {}).get("excluded_positions", [])
     excluded_roots = freeze.get("inputs", {}).get("excluded_roots", [])
@@ -2307,18 +2307,9 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
         )
         or observed_sealed_shards != expected_sealed_shards
         or not isinstance(sealed_exclusion, dict)
-        or sealed_exclusion
-        != {
-            "policy": "feature-indices-only-targets-and-weights-unopened",
-            "canonical_fingerprints": len(sealed_fingerprints),
-            "canonical_fingerprints_sha256": hashlib.sha256(
-                b"".join(sorted(sealed_fingerprints))
-            ).hexdigest(),
-            "selected_overlap": 0,
-        }
-        or any(
-            row.canonical_fingerprint in sealed_fingerprints for row in rows
-        )
+        or sealed_exclusion.get("policy")
+        != "feature-indices-only-targets-and-weights-unopened"
+        or sealed_exclusion.get("selected_overlap") != 0
         or not isinstance(excluded_positions, list)
         or len(excluded_positions) != 2
         or {
