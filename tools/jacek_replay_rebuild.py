@@ -70,8 +70,8 @@ DEVELOPMENT_BANK_SEED = 2026082701
 FINAL_BANK_SEED = 2026082705
 BLIND_HOLDOUT_SEED = 2026082703
 HOLDOUT_GAME_SEED = 2026082704
-HOLDOUT_SOURCE_GAMES = 2_000
-HOLDOUT_CANDIDATE_GROUPS = 1_000
+HOLDOUT_SOURCE_GAMES = 40_000
+HOLDOUT_CANDIDATE_GROUPS = 35_000
 HOLDOUT_GENERATOR_WORKERS = 10
 HOLDOUT_GENERATOR_BASE_BUDGET = 1_000
 
@@ -579,6 +579,136 @@ def load_frozen_rebuild_corpus(
     return rebuild_corpus.RebuildCorpus(path, manifest)
 
 
+def _freeze_holdout_exclusion_cache(
+    *, shard_manifests: Sequence[pathlib.Path],
+    position_tsvs: Sequence[pathlib.Path],
+    root_manifests: Sequence[pathlib.Path],
+    output_directory: pathlib.Path,
+) -> tuple[set[str], set[bytes]]:
+    import jacek_replay_retention as retention
+
+    root = output_directory.resolve() / "exclusion-cache"
+    fingerprint_path = root / "canonical-fingerprints.bin"
+    groups_path = root / "root-groups.txt"
+    receipt_path = root / "receipt.json"
+    shard_paths = tuple(path.resolve() for path in shard_manifests)
+    position_paths = tuple(path.resolve() for path in position_tsvs)
+    root_paths = tuple(path.resolve() for path in root_manifests)
+    common: dict[str, object] = {
+        "schema": "papersoccer.jacek-rebuild-holdout-exclusion-cache.v1",
+        "rebuild_id": REBUILD_ID,
+        "inputs": {
+            "excluded_shards": [
+                retention.artifact_snapshot(path) for path in shard_paths
+            ],
+            "excluded_positions": [
+                retention.artifact_snapshot(path) for path in position_paths
+            ],
+            "excluded_roots": [
+                retention.artifact_snapshot(path) for path in root_paths
+            ],
+        },
+        "producer": retention._producer_identity(),
+    }
+
+    def load_cached() -> tuple[set[str], set[bytes]]:
+        receipt = load_json(receipt_path, "holdout exclusion cache receipt")
+        verify_body_hash(
+            receipt,
+            schema="papersoccer.jacek-rebuild-holdout-exclusion-cache.v1",
+            label="holdout exclusion cache receipt",
+        )
+        fingerprint_payload = fingerprint_path.read_bytes()
+        group_payload = groups_path.read_bytes()
+        if len(fingerprint_payload) % 32:
+            raise ValueError("holdout exclusion fingerprint cache is malformed")
+        fingerprints = {
+            fingerprint_payload[offset : offset + 32]
+            for offset in range(0, len(fingerprint_payload), 32)
+        }
+        try:
+            group_lines = group_payload.decode("utf-8").splitlines()
+        except UnicodeDecodeError as error:
+            raise ValueError("holdout exclusion root cache is malformed") from error
+        groups = set(group_lines)
+        expected = {
+            **common,
+            "exclusion_universe": {
+                "root_groups": len(groups),
+                "canonical_fingerprints": len(fingerprints),
+                "root_group_ids_sha256": hashlib.sha256(
+                    "\n".join(sorted(groups)).encode()
+                ).hexdigest(),
+                "canonical_fingerprints_sha256": hashlib.sha256(
+                    b"".join(sorted(fingerprints))
+                ).hexdigest(),
+            },
+            "artifacts": {
+                "root_groups": retention.artifact_snapshot(groups_path),
+                "canonical_fingerprints": retention.artifact_snapshot(
+                    fingerprint_path
+                ),
+            },
+        }
+        expected = {
+            **expected,
+            "body_sha256": sha256_bytes(canonical_json_bytes(expected)),
+        }
+        if (
+            receipt != expected
+            or not groups
+            or not fingerprints
+            or len(group_lines) != len(groups)
+            or group_payload
+            != ("\n".join(sorted(groups)) + "\n").encode()
+            or fingerprint_payload != b"".join(sorted(fingerprints))
+        ):
+            raise ValueError("holdout exclusion cache changed")
+        return groups, fingerprints
+
+    if receipt_path.exists() or fingerprint_path.exists() or groups_path.exists():
+        if not all(
+            path.is_file()
+            for path in (receipt_path, fingerprint_path, groups_path)
+        ):
+            raise ValueError("holdout exclusion cache is partial")
+        return load_cached()
+
+    groups, fingerprints = retention._exclusion_sets(
+        shard_manifests=shard_paths,
+        position_tsvs=position_paths,
+        root_manifests=root_paths,
+    )
+    if not groups or not fingerprints:
+        raise ValueError("holdout exclusion universe is empty")
+    group_payload = ("\n".join(sorted(groups)) + "\n").encode()
+    fingerprint_payload = b"".join(sorted(fingerprints))
+    atomic_write(groups_path, group_payload)
+    atomic_write(fingerprint_path, fingerprint_payload)
+    body: dict[str, object] = {
+        **common,
+        "exclusion_universe": {
+            "root_groups": len(groups),
+            "canonical_fingerprints": len(fingerprints),
+            "root_group_ids_sha256": hashlib.sha256(
+                "\n".join(sorted(groups)).encode()
+            ).hexdigest(),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                fingerprint_payload
+            ).hexdigest(),
+        },
+        "artifacts": {
+            "root_groups": retention.artifact_snapshot(groups_path),
+            "canonical_fingerprints": retention.artifact_snapshot(
+                fingerprint_path
+            ),
+        },
+    }
+    receipt = {**body, "body_sha256": sha256_bytes(canonical_json_bytes(body))}
+    atomic_write(receipt_path, canonical_json_bytes(receipt, pretty=True))
+    return load_cached()
+
+
 def freeze_blind_holdout(
     *, candidate_positions: pathlib.Path, training_input_receipt: pathlib.Path,
     excluded_shards: Sequence[pathlib.Path],
@@ -599,14 +729,25 @@ def freeze_blind_holdout(
         selection_seed=BLIND_HOLDOUT_SEED,
         source_quotas=(),
     )
+    resolved_shards = tuple(path.resolve() for path in excluded_shards)
+    resolved_positions = tuple(path.resolve() for path in excluded_positions)
+    resolved_roots = tuple(path.resolve() for path in excluded_roots)
+    excluded_groups, excluded_fingerprints = _freeze_holdout_exclusion_cache(
+        shard_manifests=resolved_shards,
+        position_tsvs=resolved_positions,
+        root_manifests=resolved_roots,
+        output_directory=output_directory,
+    )
     payload, manifest = retention.freeze_candidate_groups(
         candidate_positions=candidate_positions.resolve(),
         training_input_receipt=training_input_receipt.resolve(),
         campaign_id=REBUILD_ID,
         spec=spec,
-        excluded_shard_manifests=tuple(path.resolve() for path in excluded_shards),
-        excluded_position_tsvs=tuple(path.resolve() for path in excluded_positions),
-        excluded_root_manifests=tuple(path.resolve() for path in excluded_roots),
+        excluded_shard_manifests=resolved_shards,
+        excluded_position_tsvs=resolved_positions,
+        excluded_root_manifests=resolved_roots,
+        precomputed_excluded_groups=excluded_groups,
+        precomputed_excluded_fingerprints=excluded_fingerprints,
     )
     sealed_paths = tuple(path.resolve() for path in excluded_sealed_shards)
     if sealed_paths:

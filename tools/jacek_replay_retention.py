@@ -468,6 +468,8 @@ def freeze_candidate_groups(
     excluded_shard_manifests: Sequence[pathlib.Path] = (),
     excluded_position_tsvs: Sequence[pathlib.Path] = (),
     excluded_root_manifests: Sequence[pathlib.Path] = (),
+    precomputed_excluded_groups: set[str] | None = None,
+    precomputed_excluded_fingerprints: set[bytes] | None = None,
 ) -> tuple[bytes, dict]:
     """Select exact complete groups; a single overlapping row rejects its group."""
 
@@ -477,11 +479,22 @@ def freeze_candidate_groups(
     training_receipt = artifact_snapshot(training_input_receipt)
     candidates = load_position_rows(candidate_positions, required_split=TEACHER_SPLIT)
 
-    excluded_groups, excluded_fingerprints = _exclusion_sets(
-        shard_manifests=excluded_shard_manifests,
-        position_tsvs=excluded_position_tsvs,
-        root_manifests=excluded_root_manifests,
-    )
+    if (
+        (precomputed_excluded_groups is None)
+        != (precomputed_excluded_fingerprints is None)
+    ):
+        raise ValueError("retention precomputed exclusion sets are incomplete")
+    if precomputed_excluded_groups is None:
+        excluded_groups, excluded_fingerprints = _exclusion_sets(
+            shard_manifests=excluded_shard_manifests,
+            position_tsvs=excluded_position_tsvs,
+            root_manifests=excluded_root_manifests,
+        )
+    else:
+        excluded_groups = set(precomputed_excluded_groups)
+        excluded_fingerprints = set(precomputed_excluded_fingerprints or ())
+        if not excluded_groups or not excluded_fingerprints:
+            raise ValueError("retention precomputed exclusion sets are empty")
 
     grouped: dict[str, list[PositionRow]] = defaultdict(list)
     for row in candidates:

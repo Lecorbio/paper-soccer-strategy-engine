@@ -247,7 +247,22 @@ class JacekReplayRetentionTests(unittest.TestCase):
                 spec=spec,
                 excluded_position_tsvs=[excluded],
             )
+            excluded_groups, excluded_fingerprints = retention._exclusion_sets(
+                shard_manifests=(),
+                position_tsvs=(excluded,),
+                root_manifests=(),
+            )
+            cached = retention.freeze_candidate_groups(
+                candidate_positions=candidate,
+                training_input_receipt=training_receipt,
+                campaign_id="retention-fixture-v1",
+                spec=spec,
+                excluded_position_tsvs=[excluded],
+                precomputed_excluded_groups=excluded_groups,
+                precomputed_excluded_fingerprints=excluded_fingerprints,
+            )
             self.assertEqual(first, second)
+            self.assertEqual(first, cached)
             frozen_path = root / "frozen.tsv"
             frozen_path.write_bytes(first[0])
             frozen_rows = retention.load_position_rows(
