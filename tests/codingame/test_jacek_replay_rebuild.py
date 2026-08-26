@@ -734,6 +734,10 @@ class ReplayRebuildTests(unittest.TestCase):
                         output_directory=output,
                         workers=workers,
                     )
+                    rebuild.load_frozen_holdout_candidate_pool(
+                        output / "candidate-positions.tsv",
+                        output / "candidate-positions.json",
+                    )
                     payloads.append((output / "candidate-positions.tsv").read_bytes())
             self.assertEqual(payloads[0], payloads[1])
             self.assertEqual(payloads[0], payloads[2])

@@ -1024,7 +1024,7 @@ def freeze_holdout_from_corpus(
     import jacek_rebuild_corpus as rebuild_corpus
 
     corpus = load_frozen_rebuild_corpus(corpus_manifest)
-    validate_holdout_candidate_pool(candidate_positions, candidate_manifest)
+    load_frozen_holdout_candidate_pool(candidate_positions, candidate_manifest)
     shards: set[pathlib.Path] = set()
     for arm in ("search", "rank4"):
         shards.update(corpus.training_manifest_paths(arm))
@@ -1531,6 +1531,100 @@ def validate_holdout_candidate_pool(
     return manifest
 
 
+def load_frozen_holdout_candidate_pool(
+    positions_path: pathlib.Path, manifest_path: pathlib.Path,
+) -> dict[str, object]:
+    """Replay a once-deep-validated procedural pool through file receipts."""
+
+    import jacek_replay_retention as retention
+
+    positions_path = positions_path.resolve()
+    manifest = load_json(manifest_path.resolve(), "frozen holdout candidates")
+    verify_body_hash(
+        manifest,
+        schema="papersoccer.jacek-replay-rebuild-holdout-candidates.v1",
+        label="frozen holdout candidates",
+    )
+    configuration = manifest.get("configuration")
+    expected_rows = HOLDOUT_CANDIDATE_GROUPS * retention.ROWS_PER_GROUP
+    if (
+        manifest.get("rebuild_id") != REBUILD_ID
+        or configuration
+        != {
+            "source_games": HOLDOUT_SOURCE_GAMES,
+            "worker_count_affects_output": False,
+            "base_budget": HOLDOUT_GENERATOR_BASE_BUDGET,
+            "maximum_turns": 200,
+            "seed": HOLDOUT_GAME_SEED,
+            "candidate_groups": HOLDOUT_CANDIDATE_GROUPS,
+            "rows_per_group": retention.ROWS_PER_GROUP,
+            "source": "rank4-vs-rank4",
+        }
+        or manifest.get("teacher_labels_opened") is not False
+        or manifest.get("selected_model_opened") is not False
+        or manifest.get("rows") != expected_rows
+    ):
+        raise ValueError("frozen holdout candidate policy changed")
+    generator = manifest.get("generator")
+    plan_snapshot = manifest.get("game_plan")
+    raw_outputs = manifest.get("raw_outputs")
+    raw_receipts = manifest.get("raw_receipts")
+    if (
+        not isinstance(generator, dict)
+        or not isinstance(plan_snapshot, dict)
+        or not isinstance(raw_outputs, list)
+        or len(raw_outputs) != HOLDOUT_SOURCE_GAMES
+        or not isinstance(raw_receipts, list)
+        or len(raw_receipts) != HOLDOUT_SOURCE_GAMES
+    ):
+        raise ValueError("frozen holdout candidate lineage is incomplete")
+    for snapshot in (generator, plan_snapshot, *raw_outputs, *raw_receipts):
+        if (
+            not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("path"), str)
+            or artifact_snapshot(pathlib.Path(snapshot["path"])) != snapshot
+        ):
+            raise ValueError("frozen holdout candidate artifact changed")
+    plan = load_json(pathlib.Path(plan_snapshot["path"]), "holdout game plan")
+    verify_body_hash(
+        plan,
+        schema="papersoccer.jacek-rebuild-holdout-game-plan.v1",
+        label="holdout game plan",
+    )
+    expected_plan_rows = [
+        {
+            "game_ordinal": ordinal,
+            "base_seed": (
+                HOLDOUT_GAME_SEED + ordinal * 32 * 0x9E3779B97F4A7C15
+            ) & ((1 << 64) - 1),
+        }
+        for ordinal in range(HOLDOUT_SOURCE_GAMES)
+    ]
+    if (
+        plan.get("rebuild_id") != REBUILD_ID
+        or plan.get("generator") != generator
+        or plan.get("games") != HOLDOUT_SOURCE_GAMES
+        or plan.get("base_budget") != HOLDOUT_GENERATOR_BASE_BUDGET
+        or plan.get("maximum_turns") != 200
+        or plan.get("root_seed") != HOLDOUT_GAME_SEED
+        or plan.get("rows") != expected_plan_rows
+    ):
+        raise ValueError("frozen holdout game plan changed")
+    payload = positions_path.read_bytes()
+    if (
+        sha256_bytes(payload) != manifest.get("positions_sha256")
+        or len(payload.splitlines()) != expected_rows + 1
+        or not payload.startswith((retention.POSITION_HEADER + "\n").encode())
+        or not isinstance(manifest.get("accepted_source_groups"), int)
+        or not isinstance(manifest.get("rejected_short_games"), int)
+        or manifest["accepted_source_groups"] < HOLDOUT_CANDIDATE_GROUPS
+        or manifest["accepted_source_groups"]
+        + manifest["rejected_short_games"] != HOLDOUT_SOURCE_GAMES
+    ):
+        raise ValueError("frozen holdout candidate coverage changed")
+    return manifest
+
+
 def freeze_rebuild_inputs(
     *, repository: pathlib.Path, corpus_manifest: pathlib.Path,
     build_manifest: pathlib.Path,
@@ -1706,7 +1800,7 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     candidate_positions_path = pathlib.Path(
         body["blind_holdout_candidate_positions"]["path"]
     )
-    validate_holdout_candidate_pool(
+    load_frozen_holdout_candidate_pool(
         candidate_positions_path, candidate_manifest_path
     )
     candidate_manifest = load_json(
