@@ -752,17 +752,23 @@ def freeze_blind_holdout(
     sealed_paths = tuple(path.resolve() for path in excluded_sealed_shards)
     if sealed_paths:
         sealed_fingerprints = _sealed_feature_fingerprints(sealed_paths)
-        selected_roots = {
-            str(record["root_group_id"])
-            for record in manifest["selection"]["groups"]
-        }
-        candidate_rows = retention.load_position_rows(
-            candidate_positions.resolve(), required_split=retention.TEACHER_SPLIT
-        )
+        with tempfile.NamedTemporaryFile(
+            dir=output_directory,
+            prefix=".selected-holdout.",
+            suffix=".tsv",
+            delete=False,
+        ) as handle:
+            selected_temporary = pathlib.Path(handle.name)
+            handle.write(payload)
+        try:
+            selected_rows = retention.load_position_rows(
+                selected_temporary,
+                required_split=retention.TEACHER_SPLIT,
+            )
+        finally:
+            selected_temporary.unlink(missing_ok=True)
         selected_fingerprints = {
-            row.canonical_fingerprint
-            for row in candidate_rows
-            if row.root_group_id in selected_roots
+            row.canonical_fingerprint for row in selected_rows
         }
         overlap = selected_fingerprints & sealed_fingerprints
         if overlap or len(selected_fingerprints) != 12_000:
