@@ -1321,9 +1321,26 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                 matched_report=matched,
                 rank4_report=rank4,
                 jacek_nn_report=jacek,
+                anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                original_anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                original_anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
                 uncontended_max_ms=999.999,
             )
             self.assertTrue(decision["eligible_for_local_publication"])
+            self.assertEqual(decision["anchor_candidate"]["sign_accuracy"], 0.855)
 
             report(matched, "jacek-replay", (260, 266))
             rejected = workflow.final_decision(
@@ -1331,9 +1348,114 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                 matched_report=matched,
                 rank4_report=rank4,
                 jacek_nn_report=jacek,
+                anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                original_anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                original_anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
                 uncontended_max_ms=999.999,
             )
             self.assertFalse(rejected["eligible_for_local_publication"])
+
+            report(matched, "jacek-replay", (260, 267))
+            sign_rejected = workflow.final_decision(
+                pilot_report=pilot,
+                matched_report=matched,
+                rank4_report=rank4,
+                jacek_nn_report=jacek,
+                anchor_candidate={
+                    "sign_accuracy": 0.854999,
+                    "weighted_huber": 0.051,
+                },
+                anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                original_anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                original_anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                uncontended_max_ms=999.999,
+            )
+            self.assertIn(
+                "canonical anchor sign noninferiority failed",
+                sign_rejected["errors"],
+            )
+
+            huber_rejected = workflow.final_decision(
+                pilot_report=pilot,
+                matched_report=matched,
+                rank4_report=rank4,
+                jacek_nn_report=jacek,
+                anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051001,
+                },
+                anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                original_anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                original_anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                uncontended_max_ms=999.999,
+            )
+            self.assertIn(
+                "canonical anchor Huber noninferiority failed",
+                huber_rejected["errors"],
+            )
+
+            original_rejected = workflow.final_decision(
+                pilot_report=pilot,
+                matched_report=matched,
+                rank4_report=rank4,
+                jacek_nn_report=jacek,
+                anchor_candidate={
+                    "sign_accuracy": 0.855,
+                    "weighted_huber": 0.051,
+                },
+                anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                original_anchor_candidate={
+                    "sign_accuracy": 0.854999,
+                    "weighted_huber": 0.051001,
+                },
+                original_anchor_incumbent={
+                    "sign_accuracy": 0.86,
+                    "weighted_huber": 0.05,
+                },
+                uncontended_max_ms=999.999,
+            )
+            self.assertIn(
+                "original incumbent anchor sign noninferiority failed",
+                original_rejected["errors"],
+            )
+            self.assertIn(
+                "original incumbent anchor Huber noninferiority failed",
+                original_rejected["errors"],
+            )
 
     def test_gate_panels_are_globally_sharded_resumable_and_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

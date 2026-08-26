@@ -75,9 +75,40 @@ prevents a rotated or reflected training state from reappearing in model
 selection.
 
 Training anchors are the three distinct R0, R1, and R2 train shards—not merely
-the latest round's shard.  The regression gate likewise combines all three
-canonical validation shards.  Their nine-manifest ancestry must exactly match
-the source-shard list in the selected canonical Round-2 model.
+the latest round's shard.  Retention selection combines all three canonical
+validation shards, while the post-selection regression gate combines all three
+canonical test shards.  Their nine-manifest ancestry must exactly match the
+source-shard list in the selected canonical Round-2 model.
+
+Retention-safe mixed training starts both matched student arms from the exact
+frozen phase actor; the three seeds change deterministic row order, never the
+initial weights.  Every 256-row batch contains 64 new rows and 192 canonical
+anchor rows in both pilot and full phases.  New and anchor weighted-Huber
+losses are normalized separately and combined with fixed 0.25/0.75
+coefficients at learning rate 6e-5, so heavy deduplication weights cannot
+silently change the source mixture.  The new stream receives a complete fresh
+permutation each epoch, while the anchor cursor continues across epochs without
+repeating before a full permutation is consumed.
+
+Checkpoint selection has two independent validation objectives.  The common
+phase adjudicator (4,000 rows in the pilot and 8,000 in the full phase) must
+improve over epoch zero, and the three canonical validation shards must remain
+within 0.5 percentage points of the actor's sign accuracy and 2% of its
+weighted-Huber error.  An early qualifying checkpoint may be preserved, but
+training and patience cannot stop before one complete anchor pass.  If no
+trained checkpoint qualifies, the exact actor bytes are retained.  Canonical
+test shards are never exposed to training or seed/epoch selection; stage 17
+uses their 121,052 rows for the post-selection retention gate.  The full
+decision applies noninferiority against both the pilot actor and the original
+campaign incumbent, preventing two phases from compounding their allowed
+slack.
+
+`tools/jacek_replay_retention.py` additionally provides a training-incompatible
+blind-holdout format for procedural post-selection audits.  It freezes whole
+root groups before model selection, opens only strict Rank-4 400k fixed-work
+labels afterwards, and requires both point and root-cluster noninferiority.
+The standalone holdout strengthens evidence; it is never an input to the
+trainer and does not replace the canonical test or game gates.
 
 ## Resource policy
 

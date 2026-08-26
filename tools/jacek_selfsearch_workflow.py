@@ -35,9 +35,9 @@ from jacek_replay_workflow import (
 )
 
 
-AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v5"
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v5"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v5"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v6"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v6"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v6"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -178,21 +178,24 @@ PILOT_CONFIGURATION = {
     "hard_fraction_denominator": 4,
     "adjudicator_positions": 2_000,
     "adjudicator_tree_nodes": 1_000_000,
-    "new_rows_per_batch": 128,
-    "anchor_rows_per_batch": 128,
+    "new_rows_per_batch": 64,
+    "anchor_rows_per_batch": 192,
+    "training_learning_rate": 0.00006,
+    "new_loss_coefficient": 0.25,
+    "anchor_loss_coefficient": 0.75,
+    "retention_sign_tolerance": 0.005,
+    "retention_huber_ratio": 1.02,
     "training_seeds": [20260901, 20260902, 20260903],
 }
 FULL_CONFIGURATION = {
     **{key: value for key, value in PILOT_CONFIGURATION.items() if key not in {
         "campaign_id", "games", "positions_per_game", "adjudicator_positions",
-        "new_rows_per_batch", "anchor_rows_per_batch", "training_seeds"
+        "training_seeds"
     }},
     "campaign_id": FULL_CAMPAIGN_ID,
     "games": 10_000,
     "positions_per_game": 20,
     "adjudicator_positions": 4_000,
-    "new_rows_per_batch": 192,
-    "anchor_rows_per_batch": 64,
     "training_seeds": [20260904, 20260905, 20260906],
 }
 
@@ -1008,9 +1011,13 @@ def final_decision(
     matched_report: pathlib.Path,
     rank4_report: pathlib.Path,
     jacek_nn_report: pathlib.Path,
+    anchor_candidate: Mapping[str, float],
+    anchor_incumbent: Mapping[str, float],
+    original_anchor_candidate: Mapping[str, float],
+    original_anchor_incumbent: Mapping[str, float],
     uncontended_max_ms: float,
 ) -> dict:
-    """Apply the frozen 980 ms promotion thresholds to four protected panels."""
+    """Apply the frozen full-campaign strength, retention, and latency gates."""
 
     reports = {
         "pilot-teacher": validate_gate_report(
@@ -1043,6 +1050,22 @@ def final_decision(
         or float(uncontended_max_ms) >= 1_000.0
     ):
         errors.append("uncontended latency gate failed")
+    candidate_sign = float(anchor_candidate["sign_accuracy"])
+    incumbent_sign = float(anchor_incumbent["sign_accuracy"])
+    candidate_huber = float(anchor_candidate["weighted_huber"])
+    incumbent_huber = float(anchor_incumbent["weighted_huber"])
+    if candidate_sign < incumbent_sign - 0.005:
+        errors.append("canonical anchor sign noninferiority failed")
+    if candidate_huber > incumbent_huber * 1.02:
+        errors.append("canonical anchor Huber noninferiority failed")
+    original_candidate_sign = float(original_anchor_candidate["sign_accuracy"])
+    original_incumbent_sign = float(original_anchor_incumbent["sign_accuracy"])
+    original_candidate_huber = float(original_anchor_candidate["weighted_huber"])
+    original_incumbent_huber = float(original_anchor_incumbent["weighted_huber"])
+    if original_candidate_sign < original_incumbent_sign - 0.005:
+        errors.append("original incumbent anchor sign noninferiority failed")
+    if original_candidate_huber > original_incumbent_huber * 1.02:
+        errors.append("original incumbent anchor Huber noninferiority failed")
     return {
         "schema": FINAL_DECISION_SCHEMA,
         "eligible_for_local_publication": not errors,
@@ -1053,6 +1076,10 @@ def final_decision(
             for name, record in counts.items()
         },
         "uncontended_max_ms": uncontended_max_ms,
+        "anchor_candidate": dict(anchor_candidate),
+        "anchor_incumbent": dict(anchor_incumbent),
+        "original_anchor_candidate": dict(original_anchor_candidate),
+        "original_anchor_incumbent": dict(original_anchor_incumbent),
         "reports": {
             name: artifact_snapshot(path)
             for name, path in {
@@ -2231,27 +2258,91 @@ def _validate_model_output(
     new_manifests: Sequence[pathlib.Path],
     anchor_manifests: Sequence[pathlib.Path],
     adjudicator_manifest: pathlib.Path,
+    retention_validation_manifests: Sequence[pathlib.Path],
+    initial_runtime: pathlib.Path,
     new_rows: int,
     anchor_rows: int,
+    learning_rate: float,
+    new_loss_coefficient: float,
+    anchor_loss_coefficient: float,
+    retention_sign_tolerance: float,
+    retention_huber_ratio: float,
 ) -> dict:
+    import jacek_replay_train as training
+
     runtime = output_directory / "jacek_replay_bfm.runtime"
     manifest_path = output_directory / "jacek_replay_bfm.runtime.json"
     manifest = _load_json(manifest_path, "self-search model manifest")
     training_report = manifest.get("training", {})
     reports = training_report.get("seed_reports")
+    _, expected_initial_runtime = training.load_runtime(initial_runtime)
     expected_sources = [
         _load_json(path, "self-search source shard")
-        for path in (*new_manifests, *anchor_manifests, adjudicator_manifest)
+        for path in (
+            *new_manifests,
+            *anchor_manifests,
+            adjudicator_manifest,
+            *retention_validation_manifests,
+        )
     ]
     expected_batching = {
-        "kind": "deterministic-two-stream-cycling-v1",
+        "kind": "deterministic-continuous-two-stream-coverage-v2",
         "new_rows_per_batch": new_rows,
         "anchor_rows_per_batch": anchor_rows,
-        "epoch_length": "new-stream-covered-once-anchor-sampled",
+        "epoch_length": "ceil-new-rows/new-quota-batches",
         "row_order": "new-then-anchor",
+        "new_stream": "fresh-complete-permutation-each-epoch-with-padding",
+        "anchor_cross_epoch": (
+            "continuous-no-repeat-until-permutation-complete"
+        ),
     }
+    expected_loss = {
+        "name": "separately-normalized-weighted-huber",
+        "delta": 0.25,
+        "new_coefficient": new_loss_coefficient,
+        "anchor_coefficient": anchor_loss_coefficient,
+    }
+    expected_initialization = {
+        "kind": "exact-supplied-runtime-all-seeds-order-only-v1"
+    }
+    expected_retention_policy = {
+        "monitor": "explicit-disjoint-retention-validation",
+        "minimum_training_anchor_permutations_before-stop": 1,
+        "checkpoint_may_precede_complete_anchor_coverage": True,
+        "minimum_sign_accuracy": "actor-sign-minus-tolerance",
+        "sign_tolerance": retention_sign_tolerance,
+        "maximum_weighted_huber": "actor-huber-times-ratio",
+        "huber_ratio": retention_huber_ratio,
+        "trained_checkpoint_order": (
+            "minimum-new-adjudicator-Huber-then-sign-correlation"
+        ),
+        "epoch_zero_comparator": "new-adjudicator-selection-key",
+        "fallback": (
+            "exact-supplied-runtime-when-no-feasible-trained-epoch-beats-epoch-zero"
+        ),
+        "patience_starts_after_complete-anchor-coverage": True,
+    }
+    expected_optimizer = {
+        "name": "adamw", "epochs": 50, "patience": 8,
+        "batch_size": 256, "learning_rate": learning_rate,
+        "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
+    }
+    expected_seed_configuration = training._seed_training_configuration({
+        "epochs": 50,
+        "patience": 8,
+        "batch_size": 256,
+        "learning_rate": learning_rate,
+        "weight_decay": 1e-5,
+        "new_rows_per_batch": new_rows,
+        "anchor_rows_per_batch": anchor_rows,
+        "new_loss_coefficient": new_loss_coefficient,
+        "anchor_loss_coefficient": anchor_loss_coefficient,
+        "retention_sign_tolerance": retention_sign_tolerance,
+        "retention_huber_ratio": retention_huber_ratio,
+        "selection_validation": "explicit-common-adjudicator",
+    })
     if (
-        manifest.get("schema") != "papersoccer.jacek-replay-bfm-model.v1"
+        manifest.get("schema") != "papersoccer.jacek-replay-bfm-model.v2"
         or not runtime.is_file()
         or manifest.get("runtime", {}).get("artifact_sha256") != sha256(runtime)
         or manifest.get("architecture", {}).get("dimensions") != [6301, 192, 32, 1]
@@ -2262,13 +2353,21 @@ def _validate_model_output(
         != list(seeds)
         or training_report.get("selection_validation", {}).get("kind")
         != "explicit-common-adjudicator"
-        or training_report.get("optimizer") != {
-            "name": "adamw", "epochs": 50, "patience": 8,
-            "batch_size": 256, "learning_rate": 0.001,
-            "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
-        }
-        or training_report.get("loss") != {"name": "weighted-huber", "delta": 0.25}
+        or training_report.get("optimizer") != expected_optimizer
+        or training_report.get("initialization") != expected_initialization
+        or training_report.get("initial_runtime") != expected_initial_runtime
+        or training_report.get("loss") != expected_loss
         or training_report.get("batching") != expected_batching
+        or training_report.get("retention_selection", {}).get("policy")
+        != expected_retention_policy
+        or training_report.get("selection")
+        != (
+            "choose each seed's best epoch that beats epoch zero on the new "
+            "adjudicator and passes disjoint retention validation; continue "
+            "training through complete anchor coverage; then choose minimum "
+            "adjudicator Huber followed by sign, correlation, and seed"
+        )
+        or training_report.get("chosen_seed") not in seeds
     ):
         raise ValueError("self-search selected model is stale or incomplete")
     publications = training_report.get("seed_checkpoints")
@@ -2281,6 +2380,8 @@ def _validate_model_output(
     ):
         raise ValueError("self-search seed checkpoint set is incomplete")
     expected_files: set[str] = set()
+    retention_monitor: dict | None = None
+    chosen_checkpoint: pathlib.Path | None = None
     for seed, publication in zip(seeds, publications, strict=True):
         if not isinstance(publication, dict):
             raise ValueError("self-search seed checkpoint binding is malformed")
@@ -2299,20 +2400,60 @@ def _validate_model_output(
         ):
             raise ValueError("self-search seed checkpoint artifact is stale")
         receipt = _load_json(receipt_path, "self-search seed checkpoint receipt")
+        body = dict(receipt)
+        body_sha256 = body.pop("body_sha256", None)
+        _, checkpoint_runtime = training.load_runtime(checkpoint)
+        seed_report = next(
+            (report for report in reports if report.get("seed") == seed), None
+        )
+        receipt_inputs = receipt.get("inputs", {})
+        monitor = receipt_inputs.get("retention_monitor")
         if (
             receipt.get("schema")
-            != "papersoccer.jacek-replay-bfm-seed-checkpoint.v1"
+            != "papersoccer.jacek-replay-bfm-seed-checkpoint.v2"
             or receipt.get("seed") != seed
-            or receipt.get("checkpoint", {}).get("file") != checkpoint_name
-            or receipt.get("checkpoint", {}).get("artifact_sha256")
-            != sha256(checkpoint)
+            or not isinstance(body_sha256, str)
+            or body_sha256 != hashlib.sha256(
+                canonical_json_bytes(body)
+            ).hexdigest()
+            or receipt.get("configuration") != expected_seed_configuration
+            or receipt_inputs.get("initial_runtime") != expected_initial_runtime
+            or receipt_inputs.get("anchor_training_monitor")
+            != receipt_inputs.get("training_streams", {}).get("anchor")
+            or monitor != training_report.get("retention_selection", {}).get("dataset")
+            or receipt_inputs.get("anchor_training_monitor")
+            != training_report.get("anchor_training_monitor")
+            or receipt_inputs.get("datasets", {}).get("validation")
+            != training_report.get("selection_validation", {}).get("dataset")
+            or receipt.get("checkpoint")
+            != {"file": checkpoint_name, **checkpoint_runtime}
+            or receipt.get("training_report") != seed_report
+            or not isinstance(seed_report, dict)
+            or seed_report.get("initial", {}).get("runtime")
+            != expected_initial_runtime
+            or seed_report.get("selection")
+            not in {"feasible-trained-epoch", "exact-initial-runtime-fallback"}
+            or seed_report.get("retention_thresholds", {}).get("sign_tolerance")
+            != retention_sign_tolerance
+            or seed_report.get("retention_thresholds", {}).get("huber_ratio")
+            != retention_huber_ratio
+            or isinstance(seed_report.get("anchor_coverage_complete_epoch"), bool)
+            or not isinstance(seed_report.get("anchor_coverage_complete_epoch"), int)
+            or seed_report["anchor_coverage_complete_epoch"] <= 0
         ):
             raise ValueError("self-search seed checkpoint receipt is stale")
+        if retention_monitor is None:
+            retention_monitor = monitor
+        elif retention_monitor != monitor:
+            raise ValueError("self-search retention monitor identity changed across seeds")
+        if seed == training_report["chosen_seed"]:
+            chosen_checkpoint = checkpoint
     if {path.name for path in checkpoint_directory.iterdir()} != expected_files:
         raise ValueError("self-search seed checkpoint directory has unexpected files")
-    # This also validates the exact 6301->192->32->1 runtime layout.
-    import jacek_replay_train as training
+    # These loads also validate the exact 6301->192->32->1 runtime layout.
     training.load_runtime(runtime)
+    if chosen_checkpoint is None or runtime.read_bytes() != chosen_checkpoint.read_bytes():
+        raise ValueError("self-search selected runtime does not match its chosen seed")
     return manifest
 
 
@@ -2320,7 +2461,11 @@ def run_training_arm(
     *, python: pathlib.Path, trainer: pathlib.Path,
     new_manifests: Sequence[pathlib.Path], anchor_manifests: Sequence[pathlib.Path],
     adjudicator_manifest: pathlib.Path, output_directory: pathlib.Path,
-    seeds: Sequence[int], new_rows: int, anchor_rows: int,
+    retention_validation_manifests: Sequence[pathlib.Path],
+    initial_runtime: pathlib.Path, seeds: Sequence[int],
+    new_rows: int, anchor_rows: int, learning_rate: float,
+    new_loss_coefficient: float, anchor_loss_coefficient: float,
+    retention_sign_tolerance: float, retention_huber_ratio: float,
 ) -> dict:
     output_directory.mkdir(parents=True, exist_ok=True)
     selected_runtime = output_directory / "jacek_replay_bfm.runtime"
@@ -2332,7 +2477,13 @@ def run_training_arm(
             output_directory, seeds=seeds, new_manifests=new_manifests,
             anchor_manifests=anchor_manifests,
             adjudicator_manifest=adjudicator_manifest,
-            new_rows=new_rows, anchor_rows=anchor_rows,
+            retention_validation_manifests=retention_validation_manifests,
+            initial_runtime=initial_runtime, new_rows=new_rows,
+            anchor_rows=anchor_rows, learning_rate=learning_rate,
+            new_loss_coefficient=new_loss_coefficient,
+            anchor_loss_coefficient=anchor_loss_coefficient,
+            retention_sign_tolerance=retention_sign_tolerance,
+            retention_huber_ratio=retention_huber_ratio,
         )
     command = [str(python), str(trainer)]
     for path in new_manifests:
@@ -2340,12 +2491,19 @@ def run_training_arm(
     for path in anchor_manifests:
         command.extend(("--anchor-shard-manifest", str(path)))
     command.extend(("--selection-validation-manifest", str(adjudicator_manifest)))
+    for path in retention_validation_manifests:
+        command.extend(("--retention-validation-manifest", str(path)))
     command.extend(
         (
             "--new-rows-per-batch", str(new_rows),
             "--anchor-rows-per-batch", str(anchor_rows),
+            "--initial-runtime", str(initial_runtime),
+            "--new-loss-coefficient", str(new_loss_coefficient),
+            "--anchor-loss-coefficient", str(anchor_loss_coefficient),
+            "--retention-sign-tolerance", str(retention_sign_tolerance),
+            "--retention-huber-ratio", str(retention_huber_ratio),
             "--batch-size", "256", "--seeds", ",".join(map(str, seeds)),
-            "--epochs", "50", "--patience", "8", "--learning-rate", "0.001",
+            "--epochs", "50", "--patience", "8", "--learning-rate", str(learning_rate),
             "--weight-decay", "1e-5", "--seed-workers", "2",
             "--seed-checkpoint-directory", str(output_directory / "training-seeds"),
             "--resume-seeds", "--output-directory", str(output_directory),
@@ -2356,18 +2514,29 @@ def run_training_arm(
         output_directory, seeds=seeds, new_manifests=new_manifests,
         anchor_manifests=anchor_manifests,
         adjudicator_manifest=adjudicator_manifest,
-        new_rows=new_rows, anchor_rows=anchor_rows,
+        retention_validation_manifests=retention_validation_manifests,
+        initial_runtime=initial_runtime, new_rows=new_rows,
+        anchor_rows=anchor_rows, learning_rate=learning_rate,
+        new_loss_coefficient=new_loss_coefficient,
+        anchor_loss_coefficient=anchor_loss_coefficient,
+        retention_sign_tolerance=retention_sign_tolerance,
+        retention_huber_ratio=retention_huber_ratio,
     )
 
 
 def anchor_metrics(
     *, candidate_runtime: pathlib.Path, incumbent_runtime: pathlib.Path,
     anchor_validation_manifests: Sequence[pathlib.Path],
+    expected_split: str = "validation",
 ) -> dict:
     import jacek_replay_train as training
 
     shards = [training.load_csr_shard(path) for path in anchor_validation_manifests]
-    if not shards or any(shard.split != "validation" or len(shard) == 0 for shard in shards):
+    if expected_split not in {"validation", "test"}:
+        raise ValueError("canonical anchor metric split is invalid")
+    if not shards or any(
+        shard.split != expected_split or len(shard) == 0 for shard in shards
+    ):
         raise ValueError("canonical anchor validation shards are invalid")
     dataset = training.combine_shards(shards)
     candidate, _ = training.load_runtime(candidate_runtime)
@@ -2810,8 +2979,10 @@ def run_phase(
     *, spec: PhaseSpec, output: pathlib.Path, resume: bool,
     roots_tsv: pathlib.Path, roots_manifest: pathlib.Path,
     actor: pathlib.Path, diversity: pathlib.Path,
+    original_incumbent: pathlib.Path | None = None,
     executables: CampaignExecutables,
     anchor_train_manifests: Sequence[pathlib.Path],
+    retention_validation_manifests: Sequence[pathlib.Path],
     anchor_validation_manifests: Sequence[pathlib.Path],
     canonical_prior_manifests: Sequence[pathlib.Path],
     opening_exclusions: Sequence[pathlib.Path],
@@ -2827,6 +2998,10 @@ def run_phase(
     output.mkdir(parents=True, exist_ok=True)
     if build_manifest is None or source_identities is None:
         raise ValueError("campaign phase has no frozen Release build identity")
+    if spec.name == "full" and original_incumbent is None:
+        raise ValueError("full campaign phase has no original incumbent retention reference")
+    if spec.name == "pilot" and original_incumbent is not None:
+        raise ValueError("pilot campaign phase must use its actor as retention reference")
     phase_environment = environment_identity()
     phase_environment["release_build"] = artifact_snapshot(build_manifest)
     manager = GuardedStageManager(
@@ -2869,6 +3044,7 @@ def run_phase(
     rank4_runtime = rank4_model_directory / "jacek_replay_bfm.runtime"
     rank4_model_manifest = rank4_model_directory / "jacek_replay_bfm.runtime.json"
     anchor_metrics_path = output / "anchor-metrics.json"
+    original_anchor_metrics_path = output / "anchor-metrics-original-incumbent.json"
     bank = output / "gate-openings.tsv"
     latency_report = output / "latency-audit.json"
     decision_path = output / "decision.json"
@@ -3141,7 +3317,25 @@ def run_phase(
                 for index, path in enumerate(anchor_train_manifests)
             },
             "adjudicator": adjudicator_validation,
+            "initial_runtime": actor,
+            **{
+                f"retention_validation_{index}": path
+                for index, path in enumerate(retention_validation_manifests)
+            },
         })
+        learning_rate = float(spec.configuration["training_learning_rate"])
+        new_loss_coefficient = float(
+            spec.configuration["new_loss_coefficient"]
+        )
+        anchor_loss_coefficient = float(
+            spec.configuration["anchor_loss_coefficient"]
+        )
+        retention_sign_tolerance = float(
+            spec.configuration["retention_sign_tolerance"]
+        )
+        retention_huber_ratio = float(
+            spec.configuration["retention_huber_ratio"]
+        )
         return manager.execute(
             ordinal=ordinal, name=name,
             configuration={
@@ -3149,7 +3343,25 @@ def run_phase(
                 "new_rows_per_batch": spec.configuration["new_rows_per_batch"],
                 "anchor_rows_per_batch": spec.configuration["anchor_rows_per_batch"],
                 "batch_size": 256, "epochs": 50, "patience": 8,
-                "learning_rate": 0.001, "weight_decay": 1e-5, "seed_workers": 2,
+                "learning_rate": learning_rate, "weight_decay": 1e-5,
+                "seed_workers": 2,
+                "initialization": {
+                    "kind": "exact-phase-actor-runtime",
+                    "runtime_sha256": sha256(actor),
+                },
+                "loss": {
+                    "kind": "separately-normalized-weighted-huber",
+                    "new_coefficient": new_loss_coefficient,
+                    "anchor_coefficient": anchor_loss_coefficient,
+                },
+                "retention": {
+                    "monitor": "explicit-disjoint-retention-validation",
+                    "sign_tolerance": retention_sign_tolerance,
+                    "huber_ratio": retention_huber_ratio,
+                    "minimum_training_anchor_permutations_before_stop": 1,
+                    "checkpoint_may_precede_complete_anchor_coverage": True,
+                    "fallback": "exact-phase-actor-epoch-zero",
+                },
             },
             producers={"workflow": workflow_source, "trainer": executables.trainer},
             inputs=inputs, outputs={"runtime": runtime, "manifest": manifest},
@@ -3158,9 +3370,16 @@ def run_phase(
                 new_manifests=new_manifests,
                 anchor_manifests=anchor_train_manifests,
                 adjudicator_manifest=adjudicator_validation, output_directory=directory,
+                retention_validation_manifests=retention_validation_manifests,
+                initial_runtime=actor,
                 seeds=list(spec.configuration["training_seeds"]),
                 new_rows=int(spec.configuration["new_rows_per_batch"]),
                 anchor_rows=int(spec.configuration["anchor_rows_per_batch"]),
+                learning_rate=learning_rate,
+                new_loss_coefficient=new_loss_coefficient,
+                anchor_loss_coefficient=anchor_loss_coefficient,
+                retention_sign_tolerance=retention_sign_tolerance,
+                retention_huber_ratio=retention_huber_ratio,
             ),
             validator=lambda _result: _validate_model_output(
                 directory,
@@ -3168,8 +3387,15 @@ def run_phase(
                 new_manifests=new_manifests,
                 anchor_manifests=anchor_train_manifests,
                 adjudicator_manifest=adjudicator_validation,
+                retention_validation_manifests=retention_validation_manifests,
+                initial_runtime=actor,
                 new_rows=int(spec.configuration["new_rows_per_batch"]),
                 anchor_rows=int(spec.configuration["anchor_rows_per_batch"]),
+                learning_rate=learning_rate,
+                new_loss_coefficient=new_loss_coefficient,
+                anchor_loss_coefficient=anchor_loss_coefficient,
+                retention_sign_tolerance=retention_sign_tolerance,
+                retention_huber_ratio=retention_huber_ratio,
             ),
         )
 
@@ -3190,22 +3416,47 @@ def run_phase(
         report = anchor_metrics(
             candidate_runtime=search_runtime, incumbent_runtime=actor,
             anchor_validation_manifests=anchor_validation_manifests,
+            expected_split="test",
         )
         _atomic_json(anchor_metrics_path, report)
-        return report
+        if original_incumbent is None:
+            return report
+        original_report = anchor_metrics(
+            candidate_runtime=search_runtime,
+            incumbent_runtime=original_incumbent,
+            anchor_validation_manifests=anchor_validation_manifests,
+            expected_split="test",
+        )
+        if original_report["candidate_metrics"] != report["candidate_metrics"]:
+            raise ValueError("anchor candidate metrics changed across retention references")
+        _atomic_json(original_anchor_metrics_path, original_report)
+        return {"phase_actor": report, "original_incumbent": original_report}
 
-    manager.execute(
-        ordinal=17, name="anchor-metrics", configuration={"canonical_anchor": True},
-        producers={"workflow": workflow_source, "trainer": executables.trainer},
-        inputs={
-            "candidate": search_runtime,
-            "incumbent": actor,
-            **{
-                f"validation_{index}": path
-                for index, path in enumerate(anchor_validation_manifests)
-            },
+    anchor_metric_inputs = {
+        "candidate": search_runtime,
+        "incumbent": actor,
+        **{
+            f"validation_{index}": path
+            for index, path in enumerate(anchor_validation_manifests)
         },
-        outputs={"metrics": anchor_metrics_path}, action=make_anchor_metrics,
+    }
+    anchor_metric_outputs = {"metrics": anchor_metrics_path}
+    anchor_metric_configuration: dict[str, object] = {
+        "canonical_anchor": True,
+        "split": "test",
+        "phase_actor_reference": True,
+    }
+    if original_incumbent is not None:
+        anchor_metric_inputs["original_incumbent"] = original_incumbent
+        anchor_metric_outputs["original_incumbent_metrics"] = (
+            original_anchor_metrics_path
+        )
+        anchor_metric_configuration["original_incumbent_reference"] = True
+    manager.execute(
+        ordinal=17, name="anchor-metrics", configuration=anchor_metric_configuration,
+        producers={"workflow": workflow_source, "trainer": executables.trainer},
+        inputs=anchor_metric_inputs,
+        outputs=anchor_metric_outputs, action=make_anchor_metrics,
     )
 
     manager.execute(
@@ -3287,21 +3538,51 @@ def run_phase(
                 uncontended_max_ms=float(latency["candidate_max_ms"]),
             )
         else:
+            metrics = _load_json(anchor_metrics_path, "anchor metrics")
+            original_metrics = _load_json(
+                original_anchor_metrics_path,
+                "original incumbent anchor metrics",
+            )
+            if original_metrics.get("candidate_metrics") != metrics.get(
+                "candidate_metrics"
+            ):
+                raise ValueError(
+                    "full anchor evidence disagrees on candidate metrics"
+                )
             decision = final_decision(
                 pilot_report=gate_reports["pilot-teacher"],
                 matched_report=gate_reports["matched"],
                 rank4_report=gate_reports["rank4"],
                 jacek_nn_report=gate_reports["jacek-nn"],
+                anchor_candidate=metrics["candidate_metrics"],
+                anchor_incumbent=metrics["incumbent_metrics"],
+                original_anchor_candidate=original_metrics["candidate_metrics"],
+                original_anchor_incumbent=original_metrics["incumbent_metrics"],
                 uncontended_max_ms=float(latency["candidate_max_ms"]),
             )
         _atomic_json(decision_path, decision)
         return decision
 
+    decision_configuration: dict[str, object] = {"profile": spec.name}
+    if spec.name == "full":
+        decision_configuration["anchor_noninferiority"] = {
+            "sign_accuracy_margin": 0.005,
+            "weighted_huber_multiplier": 1.02,
+            "references": ["phase-actor", "original-incumbent"],
+        }
+    decision_inputs = {
+        **gate_reports,
+        "latency": latency_report,
+        "anchor_metrics": anchor_metrics_path,
+    }
+    if spec.name == "full":
+        decision_inputs["original_incumbent_anchor_metrics"] = (
+            original_anchor_metrics_path
+        )
     decision = manager.execute(
-        ordinal=21, name="decision", configuration={"profile": spec.name},
+        ordinal=21, name="decision", configuration=decision_configuration,
         producers={"workflow": workflow_source},
-        inputs={**gate_reports, "latency": latency_report,
-                "anchor_metrics": anchor_metrics_path},
+        inputs=decision_inputs,
         outputs={"decision": decision_path}, action=decide,
     )
     return {
@@ -3592,6 +3873,7 @@ def _validate_canonical_campaign_inputs(
     roots_manifest: pathlib.Path,
     anchor_train: Sequence[pathlib.Path],
     anchor_validation: Sequence[pathlib.Path],
+    anchor_test: Sequence[pathlib.Path],
 ) -> dict:
     workflow_path = (canonical_campaign / "round-2/workflow.json").resolve()
     chain = validate_canonical_workflow_chain(
@@ -3620,10 +3902,12 @@ def _validate_canonical_campaign_inputs(
         or teacher_tsv.get("sha256") != sha256(roots_tsv)
     ):
         raise ValueError("canonical roots or teacher TSV differ from validated ancestry")
-    current_train, current_validation = _canonical_anchor_manifests(
-        canonical_campaign
-    )
-    if tuple(anchor_train) != current_train or tuple(anchor_validation) != current_validation:
+    current = _canonical_split_manifests(canonical_campaign)
+    if (
+        tuple(anchor_train) != current["train"]
+        or tuple(anchor_validation) != current["validation"]
+        or tuple(anchor_test) != current["test"]
+    ):
         raise ValueError("canonical anchor set changed after ancestry validation")
     return {
         "workflow": artifact_snapshot(workflow_path),
@@ -3634,6 +3918,7 @@ def _validate_canonical_campaign_inputs(
         "anchor_validation": [
             artifact_snapshot(path) for path in anchor_validation
         ],
+        "anchor_test": [artifact_snapshot(path) for path in anchor_test],
     }
 
 
@@ -3726,6 +4011,7 @@ def run_campaign(
             canonical_splits = _canonical_split_manifests(canonical_campaign)
             anchor_train = canonical_splits["train"]
             anchor_validation = canonical_splits["validation"]
+            anchor_test = canonical_splits["test"]
             canonical_prior_manifests = tuple(
                 canonical_splits[split][round_index]
                 for round_index in range(3)
@@ -3737,6 +4023,7 @@ def run_campaign(
                 roots_manifest=roots_manifest,
                 anchor_train=anchor_train,
                 anchor_validation=anchor_validation,
+                anchor_test=anchor_test,
             )
             opening_exclusions = _evaluation_opening_banks(evaluation_directory)
             manager = GuardedStageManager(
@@ -3760,6 +4047,7 @@ def run_campaign(
                     "anchor_validation": [
                         artifact_snapshot(path) for path in anchor_validation
                     ],
+                    "anchor_test": [artifact_snapshot(path) for path in anchor_test],
                     "canonical_prior_manifests": [
                         artifact_snapshot(path) for path in canonical_prior_manifests
                     ],
@@ -3777,6 +4065,7 @@ def run_campaign(
                     roots_manifest=roots_manifest,
                     anchor_train=anchor_train,
                     anchor_validation=anchor_validation,
+                    anchor_test=anchor_test,
                 )
                 if result.get("canonical_ancestry") != current_canonical:
                     raise ValueError("canonical trigger ancestry is stale")
@@ -3800,6 +4089,10 @@ def run_campaign(
                 **{
                     f"anchor_validation_{index}": path
                     for index, path in enumerate(anchor_validation)
+                },
+                **{
+                    f"anchor_test_{index}": path
+                    for index, path in enumerate(anchor_test)
                 },
                 **{
                     f"canonical_prior_{index}": path
@@ -3892,7 +4185,8 @@ def run_campaign(
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=incumbent_snapshot, diversity=runner_snapshot,
                 executables=executables, anchor_train_manifests=anchor_train,
-                anchor_validation_manifests=anchor_validation,
+                retention_validation_manifests=anchor_validation,
+                anchor_validation_manifests=anchor_test,
                 canonical_prior_manifests=canonical_prior_manifests,
                 opening_exclusions=opening_exclusions,
                 producer_guard=producer_guard,
@@ -3944,8 +4238,10 @@ def run_campaign(
                 spec=FULL_SPEC, output=output / "full", resume=resume,
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=pilot_runtime, diversity=incumbent_snapshot,
+                original_incumbent=incumbent_snapshot,
                 executables=executables, anchor_train_manifests=anchor_train,
-                anchor_validation_manifests=anchor_validation,
+                retention_validation_manifests=anchor_validation,
+                anchor_validation_manifests=anchor_test,
                 canonical_prior_manifests=canonical_prior_manifests,
                 opening_exclusions=[*opening_exclusions, pathlib.Path(pilot["opening_bank"])],
                 prior_search_manifests=pilot_search_manifests,
