@@ -670,6 +670,210 @@ def freeze_blind_holdout(
     }
 
 
+def load_frozen_blind_holdout(
+    positions_path: pathlib.Path, manifest_path: pathlib.Path,
+) -> tuple[dict, list[object]]:
+    """Replay frozen selection identities without rescanning million-row anchors."""
+
+    from collections import Counter, defaultdict
+    import jacek_replay_retention as retention
+    import jacek_replay_features as replay_features
+
+    positions_path = positions_path.resolve()
+    manifest = load_json(manifest_path.resolve(), "frozen rebuild holdout")
+    body = dict(manifest)
+    claimed = body.pop("body_sha256", None)
+    configuration = manifest.get("configuration")
+    timing = manifest.get("timing")
+    inputs = manifest.get("inputs")
+    if (
+        claimed != sha256_bytes(retention.canonical_json_bytes(body))
+        or manifest.get("schema") != retention.FREEZE_SCHEMA
+        or manifest.get("campaign_id") != REBUILD_ID
+        or manifest.get("profile") != "rebuild"
+        or manifest.get("feature_schema") != replay_features.FEATURE_SCHEMA
+        or manifest.get("role") != "retention-rebuild"
+        or manifest.get("teacher_split") != retention.TEACHER_SPLIT
+        or manifest.get("training_eligible") is not False
+        or not isinstance(configuration, dict)
+        or configuration
+        != {
+            "groups": 600,
+            "rows_per_group": retention.ROWS_PER_GROUP,
+            "selection_seed": BLIND_HOLDOUT_SEED,
+            "selection": "sha256-seeded-whole-root-groups-v1",
+            "source_quotas": {},
+            "overlap_identity": (
+                "rotate-and-reflect-canonical-feature-fingerprint"
+            ),
+            "partial_group_policy": (
+                "reject-whole-candidate-group-before-freeze"
+            ),
+            "post_freeze_drop_policy": "forbidden",
+        }
+        or not isinstance(timing, dict)
+        or timing.get("teacher_labels_opened") is not False
+        or timing.get("selected_model_opened") is not False
+        or timing.get("required_reveal_order")
+        != "freeze-before-model-selection;labels-after-model-selection;"
+        "metrics-after-selected-runtime-binding"
+        or not isinstance(inputs, dict)
+    ):
+        raise ValueError("frozen rebuild holdout contract changed")
+    retention._validate_snapshot(
+        timing.get("training_inputs_frozen_by"),
+        "rebuild holdout training receipt",
+    )
+    retention._validate_snapshot(
+        inputs.get("candidate_positions"), "rebuild holdout candidate positions"
+    )
+    for key in ("excluded_shards", "excluded_positions", "excluded_roots"):
+        retention._validate_snapshot_list(
+            inputs.get(key), f"rebuild holdout {key}"
+        )
+    sealed_records = inputs.get("excluded_sealed_identity_shards")
+    if not isinstance(sealed_records, list) or not sealed_records:
+        raise ValueError("rebuild holdout sealed exclusions are missing")
+    for record in sealed_records:
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("path"), str)
+            or retention.artifact_snapshot(pathlib.Path(record["path"]))
+            != record
+        ):
+            raise ValueError("rebuild holdout sealed exclusion binding changed")
+    retention._validate_producer_identity(manifest.get("producer"))
+    exclusion = manifest.get("exclusion_universe")
+    if (
+        not isinstance(exclusion, dict)
+        or set(exclusion) != {
+            "root_groups", "canonical_fingerprints",
+            "root_group_ids_sha256", "canonical_fingerprints_sha256",
+        }
+        or any(
+            isinstance(exclusion.get(key), bool)
+            or not isinstance(exclusion.get(key), int)
+            or exclusion[key] <= 0
+            for key in ("root_groups", "canonical_fingerprints")
+        )
+        or any(
+            not isinstance(exclusion.get(key), str)
+            or len(exclusion[key]) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in exclusion[key]
+            )
+            for key in (
+                "root_group_ids_sha256", "canonical_fingerprints_sha256"
+            )
+        )
+    ):
+        raise ValueError("rebuild holdout deep exclusion receipt changed")
+    output = manifest.get("output")
+    payload = positions_path.read_bytes()
+    if (
+        not isinstance(output, dict)
+        or output
+        != {
+            "sha256": sha256_bytes(payload),
+            "bytes": len(payload),
+            "lines": len(payload.splitlines()),
+        }
+    ):
+        raise ValueError("rebuild holdout output binding changed")
+    rows = retention.load_position_rows(
+        positions_path, required_split=retention.TEACHER_SPLIT
+    )
+    selection = manifest.get("selection")
+    groups = selection.get("groups") if isinstance(selection, dict) else None
+    if (
+        not isinstance(selection, dict)
+        or not isinstance(groups, list)
+        or len(groups) != 600
+        or len(rows) != 12_000
+        or len({row.position_id for row in rows}) != len(rows)
+        or len({row.root_group_id for row in rows}) != 600
+        or any(
+            count != retention.ROWS_PER_GROUP
+            for count in Counter(row.root_group_id for row in rows).values()
+        )
+        or len({row.canonical_fingerprint for row in rows}) != len(rows)
+        or selection.get("selected_root_groups") != 600
+        or selection.get("selected_positions") != 12_000
+        or selection.get("position_ids_sha256")
+        != hashlib.sha256(
+            "\n".join(row.position_id for row in rows).encode()
+        ).hexdigest()
+        or selection.get("canonical_fingerprints_sha256")
+        != hashlib.sha256(
+            b"".join(sorted(row.canonical_fingerprint for row in rows))
+        ).hexdigest()
+    ):
+        raise ValueError("rebuild holdout selected coverage changed")
+    rows_by_root: dict[str, list[object]] = defaultdict(list)
+    for row in rows:
+        rows_by_root[row.root_group_id].append(row)
+    selected_root_ids = []
+    for record in groups:
+        bound = (
+            rows_by_root.get(str(record.get("root_group_id")), [])
+            if isinstance(record, dict) else []
+        )
+        if (
+            not isinstance(record, dict)
+            or record.get("rows") != retention.ROWS_PER_GROUP
+            or not bound
+            or record.get("generated_group_id") != bound[0].group_id
+            or record.get("source") != bound[0].source
+            or record.get("position_ids_sha256")
+            != hashlib.sha256(
+                "\n".join(row.position_id for row in bound).encode()
+            ).hexdigest()
+            or record.get("canonical_fingerprints_sha256")
+            != hashlib.sha256(
+                b"".join(sorted(row.canonical_fingerprint for row in bound))
+            ).hexdigest()
+        ):
+            raise ValueError("rebuild holdout group receipt changed")
+        selected_root_ids.append(record["root_group_id"])
+    row_root_ids = list(dict.fromkeys(row.root_group_id for row in rows))
+    if (
+        selected_root_ids != row_root_ids
+        or selection.get("root_group_ids_sha256")
+        != hashlib.sha256("\n".join(row_root_ids).encode()).hexdigest()
+        or selection.get("selected_source_counts")
+        != dict(
+            sorted(
+                Counter(
+                    group_rows[0].source
+                    for group_rows in rows_by_root.values()
+                ).items()
+            )
+        )
+    ):
+        raise ValueError("rebuild holdout root/source selection changed")
+    sealed_fingerprints = _sealed_feature_fingerprints(
+        tuple(pathlib.Path(record["path"]) for record in sealed_records)
+    )
+    sealed_exclusion = manifest.get("sealed_identity_exclusion")
+    if (
+        sealed_exclusion
+        != {
+            "policy": "feature-indices-only-targets-and-weights-unopened",
+            "canonical_fingerprints": len(sealed_fingerprints),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                b"".join(sorted(sealed_fingerprints))
+            ).hexdigest(),
+            "selected_overlap": 0,
+        }
+        or any(
+            row.canonical_fingerprint in sealed_fingerprints for row in rows
+        )
+    ):
+        raise ValueError("rebuild holdout sealed exclusion changed")
+    return manifest, rows
+
+
 def freeze_holdout_from_corpus(
     *, candidate_positions: pathlib.Path, candidate_manifest: pathlib.Path,
     corpus_manifest: pathlib.Path,
@@ -1212,7 +1416,7 @@ def freeze_rebuild_inputs(
     validate_matrix(matrix)
     banks = load_json(banks_manifest, "rebuild opening banks")
     validate_opening_banks(banks)
-    holdout, holdout_rows = retention.load_freeze(
+    holdout, holdout_rows = load_frozen_blind_holdout(
         holdout_positions, holdout_manifest
     )
     if (
@@ -1367,7 +1571,7 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     candidate_manifest = load_json(
         candidate_manifest_path, "holdout candidate manifest"
     )
-    freeze, rows = retention.load_freeze(positions_path, freeze_path)
+    freeze, rows = load_frozen_blind_holdout(positions_path, freeze_path)
     expected_shards = {
         *corpus.training_manifest_paths("search"),
         *corpus.training_manifest_paths("rank4"),
@@ -5044,7 +5248,7 @@ def _validate_qualification_holdout(
     frozen_positions = pathlib.Path(inputs["blind_holdout_positions"]["path"])
     corpus_manifest = pathlib.Path(inputs["corpus"]["path"])
     selection_snapshot = retention.artifact_snapshot(selection_path)
-    freeze, frozen_rows = retention.load_freeze(
+    freeze, frozen_rows = load_frozen_blind_holdout(
         frozen_positions, freeze_manifest
     )
     if (
@@ -5404,7 +5608,7 @@ def qualify_selected_candidate(
     source_sha256 = selfsearch._source_identities(repository)[
         "rank4_teacher_source_sha256"
     ]
-    freeze, frozen_rows = retention.load_freeze(
+    freeze, frozen_rows = load_frozen_blind_holdout(
         frozen_positions, freeze_manifest
     )
     if (

@@ -359,8 +359,8 @@ class ReplayRebuildTests(unittest.TestCase):
             }
             evidence_path = root / "evidence.json"
             evidence_path.write_text(json.dumps(evidence))
-            with mock.patch(
-                "jacek_replay_retention.load_freeze",
+            with mock.patch.object(
+                rebuild, "load_frozen_blind_holdout",
                 return_value=(freeze, [object()] * 12_000),
             ), mock.patch(
                 "jacek_replay_retention.load_holdout_shard", return_value=shard,
