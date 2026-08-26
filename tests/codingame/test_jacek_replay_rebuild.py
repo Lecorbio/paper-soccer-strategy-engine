@@ -13,6 +13,7 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 rebuild = importlib.import_module("jacek_replay_rebuild")
+selfsearch = importlib.import_module("jacek_selfsearch_workflow")
 
 
 class ReplayRebuildTests(unittest.TestCase):
@@ -750,6 +751,7 @@ class ReplayRebuildTests(unittest.TestCase):
                 root, "final.tsv", "final", rebuild.FINAL_BANK_SEED, "final"
             )
             exclusions = [rebuild.artifact_snapshot(exclusion)]
+            detailed_exclusions = [selfsearch.artifact_snapshot(exclusion)]
             development_states = {
                 f"development:{index}" for index in range(rebuild.FULL_SCREEN_PAIRS)
             }
@@ -771,7 +773,7 @@ class ReplayRebuildTests(unittest.TestCase):
                         "states_sha256": hashlib.sha256(
                             "\n".join(sorted(development_states)).encode()
                         ).hexdigest(),
-                        "exclusions": exclusions,
+                        "exclusions": detailed_exclusions,
                     },
                     "model_selection_eligible": True,
                 },
@@ -786,7 +788,8 @@ class ReplayRebuildTests(unittest.TestCase):
                             "\n".join(sorted(final_states)).encode()
                         ).hexdigest(),
                         "exclusions": [
-                            *exclusions, rebuild.artifact_snapshot(development)
+                            *detailed_exclusions,
+                            selfsearch.artifact_snapshot(development),
                         ],
                     },
                     "model_selection_eligible": False,

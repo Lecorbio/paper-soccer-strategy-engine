@@ -298,6 +298,10 @@ def validate_opening_banks(record: Mapping[str, object]) -> None:
         excluded_states.update(
             selfsearch._comparison_bank_states(pathlib.Path(exclusion["path"]))
         )
+    detailed_exclusions = [
+        selfsearch.artifact_snapshot(pathlib.Path(exclusion["path"]))
+        for exclusion in exclusions
+    ]
     if (
         len(development_states) != FULL_SCREEN_PAIRS
         or len(final_states) != FULL_SCREEN_PAIRS
@@ -326,13 +330,14 @@ def validate_opening_banks(record: Mapping[str, object]) -> None:
         classification="development",
         seed=DEVELOPMENT_BANK_SEED,
         states=development_states,
-        configuration_exclusions=exclusions,
+        configuration_exclusions=detailed_exclusions,
     ) or final_value.get("configuration") != expected_configuration(
         classification="final",
         seed=FINAL_BANK_SEED,
         states=final_states,
         configuration_exclusions=(
-            *exclusions, artifact_snapshot(development_path)
+            *detailed_exclusions,
+            selfsearch.artifact_snapshot(development_path),
         ),
     ):
         raise ValueError("rebuild opening-bank configuration changed")
