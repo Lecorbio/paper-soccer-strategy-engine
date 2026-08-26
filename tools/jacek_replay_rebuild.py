@@ -810,6 +810,10 @@ def freeze_blind_holdout(
         root_manifests=resolved_roots,
         output_directory=output_directory,
     )
+    sealed_paths = tuple(path.resolve() for path in excluded_sealed_shards)
+    sealed_fingerprints = (
+        _sealed_feature_fingerprints(sealed_paths) if sealed_paths else set()
+    )
     payload, manifest = retention.freeze_candidate_groups(
         candidate_positions=candidate_positions.resolve(),
         training_input_receipt=training_input_receipt.resolve(),
@@ -819,11 +823,11 @@ def freeze_blind_holdout(
         excluded_position_tsvs=resolved_positions,
         excluded_root_manifests=resolved_roots,
         precomputed_excluded_groups=excluded_groups,
-        precomputed_excluded_fingerprints=excluded_fingerprints,
+        precomputed_excluded_fingerprints=(
+            excluded_fingerprints | sealed_fingerprints
+        ),
     )
-    sealed_paths = tuple(path.resolve() for path in excluded_sealed_shards)
     if sealed_paths:
-        sealed_fingerprints = _sealed_feature_fingerprints(sealed_paths)
         with tempfile.NamedTemporaryFile(
             dir=output_directory,
             prefix=".selected-holdout.",
