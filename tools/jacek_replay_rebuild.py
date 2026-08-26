@@ -72,6 +72,7 @@ BLIND_HOLDOUT_SEED = 2026082703
 HOLDOUT_GAME_SEED = 2026082704
 HOLDOUT_SOURCE_GAMES = 40_000
 HOLDOUT_CANDIDATE_GROUPS = 35_000
+FILTERED_HOLDOUT_CANDIDATE_GROUPS = 5_000
 HOLDOUT_GENERATOR_WORKERS = 10
 HOLDOUT_GENERATOR_BASE_BUDGET = 1_000
 
@@ -577,6 +578,77 @@ def load_frozen_rebuild_corpus(
     ):
         raise ValueError("frozen rebuild leakage proof changed")
     return rebuild_corpus.RebuildCorpus(path, manifest)
+
+
+def load_holdout_exclusion_cache(
+    receipt_path: pathlib.Path,
+) -> tuple[set[str], set[bytes]]:
+    import jacek_replay_retention as retention
+
+    receipt = load_json(receipt_path.resolve(), "holdout exclusion cache receipt")
+    verify_body_hash(
+        receipt,
+        schema="papersoccer.jacek-rebuild-holdout-exclusion-cache.v1",
+        label="holdout exclusion cache receipt",
+    )
+    if (
+        receipt.get("rebuild_id") != REBUILD_ID
+        or receipt.get("producer") != retention._producer_identity()
+    ):
+        raise ValueError("holdout exclusion cache producer changed")
+    inputs = receipt.get("inputs")
+    artifacts = receipt.get("artifacts")
+    if not isinstance(inputs, dict) or not isinstance(artifacts, dict):
+        raise ValueError("holdout exclusion cache lineage is incomplete")
+    for key in ("excluded_shards", "excluded_positions", "excluded_roots"):
+        retention._validate_snapshot_list(
+            inputs.get(key), f"holdout exclusion cache {key}"
+        )
+    for key in ("root_groups", "canonical_fingerprints"):
+        record = artifacts.get(key)
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("path"), str)
+            or retention.artifact_snapshot(pathlib.Path(record["path"]))
+            != record
+        ):
+            raise ValueError("holdout exclusion cache artifact changed")
+    fingerprint_payload = pathlib.Path(
+        artifacts["canonical_fingerprints"]["path"]
+    ).read_bytes()
+    group_payload = pathlib.Path(artifacts["root_groups"]["path"]).read_bytes()
+    if len(fingerprint_payload) % 32:
+        raise ValueError("holdout exclusion fingerprint cache is malformed")
+    fingerprints = {
+        fingerprint_payload[offset : offset + 32]
+        for offset in range(0, len(fingerprint_payload), 32)
+    }
+    try:
+        group_lines = group_payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError("holdout exclusion root cache is malformed") from error
+    groups = set(group_lines)
+    exclusion = receipt.get("exclusion_universe")
+    if (
+        not groups
+        or not fingerprints
+        or len(group_lines) != len(groups)
+        or group_payload != ("\n".join(sorted(groups)) + "\n").encode()
+        or fingerprint_payload != b"".join(sorted(fingerprints))
+        or exclusion
+        != {
+            "root_groups": len(groups),
+            "canonical_fingerprints": len(fingerprints),
+            "root_group_ids_sha256": hashlib.sha256(
+                "\n".join(sorted(groups)).encode()
+            ).hexdigest(),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                fingerprint_payload
+            ).hexdigest(),
+        }
+    ):
+        raise ValueError("holdout exclusion cache contents changed")
+    return groups, fingerprints
 
 
 def _freeze_holdout_exclusion_cache(
@@ -1333,6 +1405,368 @@ def generate_holdout_candidate_positions(
     }
 
 
+def filter_holdout_candidate_positions(
+    *, source_positions: pathlib.Path, source_manifest: pathlib.Path,
+    exclusion_cache_receipt: pathlib.Path, output_directory: pathlib.Path,
+) -> dict[str, object]:
+    """Freeze whole 20-row games chosen only from corpus-disjoint positions."""
+
+    import jacek_replay_corpus as replay_corpus
+    import jacek_replay_features as replay_features
+    import jacek_replay_retention as retention
+
+    source = load_frozen_holdout_candidate_pool(
+        source_positions.resolve(), source_manifest.resolve()
+    )
+    excluded_groups, excluded_fingerprints = load_holdout_exclusion_cache(
+        exclusion_cache_receipt.resolve()
+    )
+    raw_outputs = source["raw_outputs"]
+    raw_receipts = source["raw_receipts"]
+    plan_snapshot = source["game_plan"]
+    plan = load_json(pathlib.Path(plan_snapshot["path"]), "holdout game plan")
+    selection_spec = retention.FreezeSpec("rebuild", 600, BLIND_HOLDOUT_SEED)
+    ordered_games = []
+    for ordinal, (output_snapshot, receipt_snapshot, plan_row) in enumerate(
+        zip(raw_outputs, raw_receipts, plan["rows"], strict=True)
+    ):
+        receipt = load_json(
+            pathlib.Path(receipt_snapshot["path"]), "holdout game receipt"
+        )
+        seed = receipt.get("successful_seed")
+        expected = {
+            "schema": "papersoccer.jacek-rebuild-holdout-game-receipt.v1",
+            "rebuild_id": REBUILD_ID,
+            "game_ordinal": ordinal,
+            "base_seed": plan_row["base_seed"],
+            "successful_seed": seed,
+            "generator": source["generator"],
+            "configuration": {
+                "games": 1,
+                "base_budget": HOLDOUT_GENERATOR_BASE_BUDGET,
+                "maximum_turns": 200,
+            },
+            "plan": plan_snapshot,
+            "output": output_snapshot,
+        }
+        if (
+            receipt != expected
+            or not isinstance(seed, int)
+            or seed not in {
+                (
+                    int(plan_row["base_seed"])
+                    + attempt * 0x9E3779B97F4A7C15
+                ) & ((1 << 64) - 1)
+                for attempt in range(30)
+            }
+        ):
+            raise ValueError("filtered holdout source receipt changed")
+        identity = hashlib.sha256(
+            f"{ordinal}\0{1}\0{seed}".encode()
+        ).hexdigest()
+        root_group_id = f"rebuild-holdout-root:{identity}"
+        ordered_games.append(
+            (
+                retention._selection_key(
+                    selection_spec,
+                    root_group_id,
+                ),
+                ordinal,
+                identity,
+                root_group_id,
+                int(seed),
+                pathlib.Path(output_snapshot["path"]),
+            )
+        )
+    ordered_games.sort(key=lambda record: record[0])
+    chosen_fingerprints: set[bytes] = set()
+    selected_groups = []
+    rejected_counts: dict[str, int] = {}
+    considered = 0
+    for _key, ordinal, identity, root_group_id, seed, output_path in ordered_games:
+        if len(selected_groups) == FILTERED_HOLDOUT_CANDIDATE_GROUPS:
+            break
+        considered += 1
+        lines = output_path.read_text(encoding="utf-8").splitlines()
+        game = json.loads(lines[0]) if len(lines) == 1 else None
+        if (
+            not isinstance(game, dict)
+            or game.get("schema")
+            != "papersoccer.teacher-residual-samples.v1"
+            or game.get("seed") != seed
+            or game.get("winner") not in (0, 1)
+            or not isinstance(game.get("samples"), list)
+        ):
+            raise ValueError("filtered holdout source game changed")
+        if root_group_id in excluded_groups:
+            rejected_counts["excluded-root-group-overlap"] = (
+                rejected_counts.get("excluded-root-group-overlap", 0) + 1
+            )
+            continue
+        candidates = []
+        seen_prefixes = set()
+        seen_fingerprints = set()
+        for sample in game["samples"]:
+            if not isinstance(sample, dict):
+                continue
+            prefix = sample.get("transcript")
+            mover = sample.get("player_id")
+            if (
+                not isinstance(prefix, str)
+                or not prefix
+                or mover not in (0, 1)
+                or prefix in seen_prefixes
+            ):
+                continue
+            seen_prefixes.add(prefix)
+            state, _prefix_records = retention._prefix_state(prefix)
+            if state.to_move != mover:
+                raise ValueError("filtered holdout mover disagrees with prefix")
+            active = replay_features.encode_active(state)
+            fingerprint = replay_corpus.canonical_feature_fingerprint(active)
+            if (
+                fingerprint in excluded_fingerprints
+                or fingerprint in chosen_fingerprints
+                or fingerprint in seen_fingerprints
+            ):
+                continue
+            seen_fingerprints.add(fingerprint)
+            candidates.append(
+                (
+                    hashlib.sha256(
+                        f"{identity}\0{prefix}".encode()
+                    ).digest(),
+                    prefix,
+                    int(mover),
+                    fingerprint,
+                )
+            )
+        candidates.sort(key=lambda record: (record[0], record[1]))
+        if len(candidates) < retention.ROWS_PER_GROUP:
+            rejected_counts["fewer-than-20-disjoint-positions"] = (
+                rejected_counts.get("fewer-than-20-disjoint-positions", 0) + 1
+            )
+            continue
+        group_id = f"rebuild-holdout-game:{identity}"
+        rows = []
+        group_fingerprints = []
+        for row_ordinal, (_order, prefix, mover, fingerprint) in enumerate(
+            candidates[: retention.ROWS_PER_GROUP]
+        ):
+            position_id = "position:" + hashlib.sha256(
+                f"{REBUILD_ID}\0{group_id}\0{row_ordinal}\0{prefix}".encode()
+            ).hexdigest()
+            rows.append(
+                "\t".join(
+                    (
+                        position_id,
+                        root_group_id,
+                        group_id,
+                        "rank4-vs-rank4",
+                        "validation",
+                        str(game["winner"]),
+                        str(mover),
+                        prefix,
+                    )
+                )
+            )
+            group_fingerprints.append(fingerprint)
+        chosen_fingerprints.update(group_fingerprints)
+        selected_groups.append(
+            {
+                "game_ordinal": ordinal,
+                "root_group_id": root_group_id,
+                "generated_group_id": group_id,
+                "successful_seed": seed,
+                "rows": rows,
+                "canonical_fingerprints_sha256": hashlib.sha256(
+                    b"".join(sorted(group_fingerprints))
+                ).hexdigest(),
+            }
+        )
+    if len(selected_groups) != FILTERED_HOLDOUT_CANDIDATE_GROUPS:
+        raise ValueError(
+            "filtered procedural pool cannot fill its whole-group quota: "
+            f"selected={len(selected_groups)} required="
+            f"{FILTERED_HOLDOUT_CANDIDATE_GROUPS} "
+            f"rejected={dict(sorted(rejected_counts.items()))}"
+        )
+    payload = (
+        retention.POSITION_HEADER
+        + "\n"
+        + "\n".join(
+            row for group in selected_groups for row in group["rows"]
+        )
+        + "\n"
+    ).encode()
+    positions_path = output_directory.resolve() / "candidate-positions.tsv"
+    manifest_path = output_directory.resolve() / "candidate-positions.json"
+    group_records = [
+        {key: value for key, value in group.items() if key != "rows"}
+        for group in selected_groups
+    ]
+    body: dict[str, object] = {
+        "schema": "papersoccer.jacek-rebuild-filtered-holdout-candidates.v1",
+        "rebuild_id": REBUILD_ID,
+        "generator": source["generator"],
+        "source_candidate_positions": artifact_snapshot(source_positions),
+        "source_candidate_manifest": artifact_snapshot(source_manifest),
+        "exclusion_cache": artifact_snapshot(exclusion_cache_receipt),
+        "configuration": {
+            "candidate_groups": FILTERED_HOLDOUT_CANDIDATE_GROUPS,
+            "rows_per_group": retention.ROWS_PER_GROUP,
+            "source": "rank4-vs-rank4",
+            "group_order": "frozen-retention-selection-key",
+            "row_order": "sha256-identity-prefix",
+            "corpus_overlap_policy": "exclude-before-whole-group-freeze",
+            "cross_group_overlap_policy": "exclude-before-whole-group-freeze",
+            "post_freeze_drop_policy": "forbidden",
+        },
+        "selection": {
+            "source_games": HOLDOUT_SOURCE_GAMES,
+            "considered_games": considered,
+            "selected_groups": len(selected_groups),
+            "selected_rows": len(selected_groups) * retention.ROWS_PER_GROUP,
+            "rejection_counts": dict(sorted(rejected_counts.items())),
+            "groups": group_records,
+            "root_group_ids_sha256": hashlib.sha256(
+                "\n".join(
+                    str(group["root_group_id"]) for group in selected_groups
+                ).encode()
+            ).hexdigest(),
+            "canonical_fingerprints_sha256": hashlib.sha256(
+                b"".join(sorted(chosen_fingerprints))
+            ).hexdigest(),
+        },
+        "positions_sha256": sha256_bytes(payload),
+        "rows": len(selected_groups) * retention.ROWS_PER_GROUP,
+        "teacher_labels_opened": False,
+        "selected_model_opened": False,
+    }
+    manifest = {**body, "body_sha256": sha256_bytes(canonical_json_bytes(body))}
+    if positions_path.exists() or manifest_path.exists():
+        if (
+            not positions_path.is_file()
+            or positions_path.read_bytes() != payload
+            or not manifest_path.is_file()
+            or load_json(manifest_path, "filtered holdout candidates") != manifest
+        ):
+            raise ValueError("existing filtered holdout candidate pool is stale")
+    else:
+        atomic_write(positions_path, payload)
+        atomic_write(manifest_path, canonical_json_bytes(manifest, pretty=True))
+    return {
+        "positions": artifact_snapshot(positions_path),
+        "manifest": artifact_snapshot(manifest_path),
+        "groups": FILTERED_HOLDOUT_CANDIDATE_GROUPS,
+        "rows": body["rows"],
+    }
+
+
+def _load_frozen_filtered_holdout_candidate_pool(
+    positions_path: pathlib.Path, manifest_path: pathlib.Path,
+    manifest: Mapping[str, object],
+) -> dict[str, object]:
+    import jacek_replay_retention as retention
+
+    verify_body_hash(
+        manifest,
+        schema="papersoccer.jacek-rebuild-filtered-holdout-candidates.v1",
+        label="frozen filtered holdout candidates",
+    )
+    source_positions = manifest.get("source_candidate_positions")
+    source_manifest = manifest.get("source_candidate_manifest")
+    exclusion_cache = manifest.get("exclusion_cache")
+    for snapshot in (source_positions, source_manifest, exclusion_cache):
+        if (
+            not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("path"), str)
+            or artifact_snapshot(pathlib.Path(snapshot["path"])) != snapshot
+        ):
+            raise ValueError("filtered holdout candidate lineage changed")
+    source = load_frozen_holdout_candidate_pool(
+        pathlib.Path(source_positions["path"]),
+        pathlib.Path(source_manifest["path"]),
+    )
+    _groups, _fingerprints = load_holdout_exclusion_cache(
+        pathlib.Path(exclusion_cache["path"])
+    )
+    configuration = manifest.get("configuration")
+    selection = manifest.get("selection")
+    group_records = selection.get("groups") if isinstance(selection, dict) else None
+    expected_rows = FILTERED_HOLDOUT_CANDIDATE_GROUPS * retention.ROWS_PER_GROUP
+    if (
+        manifest.get("rebuild_id") != REBUILD_ID
+        or manifest.get("generator") != source.get("generator")
+        or configuration
+        != {
+            "candidate_groups": FILTERED_HOLDOUT_CANDIDATE_GROUPS,
+            "rows_per_group": retention.ROWS_PER_GROUP,
+            "source": "rank4-vs-rank4",
+            "group_order": "frozen-retention-selection-key",
+            "row_order": "sha256-identity-prefix",
+            "corpus_overlap_policy": "exclude-before-whole-group-freeze",
+            "cross_group_overlap_policy": "exclude-before-whole-group-freeze",
+            "post_freeze_drop_policy": "forbidden",
+        }
+        or manifest.get("teacher_labels_opened") is not False
+        or manifest.get("selected_model_opened") is not False
+        or manifest.get("rows") != expected_rows
+        or not isinstance(selection, dict)
+        or selection.get("source_games") != HOLDOUT_SOURCE_GAMES
+        or not isinstance(selection.get("considered_games"), int)
+        or not (
+            FILTERED_HOLDOUT_CANDIDATE_GROUPS
+            <= selection["considered_games"]
+            <= HOLDOUT_SOURCE_GAMES
+        )
+        or selection.get("selected_groups")
+        != FILTERED_HOLDOUT_CANDIDATE_GROUPS
+        or selection.get("selected_rows") != expected_rows
+        or not isinstance(selection.get("rejection_counts"), dict)
+        or not isinstance(group_records, list)
+        or len(group_records) != FILTERED_HOLDOUT_CANDIDATE_GROUPS
+    ):
+        raise ValueError("filtered holdout candidate policy changed")
+    root_ids = []
+    ordinals = set()
+    for record in group_records:
+        if (
+            not isinstance(record, dict)
+            or set(record) != {
+                "game_ordinal", "root_group_id", "generated_group_id",
+                "successful_seed", "canonical_fingerprints_sha256",
+            }
+            or not isinstance(record.get("game_ordinal"), int)
+            or not 0 <= record["game_ordinal"] < HOLDOUT_SOURCE_GAMES
+            or record["game_ordinal"] in ordinals
+            or not isinstance(record.get("successful_seed"), int)
+            or not isinstance(record.get("root_group_id"), str)
+            or not isinstance(record.get("generated_group_id"), str)
+            or not isinstance(record.get("canonical_fingerprints_sha256"), str)
+            or len(record["canonical_fingerprints_sha256"]) != 64
+        ):
+            raise ValueError("filtered holdout candidate group receipt changed")
+        ordinals.add(record["game_ordinal"])
+        root_ids.append(record["root_group_id"])
+    if (
+        len(set(root_ids)) != len(root_ids)
+        or selection.get("root_group_ids_sha256")
+        != hashlib.sha256("\n".join(root_ids).encode()).hexdigest()
+        or not isinstance(selection.get("canonical_fingerprints_sha256"), str)
+        or len(selection["canonical_fingerprints_sha256"]) != 64
+    ):
+        raise ValueError("filtered holdout candidate identities changed")
+    payload = positions_path.resolve().read_bytes()
+    if (
+        sha256_bytes(payload) != manifest.get("positions_sha256")
+        or len(payload.splitlines()) != expected_rows + 1
+        or not payload.startswith((retention.POSITION_HEADER + "\n").encode())
+    ):
+        raise ValueError("filtered holdout candidate positions changed")
+    return dict(manifest)
+
+
 def validate_holdout_candidate_pool(
     positions_path: pathlib.Path, manifest_path: pathlib.Path
 ) -> dict[str, object]:
@@ -1546,6 +1980,13 @@ def load_frozen_holdout_candidate_pool(
 
     positions_path = positions_path.resolve()
     manifest = load_json(manifest_path.resolve(), "frozen holdout candidates")
+    if (
+        manifest.get("schema")
+        == "papersoccer.jacek-rebuild-filtered-holdout-candidates.v1"
+    ):
+        return _load_frozen_filtered_holdout_candidate_pool(
+            positions_path, manifest_path.resolve(), manifest
+        )
     verify_body_hash(
         manifest,
         schema="papersoccer.jacek-replay-rebuild-holdout-candidates.v1",
@@ -6061,6 +6502,13 @@ def main() -> int:
         "--output-directory", type=pathlib.Path, required=True
     )
     holdout_candidates.add_argument("--workers", type=int, default=10)
+    filtered_holdout = subparsers.add_parser("filter-holdout-candidates")
+    filtered_holdout.add_argument("--source-positions", type=pathlib.Path, required=True)
+    filtered_holdout.add_argument("--source-manifest", type=pathlib.Path, required=True)
+    filtered_holdout.add_argument("--exclusion-cache", type=pathlib.Path, required=True)
+    filtered_holdout.add_argument(
+        "--output-directory", type=pathlib.Path, required=True
+    )
     inputs = subparsers.add_parser("freeze-inputs")
     inputs.add_argument("--repository", type=pathlib.Path, required=True)
     inputs.add_argument("--corpus-manifest", type=pathlib.Path, required=True)
@@ -6161,6 +6609,19 @@ def main() -> int:
                     generator=arguments.generator,
                     output_directory=arguments.output_directory,
                     workers=arguments.workers,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif arguments.command == "filter-holdout-candidates":
+        print(
+            json.dumps(
+                filter_holdout_candidate_positions(
+                    source_positions=arguments.source_positions,
+                    source_manifest=arguments.source_manifest,
+                    exclusion_cache_receipt=arguments.exclusion_cache,
+                    output_directory=arguments.output_directory,
                 ),
                 indent=2,
                 sort_keys=True,

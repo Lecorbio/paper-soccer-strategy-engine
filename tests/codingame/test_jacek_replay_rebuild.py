@@ -14,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 rebuild = importlib.import_module("jacek_replay_rebuild")
 selfsearch = importlib.import_module("jacek_selfsearch_workflow")
+retention = importlib.import_module("jacek_replay_retention")
 
 
 class ReplayRebuildTests(unittest.TestCase):
@@ -739,6 +740,64 @@ class ReplayRebuildTests(unittest.TestCase):
                         output / "candidate-positions.json",
                     )
                     payloads.append((output / "candidate-positions.tsv").read_bytes())
+                cache = root / "cache"
+                cache.mkdir()
+                fingerprints = cache / "canonical-fingerprints.bin"
+                groups = cache / "root-groups.txt"
+                fingerprints.write_bytes(b"x" * 32)
+                groups.write_text("excluded-root\n")
+                cache_body = {
+                    "schema": "papersoccer.jacek-rebuild-holdout-exclusion-cache.v1",
+                    "rebuild_id": rebuild.REBUILD_ID,
+                    "inputs": {
+                        "excluded_shards": [],
+                        "excluded_positions": [],
+                        "excluded_roots": [],
+                    },
+                    "producer": retention._producer_identity(),
+                    "exclusion_universe": {
+                        "root_groups": 1,
+                        "canonical_fingerprints": 1,
+                        "root_group_ids_sha256": hashlib.sha256(
+                            b"excluded-root"
+                        ).hexdigest(),
+                        "canonical_fingerprints_sha256": hashlib.sha256(
+                            b"x" * 32
+                        ).hexdigest(),
+                    },
+                    "artifacts": {
+                        "root_groups": retention.artifact_snapshot(groups),
+                        "canonical_fingerprints": retention.artifact_snapshot(
+                            fingerprints
+                        ),
+                    },
+                }
+                cache_receipt = cache / "receipt.json"
+                cache_receipt.write_bytes(
+                    rebuild.canonical_json_bytes(
+                        {
+                            **cache_body,
+                            "body_sha256": rebuild.sha256_bytes(
+                                rebuild.canonical_json_bytes(cache_body)
+                            ),
+                        },
+                        pretty=True,
+                    )
+                )
+                with mock.patch.object(
+                    rebuild, "FILTERED_HOLDOUT_CANDIDATE_GROUPS", 1
+                ):
+                    filtered = root / "filtered"
+                    rebuild.filter_holdout_candidate_positions(
+                        source_positions=root / "workers-1/candidate-positions.tsv",
+                        source_manifest=root / "workers-1/candidate-positions.json",
+                        exclusion_cache_receipt=cache_receipt,
+                        output_directory=filtered,
+                    )
+                    rebuild.load_frozen_holdout_candidate_pool(
+                        filtered / "candidate-positions.tsv",
+                        filtered / "candidate-positions.json",
+                    )
             self.assertEqual(payloads[0], payloads[1])
             self.assertEqual(payloads[0], payloads[2])
 
