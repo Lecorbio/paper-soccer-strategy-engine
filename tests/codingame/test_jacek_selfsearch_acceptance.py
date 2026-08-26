@@ -870,6 +870,9 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
                 self.assertEqual(configuration["new_rows_per_batch"], 64)
                 self.assertEqual(configuration["anchor_rows_per_batch"], 192)
                 self.assertEqual(configuration["training_learning_rate"], 0.00006)
+                self.assertEqual(
+                    configuration["training_reference_new_samples"], 50_000
+                )
                 self.assertEqual(configuration["new_loss_coefficient"], 0.25)
                 self.assertEqual(configuration["anchor_loss_coefficient"], 0.75)
                 self.assertEqual(configuration["retention_sign_tolerance"], 0.005)
@@ -897,6 +900,7 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
                         )
                     ],
                 )
+                phase_learning_policies = []
                 for stage in ("15-train-search.json", "16-train-rank4.json"):
                     receipt = json.loads((receipts / stage).read_text())
                     expected_actor = workflow.artifact_snapshot(phase_actors[phase])
@@ -911,6 +915,28 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
                     self.assertEqual(receipt["configuration"]["new_rows_per_batch"], 64)
                     self.assertEqual(receipt["configuration"]["anchor_rows_per_batch"], 192)
                     self.assertEqual(receipt["configuration"]["learning_rate"], 0.00006)
+                    learning_policy = receipt["configuration"][
+                        "learning_rate_policy"
+                    ]
+                    self.assertEqual(
+                        learning_policy["kind"],
+                        "inverse-new-train-optimizer-steps-capped-v1",
+                    )
+                    self.assertEqual(
+                        learning_policy["base_learning_rate"], 0.00006
+                    )
+                    self.assertEqual(
+                        learning_policy["reference_new_samples"], 50_000
+                    )
+                    self.assertEqual(
+                        learning_policy["new_rows_per_batch"], 64
+                    )
+                    self.assertGreater(learning_policy["actual_new_samples"], 0)
+                    self.assertEqual(learning_policy["scale"], 1.0)
+                    self.assertEqual(
+                        learning_policy["effective_learning_rate"], 0.00006
+                    )
+                    phase_learning_policies.append(learning_policy)
                     self.assertEqual(
                         receipt["configuration"]["loss"],
                         {
@@ -930,6 +956,9 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
                             "fallback": "exact-phase-actor-epoch-zero",
                         },
                     )
+                self.assertEqual(
+                    phase_learning_policies[0], phase_learning_policies[1]
+                )
                 if phase == "full":
                     anchor_receipt = json.loads(
                         (receipts / "17-anchor-metrics.json").read_text()

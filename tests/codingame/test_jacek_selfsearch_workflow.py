@@ -143,6 +143,44 @@ def rank4_teacher_row(position_id: str, score: int = 100) -> dict:
 
 
 class SelfSearchWorkflowTests(unittest.TestCase):
+    def test_training_learning_rate_scales_with_full_new_sample_count(self):
+        pilot = workflow._training_learning_rate_policy(
+            base_learning_rate=0.00006,
+            reference_new_samples=50_000,
+            actual_new_samples=48_573,
+            new_rows_per_batch=64,
+        )
+        full = workflow._training_learning_rate_policy(
+            base_learning_rate=0.00006,
+            reference_new_samples=50_000,
+            actual_new_samples=250_000,
+            new_rows_per_batch=64,
+        )
+        self.assertEqual(pilot["scale"], 1.0)
+        self.assertEqual(pilot["effective_learning_rate"], 0.00006)
+        self.assertEqual(full["reference_optimizer_steps"], 782)
+        self.assertEqual(full["actual_optimizer_steps"], 3_907)
+        self.assertAlmostEqual(full["scale"], 782 / 3_907)
+        self.assertAlmostEqual(
+            full["effective_learning_rate"], 0.00006 * 782 / 3_907
+        )
+        self.assertEqual(full["actual_new_samples"], 250_000)
+        for field, value in (
+            ("base_learning_rate", 0.0),
+            ("reference_new_samples", 0),
+            ("actual_new_samples", 0),
+            ("new_rows_per_batch", 0),
+        ):
+            arguments = {
+                "base_learning_rate": 0.00006,
+                "reference_new_samples": 50_000,
+                "actual_new_samples": 250_000,
+                "new_rows_per_batch": 64,
+            }
+            arguments[field] = value
+            with self.assertRaisesRegex(ValueError, "scale inputs"):
+                workflow._training_learning_rate_policy(**arguments)
+
     def test_campaign_output_requires_current_version_basename(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

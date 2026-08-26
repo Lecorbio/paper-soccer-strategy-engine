@@ -181,6 +181,7 @@ PILOT_CONFIGURATION = {
     "new_rows_per_batch": 64,
     "anchor_rows_per_batch": 192,
     "training_learning_rate": 0.00006,
+    "training_reference_new_samples": 50_000,
     "new_loss_coefficient": 0.25,
     "anchor_loss_coefficient": 0.75,
     "retention_sign_tolerance": 0.005,
@@ -208,6 +209,69 @@ def _load_json(path: pathlib.Path, label: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     return value
+
+
+def _training_new_sample_count(
+    manifests: Sequence[pathlib.Path], *, label: str
+) -> int:
+    if not manifests:
+        raise ValueError(f"{label} has no new training manifests")
+    total = 0
+    for path in manifests:
+        manifest = _load_json(path, f"{label} training shard")
+        samples = manifest.get("samples")
+        if (
+            manifest.get("split") != "train"
+            or isinstance(samples, bool)
+            or not isinstance(samples, int)
+            or samples <= 0
+        ):
+            raise ValueError(f"{label} training shard sample count is invalid")
+        total += samples
+    return total
+
+
+def _training_learning_rate_policy(
+    *, base_learning_rate: float, reference_new_samples: int,
+    actual_new_samples: int, new_rows_per_batch: int,
+) -> dict:
+    if (
+        isinstance(base_learning_rate, bool)
+        or not isinstance(base_learning_rate, (int, float))
+        or not math.isfinite(float(base_learning_rate))
+        or float(base_learning_rate) <= 0.0
+        or isinstance(reference_new_samples, bool)
+        or not isinstance(reference_new_samples, int)
+        or reference_new_samples <= 0
+        or isinstance(actual_new_samples, bool)
+        or not isinstance(actual_new_samples, int)
+        or actual_new_samples <= 0
+        or isinstance(new_rows_per_batch, bool)
+        or not isinstance(new_rows_per_batch, int)
+        or new_rows_per_batch <= 0
+    ):
+        raise ValueError("training learning-rate scale inputs are invalid")
+    reference_optimizer_steps = math.ceil(
+        reference_new_samples / new_rows_per_batch
+    )
+    actual_optimizer_steps = math.ceil(
+        actual_new_samples / new_rows_per_batch
+    )
+    scale = min(1.0, reference_optimizer_steps / actual_optimizer_steps)
+    effective = float(base_learning_rate) * scale
+    if not math.isfinite(effective) or effective <= 0.0:
+        raise ValueError("effective training learning rate is invalid")
+    return {
+        "kind": "inverse-new-train-optimizer-steps-capped-v1",
+        "base_learning_rate": float(base_learning_rate),
+        "reference_new_samples": reference_new_samples,
+        "actual_new_samples": actual_new_samples,
+        "new_rows_per_batch": new_rows_per_batch,
+        "reference_optimizer_steps": reference_optimizer_steps,
+        "actual_optimizer_steps": actual_optimizer_steps,
+        "scale": scale,
+        "effective_learning_rate": effective,
+    }
 
 
 def _atomic_bytes(path: pathlib.Path, payload: bytes) -> None:
@@ -3323,7 +3387,23 @@ def run_phase(
                 for index, path in enumerate(retention_validation_manifests)
             },
         })
-        learning_rate = float(spec.configuration["training_learning_rate"])
+        learning_rate_policy = _training_learning_rate_policy(
+            base_learning_rate=float(
+                spec.configuration["training_learning_rate"]
+            ),
+            reference_new_samples=int(
+                spec.configuration["training_reference_new_samples"]
+            ),
+            actual_new_samples=_training_new_sample_count(
+                new_manifests, label=name
+            ),
+            new_rows_per_batch=int(
+                spec.configuration["new_rows_per_batch"]
+            ),
+        )
+        learning_rate = float(
+            learning_rate_policy["effective_learning_rate"]
+        )
         new_loss_coefficient = float(
             spec.configuration["new_loss_coefficient"]
         )
@@ -3344,6 +3424,7 @@ def run_phase(
                 "anchor_rows_per_batch": spec.configuration["anchor_rows_per_batch"],
                 "batch_size": 256, "epochs": 50, "patience": 8,
                 "learning_rate": learning_rate, "weight_decay": 1e-5,
+                "learning_rate_policy": learning_rate_policy,
                 "seed_workers": 2,
                 "initialization": {
                     "kind": "exact-phase-actor-runtime",
@@ -3407,9 +3488,24 @@ def run_phase(
         path for path in prior_rank4_manifests
         if _load_json(path, "prior Rank-4 shard").get("split") == "train"
     ]
-    training_stage(15, "train-search", [*prior_search_train, search_new],
+    search_training_new = [*prior_search_train, search_new]
+    rank4_training_new = [*prior_rank4_train, rank4_new]
+    if (
+        len(search_training_new) != len(rank4_training_new)
+        or any(
+            _training_new_sample_count([search_path], label="search arm")
+            != _training_new_sample_count([rank4_path], label="Rank-4 arm")
+            for search_path, rank4_path in zip(
+                search_training_new, rank4_training_new, strict=True
+            )
+        )
+    ):
+        raise ValueError(
+            "matched training arms have different new sample counts"
+        )
+    training_stage(15, "train-search", search_training_new,
                    search_model_directory, search_runtime, search_model_manifest)
-    training_stage(16, "train-rank4", [*prior_rank4_train, rank4_new],
+    training_stage(16, "train-rank4", rank4_training_new,
                    rank4_model_directory, rank4_runtime, rank4_model_manifest)
 
     def make_anchor_metrics() -> dict:

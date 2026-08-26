@@ -85,8 +85,14 @@ frozen phase actor; the three seeds change deterministic row order, never the
 initial weights.  Every 256-row batch contains 64 new rows and 192 canonical
 anchor rows in both pilot and full phases.  New and anchor weighted-Huber
 losses are normalized separately and combined with fixed 0.25/0.75
-coefficients at learning rate 6e-5, so heavy deduplication weights cannot
-silently change the source mixture.  The new stream receives a complete fresh
+coefficients.  The learning rate is capped at 6e-5 for at most 50,000 packed
+new train rows and scales inversely with the actual cumulative new-train
+optimizer-step count above that.  This keeps the first-pass AdamW update and
+decoupled weight-decay budgets stable when the full phase has several times
+more rows, while still consuming every new row before its first selectable
+epoch.  The exact base, reference count, actual post-dedup count, scale,
+effective rate, and both step counts are receipt-bound and must match between
+the search and Rank-4 arms.  The new stream receives a complete fresh
 permutation each epoch, while the anchor cursor continues across epochs without
 repeating before a full permutation is consumed.
 
