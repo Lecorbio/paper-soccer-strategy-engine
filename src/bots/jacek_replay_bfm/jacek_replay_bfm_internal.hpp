@@ -21,10 +21,16 @@ inline constexpr std::size_t kReplayBfmInputCount =
     kReplayBfmVertices * kReplayBfmVertexCategories;
 inline constexpr std::size_t kReplayBfmHiddenOne = 192;
 inline constexpr std::size_t kReplayBfmHiddenTwo = 32;
+inline constexpr std::size_t kReplayBfmResidualRank = 16;
 inline constexpr std::size_t kReplayBfmWeightCount =
     kReplayBfmInputCount * kReplayBfmHiddenOne +
     kReplayBfmHiddenOne * kReplayBfmHiddenTwo +
     kReplayBfmHiddenTwo;
+inline constexpr std::size_t kReplayBfmResidualParameterCount =
+    2U + kReplayBfmHiddenOne * kReplayBfmResidualRank +
+    kReplayBfmResidualRank;
+inline constexpr std::size_t kReplayBfmRuntimeV2WeightCount =
+    kReplayBfmWeightCount + kReplayBfmResidualParameterCount;
 inline constexpr std::size_t kReplayBfmMaximumActiveInputs =
     kReplayBfmEdgeInputs + kReplayBfmVertices;
 inline constexpr std::size_t kReplayBfmRuntimeHeaderBytes = 128;
@@ -36,6 +42,7 @@ inline constexpr std::string_view kReplayBfmFeatureSchemaSha256 =
 
 static_assert(kReplayBfmInputCount == 6301);
 static_assert(kReplayBfmWeightCount == 1'215'968);
+static_assert(kReplayBfmRuntimeV2WeightCount == 1'219'058);
 
 struct ReplayBfmSparseFeatures {
   std::array<std::uint16_t, kReplayBfmMaximumActiveInputs> indices{};
@@ -91,11 +98,14 @@ class ReplayBfmModel {
   std::string_view model_sha256() const noexcept { return model_sha256_; }
   std::string_view payload_sha256() const noexcept { return payload_sha256_; }
   std::span<const float> weights() const noexcept { return weights_; }
+  std::uint32_t runtime_version() const noexcept { return runtime_version_; }
 
  private:
   std::vector<float> weights_{};
   std::string model_sha256_{};
   std::string payload_sha256_{};
+  std::uint32_t runtime_version_{1U};
+  bool adapter_output_is_zero_{true};
 };
 
 std::string replay_bfm_sha256_hex(std::span<const std::uint8_t> bytes);

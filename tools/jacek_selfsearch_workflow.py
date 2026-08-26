@@ -38,6 +38,9 @@ from jacek_replay_workflow import (
 AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v6"
 PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v6"
 FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v6"
+QUALIFIED_AUTO_CAMPAIGN_ID = "selfsearch-auto-20260826-v7"
+QUALIFIED_PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260826-v7"
+QUALIFIED_FULL_CAMPAIGN_ID = "selfsearch-full-20260826-v7"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -2340,6 +2343,9 @@ def _validate_model_output(
     training_report = manifest.get("training", {})
     reports = training_report.get("seed_reports")
     _, expected_initial_runtime = training.load_runtime(initial_runtime)
+    initial_runtime_version = int(
+        expected_initial_runtime.get("runtime_version", training.RUNTIME_VERSION)
+    )
     expected_sources = [
         _load_json(path, "self-search source shard")
         for path in (
@@ -2366,9 +2372,6 @@ def _validate_model_output(
         "new_coefficient": new_loss_coefficient,
         "anchor_coefficient": anchor_loss_coefficient,
     }
-    expected_initialization = {
-        "kind": "exact-supplied-runtime-all-seeds-order-only-v1"
-    }
     expected_retention_policy = {
         "monitor": "explicit-disjoint-retention-validation",
         "minimum_training_anchor_permutations_before-stop": 1,
@@ -2386,12 +2389,7 @@ def _validate_model_output(
         ),
         "patience_starts_after_complete-anchor-coverage": True,
     }
-    expected_optimizer = {
-        "name": "adamw", "epochs": 50, "patience": 8,
-        "batch_size": 256, "learning_rate": learning_rate,
-        "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
-    }
-    expected_seed_configuration = training._seed_training_configuration({
+    seed_arguments = {
         "epochs": 50,
         "patience": 8,
         "batch_size": 256,
@@ -2404,13 +2402,25 @@ def _validate_model_output(
         "retention_sign_tolerance": retention_sign_tolerance,
         "retention_huber_ratio": retention_huber_ratio,
         "selection_validation": "explicit-common-adjudicator",
-    })
+    }
+    if initial_runtime_version == training.RUNTIME_V2_VERSION:
+        seed_arguments["initial_runtime_version"] = training.RUNTIME_V2_VERSION
+    expected_seed_configuration = training._seed_training_configuration(
+        seed_arguments
+    )
+    expected_initialization = expected_seed_configuration["initialization"]
+    expected_optimizer = expected_seed_configuration["optimizer"]
+    expected_architecture = {
+        **expected_seed_configuration["architecture"],
+        "payload_layout": training.RUNTIME_V1_PAYLOAD_LAYOUT,
+    }
+    if initial_runtime_version == training.RUNTIME_V2_VERSION:
+        expected_architecture.update(training._residual_runtime_contract())
     if (
         manifest.get("schema") != "papersoccer.jacek-replay-bfm-model.v2"
         or not runtime.is_file()
         or manifest.get("runtime", {}).get("artifact_sha256") != sha256(runtime)
-        or manifest.get("architecture", {}).get("dimensions") != [6301, 192, 32, 1]
-        or manifest.get("architecture", {}).get("biases") is not False
+        or manifest.get("architecture") != expected_architecture
         or manifest.get("source_shards") != expected_sources
         or not isinstance(reports, list)
         or [report.get("seed") for report in reports if isinstance(report, dict)]
@@ -2491,6 +2501,11 @@ def _validate_model_output(
             != training_report.get("selection_validation", {}).get("dataset")
             or receipt.get("checkpoint")
             != {"file": checkpoint_name, **checkpoint_runtime}
+            or (
+                initial_runtime_version == training.RUNTIME_V2_VERSION
+                and checkpoint_runtime.get("base_payload_sha256")
+                != expected_initial_runtime.get("base_payload_sha256")
+            )
             or receipt.get("training_report") != seed_report
             or not isinstance(seed_report, dict)
             or seed_report.get("initial", {}).get("runtime")
@@ -2515,7 +2530,13 @@ def _validate_model_output(
     if {path.name for path in checkpoint_directory.iterdir()} != expected_files:
         raise ValueError("self-search seed checkpoint directory has unexpected files")
     # These loads also validate the exact 6301->192->32->1 runtime layout.
-    training.load_runtime(runtime)
+    _selected_parameters, selected_runtime_report = training.load_runtime(runtime)
+    if (
+        initial_runtime_version == training.RUNTIME_V2_VERSION
+        and selected_runtime_report.get("base_payload_sha256")
+        != expected_initial_runtime.get("base_payload_sha256")
+    ):
+        raise ValueError("self-search v2 selected runtime changed frozen base tensors")
     if chosen_checkpoint is None or runtime.read_bytes() != chosen_checkpoint.read_bytes():
         raise ValueError("self-search selected runtime does not match its chosen seed")
     return manifest
@@ -4025,13 +4046,67 @@ def _copy_atomic(source: pathlib.Path, target: pathlib.Path) -> None:
         raise RuntimeError("atomic campaign snapshot changed bytes")
 
 
+def validate_qualified_starting_actor(path: pathlib.Path) -> dict:
+    import jacek_replay_rebuild as rebuild
+
+    receipt = _load_json(path, "qualified v7 starting actor")
+    body = dict(receipt)
+    claimed = body.pop("body_sha256", None)
+    if (
+        set(receipt)
+        != {
+            "schema", "campaign_id", "pilot_campaign_id",
+            "full_campaign_id", "starting_actor", "qualification",
+            "pilot_games", "conditional_full_games", "external_upload",
+            "replace_rank4", "body_sha256",
+        }
+        or receipt.get("schema")
+        != "papersoccer.jacek-selfsearch-v7-starting-actor.v1"
+        or receipt.get("campaign_id") != QUALIFIED_AUTO_CAMPAIGN_ID
+        or receipt.get("pilot_campaign_id") != QUALIFIED_PILOT_CAMPAIGN_ID
+        or receipt.get("full_campaign_id") != QUALIFIED_FULL_CAMPAIGN_ID
+        or type(receipt.get("pilot_games")) is not int
+        or receipt.get("pilot_games") != 2_000
+        or type(receipt.get("conditional_full_games")) is not int
+        or receipt.get("conditional_full_games") != 10_000
+        or receipt.get("external_upload") is not False
+        or receipt.get("replace_rank4") is not False
+        or claimed != hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+    ):
+        raise ValueError("qualified v7 starting-actor receipt is invalid")
+    actor = receipt.get("starting_actor")
+    qualification = receipt.get("qualification")
+    if (
+        not isinstance(actor, dict)
+        or not isinstance(actor.get("path"), str)
+        or artifact_snapshot(pathlib.Path(actor["path"])) != actor
+        or not isinstance(qualification, dict)
+        or not isinstance(qualification.get("path"), str)
+        or artifact_snapshot(pathlib.Path(qualification["path"])) != qualification
+    ):
+        raise ValueError("qualified v7 starting-actor bindings are stale")
+    evidence = rebuild.validate_qualification_receipt(
+        pathlib.Path(qualification["path"])
+    )
+    if (
+        evidence.get("pass") is not True
+        or evidence.get("local_only") is not True
+        or evidence.get("external_upload") is not False
+        or evidence.get("canonical_rank4_replaced") is not False
+        or evidence.get("candidate", {}).get("sha256") != actor.get("sha256")
+        or evidence.get("candidate", {}).get("bytes") != actor.get("bytes")
+    ):
+        raise ValueError("v7 starting actor did not pass rebuild qualification")
+    return receipt
+
+
 def run_campaign(
     *, repository: pathlib.Path, expected_commit: str,
     evaluation_directory: pathlib.Path, canonical_campaign: pathlib.Path,
     output: pathlib.Path, executables: CampaignExecutables,
     build_manifest: pathlib.Path,
     resume: bool, wait_for_evaluation: bool, poll_seconds: float,
-    skip_power_check: bool,
+    skip_power_check: bool, starting_actor_receipt: pathlib.Path | None = None,
 ) -> dict:
     """Wait for the prerequisite audit, then run pilot and conditional full phase."""
 
@@ -4041,9 +4116,40 @@ def run_campaign(
     evaluation_directory = evaluation_directory.resolve()
     canonical_campaign = canonical_campaign.resolve()
     output = output.resolve()
-    if output.name != AUTO_CAMPAIGN_ID:
+    qualified_start = (
+        validate_qualified_starting_actor(starting_actor_receipt.resolve())
+        if starting_actor_receipt is not None
+        else None
+    )
+    auto_campaign_id = (
+        QUALIFIED_AUTO_CAMPAIGN_ID if qualified_start is not None
+        else AUTO_CAMPAIGN_ID
+    )
+    pilot_spec = (
+        dataclasses.replace(
+            PILOT_SPEC,
+            campaign_id=QUALIFIED_PILOT_CAMPAIGN_ID,
+            configuration={
+                **PILOT_SPEC.configuration,
+                "campaign_id": QUALIFIED_PILOT_CAMPAIGN_ID,
+            },
+        )
+        if qualified_start is not None else PILOT_SPEC
+    )
+    full_spec = (
+        dataclasses.replace(
+            FULL_SPEC,
+            campaign_id=QUALIFIED_FULL_CAMPAIGN_ID,
+            configuration={
+                **FULL_SPEC.configuration,
+                "campaign_id": QUALIFIED_FULL_CAMPAIGN_ID,
+            },
+        )
+        if qualified_start is not None else FULL_SPEC
+    )
+    if output.name != auto_campaign_id:
         raise ValueError(
-            f"campaign output directory must be named {AUTO_CAMPAIGN_ID}"
+            f"campaign output directory must be named {auto_campaign_id}"
         )
     output.mkdir(parents=True, exist_ok=True)
     status_path = output / "supervisor-status.json"
@@ -4123,7 +4229,7 @@ def run_campaign(
             )
             opening_exclusions = _evaluation_opening_banks(evaluation_directory)
             manager = GuardedStageManager(
-                output=output, campaign_id=AUTO_CAMPAIGN_ID,
+                output=output, campaign_id=auto_campaign_id,
                 round_index=-1, resume=resume, environment=environment_identity(),
                 producer_guard=producer_guard,
             )
@@ -4147,6 +4253,10 @@ def run_campaign(
                     "canonical_prior_manifests": [
                         artifact_snapshot(path) for path in canonical_prior_manifests
                     ],
+                    "qualified_starting_actor": (
+                        artifact_snapshot(starting_actor_receipt.resolve())
+                        if starting_actor_receipt is not None else None
+                    ),
                 }
                 _atomic_json(trigger_path, record)
                 return record
@@ -4195,6 +4305,13 @@ def run_campaign(
                     for index, path in enumerate(canonical_prior_manifests)
                 },
             }
+            if starting_actor_receipt is not None:
+                trigger_inputs["qualified_starting_actor_receipt"] = (
+                    starting_actor_receipt.resolve()
+                )
+                trigger_inputs["qualified_starting_actor_runtime"] = pathlib.Path(
+                    qualified_start["starting_actor"]["path"]
+                )
             evaluation_manifest = _load_json(
                 evaluation_directory / "run-manifest.json", "evaluation manifest"
             )
@@ -4240,7 +4357,11 @@ def run_campaign(
             planned = select_incumbent(
                 evaluation_directory / "final-summary.json", canonical_campaign
             )
-            original_incumbent = pathlib.Path(planned["incumbent"]["runtime"])
+            original_incumbent = (
+                pathlib.Path(qualified_start["starting_actor"]["path"])
+                if qualified_start is not None
+                else pathlib.Path(planned["incumbent"]["runtime"])
+            )
             original_runner = pathlib.Path(planned["runner_up"]["runtime"])
 
             def freeze_incumbent() -> dict:
@@ -4249,6 +4370,20 @@ def run_campaign(
                 )
                 if selected != planned:
                     raise ValueError("incumbent ranking changed during selection")
+                if qualified_start is not None:
+                    selected = {
+                        **selected,
+                        "ranking_policy": "qualified-rebuild-starting-actor-v1",
+                        "canonical_league_incumbent": selected["incumbent"],
+                        "incumbent": {
+                            "round": None,
+                            "runtime": str(original_incumbent),
+                            "runtime_sha256": sha256(original_incumbent),
+                            "qualification": artifact_snapshot(
+                                starting_actor_receipt.resolve()
+                            ),
+                        },
+                    }
                 _copy_atomic(original_incumbent, incumbent_snapshot)
                 _copy_atomic(original_runner, runner_snapshot)
                 selected["incumbent_snapshot"] = artifact_snapshot(incumbent_snapshot)
@@ -4258,11 +4393,21 @@ def run_campaign(
 
             manager.execute(
                 ordinal=1, name="incumbent-selection",
-                configuration={"policy": planned["ranking_policy"]},
+                configuration={
+                    "policy": (
+                        "qualified-rebuild-starting-actor-v1"
+                        if qualified_start is not None
+                        else planned["ranking_policy"]
+                    )
+                },
                 producers={"workflow": workflow_source},
                 inputs={
                     "evaluation": evaluation_directory / "final-summary.json",
                     "incumbent": original_incumbent, "runner_up": original_runner,
+                    **(
+                        {"qualification": starting_actor_receipt.resolve()}
+                        if starting_actor_receipt is not None else {}
+                    ),
                     **{f"round_{index}": canonical_campaign / f"round-{index}/workflow.json"
                        for index in range(3)},
                 },
@@ -4275,9 +4420,17 @@ def run_campaign(
             ):
                 frozen_input_records[str(path.resolve())] = artifact_snapshot(path)
             producer_guard()
-            _status(status_path, "running-pilot", incumbent_round=planned["incumbent"]["round"])
+            _status(
+                status_path,
+                "running-pilot",
+                incumbent_round=(
+                    None if qualified_start is not None
+                    else planned["incumbent"]["round"]
+                ),
+                qualified_rebuild_start=qualified_start is not None,
+            )
             pilot = run_phase(
-                spec=PILOT_SPEC, output=output / "pilot", resume=resume,
+                spec=pilot_spec, output=output / "pilot", resume=resume,
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=incumbent_snapshot, diversity=runner_snapshot,
                 executables=executables, anchor_train_manifests=anchor_train,
@@ -4331,7 +4484,7 @@ def run_campaign(
             )
             _status(status_path, "running-full", pilot_runtime_sha256=sha256(pilot_runtime))
             full = run_phase(
-                spec=FULL_SPEC, output=output / "full", resume=resume,
+                spec=full_spec, output=output / "full", resume=resume,
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=pilot_runtime, diversity=incumbent_snapshot,
                 original_incumbent=incumbent_snapshot,
@@ -4360,7 +4513,7 @@ def run_campaign(
                 _status(status_path, "full-rejected", summary=str(summary_path),
                         summary_sha256=sha256(summary_path))
                 return summary
-            publication_directory = output / "promoted" / FULL_CAMPAIGN_ID
+            publication_directory = output / "promoted" / full_spec.campaign_id
             published_runtime = publication_directory / "jacek_replay_bfm.runtime"
             published_manifest = publication_directory / "jacek_replay_bfm.runtime.json"
             publication_receipt = publication_directory / "publication.json"
@@ -4376,7 +4529,7 @@ def run_campaign(
             panel_receipts = sorted(
                 (output / "full/receipts/19-game-gates-panels").rglob("*.json")
             )
-            expected_panel_receipts = 4 * (FULL_SPEC.pairs // 5)
+            expected_panel_receipts = 4 * (full_spec.pairs // 5)
             if len(panel_receipts) != expected_panel_receipts:
                 raise ValueError(
                     "full gate publication requires every sharded panel receipt"
@@ -4486,6 +4639,7 @@ def main() -> int:
     campaign.add_argument("--pack-tool", type=pathlib.Path, required=True)
     campaign.add_argument("--trainer", type=pathlib.Path, required=True)
     campaign.add_argument("--build-manifest", type=pathlib.Path, required=True)
+    campaign.add_argument("--starting-actor-receipt", type=pathlib.Path)
     campaign.add_argument("--resume", action="store_true")
     campaign.add_argument("--wait-for-evaluation", action="store_true")
     campaign.add_argument("--poll-seconds", type=float, default=30.0)
@@ -4556,6 +4710,7 @@ def main() -> int:
             wait_for_evaluation=arguments.wait_for_evaluation,
             poll_seconds=arguments.poll_seconds,
             skip_power_check=arguments.skip_power_check,
+            starting_actor_receipt=arguments.starting_actor_receipt,
         )
     elif arguments.command == "write-build-manifest":
         if (

@@ -11,11 +11,18 @@
 namespace papersoccer::detail {
 namespace {
 
-constexpr std::array<std::uint8_t, 8> kMagic{
+constexpr std::array<std::uint8_t, 8> kV1Magic{
     'J', 'R', 'B', 'F', 'M', 0, 0, 1};
-constexpr std::size_t kPayloadBytes = kReplayBfmWeightCount * sizeof(float);
-constexpr std::size_t kRuntimeBytes =
-    kReplayBfmRuntimeHeaderBytes + kPayloadBytes;
+constexpr std::array<std::uint8_t, 8> kV2Magic{
+    'J', 'R', 'B', 'F', 'M', 0, 0, 2};
+constexpr std::size_t kV1PayloadBytes =
+    kReplayBfmWeightCount * sizeof(float);
+constexpr std::size_t kV2PayloadBytes =
+    kReplayBfmRuntimeV2WeightCount * sizeof(float);
+constexpr std::size_t kV1RuntimeBytes =
+    kReplayBfmRuntimeHeaderBytes + kV1PayloadBytes;
+constexpr std::size_t kV2RuntimeBytes =
+    kReplayBfmRuntimeHeaderBytes + kV2PayloadBytes;
 
 std::uint32_t rotate_right(std::uint32_t value, unsigned shift) noexcept {
   return (value >> shift) | (value << (32U - shift));
@@ -60,11 +67,13 @@ std::vector<std::uint8_t> read_checkpoint(std::string_view path) {
         "could not open Jacek replay BFM checkpoint");
   }
   const std::streampos end = input.tellg();
-  if (end < 0 || static_cast<std::uint64_t>(end) != kRuntimeBytes) {
+  if (end < 0 ||
+      (static_cast<std::uint64_t>(end) != kV1RuntimeBytes &&
+       static_cast<std::uint64_t>(end) != kV2RuntimeBytes)) {
     throw std::invalid_argument(
         "Jacek replay BFM checkpoint has a wrong size or trailing bytes");
   }
-  std::vector<std::uint8_t> bytes(kRuntimeBytes);
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(end));
   input.seekg(0, std::ios::beg);
   input.read(reinterpret_cast<char *>(bytes.data()),
              static_cast<std::streamsize>(bytes.size()));
@@ -188,9 +197,18 @@ ReplayBfmModel::ReplayBfmModel(std::string_view path) {
 
   const std::vector<std::uint8_t> checkpoint = read_checkpoint(path);
   const std::span<const std::uint8_t> bytes(checkpoint);
-  if (!std::equal(kMagic.begin(), kMagic.end(), bytes.begin()) ||
+  const std::uint32_t version = read_u32(bytes, 12U);
+  const std::uint64_t weight_count = read_u64(bytes, 48U);
+  const bool is_v1 =
+      std::equal(kV1Magic.begin(), kV1Magic.end(), bytes.begin()) &&
+      version == 1U && weight_count == kReplayBfmWeightCount &&
+      bytes.size() == kV1RuntimeBytes;
+  const bool is_v2 =
+      std::equal(kV2Magic.begin(), kV2Magic.end(), bytes.begin()) &&
+      version == 2U && weight_count == kReplayBfmRuntimeV2WeightCount &&
+      bytes.size() == kV2RuntimeBytes;
+  if ((!is_v1 && !is_v2) ||
       read_u32(bytes, 8U) != kReplayBfmRuntimeHeaderBytes ||
-      read_u32(bytes, 12U) != 1U ||
       read_u32(bytes, 16U) != kReplayBfmInputCount ||
       read_u32(bytes, 20U) != kReplayBfmHiddenOne ||
       read_u32(bytes, 24U) != kReplayBfmHiddenTwo ||
@@ -198,8 +216,7 @@ ReplayBfmModel::ReplayBfmModel(std::string_view path) {
       read_u32(bytes, 32U) != 1U ||
       read_u32(bytes, 36U) != 2U ||
       read_u32(bytes, 40U) != 3U ||
-      std::bit_cast<float>(read_u32(bytes, 44U)) != 0.01F ||
-      read_u64(bytes, 48U) != kReplayBfmWeightCount) {
+      std::bit_cast<float>(read_u32(bytes, 44U)) != 0.01F) {
     throw std::invalid_argument(
         "Jacek replay BFM checkpoint header is incompatible");
   }
@@ -221,15 +238,17 @@ ReplayBfmModel::ReplayBfmModel(std::string_view path) {
         "Jacek replay BFM checkpoint feature schema does not match");
   }
 
+  const std::size_t payload_bytes =
+      is_v2 ? kV2PayloadBytes : kV1PayloadBytes;
   const std::span<const std::uint8_t> payload =
-      bytes.subspan(kReplayBfmRuntimeHeaderBytes, kPayloadBytes);
+      bytes.subspan(kReplayBfmRuntimeHeaderBytes, payload_bytes);
   payload_sha256_ = replay_bfm_sha256_hex(payload);
   if (payload_sha256_ != bytes_to_hex(bytes.subspan(88U, 32U))) {
     throw std::invalid_argument(
         "Jacek replay BFM checkpoint payload hash does not match");
   }
 
-  weights_.resize(kReplayBfmWeightCount);
+  weights_.resize(static_cast<std::size_t>(weight_count));
   for (std::size_t index = 0; index < weights_.size(); ++index) {
     const float weight =
         std::bit_cast<float>(read_u32(payload, index * sizeof(float)));
@@ -238,6 +257,15 @@ ReplayBfmModel::ReplayBfmModel(std::string_view path) {
           "Jacek replay BFM checkpoint contains a non-finite weight");
     }
     weights_[index] = weight;
+  }
+  runtime_version_ = version;
+  if (is_v2) {
+    const std::size_t adapter_b_offset =
+        kReplayBfmWeightCount + 2U +
+        kReplayBfmHiddenOne * kReplayBfmResidualRank;
+    adapter_output_is_zero_ = std::all_of(
+        weights_.begin() + static_cast<std::ptrdiff_t>(adapter_b_offset),
+        weights_.end(), [](float value) { return value == 0.0F; });
   }
   model_sha256_ = replay_bfm_sha256_hex(bytes);
 }
@@ -315,7 +343,34 @@ float ReplayBfmModel::evaluate_delta(
   for (std::size_t hidden = 0; hidden < second.size(); ++hidden) {
     output += second[hidden] * weights_[output_offset + hidden];
   }
-  return std::tanh(output);
+  if (runtime_version_ == 1U) {
+    return std::tanh(output);
+  }
+
+  const std::size_t gain_offset = kReplayBfmWeightCount;
+  const float gain = weights_[gain_offset];
+  const float bias = weights_[gain_offset + 1U];
+  if (gain == 1.0F && bias == 0.0F && adapter_output_is_zero_) {
+    return std::tanh(output);
+  }
+
+  const std::size_t adapter_a_offset = gain_offset + 2U;
+  const std::size_t adapter_b_offset =
+      adapter_a_offset + kReplayBfmHiddenOne * kReplayBfmResidualRank;
+  float residual = 0.0F;
+  for (std::size_t rank = 0; rank < kReplayBfmResidualRank; ++rank) {
+    float adapter_pre = 0.0F;
+    for (std::size_t hidden = 0; hidden < first.size(); ++hidden) {
+      adapter_pre +=
+          first[hidden] *
+          weights_[adapter_a_offset +
+                   hidden * kReplayBfmResidualRank + rank];
+    }
+    const float adapter_hidden =
+        adapter_pre < 0.0F ? 0.01F * adapter_pre : adapter_pre;
+    residual += adapter_hidden * weights_[adapter_b_offset + rank];
+  }
+  return std::tanh(gain * output + bias + residual);
 }
 
 float ReplayBfmModel::evaluate(

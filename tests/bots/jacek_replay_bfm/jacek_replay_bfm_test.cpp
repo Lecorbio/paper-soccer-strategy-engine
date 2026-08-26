@@ -117,6 +117,46 @@ std::vector<std::uint8_t> make_checkpoint(
   return bytes;
 }
 
+std::vector<std::uint8_t> make_v2_checkpoint(
+    const std::vector<std::pair<std::size_t, float>> &weights = {}) {
+  const std::size_t payload_bytes =
+      ps::detail::kReplayBfmRuntimeV2WeightCount * sizeof(float);
+  std::vector<std::uint8_t> bytes(
+      ps::detail::kReplayBfmRuntimeHeaderBytes + payload_bytes, 0U);
+  const std::array<std::uint8_t, 8> magic{
+      'J', 'R', 'B', 'F', 'M', 0, 0, 2};
+  std::copy(magic.begin(), magic.end(), bytes.begin());
+  write_u32(bytes, 8U, ps::detail::kReplayBfmRuntimeHeaderBytes);
+  write_u32(bytes, 12U, 2U);
+  write_u32(bytes, 16U, ps::detail::kReplayBfmInputCount);
+  write_u32(bytes, 20U, ps::detail::kReplayBfmHiddenOne);
+  write_u32(bytes, 24U, ps::detail::kReplayBfmHiddenTwo);
+  write_u32(bytes, 28U, 1U);
+  write_u32(bytes, 32U, 1U);
+  write_u32(bytes, 36U, 2U);
+  write_u32(bytes, 40U, 3U);
+  write_u32(bytes, 44U, std::bit_cast<std::uint32_t>(0.01F));
+  write_u64(bytes, 48U, ps::detail::kReplayBfmRuntimeV2WeightCount);
+  write_hash(bytes, 56U, ps::detail::kReplayBfmFeatureSchemaSha256);
+
+  write_u32(bytes,
+            ps::detail::kReplayBfmRuntimeHeaderBytes +
+                ps::detail::kReplayBfmWeightCount * sizeof(float),
+            std::bit_cast<std::uint32_t>(1.0F));
+  for (const auto &[index, value] : weights) {
+    require(index < ps::detail::kReplayBfmRuntimeV2WeightCount,
+            "Test v2 weight index must be in range.");
+    write_u32(bytes,
+              ps::detail::kReplayBfmRuntimeHeaderBytes + index * 4U,
+              std::bit_cast<std::uint32_t>(value));
+  }
+  const std::span<const std::uint8_t> payload(
+      bytes.data() + ps::detail::kReplayBfmRuntimeHeaderBytes,
+      payload_bytes);
+  write_hash(bytes, 88U, ps::detail::replay_bfm_sha256_hex(payload));
+  return bytes;
+}
+
 class TemporaryCheckpoint {
  public:
   explicit TemporaryCheckpoint(const std::vector<std::uint8_t> &bytes) {
@@ -365,6 +405,89 @@ void loader_and_float_inference_match_the_binary_contract() {
               ps::JacekReplayBfmBot::feature_schema_sha256() ==
                   ps::detail::kReplayBfmFeatureSchemaSha256,
           "The runtime and feature schema must expose stable SHA-256 identities.");
+}
+
+void zero_residual_adapter_is_bit_exact_to_v1() {
+  ps::detail::ReplayBfmSparseFeatures features;
+  features.indices = {5U, 17U, 316U};
+  features.count = 3U;
+  const std::size_t w1 = 5U * ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w2 = ps::detail::kReplayBfmInputCount *
+                         ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w3 =
+      w2 + ps::detail::kReplayBfmHiddenOne * ps::detail::kReplayBfmHiddenTwo;
+  const std::vector<std::pair<std::size_t, float>> base_weights{
+      {w1, 2.0F}, {w2, 0.5F}, {w3, 0.25F}};
+  std::vector<std::pair<std::size_t, float>> v2_weights = base_weights;
+  const std::size_t adapter_a = ps::detail::kReplayBfmWeightCount + 2U;
+  v2_weights.emplace_back(adapter_a, -0.5F);
+
+  TemporaryCheckpoint v1_checkpoint(make_checkpoint(base_weights));
+  TemporaryCheckpoint v2_checkpoint(make_v2_checkpoint(v2_weights));
+  const ps::detail::ReplayBfmModel v1(v1_checkpoint.string());
+  const ps::detail::ReplayBfmModel v2(v2_checkpoint.string());
+  const float v1_prediction = v1.evaluate(features);
+  const float v2_prediction = v2.evaluate(features);
+  require(v1.runtime_version() == 1U && v2.runtime_version() == 2U &&
+              std::bit_cast<std::uint32_t>(v1_prediction) ==
+                  std::bit_cast<std::uint32_t>(v2_prediction),
+          "A zero-output v2 residual adapter must be bit-exact to its v1 base.");
+}
+
+void residual_adapter_matches_the_python_inference_golden() {
+  ps::detail::ReplayBfmSparseFeatures features;
+  features.indices = {5U};
+  features.count = 1U;
+  const std::size_t w1 = 5U * ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w2 = ps::detail::kReplayBfmInputCount *
+                         ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w3 =
+      w2 + ps::detail::kReplayBfmHiddenOne * ps::detail::kReplayBfmHiddenTwo;
+  const std::size_t gain = ps::detail::kReplayBfmWeightCount;
+  const std::size_t bias = gain + 1U;
+  const std::size_t adapter_a = gain + 2U;
+  const std::size_t adapter_b =
+      adapter_a + ps::detail::kReplayBfmHiddenOne *
+                      ps::detail::kReplayBfmResidualRank;
+  TemporaryCheckpoint checkpoint(make_v2_checkpoint({
+      {w1, 2.0F},
+      {w2, 0.5F},
+      {w3, 0.25F},
+      {gain, 1.2F},
+      {bias, 0.1F},
+      {adapter_a, -0.5F},
+      {adapter_b, 3.0F},
+  }));
+  const ps::detail::ReplayBfmModel model(checkpoint.string());
+  const float prediction = model.evaluate(features);
+  require(std::bit_cast<std::uint32_t>(prediction) == 0x3f109d42U,
+          "Native v2 inference must match the Python float32 parity golden.");
+}
+
+void loader_rejects_malformed_v2_checkpoints() {
+  std::vector<std::uint8_t> wrong_count = make_v2_checkpoint();
+  write_u64(wrong_count, 48U,
+            ps::detail::kReplayBfmRuntimeV2WeightCount - 1U);
+  TemporaryCheckpoint bad_count(wrong_count);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_count.string()); },
+      "A v2 checkpoint with the wrong fixed payload count must be rejected.");
+
+  std::vector<std::uint8_t> nonfinite = make_v2_checkpoint({
+      {ps::detail::kReplayBfmWeightCount,
+       std::numeric_limits<float>::quiet_NaN()},
+  });
+  TemporaryCheckpoint bad_weight(nonfinite);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_weight.string()); },
+      "A hash-valid non-finite v2 adapter parameter must be rejected.");
+
+  std::vector<std::uint8_t> trailing = make_v2_checkpoint();
+  trailing.push_back(0U);
+  TemporaryCheckpoint bad_size(trailing);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_size.string()); },
+      "Trailing v2 checkpoint bytes must be rejected.");
 }
 
 void prepared_first_layer_matches_full_sparse_inference() {
@@ -1001,6 +1124,12 @@ int run_jacek_replay_bfm_tests() {
        feature_schema_has_exact_categories_and_rotation},
       {"loader_and_float_inference_match_the_binary_contract",
        loader_and_float_inference_match_the_binary_contract},
+      {"zero_residual_adapter_is_bit_exact_to_v1",
+       zero_residual_adapter_is_bit_exact_to_v1},
+      {"residual_adapter_matches_the_python_inference_golden",
+       residual_adapter_matches_the_python_inference_golden},
+      {"loader_rejects_malformed_v2_checkpoints",
+       loader_rejects_malformed_v2_checkpoints},
       {"prepared_first_layer_matches_full_sparse_inference",
        prepared_first_layer_matches_full_sparse_inference},
       {"loader_rejects_corruption_nonfinite_weights_and_trailing_bytes",

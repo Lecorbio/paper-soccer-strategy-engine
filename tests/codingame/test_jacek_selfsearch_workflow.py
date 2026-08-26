@@ -6,6 +6,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -143,6 +144,85 @@ def rank4_teacher_row(position_id: str, score: int = 100) -> dict:
 
 
 class SelfSearchWorkflowTests(unittest.TestCase):
+    def test_qualified_rebuild_starting_actor_is_strictly_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            actor = root / "actor.runtime"
+            actor.write_bytes(b"qualified-actor")
+            qualification = root / "qualification.json"
+            qualification_body = {
+                "schema": "papersoccer.jacek-replay-rebuild-qualification.v1",
+                "pass": True,
+                "local_only": True,
+                "external_upload": False,
+                "canonical_rank4_replaced": False,
+                "candidate": workflow.artifact_snapshot(actor),
+            }
+            write_json(
+                qualification,
+                {
+                    **qualification_body,
+                    "body_sha256": hashlib.sha256(
+                        workflow.canonical_json_bytes(qualification_body)
+                    ).hexdigest(),
+                },
+            )
+            receipt = root / "v7-starting-actor.json"
+            body = {
+                "schema": "papersoccer.jacek-selfsearch-v7-starting-actor.v1",
+                "campaign_id": workflow.QUALIFIED_AUTO_CAMPAIGN_ID,
+                "pilot_campaign_id": workflow.QUALIFIED_PILOT_CAMPAIGN_ID,
+                "full_campaign_id": workflow.QUALIFIED_FULL_CAMPAIGN_ID,
+                "starting_actor": workflow.artifact_snapshot(actor),
+                "qualification": workflow.artifact_snapshot(qualification),
+                "pilot_games": 2_000,
+                "conditional_full_games": 10_000,
+                "external_upload": False,
+                "replace_rank4": False,
+            }
+            write_json(
+                receipt,
+                {
+                    **body,
+                    "body_sha256": hashlib.sha256(
+                        workflow.canonical_json_bytes(body)
+                    ).hexdigest(),
+                },
+            )
+            with mock.patch(
+                "jacek_replay_rebuild.validate_qualification_receipt",
+                return_value={
+                    **qualification_body,
+                    "body_sha256": hashlib.sha256(
+                        workflow.canonical_json_bytes(qualification_body)
+                    ).hexdigest(),
+                },
+            ) as validate_qualification:
+                self.assertEqual(
+                    workflow.validate_qualified_starting_actor(receipt)[
+                        "starting_actor"
+                    ]["sha256"],
+                    workflow.sha256(actor),
+                )
+                validate_qualification.assert_called_once_with(
+                    qualification.resolve()
+                )
+            weakened = json.loads(receipt.read_text())
+            weakened["pilot_games"] = 1
+            weakened.pop("body_sha256")
+            weakened["body_sha256"] = hashlib.sha256(
+                workflow.canonical_json_bytes(weakened)
+            ).hexdigest()
+            weakened_path = root / "weakened-v7-starting-actor.json"
+            write_json(weakened_path, weakened)
+            with self.assertRaisesRegex(ValueError, "receipt is invalid"):
+                workflow.validate_qualified_starting_actor(weakened_path)
+            damaged = json.loads(qualification.read_text())
+            damaged["pass"] = False
+            write_json(qualification, damaged)
+            with self.assertRaisesRegex(ValueError, "stale|did not pass"):
+                workflow.validate_qualified_starting_actor(receipt)
+
     def test_training_learning_rate_scales_with_full_new_sample_count(self):
         pilot = workflow._training_learning_rate_policy(
             base_learning_rate=0.00006,

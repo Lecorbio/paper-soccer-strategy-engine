@@ -37,12 +37,16 @@ import jacek_replay_features as features  # noqa: E402
 HIDDEN_ONE = 192
 HIDDEN_TWO = 32
 OUTPUT_COUNT = 1
+RESIDUAL_RANK = 16
 LEAKY_SLOPE = np.float32(0.01)
 WEIGHT_COUNT = (
     features.INPUT_COUNT * HIDDEN_ONE
     + HIDDEN_ONE * HIDDEN_TWO
     + HIDDEN_TWO
 )
+RESIDUAL_PARAMETER_COUNT = 2 + HIDDEN_ONE * RESIDUAL_RANK + RESIDUAL_RANK
+RUNTIME_V2_WEIGHT_COUNT = WEIGHT_COUNT + RESIDUAL_PARAMETER_COUNT
+RESIDUAL_INITIALIZATION_SEED = 0x4A5242464D000002
 FIXED_SEEDS = (20260823, 20260824, 20260825)
 
 SHARD_SCHEMA = "papersoccer.jacek-replay-csr-shard.v1"
@@ -54,9 +58,47 @@ RETENTION_SEED_CHECKPOINT_SCHEMA = (
 )
 RUNTIME_MAGIC = b"JRBFM\0\0\x01"
 RUNTIME_VERSION = 1
+RUNTIME_V2_MAGIC = b"JRBFM\0\0\x02"
+RUNTIME_V2_VERSION = 2
 RUNTIME_HEADER = struct.Struct("<8s9IfQ32s32s8s")
 FEATURE_SCHEMA_HASH = hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).digest()
 ACTIVATION_IDS = (1, 2, 3)
+BASE_PARAMETER_NAMES = ("w1", "w2", "w3")
+RESIDUAL_PARAMETER_NAMES = (
+    "base_gain",
+    "residual_bias",
+    "adapter_a",
+    "adapter_b",
+)
+RUNTIME_V1_PAYLOAD_LAYOUT = "w1-input-major,w2-input-major,w3"
+RUNTIME_V2_PAYLOAD_LAYOUT = (
+    "w1-input-major,w2-input-major,w3,base_gain,residual_bias,"
+    "adapter_a-192x16-input-major,adapter_b-16"
+)
+
+
+def _residual_runtime_contract() -> dict[str, object]:
+    return {
+        "runtime_version": RUNTIME_V2_VERSION,
+        "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+        "biases": {
+            "base_network": False,
+            "residual_output_parameter": "residual_bias",
+        },
+        "residual_adapter": {
+            "input": "first-hidden-activation-h1",
+            "rank": RESIDUAL_RANK,
+            "activation": "leaky-relu-0.01",
+            "base_gain_parameter": "base_gain",
+            "residual_bias_parameter": "residual_bias",
+            "matrix_parameter": "adapter_a[192,16]-input-major",
+            "output_parameter": "adapter_b[16]",
+        },
+        "parameter_update": {
+            "trainable": list(RESIDUAL_PARAMETER_NAMES),
+            "frozen": list(BASE_PARAMETER_NAMES),
+        },
+    }
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -737,6 +779,98 @@ def initialize(seed: int) -> dict[str, np.ndarray]:
     }
 
 
+def initialize_residual_adapter(
+    base_parameters: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Return a deterministic zero-output rank-16 adapter over a frozen base."""
+
+    _validate_parameters(base_parameters)
+    if set(base_parameters) != set(BASE_PARAMETER_NAMES):
+        raise ValueError("residual adapter initialization requires a v1 base runtime")
+    rng = np.random.default_rng(RESIDUAL_INITIALIZATION_SEED)
+    result = {
+        name: np.asarray(base_parameters[name], dtype=np.float32).copy()
+        for name in BASE_PARAMETER_NAMES
+    }
+    result.update(
+        {
+            "base_gain": np.asarray(1.0, dtype=np.float32),
+            "residual_bias": np.asarray(0.0, dtype=np.float32),
+            "adapter_a": rng.normal(
+                0.0,
+                math.sqrt(1.0 / HIDDEN_ONE),
+                (HIDDEN_ONE, RESIDUAL_RANK),
+            ).astype(np.float32),
+            "adapter_b": np.zeros(RESIDUAL_RANK, dtype=np.float32),
+        }
+    )
+    return result
+
+
+def _is_residual_runtime(parameters: Mapping[str, np.ndarray]) -> bool:
+    return set(parameters) == set((*BASE_PARAMETER_NAMES, *RESIDUAL_PARAMETER_NAMES))
+
+
+def _base_parameter_bytes(parameters: Mapping[str, np.ndarray]) -> bytes:
+    return b"".join(
+        np.asarray(parameters[name], dtype="<f4", order="C").tobytes(order="C")
+        for name in BASE_PARAMETER_NAMES
+    )
+
+
+def _base_parameters_are_byte_identical(
+    candidate: Mapping[str, np.ndarray], initial: Mapping[str, np.ndarray]
+) -> bool:
+    return _base_parameter_bytes(candidate) == _base_parameter_bytes(initial)
+
+
+def _runtime_report_version(report: Mapping[str, object]) -> int:
+    if report.get("runtime_version") == RUNTIME_V2_VERSION:
+        return RUNTIME_V2_VERSION
+    if (
+        "runtime_version" not in report
+        and report.get("weight_count") == WEIGHT_COUNT
+        and report.get("bytes") == RUNTIME_HEADER.size + WEIGHT_COUNT * 4
+    ):
+        return RUNTIME_VERSION
+    raise ValueError("runtime identity has an unknown version contract")
+
+
+def _require_v2_frozen_base_report(
+    candidate_report: Mapping[str, object],
+    initial_report: Mapping[str, object],
+    *,
+    context: str,
+) -> None:
+    if not initial_report:
+        return
+    initial_version = _runtime_report_version(initial_report)
+    if initial_version != RUNTIME_V2_VERSION:
+        return
+    candidate_version = _runtime_report_version(candidate_report)
+    expected = {
+        "runtime_version": RUNTIME_V2_VERSION,
+        "residual_rank": RESIDUAL_RANK,
+        "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+    }
+    if (
+        candidate_version != RUNTIME_V2_VERSION
+        or any(candidate_report.get(key) != value for key, value in expected.items())
+        or any(initial_report.get(key) != value for key, value in expected.items())
+        or any(
+            isinstance(report.get(name), bool)
+            or not isinstance(report.get(name), (int, float))
+            or not math.isfinite(float(report[name]))
+            for report in (candidate_report, initial_report)
+            for name in ("base_gain", "residual_bias")
+        )
+        or not isinstance(initial_report.get("base_payload_sha256"), str)
+        or candidate_report.get("base_payload_sha256")
+        != initial_report.get("base_payload_sha256")
+    ):
+        raise ValueError(f"{context} v2 frozen base parameters changed")
+
+
 def _hidden_one(value: np.ndarray) -> np.ndarray:
     return np.where(value >= 0.0, value * value, LEAKY_SLOPE * value).astype(np.float32)
 
@@ -762,9 +896,40 @@ def forward(
     first = _hidden_one(first_pre)
     second_pre = first @ parameters["w2"]
     second = _leaky(second_pre)
-    output_pre = second @ parameters["w3"]
+    base_output_pre = second @ parameters["w3"]
+    if not _is_residual_runtime(parameters):
+        output_pre = base_output_pre
+        output = np.tanh(output_pre).astype(np.float32)
+        return output, (first_pre, first, second_pre, second, output_pre)
+
+    adapter_pre = first @ parameters["adapter_a"]
+    adapter_hidden = _leaky(adapter_pre)
+    # Keep the freshly initialized adapter exactly prediction-equivalent to
+    # its v1 base, including the float32 output bits.
+    if (
+        parameters["base_gain"].item() == 1.0
+        and parameters["residual_bias"].item() == 0.0
+        and not np.any(parameters["adapter_b"])
+    ):
+        output_pre = base_output_pre
+    else:
+        residual = adapter_hidden @ parameters["adapter_b"]
+        output_pre = (
+            parameters["base_gain"] * base_output_pre
+            + parameters["residual_bias"]
+            + residual
+        ).astype(np.float32)
     output = np.tanh(output_pre).astype(np.float32)
-    return output, (first_pre, first, second_pre, second, output_pre)
+    return output, (
+        first_pre,
+        first,
+        second_pre,
+        second,
+        base_output_pre,
+        adapter_pre,
+        adapter_hidden,
+        output_pre,
+    )
 
 
 def _weighted_huber(
@@ -807,8 +972,10 @@ class AdamW:
         self.step += 1
         correction_one = 1.0 - 0.9**self.step
         correction_two = 1.0 - 0.999**self.step
-        for name, parameter in parameters.items():
-            gradient = gradients[name]
+        for name, gradient in gradients.items():
+            if name not in self.first or name not in parameters:
+                raise ValueError(f"optimizer has no state for parameter {name}")
+            parameter = parameters[name]
             self.first[name] = 0.9 * self.first[name] + 0.1 * gradient
             self.second[name] = 0.999 * self.second[name] + 0.001 * gradient * gradient
             first = self.first[name] / correction_one
@@ -827,25 +994,55 @@ def _apply_training_batch(
     huber_delta: float,
 ) -> float:
     prediction, cache = forward(parameters, active)
-    first_pre, first, second_pre, second, output_pre = cache
     loss, output_gradient = _weighted_huber(
         prediction,
         targets,
         weights,
         huber_delta,
     )
-    output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
-    gradients: dict[str, np.ndarray] = {
-        "w3": second.T @ output_pre_gradient,
-    }
-    second_gradient = output_pre_gradient[:, None] * parameters["w3"][None, :]
-    second_pre_gradient = second_gradient * _leaky_derivative(second_pre)
-    gradients["w2"] = first.T @ second_pre_gradient
-    first_gradient = second_pre_gradient @ parameters["w2"].T
-    first_pre_gradient = first_gradient * _hidden_one_derivative(first_pre)
-    gradients["w1"] = np.zeros_like(parameters["w1"])
-    for row, indices in enumerate(active):
-        np.add.at(gradients["w1"], indices, first_pre_gradient[row])
+    if _is_residual_runtime(parameters):
+        (
+            _first_pre,
+            first,
+            _second_pre,
+            _second,
+            base_output_pre,
+            adapter_pre,
+            adapter_hidden,
+            output_pre,
+        ) = cache
+        output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
+        adapter_hidden_gradient = (
+            output_pre_gradient[:, None] * parameters["adapter_b"][None, :]
+        )
+        adapter_pre_gradient = (
+            adapter_hidden_gradient * _leaky_derivative(adapter_pre)
+        )
+        gradients = {
+            "base_gain": np.asarray(
+                np.sum(output_pre_gradient * base_output_pre, dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "residual_bias": np.asarray(
+                np.sum(output_pre_gradient, dtype=np.float32), dtype=np.float32
+            ),
+            "adapter_a": first.T @ adapter_pre_gradient,
+            "adapter_b": adapter_hidden.T @ output_pre_gradient,
+        }
+    else:
+        first_pre, first, second_pre, second, output_pre = cache
+        output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
+        gradients = {
+            "w3": second.T @ output_pre_gradient,
+        }
+        second_gradient = output_pre_gradient[:, None] * parameters["w3"][None, :]
+        second_pre_gradient = second_gradient * _leaky_derivative(second_pre)
+        gradients["w2"] = first.T @ second_pre_gradient
+        first_gradient = second_pre_gradient @ parameters["w2"].T
+        first_pre_gradient = first_gradient * _hidden_one_derivative(first_pre)
+        gradients["w1"] = np.zeros_like(parameters["w1"])
+        for row, indices in enumerate(active):
+            np.add.at(gradients["w1"], indices, first_pre_gradient[row])
     squared_norm = sum(float(np.sum(value * value)) for value in gradients.values())
     norm = math.sqrt(squared_norm)
     if norm > 5.0:
@@ -1087,6 +1284,8 @@ def train_seed(
         if initial_parameters is None or initial_runtime_report is None:
             raise ValueError("mixed training requires an exact supplied runtime")
         _validate_parameters(initial_parameters)
+        if dict(initial_runtime_report) != runtime_bytes(initial_parameters)[1]:
+            raise ValueError("mixed training initial runtime identity is stale")
         _validate_loss_coefficients(
             new_loss_coefficient, anchor_loss_coefficient
         )
@@ -1096,7 +1295,12 @@ def train_seed(
             name: np.asarray(value, dtype=np.float32).copy()
             for name, value in initial_parameters.items()
         }
-    optimizer = AdamW(parameters, learning_rate, weight_decay)
+    optimizer_parameters = (
+        {name: parameters[name] for name in RESIDUAL_PARAMETER_NAMES}
+        if _is_residual_runtime(parameters)
+        else parameters
+    )
+    optimizer = AdamW(optimizer_parameters, learning_rate, weight_decay)
     rng = np.random.default_rng(seed ^ 0xD1B54A32D192ED03)
     if mixed_training is not None:
         mixed_training.validate(batch_size)
@@ -1254,6 +1458,11 @@ def train_seed(
         selected_row = history[best_epoch - 1]
         selected_validation = selected_row["validation"]
         selected_retention = selected_row["retention"]
+    if _is_residual_runtime(initial_parameters) and (
+        not _is_residual_runtime(best)
+        or not _base_parameters_are_byte_identical(best, initial_parameters)
+    ):
+        raise RuntimeError("mixed v2 training changed frozen base parameters")
     return best, {
         "seed": seed,
         "best_epoch": best_epoch,
@@ -1270,51 +1479,85 @@ def train_seed(
 
 
 def _validate_parameters(parameters: Mapping[str, np.ndarray]) -> None:
-    expected = {
+    base = {
         "w1": (features.INPUT_COUNT, HIDDEN_ONE),
         "w2": (HIDDEN_ONE, HIDDEN_TWO),
         "w3": (HIDDEN_TWO,),
     }
-    if set(parameters) != set(expected):
-        raise ValueError("runtime parameters must contain exactly w1, w2, and w3")
+    residual = {
+        "base_gain": (),
+        "residual_bias": (),
+        "adapter_a": (HIDDEN_ONE, RESIDUAL_RANK),
+        "adapter_b": (RESIDUAL_RANK,),
+    }
+    if set(parameters) == set(base):
+        expected = base
+    elif set(parameters) == set((*base, *residual)):
+        expected = {**base, **residual}
+    else:
+        raise ValueError(
+            "runtime parameters must contain exactly the v1 base tensors or "
+            "the v2 base plus residual adapter tensors"
+        )
     for name, shape in expected.items():
-        value = parameters[name]
+        value = np.asarray(parameters[name])
         if value.shape != shape or not np.all(np.isfinite(value)):
             raise ValueError(f"invalid or nonfinite runtime tensor {name}")
 
 
 def runtime_bytes(parameters: Mapping[str, np.ndarray]) -> tuple[bytes, dict]:
     _validate_parameters(parameters)
+    residual = _is_residual_runtime(parameters)
+    parameter_names = (
+        (*BASE_PARAMETER_NAMES, *RESIDUAL_PARAMETER_NAMES)
+        if residual
+        else BASE_PARAMETER_NAMES
+    )
+    weight_count = RUNTIME_V2_WEIGHT_COUNT if residual else WEIGHT_COUNT
     payload = b"".join(
         np.asarray(parameters[name], dtype="<f4", order="C").tobytes(order="C")
-        for name in ("w1", "w2", "w3")
+        for name in parameter_names
     )
-    if len(payload) != WEIGHT_COUNT * 4:
+    if len(payload) != weight_count * 4:
         raise RuntimeError("runtime payload weight count is inconsistent")
     payload_hash = hashlib.sha256(payload).digest()
     header = RUNTIME_HEADER.pack(
-        RUNTIME_MAGIC,
+        RUNTIME_V2_MAGIC if residual else RUNTIME_MAGIC,
         RUNTIME_HEADER.size,
-        RUNTIME_VERSION,
+        RUNTIME_V2_VERSION if residual else RUNTIME_VERSION,
         features.INPUT_COUNT,
         HIDDEN_ONE,
         HIDDEN_TWO,
         OUTPUT_COUNT,
         *ACTIVATION_IDS,
         float(LEAKY_SLOPE),
-        WEIGHT_COUNT,
+        weight_count,
         FEATURE_SCHEMA_HASH,
         payload_hash,
         b"\0" * 8,
     )
     artifact = header + payload
-    return artifact, {
+    report = {
         "artifact_sha256": _sha256(artifact),
         "payload_sha256": payload_hash.hex(),
         "feature_schema_sha256": FEATURE_SCHEMA_HASH.hex(),
         "bytes": len(artifact),
-        "weight_count": WEIGHT_COUNT,
+        "weight_count": weight_count,
     }
+    if residual:
+        report.update(
+            {
+                "runtime_version": RUNTIME_V2_VERSION,
+                "residual_rank": RESIDUAL_RANK,
+                "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+                "base_payload_sha256": _sha256(payload[: WEIGHT_COUNT * 4]),
+                "base_gain": float(np.asarray(parameters["base_gain"])),
+                "residual_bias": float(
+                    np.asarray(parameters["residual_bias"])
+                ),
+            }
+        )
+    return artifact, report
 
 
 def export_runtime(path: pathlib.Path, parameters: Mapping[str, np.ndarray]) -> dict:
@@ -1358,22 +1601,29 @@ def load_runtime(path: pathlib.Path) -> tuple[dict[str, np.ndarray], dict]:
         payload_hash,
         reserved,
     ) = fields
-    expected = (
-        magic == RUNTIME_MAGIC
-        and header_size == RUNTIME_HEADER.size
-        and version == RUNTIME_VERSION
+    common = (
+        header_size == RUNTIME_HEADER.size
         and (inputs, hidden_one, hidden_two, outputs)
         == (features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT)
         and (activation_one, activation_two, activation_out) == ACTIVATION_IDS
         and struct.pack("<f", slope) == struct.pack("<f", float(LEAKY_SLOPE))
-        and weight_count == WEIGHT_COUNT
         and schema_hash == FEATURE_SCHEMA_HASH
         and reserved == b"\0" * 8
     )
-    if not expected:
+    is_v1 = (
+        magic == RUNTIME_MAGIC
+        and version == RUNTIME_VERSION
+        and weight_count == WEIGHT_COUNT
+    )
+    is_v2 = (
+        magic == RUNTIME_V2_MAGIC
+        and version == RUNTIME_V2_VERSION
+        and weight_count == RUNTIME_V2_WEIGHT_COUNT
+    )
+    if not common or not (is_v1 or is_v2):
         raise ValueError("runtime header contract mismatch")
     payload = artifact[RUNTIME_HEADER.size :]
-    if len(payload) != WEIGHT_COUNT * 4:
+    if len(payload) != weight_count * 4:
         raise ValueError("runtime is truncated or has trailing bytes")
     if hashlib.sha256(payload).digest() != payload_hash:
         raise ValueError("runtime payload SHA-256 mismatch")
@@ -1385,15 +1635,50 @@ def load_runtime(path: pathlib.Path) -> tuple[dict[str, np.ndarray], dict]:
     parameters = {
         "w1": values[:first_end].reshape(features.INPUT_COUNT, HIDDEN_ONE).copy(),
         "w2": values[first_end:second_end].reshape(HIDDEN_ONE, HIDDEN_TWO).copy(),
-        "w3": values[second_end:].copy(),
+        "w3": values[second_end : second_end + HIDDEN_TWO].copy(),
     }
-    return parameters, {
+    if is_v2:
+        adapter_start = second_end + HIDDEN_TWO
+        parameters.update(
+            {
+                "base_gain": np.asarray(
+                    values[adapter_start], dtype=np.float32
+                ).copy(),
+                "residual_bias": np.asarray(
+                    values[adapter_start + 1], dtype=np.float32
+                ).copy(),
+                "adapter_a": values[
+                    adapter_start + 2 :
+                    adapter_start + 2 + HIDDEN_ONE * RESIDUAL_RANK
+                ]
+                .reshape(HIDDEN_ONE, RESIDUAL_RANK)
+                .copy(),
+                "adapter_b": values[
+                    adapter_start + 2 + HIDDEN_ONE * RESIDUAL_RANK :
+                ].copy(),
+            }
+        )
+    report = {
         "artifact_sha256": _sha256(artifact),
         "payload_sha256": payload_hash.hex(),
         "feature_schema_sha256": schema_hash.hex(),
         "bytes": len(artifact),
         "weight_count": weight_count,
     }
+    if is_v2:
+        report.update(
+            {
+                "runtime_version": RUNTIME_V2_VERSION,
+                "residual_rank": RESIDUAL_RANK,
+                "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+                "base_payload_sha256": _sha256(payload[: WEIGHT_COUNT * 4]),
+                "base_gain": float(np.asarray(parameters["base_gain"])),
+                "residual_bias": float(
+                    np.asarray(parameters["residual_bias"])
+                ),
+            }
+        )
+    return parameters, report
 
 
 def _training_producer_identity() -> dict[str, str]:
@@ -1409,8 +1694,15 @@ def _seed_training_configuration(
 ) -> dict:
     new_rows = int(training_arguments.get("new_rows_per_batch", 0))
     anchor_rows = int(training_arguments.get("anchor_rows_per_batch", 0))
+    initial_runtime_version = int(
+        training_arguments.get("initial_runtime_version", RUNTIME_VERSION)
+    )
     if (new_rows == 0) != (anchor_rows == 0):
         raise ValueError("mixed batch configuration is incomplete")
+    if initial_runtime_version not in {RUNTIME_VERSION, RUNTIME_V2_VERSION}:
+        raise ValueError("mixed initial runtime version is unsupported")
+    if not new_rows and initial_runtime_version != RUNTIME_VERSION:
+        raise ValueError("legacy training cannot declare a v2 initial runtime")
     if new_rows:
         _validate_loss_coefficients(
             float(training_arguments["new_loss_coefficient"]),
@@ -1497,6 +1789,19 @@ def _seed_training_configuration(
             },
         }
     )
+    if initial_runtime_version == RUNTIME_V2_VERSION:
+        contract = _residual_runtime_contract()
+        configuration["architecture"].update(contract)
+        configuration["optimizer"].update(
+            {
+                "trainable_parameters": list(RESIDUAL_PARAMETER_NAMES),
+                "frozen_parameters": list(BASE_PARAMETER_NAMES),
+            }
+        )
+        configuration["initialization"] = {
+            "kind": "exact-supplied-runtime-v2-adapter-only-all-seeds-order-only-v1",
+            **contract,
+        }
     return configuration
 
 
@@ -1573,6 +1878,12 @@ def _validate_seed_report(
     runtime_report: Mapping[str, object],
 ) -> dict:
     mixed = configuration.get("retention_selection") is not None
+    if mixed:
+        _require_v2_frozen_base_report(
+            runtime_report,
+            inputs.get("initial_runtime", {}),
+            context=f"seed {seed} checkpoint",
+        )
     expected_fields = {
         "seed",
         "best_epoch",
@@ -1803,6 +2114,11 @@ def _publish_seed_checkpoint(
         raise RuntimeError("seed checkpoint producer changed during training")
     checkpoint_path, receipt_path = _seed_checkpoint_paths(directory, seed)
     checkpoint_payload, runtime_report = runtime_bytes(candidate)
+    _require_v2_frozen_base_report(
+        runtime_report,
+        receipt_binding.get("inputs", {}).get("initial_runtime", {}),
+        context=f"seed {seed} checkpoint publication",
+    )
     if report.get("checkpoint") != runtime_report:
         raise RuntimeError("seed report checkpoint identity changed before publication")
     body = {
@@ -1877,6 +2193,16 @@ def _load_seed_checkpoint(
         raise ValueError(f"seed {seed} checkpoint parameters are corrupt") from error
     if receipt.get("checkpoint") != {"file": checkpoint_path.name, **runtime_report}:
         raise ValueError(f"seed {seed} checkpoint hash is stale or corrupt")
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        if (
+            not _is_residual_runtime(candidate)
+            or not _base_parameters_are_byte_identical(
+                candidate, initial_parameters
+            )
+        ):
+            raise ValueError(
+                f"seed {seed} checkpoint v2 frozen base parameters changed"
+            )
     report = _validate_seed_report(
         receipt.get("training_report"),
         seed,
@@ -1973,6 +2299,16 @@ def _train_seed_and_report(
         ),
         retention_validation=retention_validation,
     )
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        if (
+            not _is_residual_runtime(candidate)
+            or not _base_parameters_are_byte_identical(
+                candidate, initial_parameters
+            )
+        ):
+            raise RuntimeError(
+                f"seed {seed} candidate v2 frozen base parameters changed"
+            )
     report["checkpoint"] = runtime_bytes(candidate)[1]
     publication = None
     if checkpoint_directory is not None:
@@ -2363,6 +2699,8 @@ def train_three_seeds(
             else "dataset-validation-split"
         ),
     }
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        training_arguments["initial_runtime_version"] = RUNTIME_V2_VERSION
     receipt_binding = None
     completed: dict[
         int, tuple[dict[str, np.ndarray], dict, dict | None]
@@ -2425,6 +2763,17 @@ def train_three_seeds(
     seed_results = [completed[seed] for seed in normalized_seeds]
     candidates = [result[0] for result in seed_results]
     reports = [result[1] for result in seed_results]
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        for seed, candidate in zip(normalized_seeds, candidates, strict=True):
+            if (
+                not _is_residual_runtime(candidate)
+                or not _base_parameters_are_byte_identical(
+                    candidate, initial_parameters
+                )
+            ):
+                raise RuntimeError(
+                    f"seed {seed} selected v2 frozen base parameters changed"
+                )
     trained_indices = [
         index for index, report in enumerate(reports)
         if int(report["best_epoch"]) > 0
@@ -2446,6 +2795,22 @@ def train_three_seeds(
             candidates[chosen_index], datasets["test"]
         )
     selected_configuration = _seed_training_configuration(training_arguments)
+    optimizer_report = {
+        "name": "adamw",
+        "epochs": epochs,
+        "patience": patience,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "gradient_norm_clip": 5.0,
+    }
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        optimizer_report.update(
+            {
+                "trainable_parameters": list(RESIDUAL_PARAMETER_NAMES),
+                "frozen_parameters": list(BASE_PARAMETER_NAMES),
+            }
+        )
     selection_report = {
         "seeds": list(normalized_seeds),
         "seed_reports": reports,
@@ -2460,15 +2825,7 @@ def train_three_seeds(
             "then maximum correlation; then seed"
         ),
         "test_revealed_after_selection": reveal_test,
-        "optimizer": {
-            "name": "adamw",
-            "epochs": epochs,
-            "patience": patience,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "weight_decay": weight_decay,
-            "gradient_norm_clip": 5.0,
-        },
+        "optimizer": optimizer_report,
         "loss": selected_configuration["loss"],
         "augmentation": "reflection rows inherit root game split",
         "batching": selected_configuration["batching"],
@@ -2891,6 +3248,20 @@ def main() -> int:
 
     runtime_path = arguments.output_directory / runtime_name
     runtime_report = export_runtime(runtime_path, selected)
+    if _is_residual_runtime(selected):
+        _require_v2_frozen_base_report(
+            runtime_report,
+            training_report.get("initial_runtime", {}),
+            context="selected model publication",
+        )
+    architecture = {
+        "dimensions": [features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT],
+        "biases": False,
+        "activations": ["square-leaky-0.01", "leaky-relu-0.01", "tanh"],
+        "payload_layout": RUNTIME_V1_PAYLOAD_LAYOUT,
+    }
+    if _is_residual_runtime(selected):
+        architecture.update(_residual_runtime_contract())
     manifest = {
         "schema": (
             RETENTION_MODEL_MANIFEST_SCHEMA
@@ -2903,12 +3274,7 @@ def main() -> int:
             else "research-candidate-not-game-gated"
         ),
         "feature_schema": features.FEATURE_SCHEMA,
-        "architecture": {
-            "dimensions": [features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT],
-            "biases": False,
-            "activations": ["square-leaky-0.01", "leaky-relu-0.01", "tanh"],
-            "payload_layout": "w1-input-major,w2-input-major,w3",
-        },
+        "architecture": architecture,
         "target": target_metadata_from_shard_provenance(
             source_manifests,
             source_roles,

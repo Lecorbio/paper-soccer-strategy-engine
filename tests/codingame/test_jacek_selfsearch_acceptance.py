@@ -415,7 +415,7 @@ class TinyAcceptanceFixture:
             "active_features": 1,
             "sha256": "c" * 64,
         }
-        seed_configuration = training._seed_training_configuration({
+        seed_arguments = {
             "epochs": 50,
             "patience": 8,
             "batch_size": 256,
@@ -428,7 +428,10 @@ class TinyAcceptanceFixture:
             "retention_sign_tolerance": retention_sign_tolerance,
             "retention_huber_ratio": retention_huber_ratio,
             "selection_validation": "explicit-common-adjudicator",
-        })
+        }
+        if initial_runtime_report.get("runtime_version") == 2:
+            seed_arguments["initial_runtime_version"] = 2
+        seed_configuration = training._seed_training_configuration(seed_arguments)
         checkpoint_directory = output_directory / "training-seeds"
         checkpoint_directory.mkdir(parents=True, exist_ok=True)
         publications = []
@@ -493,7 +496,15 @@ class TinyAcceptanceFixture:
         manifest = {
             "schema": "papersoccer.jacek-replay-bfm-model.v2",
             "runtime": {"artifact_sha256": workflow.sha256(runtime)},
-            "architecture": {"dimensions": [6301, 192, 32, 1], "biases": False},
+            "architecture": {
+                **seed_configuration["architecture"],
+                "payload_layout": training.RUNTIME_V1_PAYLOAD_LAYOUT,
+                **(
+                    training._residual_runtime_contract()
+                    if initial_runtime_report.get("runtime_version") == 2
+                    else {}
+                ),
+            },
             "source_shards": [json.loads(path.read_bytes()) for path in source_paths],
             "training": {
                 "seed_reports": seed_reports,
@@ -509,11 +520,7 @@ class TinyAcceptanceFixture:
                     "kind": "explicit-common-adjudicator",
                     "dataset": validation_identity,
                 },
-                "optimizer": {
-                    "name": "adamw", "epochs": 50, "patience": 8,
-                    "batch_size": 256, "learning_rate": learning_rate,
-                    "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
-                },
+                "optimizer": seed_configuration["optimizer"],
                 "initialization": initialization,
                 "initial_runtime": initial_runtime_report,
                 "loss": loss,
