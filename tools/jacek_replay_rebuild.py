@@ -2280,8 +2280,13 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     started = body.get("started_at_unix")
     deadline = body.get("same_architecture_deadline_unix")
     if (
-        _git_head_commit(repository) != body["repository"].get("commit")
-        or body["repository"].get("clean") is not True
+        body["repository"].get("clean") is not True
+        or not isinstance(body["repository"].get("commit"), str)
+        or len(body["repository"]["commit"]) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in body["repository"]["commit"]
+        )
         or not isinstance(started, (int, float))
         or not isinstance(deadline, (int, float))
         or float(deadline) != float(started) + SAME_ARCHITECTURE_BUDGET_SECONDS
@@ -2505,8 +2510,9 @@ def validate_rebuild_build_manifest(path: pathlib.Path) -> dict[str, object]:
     cache_text = cache.read_text(encoding="utf-8", errors="replace")
     build_directory = pathlib.Path(body["build"]["directory"])
     if (
-        _git_head_commit(repository) != commit
-        or body["repository"].get("clean") is not True
+        body["repository"].get("clean") is not True
+        or len(commit) != 40
+        or any(character not in "0123456789abcdef" for character in commit)
         or body["build"].get("type") != "Release"
         or body["build"].get("sanitizers") is not False
         or cache.parent != build_directory
