@@ -228,6 +228,34 @@ class JacekReplayRecoveryTests(unittest.TestCase):
         # Restore the ordinary bundle to the process cache for later tests.
         type(self).inputs = self._prepare()
 
+    def test_deep_corpus_role_receipt_reuses_immutable_shards(self):
+        recovery.clear_recovery_input_cache()
+        arguments = {
+            "new_manifests": [self.manifests["new"]],
+            "anchor_manifests": [self.manifests["anchor"]],
+            "selection_manifests": [self.manifests["selection"]],
+            "retention_manifests": [self.manifests["retention"]],
+        }
+        with mock.patch.object(
+            training,
+            "load_csr_shard",
+            wraps=training.load_csr_shard,
+        ) as load_shard:
+            trusted = recovery.prepare_recovery_datasets(
+                **arguments, prevalidated_role_isolation=True
+            )
+            recomputed = recovery.prepare_recovery_datasets(**arguments)
+        self.assertEqual(load_shard.call_count, 4)
+        self.assertEqual(
+            trusted.receipt_identity()["role_isolation"],
+            "deep-rebuild-corpus-receipt",
+        )
+        self.assertEqual(
+            recomputed.receipt_identity()["role_isolation"],
+            "recomputed-from-sparse-rows",
+        )
+        type(self).inputs = self._prepare()
+
     def test_content_identical_manifest_copy_cannot_double_weight_rows(self):
         source_manifest = self.manifests["new"]
         manifest = json.loads(source_manifest.read_bytes())

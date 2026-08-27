@@ -3828,6 +3828,7 @@ def run_recovery_phase(
             anchor_manifests=corpus.anchor_manifest_paths(arm),
             selection_manifests=corpus.validation_manifest_paths(arm),
             retention_manifests=corpus.retention_validation_manifest_paths(arm),
+            prevalidated_role_isolation=True,
         )
         for arm in ("search", "rank4")
     }
@@ -3972,6 +3973,7 @@ def run_residual_phase(
             anchor_manifests=corpus.anchor_manifest_paths(arm),
             selection_manifests=corpus.validation_manifest_paths(arm),
             retention_manifests=corpus.retention_validation_manifest_paths(arm),
+            prevalidated_role_isolation=True,
         )
         for arm in ("search", "rank4")
     }
@@ -5182,6 +5184,7 @@ def _validate_phase_candidate_record(
                 anchor_manifests=corpus.anchor_manifest_paths(arm),
                 selection_manifests=corpus.validation_manifest_paths(arm),
                 retention_manifests=corpus.retention_validation_manifest_paths(arm),
+                prevalidated_role_isolation=True,
             )
             prepared = recovery.bind_recovery_runtimes(
                 datasets,
@@ -5617,6 +5620,7 @@ def validate_selected_candidate_lineage(
             anchor_manifests=corpus.anchor_manifest_paths(arm),
             selection_manifests=corpus.validation_manifest_paths(arm),
             retention_manifests=corpus.retention_validation_manifest_paths(arm),
+            prevalidated_role_isolation=True,
         )
         prepared = recovery.bind_recovery_runtimes(
             datasets,

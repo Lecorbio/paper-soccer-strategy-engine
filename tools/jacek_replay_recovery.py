@@ -96,6 +96,7 @@ _POLICY_ALIASES = {
 
 _CACHE_LOCK = threading.RLock()
 _DATASET_CACHE: dict[str, "PreparedRecoveryDatasets"] = {}
+_SHARD_CACHE: dict[tuple[str, str], training.SparseShard] = {}
 _RUNTIME_CACHE: dict[str, tuple[Mapping[str, np.ndarray], bytes]] = {}
 _METRIC_CACHE: dict[tuple[str, str], bytes] = {}
 
@@ -330,8 +331,25 @@ def _validate_role_isolation(
                     )
 
 
+def _load_shard_cached(
+    path: pathlib.Path, probe: Mapping[str, object]
+) -> training.SparseShard:
+    key = (str(probe["manifest_sha256"]), str(probe["npz_sha256"]))
+    with _CACHE_LOCK:
+        cached = _SHARD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    shard = training.load_csr_shard(path)
+    for name in ("indptr", "indices", "targets", "weights", "group_ids"):
+        getattr(shard, name).setflags(write=False)
+    with _CACHE_LOCK:
+        previous = _SHARD_CACHE.setdefault(key, shard)
+    return previous
+
+
 def _prepare_datasets(
     manifests: Mapping[str, tuple[pathlib.Path, ...]],
+    *, prevalidated_role_isolation: bool,
 ) -> PreparedRecoveryDatasets:
     probes = {
         role: [
@@ -351,14 +369,17 @@ def _prepare_datasets(
                 f"{role} repeats content-identical manifest or NPZ evidence"
             )
     cache_material = {
-        role: [
-            {
-                "manifest_sha256": item["manifest_sha256"],
-                "npz_sha256": item["npz_sha256"],
-            }
-            for item in probes[role]
-        ]
-        for role in sorted(probes)
+        "manifests": {
+            role: [
+                {
+                    "manifest_sha256": item["manifest_sha256"],
+                    "npz_sha256": item["npz_sha256"],
+                }
+                for item in probes[role]
+            ]
+            for role in sorted(probes)
+        },
+        "prevalidated_role_isolation": prevalidated_role_isolation,
     }
     cache_key = _sha256(training.canonical_json_bytes(cache_material))
     with _CACHE_LOCK:
@@ -367,7 +388,10 @@ def _prepare_datasets(
             return cached
 
         loaded = {
-            role: tuple(training.load_csr_shard(path) for path in paths)
+            role: tuple(
+                _load_shard_cached(path, probes[role][ordinal])
+                for ordinal, path in enumerate(paths)
+            )
             for role, paths in manifests.items()
         }
         expected_splits = {
@@ -381,13 +405,19 @@ def _prepare_datasets(
                 raise ValueError(
                     f"{role} manifests must use split {expected_splits[role]}"
                 )
-        _validate_role_isolation(loaded)
+        if not prevalidated_role_isolation:
+            _validate_role_isolation(loaded)
         datasets = {
             role: _readonly_dataset(training.combine_shards(role_shards))
             for role, role_shards in loaded.items()
         }
         identity = {
             "feature_schema": training.features.FEATURE_SCHEMA,
+            "role_isolation": (
+                "deep-rebuild-corpus-receipt"
+                if prevalidated_role_isolation
+                else "recomputed-from-sparse-rows"
+            ),
             "manifests": probes,
             "datasets": {
                 role: training._dataset_identity(dataset)
@@ -433,6 +463,7 @@ def prepare_recovery_datasets(
     anchor_manifests: Sequence[pathlib.Path | str],
     selection_manifests: Sequence[pathlib.Path | str],
     retention_manifests: Sequence[pathlib.Path | str],
+    prevalidated_role_isolation: bool = False,
 ) -> PreparedRecoveryDatasets:
     """Validate, freeze, and cache the four exact recovery dataset roles.
 
@@ -447,7 +478,10 @@ def prepare_recovery_datasets(
         "selection": _normalize_manifest_paths(selection_manifests, "selection"),
         "retention": _normalize_manifest_paths(retention_manifests, "retention"),
     }
-    return _prepare_datasets(manifests)
+    return _prepare_datasets(
+        manifests,
+        prevalidated_role_isolation=prevalidated_role_isolation,
+    )
 
 
 def bind_recovery_runtimes(
@@ -528,6 +562,7 @@ def clear_recovery_input_cache() -> None:
 
     with _CACHE_LOCK:
         _DATASET_CACHE.clear()
+        _SHARD_CACHE.clear()
         _RUNTIME_CACHE.clear()
         _METRIC_CACHE.clear()
 
