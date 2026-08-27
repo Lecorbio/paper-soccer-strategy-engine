@@ -151,6 +151,59 @@ def atomic_write(path: pathlib.Path, payload: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _git_head_commit(repository: pathlib.Path) -> str:
+    """Resolve HEAD without spawning Git (LaunchAgents can block in git open())."""
+
+    marker = repository.resolve() / ".git"
+    if marker.is_file():
+        value = marker.read_text(encoding="utf-8").strip()
+        if not value.startswith("gitdir: "):
+            raise ValueError("repository gitdir marker is malformed")
+        git_directory = pathlib.Path(value.removeprefix("gitdir: "))
+        if not git_directory.is_absolute():
+            git_directory = (marker.parent / git_directory).resolve()
+    elif marker.is_dir():
+        git_directory = marker
+    else:
+        raise ValueError("repository has no Git metadata")
+    head = (git_directory / "HEAD").read_text(encoding="utf-8").strip()
+    if len(head) == 40 and all(character in "0123456789abcdef" for character in head):
+        return head
+    if not head.startswith("ref: "):
+        raise ValueError("repository HEAD is malformed")
+    reference = head.removeprefix("ref: ")
+    if not reference.startswith("refs/") or ".." in pathlib.PurePosixPath(reference).parts:
+        raise ValueError("repository HEAD reference is malformed")
+    common_directory = git_directory
+    common_marker = git_directory / "commondir"
+    if common_marker.is_file():
+        common_value = common_marker.read_text(encoding="utf-8").strip()
+        common_directory = (
+            pathlib.Path(common_value)
+            if pathlib.Path(common_value).is_absolute()
+            else (git_directory / common_value).resolve()
+        )
+    for directory in (git_directory, common_directory):
+        reference_path = directory / reference
+        if reference_path.is_file():
+            commit = reference_path.read_text(encoding="utf-8").strip()
+            if len(commit) == 40 and all(
+                character in "0123456789abcdef" for character in commit
+            ):
+                return commit
+    packed = common_directory / "packed-refs"
+    if packed.is_file():
+        for line in packed.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            commit, separator, name = line.partition(" ")
+            if separator and name == reference and len(commit) == 40 and all(
+                character in "0123456789abcdef" for character in commit
+            ):
+                return commit
+    raise ValueError("repository HEAD reference cannot be resolved")
+
+
 def freeze_opening_banks(
     *, comparison: pathlib.Path, output_directory: pathlib.Path,
     excluded_banks: Sequence[pathlib.Path],
@@ -2224,22 +2277,10 @@ def validate_rebuild_inputs(path: pathlib.Path) -> dict[str, object]:
     ):
         raise ValueError("rebuild inputs do not match the frozen build")
     repository = pathlib.Path(body["repository"]["path"])
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    )
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=repository, text=True, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, check=False,
-    )
     started = body.get("started_at_unix")
     deadline = body.get("same_architecture_deadline_unix")
     if (
-        head.returncode
-        or head.stdout.strip() != body["repository"].get("commit")
-        or status.returncode
-        or status.stdout
+        _git_head_commit(repository) != body["repository"].get("commit")
         or body["repository"].get("clean") is not True
         or not isinstance(started, (int, float))
         or not isinstance(deadline, (int, float))
@@ -2460,23 +2501,11 @@ def validate_rebuild_build_manifest(path: pathlib.Path) -> dict[str, object]:
                 raise ValueError(f"rebuild build {section} binding is stale")
     repository = pathlib.Path(body["repository"]["path"])
     commit = str(body["repository"]["commit"])
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    )
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=repository, text=True, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, check=False,
-    )
     cache = pathlib.Path(body["build"]["cmake_cache"]["path"])
     cache_text = cache.read_text(encoding="utf-8", errors="replace")
     build_directory = pathlib.Path(body["build"]["directory"])
     if (
-        head.returncode
-        or head.stdout.strip() != commit
-        or status.returncode
-        or status.stdout
+        _git_head_commit(repository) != commit
         or body["repository"].get("clean") is not True
         or body["build"].get("type") != "Release"
         or body["build"].get("sanitizers") is not False

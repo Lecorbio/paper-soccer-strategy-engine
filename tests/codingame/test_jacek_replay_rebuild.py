@@ -539,6 +539,21 @@ class ReplayRebuildTests(unittest.TestCase):
             )
         )
 
+    def test_git_head_resolution_never_needs_a_git_subprocess(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = pathlib.Path(directory)
+            git_directory = repository / ".git"
+            git_directory.mkdir()
+            first = "1" * 40
+            (git_directory / "HEAD").write_text(first + "\n")
+            self.assertEqual(rebuild._git_head_commit(repository), first)
+
+            second = "2" * 40
+            (git_directory / "refs/heads").mkdir(parents=True)
+            (git_directory / "refs/heads/rebuild").write_text(second + "\n")
+            (git_directory / "HEAD").write_text("ref: refs/heads/rebuild\n")
+            self.assertEqual(rebuild._git_head_commit(repository), second)
+
     def test_launch_receipt_allows_only_predeadline_work_to_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
