@@ -69,9 +69,9 @@ PROTECTED_ROOTS = (
 # The original recursive T0 snapshot of ``results/jacek_arena_bfm`` included
 # 13 intentionally gitignored scratch files that existed in the freezing
 # worktree.  They cannot exist in a clean checkout.  Preserve that original
-# identity as canonical while accepting exact, audited Git-tracked successor
-# trees. This is deliberately an all-or-nothing identity list: modified files,
-# partial scratch trees, and any extra file still fail closed.
+# identity as canonical while accepting exact, audited successor trees. This is
+# deliberately an all-or-nothing identity list: modified files, partial scratch
+# trees, and any extra file still fail closed.
 PROTECTED_TREE_EQUIVALENTS = (
     (
         {
@@ -135,6 +135,26 @@ PROTECTED_TREE_EQUIVALENTS = (
     ),
     (
         {
+            "path": "benchmarks/flagship_study",
+            "file_count": 44,
+            "total_bytes": 146_223_641,
+            "tree_sha256": (
+                "9f943bf96f4f0a40c5412f25d3a8cf156d348ea2709a6a8cd33bdc1460cd63f3"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "benchmarks/flagship_study",
+            "file_count": 46,
+            "total_bytes": 146_248_470,
+            "tree_sha256": (
+                "18a1c61342b3d028ffb3d4bf3fecdc08c32a5b1fce2cb8e96b75769d26770291"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
+    (
+        {
             "path": "benchmarks/game_review_gate",
             "file_count": 27,
             "total_bytes": 5_703_678,
@@ -149,6 +169,26 @@ PROTECTED_TREE_EQUIVALENTS = (
             "total_bytes": 5_877_116,
             "tree_sha256": (
                 "91ff435a28581b44bec37f320a341bba188c02212dc377b0bcfb45c68b3dae33"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+    ),
+    (
+        {
+            "path": "benchmarks/game_review_gate",
+            "file_count": 27,
+            "total_bytes": 5_703_678,
+            "tree_sha256": (
+                "2cbd39a7733ca725325be92008743a08af26118c2077917494a8b4344011ea5f"
+            ),
+            "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
+        },
+        {
+            "path": "benchmarks/game_review_gate",
+            "file_count": 27,
+            "total_bytes": 5_703_620,
+            "tree_sha256": (
+                "8119de4db63bbf50730f1f5efd2f636f4c5109b825b987104e099c1e16a02e96"
             ),
             "tree_hash_algorithm": "sha256(path-nul-size-nul-file_digest-nul)/v1",
         },

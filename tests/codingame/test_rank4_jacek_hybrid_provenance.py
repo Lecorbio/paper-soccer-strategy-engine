@@ -90,6 +90,19 @@ class HybridCampaignProvenanceTest(unittest.TestCase):
             successor,
         )
 
+    def test_merged_clean_successor_trees_are_exact(self) -> None:
+        for index, relative_path in (
+            (3, "benchmarks/flagship_study"),
+            (5, "benchmarks/game_review_gate"),
+        ):
+            original, successor = self.freezer.PROTECTED_TREE_EQUIVALENTS[index]
+            self.assertEqual(
+                self.freezer.tree_identity(ROOT / relative_path), successor
+            )
+            self.assertTrue(
+                self.freezer.protected_tree_identity_matches(successor, original)
+            )
+
     def test_time_control_and_derivative_lineage_are_exact(self) -> None:
         self.assertEqual(
             self.manifest["time_boundary"]["goal_created_at_epoch"],
