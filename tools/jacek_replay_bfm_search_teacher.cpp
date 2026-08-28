@@ -34,7 +34,9 @@ namespace papersoccer::jacek_replay_search_teacher {
 namespace {
 
 constexpr std::string_view kSchema =
-    "papersoccer.jacek-replay-search-teacher.v1";
+    "papersoccer.jacek-replay-search-teacher.v4";
+constexpr std::string_view kTerminationAuditSchema =
+    "papersoccer.jacek-replay-search-termination-audit.v2";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
@@ -42,12 +44,13 @@ struct Options {
   std::string model_path;
   std::string model_sha256;
   std::string campaign_id;
-  std::uint32_t max_time_ms{60'000U};
+  std::uint32_t max_time_ms{};
   std::size_t max_tree_nodes{64'000U};
   std::size_t max_actions{250U};
   std::size_t max_partial_paths{50'000U};
   double exploration{0.5};
   double fpu{0.5};
+  bool audit_terminations{};
 };
 
 struct PositionRecord {
@@ -127,6 +130,20 @@ UInt parse_unsigned(std::string_view raw, std::string_view label) {
   return result;
 }
 
+template <typename UInt>
+UInt parse_nonnegative_unsigned(std::string_view raw,
+                                std::string_view label) {
+  UInt result{};
+  const auto [end, error] =
+      std::from_chars(raw.data(), raw.data() + raw.size(), result);
+  if (raw.empty() || error != std::errc{} ||
+      end != raw.data() + raw.size()) {
+    throw std::invalid_argument(std::string(label) +
+                                " must be a nonnegative integer");
+  }
+  return result;
+}
+
 double parse_double(std::string_view raw, std::string_view label) {
   std::string owned(raw);
   char *end = nullptr;
@@ -156,10 +173,15 @@ Options parse_options(int argc, char **argv) {
           << "usage: papersoccer_jacek_replay_search_teacher "
              "--model PATH --model-sha256 HEX --campaign-id ID "
              "[--tree-nodes N] [--time-ms N] [--max-actions N] "
-             "[--max-partial-paths N] [--exploration C] [--fpu V]\n"
+             "[--max-partial-paths N] [--exploration C] [--fpu V] "
+             "[--audit-terminations]\n"
              "stdin TSV header: "
           << kHeader << '\n';
       std::exit(0);
+    }
+    if (option == "--audit-terminations") {
+      options.audit_terminations = true;
+      continue;
     }
     const std::string value = required_value(index, argc, argv, option);
     if (option == "--model") {
@@ -173,7 +195,7 @@ Options parse_options(int argc, char **argv) {
           parse_unsigned<std::size_t>(value, option);
     } else if (option == "--time-ms") {
       options.max_time_ms =
-          parse_unsigned<std::uint32_t>(value, option);
+          parse_nonnegative_unsigned<std::uint32_t>(value, option);
     } else if (option == "--max-actions") {
       options.max_actions = parse_unsigned<std::size_t>(value, option);
     } else if (option == "--max-partial-paths") {
@@ -199,6 +221,11 @@ Options parse_options(int argc, char **argv) {
       options.max_partial_paths > 50'000U || options.exploration < 0.0 ||
       options.fpu < -1.0 || options.fpu > 1.0) {
     throw std::invalid_argument("invalid search-teacher configuration");
+  }
+  if ((!options.audit_terminations && options.max_time_ms != 0U) ||
+      (options.audit_terminations && options.max_time_ms > 60'000U)) {
+    throw std::invalid_argument(
+        "fixed-work labels require --time-ms 0; audits allow at most 60000");
   }
   return options;
 }
@@ -372,6 +399,111 @@ void write_bool(std::ostream &out, bool value) {
   out << (value ? "true" : "false");
 }
 
+void write_search_stats(std::ostream &out,
+                        const ps::JacekReplayBfmSearchStats &stats) {
+  out << "{\"expansions\":" << stats.expansions
+      << ",\"generated_actions\":" << stats.generated_actions
+      << ",\"retained_actions\":" << stats.retained_actions
+      << ",\"neural_evaluations\":" << stats.neural_evaluations
+      << ",\"visits\":" << stats.visits
+      << ",\"completed_actions\":" << stats.completed_actions
+      << ",\"duplicate_boundaries\":" << stats.duplicate_boundaries
+      << ",\"partial_paths\":" << stats.partial_paths
+      << ",\"fifo_extractions\":" << stats.fifo_extractions
+      << ",\"lifo_extractions\":" << stats.lifo_extractions
+      << ",\"tactical_proofs\":" << stats.tactical_proofs
+      << ",\"tactical_solutions\":" << stats.tactical_solutions
+      << ",\"truncations\":" << stats.truncations
+      << ",\"generation_action_cap_stops\":"
+      << stats.generation_action_cap_stops
+      << ",\"generation_partial_cap_stops\":"
+      << stats.generation_partial_cap_stops
+      << ",\"generation_deadline_stops\":"
+      << stats.generation_deadline_stops
+      << ",\"materialization_deadline_stops\":"
+      << stats.materialization_deadline_stops
+      << ",\"generation_queue_drops\":"
+      << stats.generation_queue_drops
+      << ",\"generation_retention_drops\":"
+      << stats.generation_retention_drops
+      << ",\"generation_boundary_replacements\":"
+      << stats.generation_boundary_replacements
+      << ",\"generation_tactical_shortcuts\":"
+      << stats.generation_tactical_shortcuts
+      << ",\"generation_fallbacks\":" << stats.generation_fallbacks
+      << ",\"generation_frontier_resumptions\":"
+      << stats.generation_frontier_resumptions
+      << ",\"generation_zero_action_resumptions\":"
+      << stats.generation_zero_action_resumptions
+      << ",\"generation_max_frontier_depth\":"
+      << stats.generation_max_frontier_depth
+      << ",\"progressive_widenings\":" << stats.progressive_widenings
+      << ",\"closed_unsolved_nodes\":" << stats.closed_unsolved_nodes
+      << ",\"closed_unsolved_nonexhaustive_nodes\":"
+      << stats.closed_unsolved_nonexhaustive_nodes
+      << ",\"open_unexpanded_nodes\":" << stats.open_unexpanded_nodes
+      << ",\"implicit_action_frontiers\":"
+      << stats.implicit_action_frontiers
+      << ",\"max_open_children\":" << stats.max_open_children
+      << ",\"tree_nodes\":" << stats.tree_nodes
+      << ",\"max_complete_turn_depth\":"
+      << stats.max_complete_turn_depth << ",\"deadline_reached\":";
+  write_bool(out, stats.deadline_reached);
+  out << ",\"tree_cap_reached\":";
+  write_bool(out, stats.tree_cap_reached);
+  out << ",\"termination_reason\":"
+      << json_string(ps::jacek_replay_bfm_search_termination_name(
+             stats.termination))
+      << '}';
+}
+
+void write_termination_audit(
+    std::ostream &out, const Options &options, const PositionRecord &record,
+    std::uint64_t seed, const ps::JacekReplayBfmSearchStats &stats,
+    std::string_view model_sha256) {
+  bool teacher_contract_valid = false;
+  std::optional<float> teacher_value;
+  std::string contract_error;
+  try {
+    teacher_value = direct_teacher_value(
+        stats, record.state.to_move, options.max_tree_nodes);
+    teacher_contract_valid = true;
+  } catch (const std::exception &error) {
+    contract_error = error.what();
+  }
+  const bool premature = !teacher_contract_valid;
+
+  out << "{\"schema\":" << json_string(kTerminationAuditSchema)
+      << ",\"campaign_id\":" << json_string(options.campaign_id)
+      << ",\"position_id\":" << json_string(record.position_id)
+      << ",\"model_sha256\":" << json_string(model_sha256)
+      << ",\"seed\":" << seed << ",\"termination_reason\":"
+      << json_string(ps::jacek_replay_bfm_search_termination_name(
+             stats.termination))
+      << ",\"premature\":";
+  write_bool(out, premature);
+  out << ",\"teacher_contract_valid\":";
+  write_bool(out, teacher_contract_valid);
+  out << ",\"teacher_contract_error\":";
+  if (contract_error.empty()) {
+    out << "null";
+  } else {
+    out << json_string(contract_error);
+  }
+  out << ",\"teacher_value\":";
+  if (teacher_value.has_value()) {
+    out << std::setprecision(std::numeric_limits<float>::max_digits10)
+        << *teacher_value;
+  } else {
+    out << "null";
+  }
+  out << ",\"root_solved\":";
+  write_bool(out, stats.root_solved);
+  out << ",\"search_stats\":";
+  write_search_stats(out, stats);
+  out << "}\n";
+}
+
 void write_label(std::ostream &out, const Options &options,
                  const Label &label, std::string_view model_sha256) {
   const PositionRecord &record = label.record;
@@ -402,26 +534,9 @@ void write_label(std::ostream &out, const Options &options,
       << ",\"exploration\":"
       << std::setprecision(std::numeric_limits<double>::max_digits10)
       << options.exploration << ",\"fpu\":" << options.fpu << '}'
-      << ",\"search_stats\":{\"expansions\":" << stats.expansions
-      << ",\"generated_actions\":" << stats.generated_actions
-      << ",\"retained_actions\":" << stats.retained_actions
-      << ",\"neural_evaluations\":" << stats.neural_evaluations
-      << ",\"visits\":" << stats.visits
-      << ",\"completed_actions\":" << stats.completed_actions
-      << ",\"duplicate_boundaries\":" << stats.duplicate_boundaries
-      << ",\"partial_paths\":" << stats.partial_paths
-      << ",\"fifo_extractions\":" << stats.fifo_extractions
-      << ",\"lifo_extractions\":" << stats.lifo_extractions
-      << ",\"tactical_proofs\":" << stats.tactical_proofs
-      << ",\"tactical_solutions\":" << stats.tactical_solutions
-      << ",\"truncations\":" << stats.truncations
-      << ",\"tree_nodes\":" << stats.tree_nodes
-      << ",\"max_complete_turn_depth\":"
-      << stats.max_complete_turn_depth << ",\"deadline_reached\":";
-  write_bool(out, stats.deadline_reached);
-  out << ",\"tree_cap_reached\":";
-  write_bool(out, stats.tree_cap_reached);
-  out << "},\"teacher_value\":"
+      << ",\"search_stats\":";
+  write_search_stats(out, stats);
+  out << ",\"teacher_value\":"
       << std::setprecision(std::numeric_limits<float>::max_digits10)
       << label.teacher_value << ",\"root_solved\":";
   write_bool(out, stats.root_solved);
@@ -432,22 +547,6 @@ void write_label(std::ostream &out, const Options &options,
     out << "null";
   }
   out << ",\"weight\":1.0}\n";
-}
-
-std::vector<Label> analyze(const Options &options,
-                           std::vector<PositionRecord> records,
-                           const ps::JacekReplayBfmBot &bot) {
-  std::vector<Label> labels;
-  labels.reserve(records.size());
-  for (PositionRecord &record : records) {
-    const std::uint64_t seed = derive_search_seed(
-        options.campaign_id, record.position_id, options.max_tree_nodes);
-    const ps::JacekReplayBfmSearchStats stats =
-        bot.analyze_position(record.state, seed);
-    const float value = direct_teacher_value(stats, record.state.to_move);
-    labels.push_back(Label{std::move(record), seed, stats, value});
-  }
-  return labels;
 }
 
 }  // namespace
@@ -491,22 +590,38 @@ void validate_model_identity(std::string_view actual_sha256,
 }
 
 float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
-                           ps::Player mover) {
-  if (stats.deadline_reached) {
+                           ps::Player mover,
+                           std::size_t expected_tree_nodes) {
+  if (stats.deadline_reached ||
+      stats.termination == ps::JacekReplayBfmSearchTermination::Deadline ||
+      stats.generation_deadline_stops != 0U ||
+      stats.materialization_deadline_stops != 0U) {
     throw std::runtime_error("search teacher reached its deadline");
+  }
+  if (stats.closed_unsolved_nodes != 0U ||
+      stats.closed_unsolved_nonexhaustive_nodes != 0U) {
+    throw std::runtime_error("search teacher closed an unsolved frontier");
+  }
+  if (stats.generation_queue_drops != 0U) {
+    throw std::runtime_error("search teacher dropped a partial frontier");
   }
   if (stats.max_complete_turn_depth == 0U) {
     throw std::runtime_error(
         "search teacher did not complete a root search depth");
   }
-  if (!stats.root_solved && !stats.tree_cap_reached) {
+  if (stats.completed_actions == 0U) {
     throw std::runtime_error(
-        "search teacher stopped before solving or exhausting fixed work");
+        "search teacher completed no usable root actions");
   }
   if (!std::isfinite(stats.root_value)) {
     throw std::runtime_error("search teacher produced a non-finite value");
   }
   if (stats.root_solved) {
+    if (stats.termination !=
+        ps::JacekReplayBfmSearchTermination::RootSolved) {
+      throw std::runtime_error(
+          "solved search teacher root has an inconsistent termination");
+    }
     if (!stats.proven_winner.has_value()) {
       throw std::runtime_error(
           "solved search teacher root is missing its proven winner");
@@ -518,6 +633,19 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
           "solved search teacher value contradicts its proven winner");
     }
     return expected;
+  }
+  if (!stats.tree_cap_reached || stats.tree_nodes != expected_tree_nodes ||
+      stats.termination !=
+          ps::JacekReplayBfmSearchTermination::FixedWorkCap) {
+    throw std::runtime_error(
+        "search teacher termination " +
+        std::string(ps::jacek_replay_bfm_search_termination_name(
+            stats.termination)) +
+        " is not a proof or completed fixed-work cap");
+  }
+  if (stats.visits == 0U) {
+    throw std::runtime_error(
+        "unsolved search teacher completed no root visits");
   }
   if (stats.proven_winner.has_value()) {
     throw std::runtime_error(
@@ -547,15 +675,45 @@ int run(int argc, char **argv, std::istream &input, std::ostream &output) {
   config.fpu = options.fpu;
   ps::JacekReplayBfmBot bot(std::move(config));
   validate_model_identity(bot.model_sha256(), options.model_sha256);
-  const std::vector<Label> labels =
-      analyze(options, read_records(input), bot);
-  for (const Label &label : labels) {
-    write_label(output, options, label, bot.model_sha256());
+  std::vector<PositionRecord> records = read_records(input);
+  if (options.audit_terminations) {
+    for (const PositionRecord &record : records) {
+      try {
+        const std::uint64_t seed = derive_search_seed(
+            options.campaign_id, record.position_id, options.max_tree_nodes);
+        const ps::JacekReplayBfmSearchStats stats =
+            bot.analyze_position(record.state, seed);
+        write_termination_audit(
+            output, options, record, seed, stats, bot.model_sha256());
+        output.flush();
+        if (!output) {
+          throw std::runtime_error(
+              "could not write search-termination audit row");
+        }
+      } catch (const std::exception &error) {
+        throw std::runtime_error(record.position_id + ": " + error.what());
+      }
+    }
+    return 0;
   }
-  output.flush();
-  if (!output) {
-    throw std::runtime_error(
-        "could not write complete search-teacher output");
+  for (PositionRecord &record : records) {
+    const std::string position_id = record.position_id;
+    try {
+      const std::uint64_t seed = derive_search_seed(
+          options.campaign_id, record.position_id, options.max_tree_nodes);
+      const ps::JacekReplayBfmSearchStats stats =
+          bot.analyze_position(record.state, seed);
+      const float value = direct_teacher_value(
+          stats, record.state.to_move, options.max_tree_nodes);
+      const Label label{std::move(record), seed, stats, value};
+      write_label(output, options, label, bot.model_sha256());
+      output.flush();
+      if (!output) {
+        throw std::runtime_error("could not write search-teacher row");
+      }
+    } catch (const std::exception &error) {
+      throw std::runtime_error(position_id + ": " + error.what());
+    }
   }
   return 0;
 }

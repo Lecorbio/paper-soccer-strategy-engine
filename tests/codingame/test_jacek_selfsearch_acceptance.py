@@ -99,10 +99,15 @@ class TinyAcceptanceFixture:
         self.actor = root / "auto/inputs/incumbent.runtime"
         self.runner = root / "auto/inputs/runner-up.runtime"
         self.anchor_train = root / "anchor-train.json"
+        self.retention_validation = root / "retention-validation.json"
         self.anchor_validation = root / "anchor-validation.json"
         write_json(self.anchor_train, {"split": "train", "fixture": True})
         write_json(
-            self.anchor_validation, {"split": "validation", "fixture": True}
+            self.retention_validation,
+            {"split": "validation", "fixture": "retention"},
+        )
+        write_json(
+            self.anchor_validation, {"split": "test", "fixture": True}
         )
         self.generator = root / "fake-generator.py"
         self.search_teacher = root / "fake-search-teacher.py"
@@ -279,27 +284,48 @@ class TinyAcceptanceFixture:
                                 'retained_actions': 1, 'neural_evaluations': 1,
                                 'visits': nodes, 'completed_actions': 1,
                                 'duplicate_boundaries': 0, 'partial_paths': 1,
-                                'fifo_extractions': 1, 'lifo_extractions': 0,
+                                'fifo_extractions': 0, 'lifo_extractions': 1,
                                 'tactical_proofs': 0, 'tactical_solutions': 0,
                                 'truncations': 0, 'tree_nodes': nodes,
+                                'generation_action_cap_stops': 0,
+                                'generation_partial_cap_stops': 0,
+                                'generation_deadline_stops': 0,
+                                'materialization_deadline_stops': 0,
+                                'generation_queue_drops': 0,
+                                'generation_retention_drops': 0,
+                                'generation_boundary_replacements': 0,
+                                'generation_tactical_shortcuts': 0,
+                                'generation_fallbacks': 0,
+                                'generation_frontier_resumptions': 0,
+                                'generation_zero_action_resumptions': 0,
+                                'generation_max_frontier_depth': 1,
+                                'progressive_widenings': 0,
+                                'closed_unsolved_nodes': 0,
+                                'closed_unsolved_nonexhaustive_nodes': 0,
+                                'open_unexpanded_nodes': 1,
+                                'implicit_action_frontiers': 0,
+                                'max_open_children': 1,
                                 'max_complete_turn_depth': 1,
                                 'deadline_reached': False, 'tree_cap_reached': True,
+                                'termination_reason': 'fixed-work-cap',
                             }},
                             'teacher_value': 0.2,
                         }}
                     else:
                         stats = {{
-                            'attempted_depth': 2, 'completed_depth': 1,
+                            'attempted_depth': 1, 'completed_depth': 0,
                             'nodes': nodes, 'leaf_evaluations': 1,
                             'terminal_nodes': 0, 'completed_actions': 1,
                             'budget_exhausted': True, 'node_cap_reached': True,
+                            'depth_cap_reached': False,
                             'deadline_reached': False,
+                            'termination_reason': 'fixed-work-cap',
                         }}
                         row = {{
                             **common, 'schema': {workflow.RANK4_TEACHER_SCHEMA!r},
                             'teacher': {{'kind': 'rank4-fixed-work',
                                         'source_sha256': {source_hash!r}}},
-                            'root_score': 100, 'completed_depth': 1,
+                            'root_score': 100, 'completed_depth': 0,
                             'nodes': nodes,
                             'search_config': {{
                                 'max_nodes': nodes, 'max_time_ms': args.time_ms,
@@ -355,33 +381,99 @@ class TinyAcceptanceFixture:
         *, new_manifests: list[pathlib.Path] | tuple[pathlib.Path, ...],
         anchor_manifests: list[pathlib.Path] | tuple[pathlib.Path, ...],
         adjudicator_manifest: pathlib.Path,
+        retention_validation_manifests: list[pathlib.Path] | tuple[pathlib.Path, ...],
         output_directory: pathlib.Path,
         seeds: list[int] | tuple[int, ...],
+        initial_runtime: pathlib.Path,
         new_rows: int,
         anchor_rows: int,
+        learning_rate: float,
+        new_loss_coefficient: float,
+        anchor_loss_coefficient: float,
+        retention_sign_tolerance: float,
+        retention_huber_ratio: float,
         **_arguments: object,
     ) -> dict:
+        import jacek_replay_train as training
+
         output_directory.mkdir(parents=True, exist_ok=True)
         runtime = output_directory / "jacek_replay_bfm.runtime"
-        shutil.copy2(self.bootstrap, runtime)
+        shutil.copy2(initial_runtime, runtime)
+        _, initial_runtime_report = training.load_runtime(initial_runtime)
+        monitor_identity = {
+            "samples": 1,
+            "active_features": 1,
+            "sha256": "a" * 64,
+        }
+        validation_identity = {
+            "samples": 1,
+            "active_features": 1,
+            "sha256": "b" * 64,
+        }
+        anchor_training_identity = {
+            "samples": 1,
+            "active_features": 1,
+            "sha256": "c" * 64,
+        }
+        seed_arguments = {
+            "epochs": 50,
+            "patience": 8,
+            "batch_size": 256,
+            "learning_rate": learning_rate,
+            "weight_decay": 1e-5,
+            "new_rows_per_batch": new_rows,
+            "anchor_rows_per_batch": anchor_rows,
+            "new_loss_coefficient": new_loss_coefficient,
+            "anchor_loss_coefficient": anchor_loss_coefficient,
+            "retention_sign_tolerance": retention_sign_tolerance,
+            "retention_huber_ratio": retention_huber_ratio,
+            "selection_validation": "explicit-common-adjudicator",
+        }
+        if initial_runtime_report.get("runtime_version") == 2:
+            seed_arguments["initial_runtime_version"] = 2
+        seed_configuration = training._seed_training_configuration(seed_arguments)
         checkpoint_directory = output_directory / "training-seeds"
         checkpoint_directory.mkdir(parents=True, exist_ok=True)
         publications = []
+        seed_reports = []
         for seed in seeds:
             checkpoint = checkpoint_directory / f"seed-{seed}.runtime"
             receipt = checkpoint_directory / f"seed-{seed}.json"
-            shutil.copy2(self.bootstrap, checkpoint)
-            write_json(
-                receipt,
-                {
-                    "schema": "papersoccer.jacek-replay-bfm-seed-checkpoint.v1",
-                    "seed": seed,
-                    "checkpoint": {
-                        "file": checkpoint.name,
-                        "artifact_sha256": workflow.sha256(checkpoint),
-                    },
+            shutil.copy2(initial_runtime, checkpoint)
+            _, checkpoint_report = training.load_runtime(checkpoint)
+            seed_report = {
+                "seed": seed,
+                "best_epoch": 0,
+                "selection": "exact-initial-runtime-fallback",
+                "initial": {"runtime": initial_runtime_report},
+                "retention_thresholds": {
+                    "sign_tolerance": retention_sign_tolerance,
+                    "huber_ratio": retention_huber_ratio,
                 },
-            )
+                "anchor_coverage_complete_epoch": 1,
+            }
+            seed_reports.append(seed_report)
+            receipt_inputs = {
+                "initial_runtime": initial_runtime_report,
+                "training_streams": {"anchor": anchor_training_identity},
+                "retention_monitor": monitor_identity,
+                "anchor_training_monitor": anchor_training_identity,
+                "datasets": {"validation": validation_identity},
+            }
+            body = {
+                "schema": "papersoccer.jacek-replay-bfm-seed-checkpoint.v2",
+                "seed": seed,
+                "configuration": seed_configuration,
+                "inputs": receipt_inputs,
+                "checkpoint": {"file": checkpoint.name, **checkpoint_report},
+                "training_report": seed_report,
+            }
+            write_json(receipt, {
+                **body,
+                "body_sha256": hashlib.sha256(
+                    workflow.canonical_json_bytes(body)
+                ).hexdigest(),
+            })
             publications.append(
                 {
                     "seed": seed,
@@ -391,29 +483,53 @@ class TinyAcceptanceFixture:
                     "receipt_sha256": workflow.sha256(receipt),
                 }
             )
-        source_paths = [*new_manifests, *anchor_manifests, adjudicator_manifest]
+        source_paths = [
+            *new_manifests,
+            *anchor_manifests,
+            adjudicator_manifest,
+            *retention_validation_manifests,
+        ]
+        batching = seed_configuration["batching"]
+        loss = seed_configuration["loss"]
+        initialization = seed_configuration["initialization"]
+        retention_policy = seed_configuration["retention_selection"]
         manifest = {
-            "schema": "papersoccer.jacek-replay-bfm-model.v1",
+            "schema": "papersoccer.jacek-replay-bfm-model.v2",
             "runtime": {"artifact_sha256": workflow.sha256(runtime)},
-            "architecture": {"dimensions": [6301, 192, 32, 1], "biases": False},
+            "architecture": {
+                **seed_configuration["architecture"],
+                "payload_layout": training.RUNTIME_V1_PAYLOAD_LAYOUT,
+                **(
+                    training._residual_runtime_contract()
+                    if initial_runtime_report.get("runtime_version") == 2
+                    else {}
+                ),
+            },
             "source_shards": [json.loads(path.read_bytes()) for path in source_paths],
             "training": {
-                "seed_reports": [{"seed": seed} for seed in seeds],
+                "seed_reports": seed_reports,
                 "seed_checkpoints": publications,
-                "selection_validation": {"kind": "explicit-common-adjudicator"},
-                "optimizer": {
-                    "name": "adamw", "epochs": 50, "patience": 8,
-                    "batch_size": 256, "learning_rate": 0.001,
-                    "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
+                "chosen_seed": seeds[0],
+                "selection": (
+                    "choose each seed's best epoch that beats epoch zero on the new "
+                    "adjudicator and passes disjoint retention validation; continue "
+                    "training through complete anchor coverage; then choose minimum "
+                    "adjudicator Huber followed by sign, correlation, and seed"
+                ),
+                "selection_validation": {
+                    "kind": "explicit-common-adjudicator",
+                    "dataset": validation_identity,
                 },
-                "loss": {"name": "weighted-huber", "delta": 0.25},
-                "batching": {
-                    "kind": "deterministic-two-stream-cycling-v1",
-                    "new_rows_per_batch": new_rows,
-                    "anchor_rows_per_batch": anchor_rows,
-                    "epoch_length": "new-stream-covered-once-anchor-sampled",
-                    "row_order": "new-then-anchor",
+                "optimizer": seed_configuration["optimizer"],
+                "initialization": initialization,
+                "initial_runtime": initial_runtime_report,
+                "loss": loss,
+                "batching": batching,
+                "retention_selection": {
+                    "policy": retention_policy,
+                    "dataset": monitor_identity,
                 },
+                "anchor_training_monitor": anchor_training_identity,
             },
         }
         write_json(output_directory / "jacek_replay_bfm.runtime.json", manifest)
@@ -618,8 +734,10 @@ class TinyAcceptanceFixture:
             roots_manifest=self.roots_manifest,
             actor=actor,
             diversity=diversity,
+            original_incumbent=(diversity if name == "full" else None),
             executables=self.executables,
             anchor_train_manifests=[self.anchor_train],
+            retention_validation_manifests=[self.retention_validation],
             anchor_validation_manifests=[self.anchor_validation],
             canonical_prior_manifests=[],
             opening_exclusions=exclusions,
@@ -750,6 +868,26 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
             )
             self.assertTrue(evidence["local_only"])
             self.assertFalse(evidence["canonical_rank4_replaced"])
+            self.assertEqual(workflow.PILOT_CONFIGURATION["games"], 2_000)
+            self.assertEqual(workflow.FULL_CONFIGURATION["games"], 10_000)
+            for configuration in (
+                workflow.PILOT_CONFIGURATION,
+                workflow.FULL_CONFIGURATION,
+            ):
+                self.assertEqual(configuration["new_rows_per_batch"], 64)
+                self.assertEqual(configuration["anchor_rows_per_batch"], 192)
+                self.assertEqual(configuration["training_learning_rate"], 0.00006)
+                self.assertEqual(
+                    configuration["training_reference_new_samples"], 50_000
+                )
+                self.assertEqual(configuration["new_loss_coefficient"], 0.25)
+                self.assertEqual(configuration["anchor_loss_coefficient"], 0.75)
+                self.assertEqual(configuration["retention_sign_tolerance"], 0.005)
+                self.assertEqual(configuration["retention_huber_ratio"], 1.02)
+            phase_actors = {
+                "pilot": fixture.actor,
+                "full": pathlib.Path(pilot["search_runtime"]),
+            }
             for phase in ("pilot", "full"):
                 receipts = fixture.root / "auto" / phase / "receipts"
                 self.assertEqual(
@@ -769,6 +907,161 @@ class SelfSearchAcceptanceTests(unittest.TestCase):
                         )
                     ],
                 )
+                phase_learning_policies = []
+                for stage in ("15-train-search.json", "16-train-rank4.json"):
+                    receipt = json.loads((receipts / stage).read_text())
+                    expected_actor = workflow.artifact_snapshot(phase_actors[phase])
+                    self.assertEqual(receipt["inputs"]["initial_runtime"], expected_actor)
+                    self.assertEqual(
+                        receipt["configuration"]["initialization"],
+                        {
+                            "kind": "exact-phase-actor-runtime",
+                            "runtime_sha256": expected_actor["sha256"],
+                        },
+                    )
+                    self.assertEqual(receipt["configuration"]["new_rows_per_batch"], 64)
+                    self.assertEqual(receipt["configuration"]["anchor_rows_per_batch"], 192)
+                    self.assertEqual(receipt["configuration"]["learning_rate"], 0.00006)
+                    learning_policy = receipt["configuration"][
+                        "learning_rate_policy"
+                    ]
+                    self.assertEqual(
+                        learning_policy["kind"],
+                        "inverse-new-train-optimizer-steps-capped-v1",
+                    )
+                    self.assertEqual(
+                        learning_policy["base_learning_rate"], 0.00006
+                    )
+                    self.assertEqual(
+                        learning_policy["reference_new_samples"], 50_000
+                    )
+                    self.assertEqual(
+                        learning_policy["new_rows_per_batch"], 64
+                    )
+                    self.assertGreater(learning_policy["actual_new_samples"], 0)
+                    self.assertEqual(learning_policy["scale"], 1.0)
+                    self.assertEqual(
+                        learning_policy["effective_learning_rate"], 0.00006
+                    )
+                    phase_learning_policies.append(learning_policy)
+                    self.assertEqual(
+                        receipt["configuration"]["loss"],
+                        {
+                            "kind": "separately-normalized-weighted-huber",
+                            "new_coefficient": 0.25,
+                            "anchor_coefficient": 0.75,
+                        },
+                    )
+                    self.assertEqual(
+                        receipt["configuration"]["retention"],
+                        {
+                            "monitor": "explicit-disjoint-retention-validation",
+                            "sign_tolerance": 0.005,
+                            "huber_ratio": 1.02,
+                            "minimum_training_anchor_permutations_before_stop": 1,
+                            "checkpoint_may_precede_complete_anchor_coverage": True,
+                            "fallback": "exact-phase-actor-epoch-zero",
+                        },
+                    )
+                self.assertEqual(
+                    phase_learning_policies[0], phase_learning_policies[1]
+                )
+                if phase == "full":
+                    anchor_receipt = json.loads(
+                        (receipts / "17-anchor-metrics.json").read_text()
+                    )
+                    self.assertEqual(
+                        anchor_receipt["inputs"]["original_incumbent"],
+                        workflow.artifact_snapshot(fixture.actor),
+                    )
+                    self.assertIn(
+                        "original_incumbent_metrics",
+                        anchor_receipt["outputs"],
+                    )
+                    decision_receipt = json.loads(
+                        (receipts / "21-decision.json").read_text()
+                    )
+                    self.assertIn(
+                        "original_incumbent_anchor_metrics",
+                        decision_receipt["inputs"],
+                    )
+                    self.assertEqual(
+                        decision_receipt["configuration"][
+                            "anchor_noninferiority"
+                        ]["references"],
+                        ["phase-actor", "original-incumbent"],
+                    )
+
+    def test_full_phase_rejects_anchor_regression_after_game_gates_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = TinyAcceptanceFixture(pathlib.Path(directory))
+            fixture.initialize_outer_graph(resume=False)
+            patches = self.fixture_patches(fixture)
+
+            def regressed_anchor_metrics(**_arguments: object) -> dict:
+                return {
+                    "schema": "papersoccer.jacek-selfsearch-anchor-metrics.v1",
+                    "candidate_metrics": {
+                        "sign_accuracy": 0.84,
+                        "weighted_huber": 0.06,
+                    },
+                    "incumbent_metrics": {
+                        "sign_accuracy": 0.85,
+                        "weighted_huber": 0.05,
+                    },
+                }
+
+            with (
+                patches[0],
+                mock.patch.object(
+                    workflow,
+                    "anchor_metrics",
+                    side_effect=regressed_anchor_metrics,
+                ),
+                patches[2],
+                patches[3],
+                patches[4],
+            ):
+                full = fixture.run_phase(
+                    name="full",
+                    output_name="full-retention-regression",
+                    resume=False,
+                    actor=fixture.actor,
+                    diversity=fixture.runner,
+                )
+
+            self.assertEqual(full["decision"]["counts"]["matched"]["wins"], 1_000)
+            self.assertFalse(full["decision"]["eligible_for_local_publication"])
+            self.assertEqual(
+                full["decision"]["errors"],
+                [
+                    "canonical anchor sign noninferiority failed",
+                    "canonical anchor Huber noninferiority failed",
+                    "original incumbent anchor sign noninferiority failed",
+                    "original incumbent anchor Huber noninferiority failed",
+                ],
+            )
+            self.assertTrue(
+                (
+                    fixture.root
+                    / "auto/full-retention-regression/receipts/21-decision.json"
+                ).is_file()
+            )
+            receipt = json.loads(
+                (
+                    fixture.root
+                    / "auto/full-retention-regression/receipts/21-decision.json"
+                ).read_text()
+            )
+            self.assertEqual(
+                receipt["configuration"]["anchor_noninferiority"],
+                {
+                    "sign_accuracy_margin": 0.005,
+                    "weighted_huber_multiplier": 1.02,
+                    "references": ["phase-actor", "original-incumbent"],
+                },
+            )
+            self.assertIn("anchor_metrics", receipt["inputs"])
 
     def test_interruption_after_every_phase_stage_resumes_once(self):
         stage_names = (

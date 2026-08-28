@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -116,6 +117,46 @@ std::vector<std::uint8_t> make_checkpoint(
   return bytes;
 }
 
+std::vector<std::uint8_t> make_v2_checkpoint(
+    const std::vector<std::pair<std::size_t, float>> &weights = {}) {
+  const std::size_t payload_bytes =
+      ps::detail::kReplayBfmRuntimeV2WeightCount * sizeof(float);
+  std::vector<std::uint8_t> bytes(
+      ps::detail::kReplayBfmRuntimeHeaderBytes + payload_bytes, 0U);
+  const std::array<std::uint8_t, 8> magic{
+      'J', 'R', 'B', 'F', 'M', 0, 0, 2};
+  std::copy(magic.begin(), magic.end(), bytes.begin());
+  write_u32(bytes, 8U, ps::detail::kReplayBfmRuntimeHeaderBytes);
+  write_u32(bytes, 12U, 2U);
+  write_u32(bytes, 16U, ps::detail::kReplayBfmInputCount);
+  write_u32(bytes, 20U, ps::detail::kReplayBfmHiddenOne);
+  write_u32(bytes, 24U, ps::detail::kReplayBfmHiddenTwo);
+  write_u32(bytes, 28U, 1U);
+  write_u32(bytes, 32U, 1U);
+  write_u32(bytes, 36U, 2U);
+  write_u32(bytes, 40U, 3U);
+  write_u32(bytes, 44U, std::bit_cast<std::uint32_t>(0.01F));
+  write_u64(bytes, 48U, ps::detail::kReplayBfmRuntimeV2WeightCount);
+  write_hash(bytes, 56U, ps::detail::kReplayBfmFeatureSchemaSha256);
+
+  write_u32(bytes,
+            ps::detail::kReplayBfmRuntimeHeaderBytes +
+                ps::detail::kReplayBfmWeightCount * sizeof(float),
+            std::bit_cast<std::uint32_t>(1.0F));
+  for (const auto &[index, value] : weights) {
+    require(index < ps::detail::kReplayBfmRuntimeV2WeightCount,
+            "Test v2 weight index must be in range.");
+    write_u32(bytes,
+              ps::detail::kReplayBfmRuntimeHeaderBytes + index * 4U,
+              std::bit_cast<std::uint32_t>(value));
+  }
+  const std::span<const std::uint8_t> payload(
+      bytes.data() + ps::detail::kReplayBfmRuntimeHeaderBytes,
+      payload_bytes);
+  write_hash(bytes, 88U, ps::detail::replay_bfm_sha256_hex(payload));
+  return bytes;
+}
+
 class TemporaryCheckpoint {
  public:
   explicit TemporaryCheckpoint(const std::vector<std::uint8_t> &bytes) {
@@ -171,6 +212,37 @@ ps::GameState rotated_state(const ps::GameState &state) {
   return result;
 }
 
+ps::GameState replay_complete_turn_prefix(std::string_view prefix) {
+  static constexpr std::array<ps::Point, 8> deltas{{
+      {0, -1}, {1, -1}, {1, 0}, {1, 1},
+      {0, 1},  {-1, 1}, {-1, 0}, {-1, -1},
+  }};
+  ps::GameState state = ps::make_initial_state(codingame_rules());
+  std::size_t begin = 0U;
+  for (;;) {
+    const std::size_t end = prefix.find('/', begin);
+    const std::string_view action = prefix.substr(
+        begin, end == std::string_view::npos ? prefix.size() - begin
+                                             : end - begin);
+    require(!action.empty(), "Regression prefix contains an empty turn.");
+    const ps::Player mover = state.to_move;
+    for (const char direction : action) {
+      require(direction >= '0' && direction <= '7',
+              "Regression prefix contains an invalid direction.");
+      const ps::Point delta =
+          deltas[static_cast<std::size_t>(direction - '0')];
+      state = ps::apply_move(
+          state, ps::Move{{state.ball.x + delta.x, state.ball.y + delta.y}});
+    }
+    require(ps::is_terminal(state) || state.to_move != mover,
+            "Regression prefix contains an incomplete turn.");
+    if (end == std::string_view::npos) {
+      return state;
+    }
+    begin = end + 1U;
+  }
+}
+
 bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
                               const ps::JacekReplayBfmSearchStats &right) {
   return left.expansions == right.expansions &&
@@ -186,6 +258,36 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.tactical_proofs == right.tactical_proofs &&
          left.tactical_solutions == right.tactical_solutions &&
          left.truncations == right.truncations &&
+         left.generation_action_cap_stops ==
+             right.generation_action_cap_stops &&
+         left.generation_partial_cap_stops ==
+             right.generation_partial_cap_stops &&
+         left.generation_deadline_stops ==
+             right.generation_deadline_stops &&
+         left.materialization_deadline_stops ==
+             right.materialization_deadline_stops &&
+         left.generation_queue_drops == right.generation_queue_drops &&
+         left.generation_retention_drops ==
+             right.generation_retention_drops &&
+         left.generation_boundary_replacements ==
+             right.generation_boundary_replacements &&
+         left.generation_tactical_shortcuts ==
+             right.generation_tactical_shortcuts &&
+         left.generation_fallbacks == right.generation_fallbacks &&
+         left.generation_frontier_resumptions ==
+             right.generation_frontier_resumptions &&
+         left.generation_zero_action_resumptions ==
+             right.generation_zero_action_resumptions &&
+         left.generation_max_frontier_depth ==
+             right.generation_max_frontier_depth &&
+         left.progressive_widenings == right.progressive_widenings &&
+         left.closed_unsolved_nodes == right.closed_unsolved_nodes &&
+         left.closed_unsolved_nonexhaustive_nodes ==
+             right.closed_unsolved_nonexhaustive_nodes &&
+         left.open_unexpanded_nodes == right.open_unexpanded_nodes &&
+         left.implicit_action_frontiers ==
+             right.implicit_action_frontiers &&
+         left.max_open_children == right.max_open_children &&
          left.tree_nodes == right.tree_nodes &&
          left.max_complete_turn_depth == right.max_complete_turn_depth &&
          left.root_value == right.root_value &&
@@ -193,11 +295,29 @@ bool same_capped_search_stats(const ps::JacekReplayBfmSearchStats &left,
          left.proven_winner == right.proven_winner &&
          left.deadline_reached == right.deadline_reached &&
          left.tree_cap_reached == right.tree_cap_reached &&
+         left.termination == right.termination &&
          left.cached_continuation == right.cached_continuation &&
          left.planned_action_length == right.planned_action_length &&
          left.current_edge_index == right.current_edge_index &&
          left.cached_moves_remaining == right.cached_moves_remaining &&
          left.searches == right.searches;
+}
+
+bool valid_search_completion(const ps::JacekReplayBfmSearchStats &stats,
+                             std::size_t fixed_work_cap) {
+  if (stats.deadline_reached || stats.closed_unsolved_nodes != 0U ||
+      stats.closed_unsolved_nonexhaustive_nodes != 0U) {
+    return false;
+  }
+  if (stats.root_solved) {
+    return stats.proven_winner.has_value() &&
+           stats.termination ==
+               ps::JacekReplayBfmSearchTermination::RootSolved;
+  }
+  return !stats.proven_winner.has_value() && stats.tree_cap_reached &&
+         stats.tree_nodes == fixed_work_cap &&
+         stats.termination ==
+             ps::JacekReplayBfmSearchTermination::FixedWorkCap;
 }
 
 std::string feature_indices_sha256(
@@ -285,6 +405,89 @@ void loader_and_float_inference_match_the_binary_contract() {
               ps::JacekReplayBfmBot::feature_schema_sha256() ==
                   ps::detail::kReplayBfmFeatureSchemaSha256,
           "The runtime and feature schema must expose stable SHA-256 identities.");
+}
+
+void zero_residual_adapter_is_bit_exact_to_v1() {
+  ps::detail::ReplayBfmSparseFeatures features;
+  features.indices = {5U, 17U, 316U};
+  features.count = 3U;
+  const std::size_t w1 = 5U * ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w2 = ps::detail::kReplayBfmInputCount *
+                         ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w3 =
+      w2 + ps::detail::kReplayBfmHiddenOne * ps::detail::kReplayBfmHiddenTwo;
+  const std::vector<std::pair<std::size_t, float>> base_weights{
+      {w1, 2.0F}, {w2, 0.5F}, {w3, 0.25F}};
+  std::vector<std::pair<std::size_t, float>> v2_weights = base_weights;
+  const std::size_t adapter_a = ps::detail::kReplayBfmWeightCount + 2U;
+  v2_weights.emplace_back(adapter_a, -0.5F);
+
+  TemporaryCheckpoint v1_checkpoint(make_checkpoint(base_weights));
+  TemporaryCheckpoint v2_checkpoint(make_v2_checkpoint(v2_weights));
+  const ps::detail::ReplayBfmModel v1(v1_checkpoint.string());
+  const ps::detail::ReplayBfmModel v2(v2_checkpoint.string());
+  const float v1_prediction = v1.evaluate(features);
+  const float v2_prediction = v2.evaluate(features);
+  require(v1.runtime_version() == 1U && v2.runtime_version() == 2U &&
+              std::bit_cast<std::uint32_t>(v1_prediction) ==
+                  std::bit_cast<std::uint32_t>(v2_prediction),
+          "A zero-output v2 residual adapter must be bit-exact to its v1 base.");
+}
+
+void residual_adapter_matches_the_python_inference_golden() {
+  ps::detail::ReplayBfmSparseFeatures features;
+  features.indices = {5U};
+  features.count = 1U;
+  const std::size_t w1 = 5U * ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w2 = ps::detail::kReplayBfmInputCount *
+                         ps::detail::kReplayBfmHiddenOne;
+  const std::size_t w3 =
+      w2 + ps::detail::kReplayBfmHiddenOne * ps::detail::kReplayBfmHiddenTwo;
+  const std::size_t gain = ps::detail::kReplayBfmWeightCount;
+  const std::size_t bias = gain + 1U;
+  const std::size_t adapter_a = gain + 2U;
+  const std::size_t adapter_b =
+      adapter_a + ps::detail::kReplayBfmHiddenOne *
+                      ps::detail::kReplayBfmResidualRank;
+  TemporaryCheckpoint checkpoint(make_v2_checkpoint({
+      {w1, 2.0F},
+      {w2, 0.5F},
+      {w3, 0.25F},
+      {gain, 1.2F},
+      {bias, 0.1F},
+      {adapter_a, -0.5F},
+      {adapter_b, 3.0F},
+  }));
+  const ps::detail::ReplayBfmModel model(checkpoint.string());
+  const float prediction = model.evaluate(features);
+  require(std::bit_cast<std::uint32_t>(prediction) == 0x3f109d42U,
+          "Native v2 inference must match the Python float32 parity golden.");
+}
+
+void loader_rejects_malformed_v2_checkpoints() {
+  std::vector<std::uint8_t> wrong_count = make_v2_checkpoint();
+  write_u64(wrong_count, 48U,
+            ps::detail::kReplayBfmRuntimeV2WeightCount - 1U);
+  TemporaryCheckpoint bad_count(wrong_count);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_count.string()); },
+      "A v2 checkpoint with the wrong fixed payload count must be rejected.");
+
+  std::vector<std::uint8_t> nonfinite = make_v2_checkpoint({
+      {ps::detail::kReplayBfmWeightCount,
+       std::numeric_limits<float>::quiet_NaN()},
+  });
+  TemporaryCheckpoint bad_weight(nonfinite);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_weight.string()); },
+      "A hash-valid non-finite v2 adapter parameter must be rejected.");
+
+  std::vector<std::uint8_t> trailing = make_v2_checkpoint();
+  trailing.push_back(0U);
+  TemporaryCheckpoint bad_size(trailing);
+  require_invalid(
+      [&] { ps::detail::ReplayBfmModel model(bad_size.string()); },
+      "Trailing v2 checkpoint bytes must be rejected.");
 }
 
 void prepared_first_layer_matches_full_sparse_inference() {
@@ -492,44 +695,6 @@ void complete_turn_generation_stops_at_the_action_cap() {
           "A full retained-action sample must stop complete-turn enumeration.");
 }
 
-void action_cap_preserves_prior_rebound_queue_truncation() {
-  TemporaryCheckpoint checkpoint(make_checkpoint());
-  ps::GameState state = ps::make_initial_state(codingame_rules());
-  state.ball = {4, 6};
-  state.path = {state.ball};
-  state.visit_count = {
-      {{4, 6}, 1},
-      {{3, 5}, 1},
-      {{5, 5}, 1},
-  };
-  block_point_except(state, {4, 6}, {{3, 5}, {5, 5}});
-  block_point_except(state, {3, 5}, {{4, 6}, {3, 4}});
-  block_point_except(state, {5, 5}, {{4, 6}, {5, 4}});
-
-  bool exercised = false;
-  for (std::uint64_t seed = 1U; seed <= 64U; ++seed) {
-    ps::JacekReplayBfmConfig config;
-    config.model_path = checkpoint.string();
-    config.seed = seed;
-    config.max_time_ms = 1'000U;
-    config.max_tree_nodes = 3U;
-    config.max_actions = 2U;
-    config.max_partial_paths = 1U;
-    ps::JacekReplayBfmBot bot(config);
-    (void)bot.choose_move(state);
-    const ps::JacekReplayBfmSearchStats &stats = bot.last_search_stats();
-    if (stats.retained_actions != 2U || stats.partial_paths != 2U) {
-      continue;
-    }
-    exercised = true;
-    require(stats.truncations > 0U,
-            "Reaching the action cap must not erase an earlier dropped rebound branch.");
-    break;
-  }
-  require(exercised,
-          "The rebound fixture must fill its action cap after overflowing the queue.");
-}
-
 void tactical_goal_witnesses_win_for_both_players() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::JacekReplayBfmConfig config;
@@ -614,6 +779,33 @@ void tactical_handoff_proofs_have_the_correct_minimax_sign() {
               reply_bot.last_search_stats().tactical_solutions > 0U &&
               reply_bot.last_search_stats().root_value < -1'000.0F,
           "A handoff that gives the opponent an immediate goal must back up as a loss.");
+}
+
+void universal_loss_requires_resumed_frontier_exhaustion() {
+  TemporaryCheckpoint checkpoint(make_checkpoint());
+  ps::JacekReplayBfmConfig config;
+  config.model_path = checkpoint.string();
+  config.max_time_ms = 1'000U;
+  config.max_tree_nodes = 3U;
+  config.max_actions = 1U;
+  config.max_partial_paths = 64U;
+
+  ps::GameState state = ps::make_initial_state(codingame_rules());
+  state.ball = {4, 11};
+  state.path = {state.ball};
+  state.visit_count = {{state.ball, 1}};
+  block_point_except(state, state.ball, {{3, 12}, {5, 12}});
+  ps::JacekReplayBfmBot bot(config);
+  const ps::JacekReplayBfmSearchStats stats =
+      bot.analyze_position(state, 41U);
+  require(stats.root_solved &&
+              stats.proven_winner == ps::Player::Two &&
+              stats.termination ==
+                  ps::JacekReplayBfmSearchTermination::RootSolved &&
+              stats.progressive_widenings > 0U &&
+              stats.generation_frontier_resumptions > 0U &&
+              stats.tree_nodes == 3U,
+          "A universal loss must enumerate every paged action before proof.");
 }
 
 void fixed_cap_search_is_mover_rotation_symmetric() {
@@ -709,6 +901,31 @@ void deadline_fallback_is_legal_and_bounded() {
           "A one-millisecond deadline must return a prompt legal fallback.");
 }
 
+void zero_time_disables_the_internal_deadline() {
+  TemporaryCheckpoint checkpoint(make_checkpoint());
+  ps::JacekReplayBfmConfig config;
+  config.model_path = checkpoint.string();
+  config.max_time_ms = 0U;
+  config.max_tree_nodes = 47U;
+  config.max_actions = 5U;
+  config.max_partial_paths = 11U;
+  config.exploration = 0.5;
+  config.fpu = 0.5;
+  ps::JacekReplayBfmBot bot(config);
+  const ps::GameState state = ps::make_initial_state(codingame_rules());
+  const ps::JacekReplayBfmSearchStats first =
+      bot.analyze_position(state, 31U);
+  const ps::JacekReplayBfmSearchStats repeated =
+      bot.analyze_position(state, 31U);
+  require(!first.deadline_reached &&
+              first.generation_deadline_stops == 0U &&
+              first.materialization_deadline_stops == 0U &&
+              valid_search_completion(first, config.max_tree_nodes) &&
+              same_capped_search_stats(first, repeated),
+          "A zero time budget must disable wall-clock termination while "
+          "preserving deterministic proof-or-fixed-cap completion.");
+}
+
 void analysis_api_is_stateless_seeded_rotatable_and_proof_explicit() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::JacekReplayBfmConfig config;
@@ -765,6 +982,105 @@ void analysis_api_is_stateless_seeded_rotatable_and_proof_explicit() {
           "requiring callers to infer a proof from the value magnitude.");
 }
 
+void nonexhaustive_root_progressively_widens_to_a_valid_label() {
+  const std::string source_dir = PAPERSOCCER_SOURCE_DIR;
+  if (source_dir.empty()) {
+    return;
+  }
+  const std::filesystem::path model =
+      std::filesystem::path(source_dir) / "models" /
+      "jacek_replay_bfm_development" / "jacek_replay_bfm.runtime";
+  ps::JacekReplayBfmConfig config;
+  config.model_path = model.string();
+  config.max_time_ms = 60'000U;
+  config.max_tree_nodes = 64'000U;
+  config.max_actions = 250U;
+  config.max_partial_paths = 50'000U;
+  config.exploration = 0.5;
+  config.fpu = 0.5;
+  ps::JacekReplayBfmBot bot(config);
+
+  // Preserved campaign position
+  // position:fc5350b1be0e9887a10b97bd5569a1251a9824cb4a4e9c6d7404471eeb4616e3
+  const ps::GameState state = replay_complete_turn_prefix(
+      "1/2/7/5/207/6/1/45/00/75/03/35/22/445/7/2/177/44/47/"
+      "2345/7/53/0/23/0/3/1/4/1/3/17/54/1/36350/00017/25/017/27/"
+      "035075/5433/00/35235663357/025766/752530/010/245021/"
+      "065052507117/723064534/17/7245201235/05223/63/00117");
+  require(!ps::is_terminal(state) && state.to_move == ps::Player::Two,
+          "The preserved regression prefix must end at a Player Two root.");
+
+  constexpr std::uint64_t seed = 11'313'244'602'099'372'890ULL;
+  const ps::JacekReplayBfmSearchStats first =
+      bot.analyze_position(state, seed);
+  const ps::JacekReplayBfmSearchStats repeated =
+      bot.analyze_position(state, seed);
+  require(valid_search_completion(first, config.max_tree_nodes) &&
+              first.progressive_widenings > 0U &&
+              first.generation_frontier_resumptions > 0U &&
+              first.max_open_children <= config.max_actions &&
+              same_capped_search_stats(first, repeated),
+          "A non-exhaustive root whose sampled actions all close must widen "
+          "deterministically until it has an explicit proof or fixed-work cap.");
+
+  ps::JacekReplayBfmConfig narrow_config = config;
+  narrow_config.max_tree_nodes = 200U;
+  narrow_config.max_actions = 1U;
+  ps::JacekReplayBfmBot narrow(narrow_config);
+  constexpr std::uint64_t cross_cap_seed =
+      11'703'771'591'024'012'692ULL;
+  const ps::JacekReplayBfmSearchStats narrow_stats =
+      narrow.analyze_position(state, cross_cap_seed);
+  require(valid_search_completion(narrow_stats,
+                                  narrow_config.max_tree_nodes),
+          "A truncated one-action page must not become an exhaustive proof.");
+
+  ps::JacekReplayBfmConfig stalled_config = narrow_config;
+  stalled_config.max_partial_paths = 1U;
+  ps::JacekReplayBfmBot stalled(stalled_config);
+  const ps::JacekReplayBfmSearchStats stalled_stats =
+      stalled.analyze_position(state, cross_cap_seed);
+  require(valid_search_completion(stalled_stats,
+                                  stalled_config.max_tree_nodes) &&
+              stalled_stats.generation_partial_cap_stops > 0U &&
+              stalled_stats.generation_frontier_resumptions > 0U,
+          "A one-partial cursor must resume without inventing fixed work or "
+          "waiting for a deadline.");
+
+  // Production v2 failure position.  The checked-in development model does
+  // not stall at its production limits, so the small page deliberately
+  // exercises the same cursor-resume mechanism with portable model bytes.
+  const ps::GameState production_failure = replay_complete_turn_prefix(
+      "2/1/4/1/7/4217/6/41174/36056/5/4/7/0/366/11/75/36/0752/345/71/"
+      "6113/5602534/7/4217553/13/6/7524/53/1/4/6530/12/1/6/47716524/"
+      "313/01/0254/2/5/052723/65/06331/002/7/75/72330660050/643/"
+      "2505653001/1430311");
+  require(!ps::is_terminal(production_failure) &&
+              production_failure.to_move == ps::Player::One,
+          "The production frontier regression must end at a Player One root.");
+  ps::JacekReplayBfmConfig production_config = config;
+  production_config.max_tree_nodes = 200U;
+  production_config.max_actions = 1U;
+  production_config.max_partial_paths = 1U;
+  ps::JacekReplayBfmBot production_bot(production_config);
+  constexpr std::uint64_t production_seed =
+      11'914'096'561'988'050'746ULL;
+  const ps::JacekReplayBfmSearchStats production_stats =
+      production_bot.analyze_position(production_failure, production_seed);
+  const ps::JacekReplayBfmSearchStats production_repeat =
+      production_bot.analyze_position(production_failure, production_seed);
+  require(valid_search_completion(production_stats,
+                                  production_config.max_tree_nodes) &&
+              production_stats.generation_partial_cap_stops > 0U &&
+              production_stats.generation_frontier_resumptions > 0U &&
+              production_stats.generation_zero_action_resumptions > 0U &&
+              production_stats.generation_max_frontier_depth > 0U &&
+              production_stats.generation_queue_drops == 0U &&
+              same_capped_search_stats(production_stats, production_repeat),
+          "The production partial-frontier failure must resume deterministically "
+          "until proof or the exact fixed-work cap.");
+}
+
 void public_factory_and_rule_contract_fail_closed() {
   TemporaryCheckpoint checkpoint(make_checkpoint());
   ps::BotConfig factory;
@@ -808,6 +1124,12 @@ int run_jacek_replay_bfm_tests() {
        feature_schema_has_exact_categories_and_rotation},
       {"loader_and_float_inference_match_the_binary_contract",
        loader_and_float_inference_match_the_binary_contract},
+      {"zero_residual_adapter_is_bit_exact_to_v1",
+       zero_residual_adapter_is_bit_exact_to_v1},
+      {"residual_adapter_matches_the_python_inference_golden",
+       residual_adapter_matches_the_python_inference_golden},
+      {"loader_rejects_malformed_v2_checkpoints",
+       loader_rejects_malformed_v2_checkpoints},
       {"prepared_first_layer_matches_full_sparse_inference",
        prepared_first_layer_matches_full_sparse_inference},
       {"loader_rejects_corruption_nonfinite_weights_and_trailing_bytes",
@@ -820,18 +1142,22 @@ int run_jacek_replay_bfm_tests() {
        bot_searches_complete_turns_and_reuses_rebound_edges},
       {"complete_turn_generation_stops_at_the_action_cap",
        complete_turn_generation_stops_at_the_action_cap},
-      {"action_cap_preserves_prior_rebound_queue_truncation",
-       action_cap_preserves_prior_rebound_queue_truncation},
       {"tactical_goal_witnesses_win_for_both_players",
        tactical_goal_witnesses_win_for_both_players},
       {"tactical_handoff_proofs_have_the_correct_minimax_sign",
        tactical_handoff_proofs_have_the_correct_minimax_sign},
+      {"universal_loss_requires_resumed_frontier_exhaustion",
+       universal_loss_requires_resumed_frontier_exhaustion},
       {"fixed_cap_search_is_mover_rotation_symmetric",
        fixed_cap_search_is_mover_rotation_symmetric},
       {"deadline_fallback_is_legal_and_bounded",
        deadline_fallback_is_legal_and_bounded},
+      {"zero_time_disables_the_internal_deadline",
+       zero_time_disables_the_internal_deadline},
       {"analysis_api_is_stateless_seeded_rotatable_and_proof_explicit",
        analysis_api_is_stateless_seeded_rotatable_and_proof_explicit},
+      {"nonexhaustive_root_progressively_widens_to_a_valid_label",
+       nonexhaustive_root_progressively_widens_to_a_valid_label},
       {"public_factory_and_rule_contract_fail_closed",
        public_factory_and_rule_contract_fail_closed},
   };

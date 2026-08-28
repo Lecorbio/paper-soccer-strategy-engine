@@ -318,6 +318,11 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_replay_features
               tests.codingame.test_jacek_replay_corpus
               tests.codingame.test_jacek_replay_training
+              tests.codingame.test_jacek_replay_retention
+              tests.codingame.test_jacek_rebuild_corpus
+              tests.codingame.test_jacek_replay_recovery
+              tests.codingame.test_jacek_replay_runtime_v2
+              tests.codingame.test_jacek_replay_rebuild
               tests.codingame.test_jacek_replay_promotion
               tests.codingame.test_jacek_replay_workflow
               tests.codingame.test_jacek_selfsearch_workflow
@@ -1176,7 +1181,26 @@ if(NOT EMSCRIPTEN)
         --search-teacher
         $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
         --model
-        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_bootstrap.runtime)
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
+    add_test(NAME papersoccer_jacek_selfsearch_search_teacher_deadline_regression
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_search_teacher_deadline_regression_test.py
+        --search-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_search_teacher>
+        --model
+        ${CMAKE_CURRENT_SOURCE_DIR}/models/jacek_replay_bfm_development/jacek_replay_bfm.runtime)
+    set_tests_properties(
+      papersoccer_jacek_selfsearch_search_teacher_deadline_regression
+      PROPERTIES LABELS "long" RUN_SERIAL TRUE TIMEOUT 3600)
+    add_test(NAME papersoccer_jacek_selfsearch_rank4_teacher_parallel
+      COMMAND ${CMAKE_COMMAND} -E env
+        PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/jacek_selfsearch_rank4_teacher_parallel_test.py
+        --rank4-teacher
+        $<TARGET_FILE:papersoccer_jacek_replay_rank4_position_teacher>)
     add_test(NAME papersoccer_jacek_replay_comparison_extended_test
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/test_jacek_replay_comparison_extended.py

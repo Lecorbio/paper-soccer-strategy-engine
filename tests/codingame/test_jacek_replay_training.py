@@ -152,6 +152,24 @@ class JacekReplayTrainingTests(unittest.TestCase):
         self.assertEqual(set(np.concatenate([rows for rows, _ in first])), set(range(5)))
         self.assertEqual(len(np.concatenate([rows for _, rows in first])), 2)
 
+        third = training.mixed_epoch_batches(
+            mixed, batch_size=4, seed=17, epoch=2
+        )
+        self.assertEqual(
+            set(np.concatenate([rows for rows, _ in third])), set(range(5))
+        )
+        anchor_stream = np.concatenate(
+            [anchors for _, anchors in (*first, *third)]
+        )
+        # The anchor cursor crosses the epoch boundary without replacement.
+        self.assertEqual(set(anchor_stream[:3]), set(range(3)))
+        coverage = training.mixed_epoch_coverage(
+            mixed, batch_size=4, epoch=2
+        )
+        self.assertEqual(coverage["new"]["complete_epoch_permutations"], 2)
+        self.assertEqual(coverage["new"]["padding_rows_per_epoch"], 1)
+        self.assertEqual(coverage["anchor"]["complete_permutations"], 1)
+
         # Targets differ between matched arms, but batch row order must not.
         other_new = training.Dataset(
             new.indptr,
@@ -186,24 +204,34 @@ class JacekReplayTrainingTests(unittest.TestCase):
             tuple(f"anchor:{index}" for index in range(4)),
         )
         validation = datasets["validation"]
-        selected, report = training.train_three_seeds(
-            {},
-            seeds=(31, 32, 33),
-            epochs=1,
-            patience=1,
-            batch_size=4,
-            mixed_training=training.MixedTraining(new, anchor, 2, 2),
-            selection_validation=validation,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            initial_runtime = pathlib.Path(directory) / "initial.runtime"
+            initial = training.initialize(99)
+            training.export_runtime(initial_runtime, initial)
+            selected, report = training.train_three_seeds(
+                {},
+                seeds=(31, 32, 33),
+                epochs=1,
+                patience=1,
+                batch_size=4,
+                mixed_training=training.MixedTraining(new, anchor, 2, 2),
+                selection_validation=validation,
+                retention_validation=datasets["test"],
+                initial_runtime=initial_runtime,
+            )
         self.assertEqual(selected["w1"].shape, (6301, 192))
         self.assertEqual(
             report["batching"],
             {
-                "kind": "deterministic-two-stream-cycling-v1",
+                "kind": "deterministic-continuous-two-stream-coverage-v2",
                 "new_rows_per_batch": 2,
                 "anchor_rows_per_batch": 2,
-                "epoch_length": "new-stream-covered-once-anchor-sampled",
+                "epoch_length": "ceil-new-rows/new-quota-batches",
                 "row_order": "new-then-anchor",
+                "new_stream": "fresh-complete-permutation-each-epoch-with-padding",
+                "anchor_cross_epoch": (
+                    "continuous-no-repeat-until-permutation-complete"
+                ),
             },
         )
         self.assertEqual(
@@ -214,21 +242,306 @@ class JacekReplayTrainingTests(unittest.TestCase):
             seed_report["validation"]["samples"] == len(validation)
             for seed_report in report["seed_reports"]
         ))
+        self.assertTrue(all(
+            seed_report["retention"]["samples"] == len(datasets["test"])
+            for seed_report in report["seed_reports"]
+        ))
+        self.assertTrue(all(
+            seed_report["anchor_training"]["samples"] == len(anchor)
+            for seed_report in report["seed_reports"]
+        ))
+
+    def test_source_normalized_loss_is_invariant_to_cross_source_weight_scale(self):
+        new = np.asarray([1.0, 3.0], dtype=np.float32)
+        anchor = np.asarray([1.0, 16_184.0], dtype=np.float32)
+        first = training._source_normalized_weights(
+            new,
+            anchor,
+            new_loss_coefficient=0.5,
+            anchor_loss_coefficient=0.5,
+        )
+        second = training._source_normalized_weights(
+            new,
+            anchor * np.float32(100.0),
+            new_loss_coefficient=0.5,
+            anchor_loss_coefficient=0.5,
+        )
+        self.assertTrue(np.allclose(first, second))
+        self.assertAlmostEqual(float(np.sum(first[:2])), 0.5, places=7)
+        self.assertAlmostEqual(float(np.sum(first[2:])), 0.5, places=7)
+        with self.assertRaisesRegex(ValueError, "sum to one"):
+            training._source_normalized_weights(
+                new,
+                anchor,
+                new_loss_coefficient=0.6,
+                anchor_loss_coefficient=0.5,
+            )
+
+    def test_64_192_quotas_are_exact_and_anchor_cursor_is_continuous(self):
+        def empty_dataset(rows):
+            return training.Dataset(
+                np.zeros(rows + 1, dtype=np.int64),
+                np.asarray([], dtype=np.uint16),
+                np.zeros(rows, dtype=np.float32),
+                np.ones(rows, dtype=np.float32),
+                np.arange(rows, dtype=np.uint64),
+            )
+
+        mixed = training.MixedTraining(empty_dataset(70), empty_dataset(500), 64, 192)
+        first = training.mixed_epoch_batches(
+            mixed, batch_size=256, seed=123, epoch=1
+        )
+        second = training.mixed_epoch_batches(
+            mixed, batch_size=256, seed=123, epoch=2
+        )
+        self.assertEqual(len(first), 2)
+        self.assertTrue(all(
+            len(new) == 64 and len(anchor) == 192
+            for new, anchor in (*first, *second)
+        ))
+        self.assertEqual(set(np.concatenate([new for new, _ in first])), set(range(70)))
+        self.assertEqual(set(np.concatenate([new for new, _ in second])), set(range(70)))
+        anchor_rows = np.concatenate([
+            rows for _, rows in (*first, *second)
+        ])
+        self.assertEqual(len(set(anchor_rows[:500])), 500)
+
+    def test_mixed_seed_workers_train_through_full_anchor_coverage(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4)),
+            datasets["train"].targets[:4],
+            datasets["train"].weights[:4],
+            tuple(f"new:{index}" for index in range(4)),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4, 8)),
+            datasets["train"].targets[4:8],
+            datasets["train"].weights[4:8],
+            tuple(f"anchor:{index}" for index in range(4)),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            initial_runtime = pathlib.Path(directory) / "actor.runtime"
+            actor = training.initialize(777)
+            training.export_runtime(initial_runtime, actor)
+            selected, report = training.train_three_seeds(
+                {},
+                seeds=(41, 42, 43),
+                epochs=2,
+                patience=1,
+                batch_size=4,
+                mixed_training=training.MixedTraining(new, anchor, 3, 1),
+                selection_validation=datasets["validation"],
+                retention_validation=datasets["test"],
+                initial_runtime=initial_runtime,
+            )
+            parallel, parallel_report = training.train_three_seeds(
+                {},
+                seeds=(41, 42, 43),
+                epochs=2,
+                patience=1,
+                batch_size=4,
+                mixed_training=training.MixedTraining(new, anchor, 3, 1),
+                selection_validation=datasets["validation"],
+                retention_validation=datasets["test"],
+                initial_runtime=initial_runtime,
+                seed_workers=2,
+            )
+        self.assertEqual(
+            training.runtime_bytes(selected)[0], training.runtime_bytes(parallel)[0]
+        )
+        self.assertEqual(report, parallel_report)
+        self.assertEqual(report["initial_runtime"]["artifact_sha256"],
+                         training.runtime_bytes(actor)[1]["artifact_sha256"])
+        for seed_report in report["seed_reports"]:
+            self.assertEqual(seed_report["anchor_coverage_complete_epoch"], 2)
+            self.assertGreaterEqual(len(seed_report["history"]), 2)
+            self.assertGreaterEqual(
+                seed_report["history"][-1]["coverage"]["anchor"][
+                    "complete_permutations"
+                ],
+                1,
+            )
+            self.assertEqual(
+                seed_report["initial"]["runtime"], report["initial_runtime"]
+            )
+
+    def test_equal_epoch_zero_key_skips_retention_and_falls_back(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(2)),
+            datasets["train"].targets[:2],
+            datasets["train"].weights[:2],
+            ("new:0", "new:1"),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(2, 4)),
+            datasets["train"].targets[2:4],
+            datasets["train"].weights[2:4],
+            ("anchor:0", "anchor:1"),
+        )
+        mixed = training.MixedTraining(new, anchor, 2, 2)
+        retention = datasets["test"]
+        initial = training.initialize(456)
+        runtime_report = training.runtime_bytes(initial)[1]
+        original = training.train_mixed_batch
+        original_metrics = training.metrics
+        shared_initial_metrics = {
+            "validation": original_metrics(initial, datasets["validation"]),
+            "retention": original_metrics(initial, retention),
+        }
+        retention_metric_calls = []
+
+        def no_update(*_args, **_kwargs):
+            return 0.0
+
+        def recording_metrics(parameters, dataset, batch_size=4096):
+            if dataset is retention:
+                retention_metric_calls.append(1)
+            return original_metrics(parameters, dataset, batch_size)
+
+        training.train_mixed_batch = no_update
+        training.metrics = recording_metrics
+        try:
+            selected, report = training.train_seed(
+                {
+                    "train": training.concatenate_datasets((new, anchor)),
+                    "validation": datasets["validation"],
+                },
+                999,
+                epochs=1,
+                patience=1,
+                batch_size=4,
+                learning_rate=0.001,
+                weight_decay=0.0,
+                mixed_training=mixed,
+                initial_parameters=initial,
+                initial_runtime_report=runtime_report,
+                initial_metrics=shared_initial_metrics,
+                retention_validation=retention,
+            )
+        finally:
+            training.train_mixed_batch = original
+            training.metrics = original_metrics
+        self.assertFalse(report["history"][0]["eligible"])
+        self.assertIsNone(report["history"][0]["retention"])
+        self.assertEqual(
+            report["history"][0]["retention_status"],
+            "not-evaluated-adjudicator-cannot-beat-current-best",
+        )
+        self.assertEqual(report["best_epoch"], 0)
+        self.assertEqual(report["selection"], "exact-initial-runtime-fallback")
+        self.assertEqual(training.runtime_bytes(selected)[0],
+                         training.runtime_bytes(initial)[0])
+        self.assertEqual(retention_metric_calls, [])
+
+    def test_precoverage_epoch_is_preserved_while_training_reaches_coverage(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4)),
+            datasets["train"].targets[:4],
+            datasets["train"].weights[:4],
+            tuple(f"new:{index}" for index in range(4)),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4, 8)),
+            datasets["train"].targets[4:8],
+            datasets["train"].weights[4:8],
+            tuple(f"anchor:{index}" for index in range(4)),
+        )
+        retention = datasets["test"]
+        mixed = training.MixedTraining(new, anchor, 3, 1)
+        actor = {
+            "w1": np.zeros((6301, 192), dtype=np.float32),
+            "w2": np.zeros((192, 32), dtype=np.float32),
+            "w3": np.zeros(32, dtype=np.float32),
+        }
+        runtime_report = training.runtime_bytes(actor)[1]
+        original_batch = training.train_mixed_batch
+        original_metrics = training.metrics
+        batch_calls = []
+
+        def epoch_marker(parameters, *_args, **_kwargs):
+            batch_calls.append(1)
+            epoch = (len(batch_calls) + 1) // 2
+            parameters["w3"][0] = np.float32(0.1 * epoch)
+            return 0.1
+
+        def controlled_metrics(parameters, dataset, batch_size=4096):
+            del batch_size
+            marker = float(parameters["w3"][0])
+            if dataset is datasets["validation"]:
+                huber = 0.3 if marker == 0.0 else (0.1 if marker < 0.15 else 0.2)
+            else:
+                huber = 0.1
+            return {
+                "samples": len(dataset),
+                "weighted_huber": huber,
+                "sign_accuracy": 0.9,
+                "correlation": 0.7,
+                "mae": huber,
+                "prediction_mean": 0.0,
+            }
+
+        training.train_mixed_batch = epoch_marker
+        training.metrics = controlled_metrics
+        try:
+            selected, report = training.train_seed(
+                {
+                    "train": training.concatenate_datasets((new, anchor)),
+                    "validation": datasets["validation"],
+                },
+                88,
+                epochs=2,
+                patience=1,
+                batch_size=4,
+                learning_rate=0.001,
+                weight_decay=0.0,
+                mixed_training=mixed,
+                retention_validation=retention,
+                initial_parameters=actor,
+                initial_runtime_report=runtime_report,
+            )
+        finally:
+            training.train_mixed_batch = original_batch
+            training.metrics = original_metrics
+        self.assertAlmostEqual(float(selected["w3"][0]), 0.1, places=7)
+        self.assertEqual(report["best_epoch"], 1)
+        self.assertTrue(report["history"][0]["eligible"])
+        self.assertEqual(
+            report["history"][0]["coverage"]["anchor"]["complete_permutations"],
+            0,
+        )
+        self.assertEqual(len(batch_calls), 4)
+        self.assertGreaterEqual(
+            report["history"][-1]["coverage"]["anchor"]["complete_permutations"],
+            1,
+        )
+        self.assertIsNone(report["history"][1]["retention"])
+        self.assertEqual(
+            report["history"][1]["retention_status"],
+            "not-evaluated-adjudicator-cannot-beat-current-best",
+        )
 
     def test_target_metadata_is_derived_from_shard_provenance(self):
         search_policy = corpus.target_policy_for_schema(
             corpus.SEARCH_TEACHER_SCHEMA
         )
         rank4_policy = corpus.target_policy_for_schema(corpus.TEACHER_SCHEMA)
+        rank4_v2_policy = corpus.target_policy_for_schema(
+            corpus.RANK4_TEACHER_SCHEMA
+        )
         manifests = [
             {"provenance": {"target_policy": search_policy}},
             {"provenance": {"target_policy": rank4_policy}},
+            {"provenance": {"target_policy": rank4_v2_policy}},
             {"provenance": {}},
         ]
         metadata = training.target_metadata_from_shard_provenance(
-            manifests, ("new", "anchor", "selection-validation")
+            manifests,
+            ("new", "anchor", "rank4-new", "selection-validation"),
         )
-        self.assertEqual(len(metadata["declared_policies"]), 2)
+        self.assertEqual(len(metadata["declared_policies"]), 3)
         self.assertEqual(metadata["undeclared_roles"], ["selection-validation"])
         policies = {
             row["policy"]["teacher_schema"]: row["roles"]
@@ -236,6 +549,9 @@ class JacekReplayTrainingTests(unittest.TestCase):
         }
         self.assertEqual(policies[corpus.SEARCH_TEACHER_SCHEMA], ["new"])
         self.assertEqual(policies[corpus.TEACHER_SCHEMA], ["anchor"])
+        self.assertEqual(
+            policies[corpus.RANK4_TEACHER_SCHEMA], ["rank4-new"]
+        )
 
     def test_metrics_streams_bounded_batches(self):
         samples = training.tiny_fixture_samples()["train"]
@@ -298,6 +614,60 @@ class JacekReplayTrainingTests(unittest.TestCase):
             shards = [training.load_csr_shard(path) for path in manifests]
         training.validate_shard_collection(shards)
         self.assertEqual(len(training.combine_shards(shards)), 3)
+
+    def test_retention_validation_rejects_group_and_symmetric_feature_overlap(self):
+        samples = training.tiny_fixture_samples()
+        retention_sample = samples["validation"][0]
+        retention = training.Dataset.from_active(
+            (retention_sample.active,),
+            np.asarray([retention_sample.target], dtype=np.float32),
+            np.asarray([1.0], dtype=np.float32),
+            ("retention-root",),
+        )
+        reflected = training.Dataset.from_active(
+            (training.features.reflect_active(retention_sample.active),),
+            np.asarray([retention_sample.target], dtype=np.float32),
+            np.asarray([1.0], dtype=np.float32),
+            ("different-root",),
+        )
+        with self.assertRaisesRegex(ValueError, "feature overlap"):
+            training.validate_retention_validation_independence(
+                retention, {"new-adjudicator": reflected}
+            )
+        distinct_sample = samples["test"][0]
+        repeated_group = training.Dataset.from_active(
+            (distinct_sample.active,),
+            np.asarray([distinct_sample.target], dtype=np.float32),
+            np.asarray([1.0], dtype=np.float32),
+            ("retention-root",),
+        )
+        with self.assertRaisesRegex(ValueError, "root group overlaps"):
+            training.validate_retention_validation_independence(
+                retention, {"anchor-training": repeated_group}
+            )
+        distinct = training.Dataset.from_active(
+            (distinct_sample.active,),
+            np.asarray([distinct_sample.target], dtype=np.float32),
+            np.asarray([1.0], dtype=np.float32),
+            ("independent-root",),
+        )
+        training.validate_retention_validation_independence(
+            retention, {"new-adjudicator": distinct}
+        )
+        training.validate_retention_validation_independence(
+            retention,
+            {
+                "anchor-training": repeated_group,
+                "new-adjudicator": distinct,
+            },
+            prevalidated_cross_split_roles=("anchor-training",),
+        )
+        with self.assertRaisesRegex(ValueError, "not comparison inputs"):
+            training.validate_retention_validation_independence(
+                retention,
+                {"new-adjudicator": distinct},
+                prevalidated_cross_split_roles=("anchor-training",),
+            )
 
     def test_teacher_jsonl_packs_to_three_content_addressed_shards(self):
         groups = (("root:train", "train"), ("root:val", "validation"), ("root:test", "test"))
@@ -615,6 +985,23 @@ class JacekReplayTrainingTests(unittest.TestCase):
                 self.assertEqual(
                     (sequential / name).read_bytes(), (parallel / name).read_bytes()
                 )
+            legacy_manifest = json.loads(
+                (parallel / "jacek_replay_bfm.runtime.json").read_bytes()
+            )
+            self.assertEqual(legacy_manifest["schema"], training.MODEL_MANIFEST_SCHEMA)
+            self.assertNotIn("initialization", legacy_manifest["training"])
+            for seed in training.FIXED_SEEDS:
+                checkpoint_receipt = json.loads(
+                    (parallel_checkpoints / f"seed-{seed}.json").read_bytes()
+                )
+                self.assertEqual(
+                    checkpoint_receipt["schema"], training.SEED_CHECKPOINT_SCHEMA
+                )
+                self.assertNotIn("initial_runtime", checkpoint_receipt["inputs"])
+                self.assertNotIn(
+                    "retention_selection", checkpoint_receipt["configuration"]
+                )
+                self.assertNotIn("update", checkpoint_receipt["configuration"])
             checkpoint_bytes = {
                 path.name: path.read_bytes() for path in parallel_checkpoints.iterdir()
             }
@@ -710,6 +1097,319 @@ class JacekReplayTrainingTests(unittest.TestCase):
                 receipt = json.loads((checkpoints / f"seed-{seed}.json").read_bytes())
                 self.assertNotIn("test", receipt["training_report"])
 
+    def test_mixed_resume_binds_initial_runtime_monitor_and_loss_policy(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4)),
+            datasets["train"].targets[:4],
+            datasets["train"].weights[:4],
+            tuple(f"new:{index}" for index in range(4)),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(4, 8)),
+            datasets["train"].targets[4:8],
+            datasets["train"].weights[4:8],
+            tuple(f"anchor:{index}" for index in range(4)),
+        )
+        mixed = training.MixedTraining(new, anchor, 3, 1)
+        retention = datasets["test"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            initial_runtime = root / "actor.runtime"
+            other_runtime = root / "other.runtime"
+            training.export_runtime(initial_runtime, training.initialize(901))
+            training.export_runtime(other_runtime, training.initialize(902))
+            checkpoints = root / "seeds"
+            arguments = {
+                "seeds": (51, 52, 53),
+                "epochs": 2,
+                "patience": 1,
+                "batch_size": 4,
+                "mixed_training": mixed,
+                "selection_validation": datasets["validation"],
+                "retention_validation": retention,
+                "initial_runtime": initial_runtime,
+                "seed_checkpoint_directory": checkpoints,
+                "input_shard_identities": ({"fixture": "mixed-resume-v2"},),
+            }
+            first, first_report = training.train_three_seeds({}, **arguments)
+            before = {
+                path.name: path.read_bytes() for path in checkpoints.iterdir()
+            }
+            resumed, resumed_report = training.train_three_seeds(
+                {}, resume_seeds=True, **arguments
+            )
+            self.assertEqual(training.runtime_bytes(first)[0],
+                             training.runtime_bytes(resumed)[0])
+            self.assertEqual(first_report, resumed_report)
+            self.assertEqual(
+                before,
+                {path.name: path.read_bytes() for path in checkpoints.iterdir()},
+            )
+            receipt = json.loads((checkpoints / "seed-51.json").read_bytes())
+            self.assertEqual(
+                receipt["schema"], training.RETENTION_SEED_CHECKPOINT_SCHEMA
+            )
+            self.assertEqual(
+                receipt["inputs"]["initial_runtime"]["artifact_sha256"],
+                training.load_runtime(initial_runtime)[1]["artifact_sha256"],
+            )
+            self.assertEqual(
+                receipt["inputs"]["retention_monitor"]["samples"], len(retention)
+            )
+            self.assertEqual(
+                receipt["inputs"]["anchor_training_monitor"]["samples"],
+                len(anchor),
+            )
+            self.assertEqual(
+                receipt["configuration"]["loss"],
+                {
+                    "name": "separately-normalized-weighted-huber",
+                    "delta": 0.25,
+                    "new_coefficient": 0.5,
+                    "anchor_coefficient": 0.5,
+                },
+            )
+            wrong_schema = dict(receipt)
+            wrong_schema["schema"] = training.SEED_CHECKPOINT_SCHEMA
+            (checkpoints / "seed-51.json").write_bytes(
+                training.canonical_json_bytes(wrong_schema)
+            )
+            with self.assertRaisesRegex(ValueError, "receipt schema is invalid"):
+                training.train_three_seeds({}, resume_seeds=True, **arguments)
+            (checkpoints / "seed-51.json").write_bytes(before["seed-51.json"])
+            tampered_metrics = json.loads(before["seed-51.json"])
+            tampered_metrics["training_report"]["initial"]["validation"][
+                "weighted_huber"
+            ] = 0.0
+            tampered_metrics["training_report"]["validation"][
+                "weighted_huber"
+            ] = 0.0
+            body = dict(tampered_metrics)
+            body.pop("body_sha256")
+            tampered_metrics["body_sha256"] = hashlib.sha256(
+                training.canonical_json_bytes(body)
+            ).hexdigest()
+            (checkpoints / "seed-51.json").write_bytes(
+                training.canonical_json_bytes(tampered_metrics)
+            )
+            with self.assertRaisesRegex(ValueError, "retention report is stale"):
+                training.train_three_seeds({}, resume_seeds=True, **arguments)
+            (checkpoints / "seed-51.json").write_bytes(before["seed-51.json"])
+            tampered_final = json.loads(before["seed-51.json"])
+            tampered_final["training_report"]["training"][
+                "weighted_huber"
+            ] = 0.0
+            body = dict(tampered_final)
+            body.pop("body_sha256")
+            tampered_final["body_sha256"] = hashlib.sha256(
+                training.canonical_json_bytes(body)
+            ).hexdigest()
+            (checkpoints / "seed-51.json").write_bytes(
+                training.canonical_json_bytes(tampered_final)
+            )
+            with self.assertRaisesRegex(ValueError, "recomputed metrics disagree"):
+                training.train_three_seeds({}, resume_seeds=True, **arguments)
+            (checkpoints / "seed-51.json").write_bytes(before["seed-51.json"])
+            with self.assertRaisesRegex(ValueError, "inputs is stale"):
+                training.train_three_seeds(
+                    {},
+                    resume_seeds=True,
+                    **{**arguments, "initial_runtime": other_runtime},
+                )
+            with self.assertRaisesRegex(ValueError, "configuration is stale"):
+                training.train_three_seeds(
+                    {},
+                    resume_seeds=True,
+                    **{
+                        **arguments,
+                        "new_loss_coefficient": 0.6,
+                        "anchor_loss_coefficient": 0.4,
+                    },
+                )
+
+    def test_mixed_cli_emits_only_v2_model_and_checkpoint_schemas(self):
+        samples = training.tiny_fixture_samples()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            shards = root / "shards"
+            new_manifest = training.write_csr_shard(
+                shards, "train", samples["train"][:4]
+            )[1]
+            anchor_manifest = training.write_csr_shard(
+                shards, "train", samples["train"][4:]
+            )[1]
+            validation_manifest = training.write_csr_shard(
+                shards, "validation", samples["validation"]
+            )[1]
+            retention_manifest = training.write_csr_shard(
+                shards, "validation", samples["test"]
+            )[1]
+            actor = root / "actor.runtime"
+            training.export_runtime(actor, training.initialize(7001))
+            output = root / "model"
+            checkpoints = root / "seed-checkpoints"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "jacek_replay_train.py"),
+                    "--new-shard-manifest", str(new_manifest),
+                    "--anchor-shard-manifest", str(anchor_manifest),
+                    "--selection-validation-manifest", str(validation_manifest),
+                    "--retention-validation-manifest", str(retention_manifest),
+                    "--new-rows-per-batch", "2",
+                    "--anchor-rows-per-batch", "2",
+                    "--batch-size", "4",
+                    "--initial-runtime", str(actor),
+                    "--seeds", "71,72,73",
+                    "--epochs", "1",
+                    "--patience", "1",
+                    "--seed-checkpoint-directory", str(checkpoints),
+                    "--output-directory", str(output),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            manifest = json.loads(
+                (output / "jacek_replay_bfm.runtime.json").read_bytes()
+            )
+            self.assertEqual(
+                manifest["schema"], training.RETENTION_MODEL_MANIFEST_SCHEMA
+            )
+            self.assertEqual(
+                manifest["training"]["initialization"]["kind"],
+                "exact-supplied-runtime-all-seeds-order-only-v1",
+            )
+            self.assertEqual(
+                manifest["training"]["retention_selection"]["dataset"]["samples"],
+                len(samples["test"]),
+            )
+            self.assertTrue(
+                manifest["target"]["loss"].startswith(
+                    "separately-normalized-weighted-huber-delta-0.25"
+                )
+            )
+            for seed in (71, 72, 73):
+                receipt = json.loads(
+                    (checkpoints / f"seed-{seed}.json").read_bytes()
+                )
+                self.assertEqual(
+                    receipt["schema"], training.RETENTION_SEED_CHECKPOINT_SCHEMA
+                )
+                self.assertIn("retention_selection", receipt["configuration"])
+                self.assertEqual(
+                    receipt["inputs"]["retention_monitor"]["samples"],
+                    len(samples["test"]),
+                )
+
+    def test_resume_recomputes_feasible_epoch_zero_selection_minimum(self):
+        datasets = self._tiny_datasets()
+        new = training.Dataset.from_active(
+            datasets["train"].active_rows(range(2)),
+            datasets["train"].targets[:2],
+            datasets["train"].weights[:2],
+            ("new:0", "new:1"),
+        )
+        anchor = training.Dataset.from_active(
+            datasets["train"].active_rows(range(2, 4)),
+            datasets["train"].targets[2:4],
+            datasets["train"].weights[2:4],
+            ("anchor:0", "anchor:1"),
+        )
+        mixed = training.MixedTraining(new, anchor, 2, 2)
+        retention = datasets["test"]
+        zero = {
+            "w1": np.zeros((6301, 192), dtype=np.float32),
+            "w2": np.zeros((192, 32), dtype=np.float32),
+            "w3": np.zeros(32, dtype=np.float32),
+        }
+        original_batch = training.train_mixed_batch
+        original_metrics = training.metrics
+
+        def improving_batch(parameters, *_args, **_kwargs):
+            parameters["w3"][0] = np.float32(0.1)
+            return 0.1
+
+        def controlled_metrics(parameters, dataset, batch_size=4096):
+            del batch_size
+            trained = float(parameters["w3"][0]) > 0.0
+            if dataset is datasets["validation"]:
+                huber, sign, correlation = (
+                    (0.1, 0.9, 0.7) if trained else (0.2, 0.8, 0.5)
+                )
+            elif dataset is retention:
+                huber, sign, correlation = (
+                    (0.1005, 0.899, 0.7) if trained else (0.1, 0.9, 0.7)
+                )
+            else:
+                huber, sign, correlation = (0.1, 0.9, 0.7)
+            return {
+                "samples": len(dataset),
+                "weighted_huber": huber,
+                "sign_accuracy": sign,
+                "correlation": correlation,
+                "mae": huber,
+                "prediction_mean": 0.0,
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            initial_runtime = root / "actor.runtime"
+            checkpoints = root / "seeds"
+            training.export_runtime(initial_runtime, zero)
+            arguments = {
+                "seeds": (61, 62, 63),
+                "epochs": 1,
+                "patience": 1,
+                "batch_size": 4,
+                "mixed_training": mixed,
+                "selection_validation": datasets["validation"],
+                "retention_validation": retention,
+                "initial_runtime": initial_runtime,
+                "seed_checkpoint_directory": checkpoints,
+            }
+            training.train_mixed_batch = improving_batch
+            training.metrics = controlled_metrics
+            try:
+                selected, report = training.train_three_seeds({}, **arguments)
+            finally:
+                training.train_mixed_batch = original_batch
+                training.metrics = original_metrics
+            self.assertAlmostEqual(float(selected["w3"][0]), 0.1, places=7)
+            self.assertTrue(all(
+                item["best_epoch"] == 1
+                and item["selection"] == "feasible-trained-epoch"
+                for item in report["seed_reports"]
+            ))
+            training.metrics = controlled_metrics
+            try:
+                resumed, resumed_report = training.train_three_seeds(
+                    {}, resume_seeds=True, **arguments
+                )
+            finally:
+                training.metrics = original_metrics
+            self.assertEqual(
+                training.runtime_bytes(selected)[0],
+                training.runtime_bytes(resumed)[0],
+            )
+            self.assertEqual(report, resumed_report)
+            receipt_path = checkpoints / "seed-61.json"
+            original_receipt = receipt_path.read_bytes()
+            receipt = json.loads(original_receipt)
+            receipt["training_report"]["best_epoch"] = 0
+            body = dict(receipt)
+            body.pop("body_sha256")
+            receipt["body_sha256"] = hashlib.sha256(
+                training.canonical_json_bytes(body)
+            ).hexdigest()
+            receipt_path.write_bytes(training.canonical_json_bytes(receipt))
+            training.metrics = controlled_metrics
+            try:
+                with self.assertRaisesRegex(ValueError, "selected epoch is stale"):
+                    training.train_three_seeds({}, resume_seeds=True, **arguments)
+            finally:
+                training.metrics = original_metrics
+
     def test_seed_resume_rejects_stale_corrupt_and_incomplete_receipts(self):
         datasets = self._tiny_datasets()
         arguments = {
@@ -731,6 +1431,13 @@ class JacekReplayTrainingTests(unittest.TestCase):
             runtime_path = checkpoints / "seed-11.runtime"
             receipt_bytes = receipt_path.read_bytes()
             runtime_bytes = runtime_path.read_bytes()
+
+            wrong_schema = json.loads(receipt_bytes)
+            wrong_schema["schema"] = training.RETENTION_SEED_CHECKPOINT_SCHEMA
+            receipt_path.write_bytes(training.canonical_json_bytes(wrong_schema))
+            with self.assertRaisesRegex(ValueError, "receipt schema is invalid"):
+                training.train_three_seeds(datasets, resume_seeds=True, **arguments)
+            receipt_path.write_bytes(receipt_bytes)
 
             receipt = json.loads(receipt_bytes)
             receipt["training_report"]["best_epoch"] = 999

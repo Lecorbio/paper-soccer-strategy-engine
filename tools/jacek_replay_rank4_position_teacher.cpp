@@ -27,14 +27,14 @@ namespace teacher = papersoccer::jacek_replay_rank4_position_teacher_engine;
 
 namespace {
 
-constexpr std::string_view kSchema = "papersoccer.jacek-replay-teacher.v1";
+constexpr std::string_view kSchema = "papersoccer.jacek-replay-teacher.v3";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
 struct Options {
   std::string campaign_id;
   std::uint64_t nodes{32'000U};
-  std::uint32_t time_ms{60'000U};
+  std::uint32_t time_ms{};
 };
 
 struct PositionRow {
@@ -81,6 +81,20 @@ UInt parse_unsigned(std::string_view raw, std::string_view label) {
   return value;
 }
 
+template <typename UInt>
+UInt parse_nonnegative_unsigned(std::string_view raw,
+                                std::string_view label) {
+  UInt value{};
+  const auto [end, error] =
+      std::from_chars(raw.data(), raw.data() + raw.size(), value);
+  if (raw.empty() || error != std::errc{} ||
+      end != raw.data() + raw.size()) {
+    throw std::invalid_argument(std::string(label) +
+                                " requires a nonnegative integer");
+  }
+  return value;
+}
+
 std::string require_value(int &index, int argc, char **argv,
                           std::string_view option) {
   if (++index >= argc) {
@@ -107,13 +121,14 @@ Options parse_options(int argc, char **argv) {
     } else if (option == "--nodes") {
       options.nodes = parse_unsigned<std::uint64_t>(value, option);
     } else if (option == "--time-ms") {
-      options.time_ms = parse_unsigned<std::uint32_t>(value, option);
+      options.time_ms =
+          parse_nonnegative_unsigned<std::uint32_t>(value, option);
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }
   }
   require_text(options.campaign_id, "--campaign-id");
-  if (options.nodes > teacher::kMaximumNodes || options.time_ms > 60'000U) {
+  if (options.nodes > teacher::kMaximumNodes || options.time_ms != 0U) {
     throw std::invalid_argument("invalid Rank-4 teacher configuration");
   }
   return options;
@@ -279,28 +294,46 @@ void label(const PositionRow &row, const Options &options,
   config.replay_value_blend_percent = 15;
   config.teacher_residual_weight_percent = 100;
   teacher::CompleteTurnSearch search(row.state, config);
-  (void)search.run();
+  const std::vector<ps::Move> action = search.run();
   const teacher::SearchStats &stats = search.stats();
-  const bool root_solved =
+  const bool mate_score =
       std::abs(stats.root_score) >=
       teacher::kMateScore - static_cast<int>(teacher::kMaximumTurnDepth);
+  const int score_winner = stats.root_score > 0 ? 0 : 1;
+  const bool root_solved =
+      mate_score &&
+      (stats.completed_turn_depth != 0U || score_winner == row.mover);
   const bool deadline_reached =
       stats.budget_exhausted && stats.nodes < options.nodes;
   const bool node_cap_reached =
       stats.budget_exhausted && stats.nodes == options.nodes;
+  const bool depth_cap_reached =
+      stats.completed_turn_depth == teacher::kMaximumTurnDepth;
+  const auto fail_with_stats = [&](std::string_view message) -> void {
+    std::ostringstream detail;
+    detail << message << " (attempted_depth=" << stats.attempted_turn_depth
+           << ", completed_depth=" << stats.completed_turn_depth
+           << ", nodes=" << stats.nodes
+           << ", completed_actions=" << stats.completed_actions
+           << ", budget_exhausted="
+           << (stats.budget_exhausted ? "true" : "false") << ')';
+    throw std::runtime_error(detail.str());
+  };
   if (deadline_reached) {
-    throw std::runtime_error("Rank-4 teacher reached its deadline");
+    fail_with_stats("Rank-4 teacher reached its deadline");
   }
-  if (stats.completed_turn_depth == 0U || stats.nodes == 0U) {
-    throw std::runtime_error("Rank-4 teacher did not complete depth one");
+  if (stats.nodes == 0U || stats.completed_actions == 0U || action.empty()) {
+    fail_with_stats("Rank-4 teacher completed no root action before stopping");
   }
-  if (!root_solved && !node_cap_reached &&
-      stats.completed_turn_depth != teacher::kMaximumTurnDepth) {
-    throw std::runtime_error(
-        "Rank-4 teacher stopped before fixed work completed");
+  if (stats.completed_turn_depth == 0U && !node_cap_reached) {
+    fail_with_stats(
+        "Rank-4 teacher stopped during depth one before fixed work completed");
+  }
+  if (!root_solved && !node_cap_reached && !depth_cap_reached) {
+    fail_with_stats("Rank-4 teacher stopped before fixed work completed");
   }
   const std::optional<int> proven_winner =
-      root_solved ? std::optional<int>(stats.root_score > 0 ? 0 : 1)
+      root_solved ? std::optional<int>(score_winner)
                   : std::nullopt;
 
   output << "{\"schema\":" << json_string(kSchema)
@@ -332,8 +365,12 @@ void label(const PositionRow &row, const Options &options,
   write_bool(output, stats.budget_exhausted);
   output << ",\"node_cap_reached\":";
   write_bool(output, node_cap_reached);
+  output << ",\"depth_cap_reached\":";
+  write_bool(output, depth_cap_reached);
   output << ",\"deadline_reached\":";
   write_bool(output, deadline_reached);
+  output << ",\"termination_reason\":"
+         << json_string(root_solved ? "root-solved" : "fixed-work-cap");
   output << "},\"root_score\":" << stats.root_score
          << ",\"completed_depth\":" << stats.completed_turn_depth
          << ",\"nodes\":" << stats.nodes << ",\"root_solved\":";
@@ -355,7 +392,18 @@ int main(int argc, char **argv) {
     }
     const Options options = parse_options(argc, argv);
     const std::vector<PositionRow> rows = read_rows(std::cin);
-    for (const PositionRow &row : rows) label(row, options, std::cout);
+    for (const PositionRow &row : rows) {
+      try {
+        label(row, options, std::cout);
+        std::cout.flush();
+        if (!std::cout) {
+          throw std::runtime_error(
+              "could not write complete Rank-4 teacher row");
+        }
+      } catch (const std::exception &error) {
+        throw std::runtime_error(row.position_id + ": " + error.what());
+      }
+    }
     std::cout.flush();
     if (!std::cout) {
       throw std::runtime_error(

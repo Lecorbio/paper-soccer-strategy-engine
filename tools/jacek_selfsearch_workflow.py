@@ -35,8 +35,12 @@ from jacek_replay_workflow import (
 )
 
 
-PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v1"
-FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v1"
+AUTO_CAMPAIGN_ID = "selfsearch-auto-20260825-v6"
+PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260825-v6"
+FULL_CAMPAIGN_ID = "selfsearch-full-20260825-v6"
+QUALIFIED_AUTO_CAMPAIGN_ID = "selfsearch-auto-20260826-v7"
+QUALIFIED_PILOT_CAMPAIGN_ID = "selfsearch-pilot-20260826-v7"
+QUALIFIED_FULL_CAMPAIGN_ID = "selfsearch-full-20260826-v7"
 GAME_PLAN_SCHEMA = "papersoccer.jacek-selfsearch-game-plan.v1"
 GAME_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-games.v1"
 POSITION_SCHEMA = "papersoccer.jacek-replay-position.v1"
@@ -49,8 +53,8 @@ CAMPAIGN_STATUS_SCHEMA = "papersoccer.jacek-selfsearch-campaign-status.v1"
 CAMPAIGN_RECEIPT_SCHEMA = "papersoccer.jacek-selfsearch-chunk-receipt.v1"
 CAMPAIGN_SUMMARY_SCHEMA = "papersoccer.jacek-selfsearch-campaign-summary.v1"
 BUILD_MANIFEST_SCHEMA = "papersoccer.jacek-selfsearch-release-build.v1"
-SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v1"
-RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
+SEARCH_TEACHER_SCHEMA = corpus.SEARCH_TEACHER_SCHEMA
+RANK4_TEACHER_SCHEMA = corpus.RANK4_TEACHER_SCHEMA
 
 PILOT_OPENING_SEED = 2026082505
 FULL_OPENING_SEED = 2026082507
@@ -60,7 +64,8 @@ MINIMUM_FREE_BYTES = 12 * 1024**3
 POSITION_CHUNK_GAMES = 25
 SEARCH_MAX_ACTIONS = 250
 SEARCH_MAX_PARTIAL_PATHS = 50_000
-SEARCH_SAFETY_MS = 60_000
+FIXED_WORK_TIME_MS = 0
+LABEL_PROCESS_IDLE_TIMEOUT_SECONDS = 15 * 60
 
 _CAMPAIGN_LOCK_FD: int | None = None
 
@@ -176,21 +181,25 @@ PILOT_CONFIGURATION = {
     "hard_fraction_denominator": 4,
     "adjudicator_positions": 2_000,
     "adjudicator_tree_nodes": 1_000_000,
-    "new_rows_per_batch": 128,
-    "anchor_rows_per_batch": 128,
+    "new_rows_per_batch": 64,
+    "anchor_rows_per_batch": 192,
+    "training_learning_rate": 0.00006,
+    "training_reference_new_samples": 50_000,
+    "new_loss_coefficient": 0.25,
+    "anchor_loss_coefficient": 0.75,
+    "retention_sign_tolerance": 0.005,
+    "retention_huber_ratio": 1.02,
     "training_seeds": [20260901, 20260902, 20260903],
 }
 FULL_CONFIGURATION = {
     **{key: value for key, value in PILOT_CONFIGURATION.items() if key not in {
         "campaign_id", "games", "positions_per_game", "adjudicator_positions",
-        "new_rows_per_batch", "anchor_rows_per_batch", "training_seeds"
+        "training_seeds"
     }},
     "campaign_id": FULL_CAMPAIGN_ID,
     "games": 10_000,
     "positions_per_game": 20,
     "adjudicator_positions": 4_000,
-    "new_rows_per_batch": 192,
-    "anchor_rows_per_batch": 64,
     "training_seeds": [20260904, 20260905, 20260906],
 }
 
@@ -203,6 +212,69 @@ def _load_json(path: pathlib.Path, label: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     return value
+
+
+def _training_new_sample_count(
+    manifests: Sequence[pathlib.Path], *, label: str
+) -> int:
+    if not manifests:
+        raise ValueError(f"{label} has no new training manifests")
+    total = 0
+    for path in manifests:
+        manifest = _load_json(path, f"{label} training shard")
+        samples = manifest.get("samples")
+        if (
+            manifest.get("split") != "train"
+            or isinstance(samples, bool)
+            or not isinstance(samples, int)
+            or samples <= 0
+        ):
+            raise ValueError(f"{label} training shard sample count is invalid")
+        total += samples
+    return total
+
+
+def _training_learning_rate_policy(
+    *, base_learning_rate: float, reference_new_samples: int,
+    actual_new_samples: int, new_rows_per_batch: int,
+) -> dict:
+    if (
+        isinstance(base_learning_rate, bool)
+        or not isinstance(base_learning_rate, (int, float))
+        or not math.isfinite(float(base_learning_rate))
+        or float(base_learning_rate) <= 0.0
+        or isinstance(reference_new_samples, bool)
+        or not isinstance(reference_new_samples, int)
+        or reference_new_samples <= 0
+        or isinstance(actual_new_samples, bool)
+        or not isinstance(actual_new_samples, int)
+        or actual_new_samples <= 0
+        or isinstance(new_rows_per_batch, bool)
+        or not isinstance(new_rows_per_batch, int)
+        or new_rows_per_batch <= 0
+    ):
+        raise ValueError("training learning-rate scale inputs are invalid")
+    reference_optimizer_steps = math.ceil(
+        reference_new_samples / new_rows_per_batch
+    )
+    actual_optimizer_steps = math.ceil(
+        actual_new_samples / new_rows_per_batch
+    )
+    scale = min(1.0, reference_optimizer_steps / actual_optimizer_steps)
+    effective = float(base_learning_rate) * scale
+    if not math.isfinite(effective) or effective <= 0.0:
+        raise ValueError("effective training learning rate is invalid")
+    return {
+        "kind": "inverse-new-train-optimizer-steps-capped-v1",
+        "base_learning_rate": float(base_learning_rate),
+        "reference_new_samples": reference_new_samples,
+        "actual_new_samples": actual_new_samples,
+        "new_rows_per_batch": new_rows_per_batch,
+        "reference_optimizer_steps": reference_optimizer_steps,
+        "actual_optimizer_steps": actual_optimizer_steps,
+        "scale": scale,
+        "effective_learning_rate": effective,
+    }
 
 
 def _atomic_bytes(path: pathlib.Path, payload: bytes) -> None:
@@ -706,7 +778,7 @@ def _teacher_value(row: Mapping[str, object]) -> float:
         if proven is not None and value != (1.0 if proven == mover else -1.0):
             raise ValueError("search proof/value disagree")
         return value
-    if schema == RANK4_TEACHER_SCHEMA:
+    if schema in {corpus.TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
         if proven is not None:
             return 1.0 if proven == mover else -1.0
         score = row.get("root_score")
@@ -728,6 +800,18 @@ def load_labels(path: pathlib.Path, expected_schema: str) -> dict[str, dict]:
         position_id = row.get("position_id")
         if not isinstance(position_id, str) or position_id in labels:
             raise ValueError("label position IDs are missing or duplicate")
+        if expected_schema in {SEARCH_TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
+            try:
+                corpus.sample_from_teacher_row(row)
+            except ValueError as error:
+                label_kind = (
+                    "search"
+                    if expected_schema == SEARCH_TEACHER_SCHEMA
+                    else "Rank-4"
+                )
+                raise ValueError(
+                    f"{label_kind} label line {line_number} violates its teacher contract"
+                ) from error
         _teacher_value(row)
         labels[position_id] = row
     if not labels:
@@ -994,9 +1078,13 @@ def final_decision(
     matched_report: pathlib.Path,
     rank4_report: pathlib.Path,
     jacek_nn_report: pathlib.Path,
+    anchor_candidate: Mapping[str, float],
+    anchor_incumbent: Mapping[str, float],
+    original_anchor_candidate: Mapping[str, float],
+    original_anchor_incumbent: Mapping[str, float],
     uncontended_max_ms: float,
 ) -> dict:
-    """Apply the frozen 980 ms promotion thresholds to four protected panels."""
+    """Apply the frozen full-campaign strength, retention, and latency gates."""
 
     reports = {
         "pilot-teacher": validate_gate_report(
@@ -1029,6 +1117,22 @@ def final_decision(
         or float(uncontended_max_ms) >= 1_000.0
     ):
         errors.append("uncontended latency gate failed")
+    candidate_sign = float(anchor_candidate["sign_accuracy"])
+    incumbent_sign = float(anchor_incumbent["sign_accuracy"])
+    candidate_huber = float(anchor_candidate["weighted_huber"])
+    incumbent_huber = float(anchor_incumbent["weighted_huber"])
+    if candidate_sign < incumbent_sign - 0.005:
+        errors.append("canonical anchor sign noninferiority failed")
+    if candidate_huber > incumbent_huber * 1.02:
+        errors.append("canonical anchor Huber noninferiority failed")
+    original_candidate_sign = float(original_anchor_candidate["sign_accuracy"])
+    original_incumbent_sign = float(original_anchor_incumbent["sign_accuracy"])
+    original_candidate_huber = float(original_anchor_candidate["weighted_huber"])
+    original_incumbent_huber = float(original_anchor_incumbent["weighted_huber"])
+    if original_candidate_sign < original_incumbent_sign - 0.005:
+        errors.append("original incumbent anchor sign noninferiority failed")
+    if original_candidate_huber > original_incumbent_huber * 1.02:
+        errors.append("original incumbent anchor Huber noninferiority failed")
     return {
         "schema": FINAL_DECISION_SCHEMA,
         "eligible_for_local_publication": not errors,
@@ -1039,6 +1143,10 @@ def final_decision(
             for name, record in counts.items()
         },
         "uncontended_max_ms": uncontended_max_ms,
+        "anchor_candidate": dict(anchor_candidate),
+        "anchor_incumbent": dict(anchor_incumbent),
+        "original_anchor_candidate": dict(original_anchor_candidate),
+        "original_anchor_incumbent": dict(original_anchor_incumbent),
         "reports": {
             name: artifact_snapshot(path)
             for name, path in {
@@ -1723,6 +1831,67 @@ def _position_rows(path: pathlib.Path) -> tuple[str, list[str], list[str]]:
     return lines[0], lines[1:], ids
 
 
+def _run_label_teacher(
+    *, command: Sequence[str], source, destination,
+    pass_fds: tuple[int, ...], idle_timeout_seconds: float,
+    context: str, expected_position_ids: Sequence[str],
+) -> subprocess.CompletedProcess:
+    """Run one streaming label chunk with an external no-progress watchdog."""
+
+    if not math.isfinite(idle_timeout_seconds) or idle_timeout_seconds <= 0:
+        raise ValueError("label process idle timeout must be positive")
+    process = subprocess.Popen(
+        command,
+        stdin=source,
+        stdout=destination,
+        stderr=subprocess.PIPE,
+        pass_fds=pass_fds,
+    )
+    observed_bytes = os.fstat(destination.fileno()).st_size
+    last_progress = time.monotonic()
+    try:
+        while True:
+            elapsed = time.monotonic() - last_progress
+            remaining = idle_timeout_seconds - elapsed
+            if remaining <= 0:
+                process.kill()
+                _, stderr = process.communicate()
+                detail = stderr.decode("utf-8", "replace").strip()
+                message = (
+                    f"{context} made no label-output progress for "
+                    f"{idle_timeout_seconds:g} seconds; process killed "
+                    "without output or receipt"
+                )
+                with pathlib.Path(destination.name).open("rb") as partial:
+                    completed_rows = sum(1 for line in partial if line.endswith(b"\n"))
+                if completed_rows < len(expected_position_ids):
+                    message += (
+                        "; next position_id="
+                        + expected_position_ids[completed_rows]
+                    )
+                if detail:
+                    message += f": {detail}"
+                raise RuntimeError(message)
+            try:
+                returncode = process.wait(timeout=min(1.0, remaining))
+            except subprocess.TimeoutExpired:
+                current_bytes = os.fstat(destination.fileno()).st_size
+                if current_bytes != observed_bytes:
+                    observed_bytes = current_bytes
+                    last_progress = time.monotonic()
+                continue
+            stderr = process.stderr.read() if process.stderr is not None else b""
+            return subprocess.CompletedProcess(
+                command, returncode, stdout=None, stderr=stderr
+            )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if process.stderr is not None:
+            process.stderr.close()
+
+
 def _validate_label_output(
     *, output: pathlib.Path, positions: pathlib.Path, schema: str,
     campaign_id: str, nodes: int, model_sha256: str | None,
@@ -1736,13 +1905,20 @@ def _validate_label_output(
     for position_id, row in labels.items():
         corpus.sample_from_teacher_row(row)
         fields = position_by_id[position_id]
+        actions = fields[7].split("/") if fields[7] else []
+        expected_prefix = [
+            {"player_id": turn % 2, "action": action}
+            for turn, action in enumerate(actions)
+        ]
         if (
             row.get("campaign_id") != campaign_id
             or row.get("root_group_id") != fields[1]
             or row.get("group_id") != fields[2]
+            or row.get("source") != fields[3]
             or row.get("split") != fields[4]
             or row.get("winner") != int(fields[5])
             or row.get("mover") != int(fields[6])
+            or row.get("prefix") != expected_prefix
         ):
             raise ValueError("teacher label lineage is stale")
         if schema == SEARCH_TEACHER_SCHEMA:
@@ -1763,7 +1939,7 @@ def _validate_label_output(
                 != hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).hexdigest()
                 or configuration != {
                     "seed": expected_seed,
-                    "max_time_ms": SEARCH_SAFETY_MS,
+                    "max_time_ms": FIXED_WORK_TIME_MS,
                     "max_tree_nodes": nodes,
                     "max_actions": SEARCH_MAX_ACTIONS,
                     "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS,
@@ -1771,12 +1947,25 @@ def _validate_label_output(
                     "fpu": 0.5,
                 }
                 or stats.get("deadline_reached") is not False
+                or stats.get("generation_deadline_stops") != 0
+                or stats.get("materialization_deadline_stops") != 0
+                or stats.get("closed_unsolved_nodes") != 0
+                or stats.get("closed_unsolved_nonexhaustive_nodes") != 0
+                or not isinstance(stats.get("max_open_children"), int)
+                or stats.get("max_open_children", SEARCH_MAX_ACTIONS + 1)
+                > SEARCH_MAX_ACTIONS
                 or not isinstance(stats.get("max_complete_turn_depth"), int)
                 or stats.get("max_complete_turn_depth", 0) <= 0
                 or not isinstance(stats.get("completed_actions"), int)
                 or stats.get("completed_actions", 0) <= 0
                 or row.get("root_solved")
                 != (row.get("proven_winner") is not None)
+                or stats.get("termination_reason")
+                != (
+                    "root-solved"
+                    if row.get("root_solved") is True
+                    else "fixed-work-cap"
+                )
                 or (
                     row.get("root_solved") is False
                     and (
@@ -1797,7 +1986,7 @@ def _validate_label_output(
                 }
                 or configuration != {
                     "max_nodes": nodes,
-                    "max_time_ms": SEARCH_SAFETY_MS,
+                    "max_time_ms": FIXED_WORK_TIME_MS,
                     "max_turn_depth": 32,
                     "replay_value_blend_percent": 15,
                     "teacher_residual_weight_percent": 100,
@@ -1805,7 +1994,8 @@ def _validate_label_output(
                 or set(stats) != {
                     "attempted_depth", "completed_depth", "nodes",
                     "leaf_evaluations", "terminal_nodes", "completed_actions",
-                    "budget_exhausted", "node_cap_reached", "deadline_reached",
+                    "budget_exhausted", "node_cap_reached", "depth_cap_reached",
+                    "deadline_reached", "termination_reason",
                 }
                 or not isinstance(observed_nodes, int)
                 or not 0 < observed_nodes <= nodes
@@ -1814,17 +2004,36 @@ def _validate_label_output(
                 or stats.get("budget_exhausted") is not stats.get("node_cap_reached")
                 or row.get("completed_depth") != stats.get("completed_depth")
                 or not isinstance(stats.get("completed_depth"), int)
-                or stats.get("completed_depth", 0) <= 0
+                or stats.get("completed_depth", -1) < 0
                 or not isinstance(stats.get("attempted_depth"), int)
-                or stats.get("attempted_depth", 0) < stats.get("completed_depth", 0)
+                or stats.get("attempted_depth", 0)
+                < max(1, stats.get("completed_depth", 0))
                 or not isinstance(stats.get("completed_actions"), int)
                 or stats.get("completed_actions", 0) <= 0
                 or row.get("root_solved") != (row.get("proven_winner") is not None)
+                or stats.get("termination_reason")
+                != (
+                    "root-solved"
+                    if row.get("root_solved") is True
+                    else "fixed-work-cap"
+                )
+                or stats.get("depth_cap_reached")
+                is not (
+                    stats.get("completed_depth")
+                    == row.get("search_config", {}).get("max_turn_depth")
+                )
+                or (
+                    stats.get("node_cap_reached") is True
+                    and stats.get("nodes") != nodes
+                )
+                or (
+                    stats.get("completed_depth") == 0
+                    and stats.get("node_cap_reached") is not True
+                )
                 or not (
                     row.get("root_solved") is True
                     or stats.get("node_cap_reached") is True
-                    or stats.get("completed_depth")
-                    == row.get("search_config", {}).get("max_turn_depth")
+                    or stats.get("depth_cap_reached") is True
                 )
             ):
                 raise ValueError("Rank-4 teacher work binding is stale")
@@ -1837,14 +2046,42 @@ def run_label_chunks(
     schema: str, campaign_id: str, nodes: int, workers: int,
     source_sha256: str,
     model: pathlib.Path | None = None, chunk_games: int = POSITION_CHUNK_GAMES,
+    process_idle_timeout_seconds: float = LABEL_PROCESS_IDLE_TIMEOUT_SECONDS,
 ) -> dict:
     header, rows, position_ids = _position_rows(positions)
     chunk_root = manager.output / "label-chunks" / stage_name
     receipt_root = manager.receipts / f"{stage_ordinal:02d}-{stage_name}-chunks"
     producer = artifact_snapshot(teacher)
     model_hash = sha256(model) if model is not None else None
+    if schema not in {SEARCH_TEACHER_SCHEMA, RANK4_TEACHER_SCHEMA}:
+        raise ValueError("position teacher schema is unsupported")
+    if (schema == SEARCH_TEACHER_SCHEMA) != (model is not None):
+        raise ValueError("search labels require one model and Rank-4 labels none")
     if chunk_games <= 0:
         raise ValueError("position teacher chunk game count must be positive")
+    if (
+        not math.isfinite(process_idle_timeout_seconds)
+        or process_idle_timeout_seconds <= 0
+    ):
+        raise ValueError("position teacher idle timeout must be positive")
+    teacher_configuration = (
+        {
+            "max_time_ms": FIXED_WORK_TIME_MS,
+            "max_tree_nodes": nodes,
+            "max_actions": SEARCH_MAX_ACTIONS,
+            "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS,
+            "exploration": 0.5,
+            "fpu": 0.5,
+        }
+        if schema == SEARCH_TEACHER_SCHEMA
+        else {
+            "max_time_ms": FIXED_WORK_TIME_MS,
+            "max_nodes": nodes,
+            "max_turn_depth": 32,
+            "replay_value_blend_percent": 15,
+            "teacher_residual_weight_percent": 100,
+        }
+    )
     grouped_by_game: dict[str, list[str]] = {}
     for row in rows:
         group_id = row.split("\t")[2]
@@ -1870,6 +2107,8 @@ def run_label_chunks(
             "stage": stage_name, "chunk_ordinal": ordinal, "row_begin": row_begin,
             "rows": len(chunk_data), "games": min(chunk_games, len(grouped) - ordinal * chunk_games),
             "nodes": nodes,
+            "teacher_configuration": teacher_configuration,
+            "process_idle_timeout_seconds": process_idle_timeout_seconds,
             "producer": producer, "model": artifact_snapshot(model) if model else None,
             "source_sha256": source_sha256,
             "input": artifact_snapshot(chunk_input),
@@ -1906,31 +2145,48 @@ def run_label_chunks(
             command = [
                 str(teacher), "--model", str(model), "--model-sha256", str(model_hash),
                 "--campaign-id", campaign_id, "--tree-nodes", str(nodes),
-                "--time-ms", str(SEARCH_SAFETY_MS), "--max-actions", str(SEARCH_MAX_ACTIONS),
+                "--time-ms", str(FIXED_WORK_TIME_MS), "--max-actions", str(SEARCH_MAX_ACTIONS),
                 "--max-partial-paths", str(SEARCH_MAX_PARTIAL_PATHS),
                 "--exploration", "0.5", "--fpu", "0.5",
             ]
         else:
             command = [
                 str(teacher), "--campaign-id", campaign_id, "--nodes", str(nodes),
-                "--time-ms", str(SEARCH_SAFETY_MS),
+                "--time-ms", str(FIXED_WORK_TIME_MS),
             ]
-        with chunk_input.open("rb") as source, tempfile.NamedTemporaryFile(
-            dir=chunk_output.parent, prefix=f".{chunk_output.name}.", delete=False
-        ) as destination:
-            temporary = pathlib.Path(destination.name)
-            pass_fds = (
-                () if _CAMPAIGN_LOCK_FD is None else (_CAMPAIGN_LOCK_FD,)
-            )
-            completed = subprocess.run(command, stdin=source, stdout=destination,
-                                       stderr=subprocess.PIPE, check=False,
-                                       pass_fds=pass_fds)
+        temporary: pathlib.Path | None = None
         try:
+            with chunk_input.open("rb") as source, tempfile.NamedTemporaryFile(
+                dir=chunk_output.parent,
+                prefix=f".{chunk_output.name}.",
+                delete=False,
+            ) as destination:
+                temporary = pathlib.Path(destination.name)
+                pass_fds = (
+                    () if _CAMPAIGN_LOCK_FD is None else (_CAMPAIGN_LOCK_FD,)
+                )
+                completed = _run_label_teacher(
+                    command=command,
+                    source=source,
+                    destination=destination,
+                    pass_fds=pass_fds,
+                    idle_timeout_seconds=process_idle_timeout_seconds,
+                    context=f"{stage_name} chunk {item[0]}",
+                    expected_position_ids=_position_rows(chunk_input)[2],
+                )
             if completed.returncode != 0:
-                raise RuntimeError(completed.stderr.decode("utf-8", "replace"))
+                detail = completed.stderr.decode("utf-8", "replace").strip()
+                message = (
+                    f"{stage_name} chunk {item[0]} teacher exited "
+                    f"with code {completed.returncode}"
+                )
+                if detail:
+                    message += f": {detail}"
+                raise RuntimeError(message)
             os.replace(temporary, chunk_output)
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         count = _validate_label_output(
             output=chunk_output, positions=chunk_input, schema=schema,
             campaign_id=campaign_id, nodes=nodes, model_sha256=model_hash,
@@ -2069,44 +2325,123 @@ def _validate_model_output(
     new_manifests: Sequence[pathlib.Path],
     anchor_manifests: Sequence[pathlib.Path],
     adjudicator_manifest: pathlib.Path,
+    retention_validation_manifests: Sequence[pathlib.Path],
+    initial_runtime: pathlib.Path,
     new_rows: int,
     anchor_rows: int,
+    learning_rate: float,
+    new_loss_coefficient: float,
+    anchor_loss_coefficient: float,
+    retention_sign_tolerance: float,
+    retention_huber_ratio: float,
 ) -> dict:
+    import jacek_replay_train as training
+
     runtime = output_directory / "jacek_replay_bfm.runtime"
     manifest_path = output_directory / "jacek_replay_bfm.runtime.json"
     manifest = _load_json(manifest_path, "self-search model manifest")
     training_report = manifest.get("training", {})
     reports = training_report.get("seed_reports")
+    _, expected_initial_runtime = training.load_runtime(initial_runtime)
+    initial_runtime_version = int(
+        expected_initial_runtime.get("runtime_version", training.RUNTIME_VERSION)
+    )
     expected_sources = [
         _load_json(path, "self-search source shard")
-        for path in (*new_manifests, *anchor_manifests, adjudicator_manifest)
+        for path in (
+            *new_manifests,
+            *anchor_manifests,
+            adjudicator_manifest,
+            *retention_validation_manifests,
+        )
     ]
     expected_batching = {
-        "kind": "deterministic-two-stream-cycling-v1",
+        "kind": "deterministic-continuous-two-stream-coverage-v2",
         "new_rows_per_batch": new_rows,
         "anchor_rows_per_batch": anchor_rows,
-        "epoch_length": "new-stream-covered-once-anchor-sampled",
+        "epoch_length": "ceil-new-rows/new-quota-batches",
         "row_order": "new-then-anchor",
+        "new_stream": "fresh-complete-permutation-each-epoch-with-padding",
+        "anchor_cross_epoch": (
+            "continuous-no-repeat-until-permutation-complete"
+        ),
     }
+    expected_loss = {
+        "name": "separately-normalized-weighted-huber",
+        "delta": 0.25,
+        "new_coefficient": new_loss_coefficient,
+        "anchor_coefficient": anchor_loss_coefficient,
+    }
+    expected_retention_policy = {
+        "monitor": "explicit-disjoint-retention-validation",
+        "minimum_training_anchor_permutations_before-stop": 1,
+        "checkpoint_may_precede_complete_anchor_coverage": True,
+        "minimum_sign_accuracy": "actor-sign-minus-tolerance",
+        "sign_tolerance": retention_sign_tolerance,
+        "maximum_weighted_huber": "actor-huber-times-ratio",
+        "huber_ratio": retention_huber_ratio,
+        "trained_checkpoint_order": (
+            "minimum-new-adjudicator-Huber-then-sign-correlation"
+        ),
+        "epoch_zero_comparator": "new-adjudicator-selection-key",
+        "fallback": (
+            "exact-supplied-runtime-when-no-feasible-trained-epoch-beats-epoch-zero"
+        ),
+        "patience_starts_after_complete-anchor-coverage": True,
+    }
+    seed_arguments = {
+        "epochs": 50,
+        "patience": 8,
+        "batch_size": 256,
+        "learning_rate": learning_rate,
+        "weight_decay": 1e-5,
+        "new_rows_per_batch": new_rows,
+        "anchor_rows_per_batch": anchor_rows,
+        "new_loss_coefficient": new_loss_coefficient,
+        "anchor_loss_coefficient": anchor_loss_coefficient,
+        "retention_sign_tolerance": retention_sign_tolerance,
+        "retention_huber_ratio": retention_huber_ratio,
+        "selection_validation": "explicit-common-adjudicator",
+    }
+    if initial_runtime_version == training.RUNTIME_V2_VERSION:
+        seed_arguments["initial_runtime_version"] = training.RUNTIME_V2_VERSION
+    expected_seed_configuration = training._seed_training_configuration(
+        seed_arguments
+    )
+    expected_initialization = expected_seed_configuration["initialization"]
+    expected_optimizer = expected_seed_configuration["optimizer"]
+    expected_architecture = {
+        **expected_seed_configuration["architecture"],
+        "payload_layout": training.RUNTIME_V1_PAYLOAD_LAYOUT,
+    }
+    if initial_runtime_version == training.RUNTIME_V2_VERSION:
+        expected_architecture.update(training._residual_runtime_contract())
     if (
-        manifest.get("schema") != "papersoccer.jacek-replay-bfm-model.v1"
+        manifest.get("schema") != "papersoccer.jacek-replay-bfm-model.v2"
         or not runtime.is_file()
         or manifest.get("runtime", {}).get("artifact_sha256") != sha256(runtime)
-        or manifest.get("architecture", {}).get("dimensions") != [6301, 192, 32, 1]
-        or manifest.get("architecture", {}).get("biases") is not False
+        or manifest.get("architecture") != expected_architecture
         or manifest.get("source_shards") != expected_sources
         or not isinstance(reports, list)
         or [report.get("seed") for report in reports if isinstance(report, dict)]
         != list(seeds)
         or training_report.get("selection_validation", {}).get("kind")
         != "explicit-common-adjudicator"
-        or training_report.get("optimizer") != {
-            "name": "adamw", "epochs": 50, "patience": 8,
-            "batch_size": 256, "learning_rate": 0.001,
-            "weight_decay": 1e-5, "gradient_norm_clip": 5.0,
-        }
-        or training_report.get("loss") != {"name": "weighted-huber", "delta": 0.25}
+        or training_report.get("optimizer") != expected_optimizer
+        or training_report.get("initialization") != expected_initialization
+        or training_report.get("initial_runtime") != expected_initial_runtime
+        or training_report.get("loss") != expected_loss
         or training_report.get("batching") != expected_batching
+        or training_report.get("retention_selection", {}).get("policy")
+        != expected_retention_policy
+        or training_report.get("selection")
+        != (
+            "choose each seed's best epoch that beats epoch zero on the new "
+            "adjudicator and passes disjoint retention validation; continue "
+            "training through complete anchor coverage; then choose minimum "
+            "adjudicator Huber followed by sign, correlation, and seed"
+        )
+        or training_report.get("chosen_seed") not in seeds
     ):
         raise ValueError("self-search selected model is stale or incomplete")
     publications = training_report.get("seed_checkpoints")
@@ -2119,6 +2454,8 @@ def _validate_model_output(
     ):
         raise ValueError("self-search seed checkpoint set is incomplete")
     expected_files: set[str] = set()
+    retention_monitor: dict | None = None
+    chosen_checkpoint: pathlib.Path | None = None
     for seed, publication in zip(seeds, publications, strict=True):
         if not isinstance(publication, dict):
             raise ValueError("self-search seed checkpoint binding is malformed")
@@ -2137,20 +2474,71 @@ def _validate_model_output(
         ):
             raise ValueError("self-search seed checkpoint artifact is stale")
         receipt = _load_json(receipt_path, "self-search seed checkpoint receipt")
+        body = dict(receipt)
+        body_sha256 = body.pop("body_sha256", None)
+        _, checkpoint_runtime = training.load_runtime(checkpoint)
+        seed_report = next(
+            (report for report in reports if report.get("seed") == seed), None
+        )
+        receipt_inputs = receipt.get("inputs", {})
+        monitor = receipt_inputs.get("retention_monitor")
         if (
             receipt.get("schema")
-            != "papersoccer.jacek-replay-bfm-seed-checkpoint.v1"
+            != "papersoccer.jacek-replay-bfm-seed-checkpoint.v2"
             or receipt.get("seed") != seed
-            or receipt.get("checkpoint", {}).get("file") != checkpoint_name
-            or receipt.get("checkpoint", {}).get("artifact_sha256")
-            != sha256(checkpoint)
+            or not isinstance(body_sha256, str)
+            or body_sha256 != hashlib.sha256(
+                canonical_json_bytes(body)
+            ).hexdigest()
+            or receipt.get("configuration") != expected_seed_configuration
+            or receipt_inputs.get("initial_runtime") != expected_initial_runtime
+            or receipt_inputs.get("anchor_training_monitor")
+            != receipt_inputs.get("training_streams", {}).get("anchor")
+            or monitor != training_report.get("retention_selection", {}).get("dataset")
+            or receipt_inputs.get("anchor_training_monitor")
+            != training_report.get("anchor_training_monitor")
+            or receipt_inputs.get("datasets", {}).get("validation")
+            != training_report.get("selection_validation", {}).get("dataset")
+            or receipt.get("checkpoint")
+            != {"file": checkpoint_name, **checkpoint_runtime}
+            or (
+                initial_runtime_version == training.RUNTIME_V2_VERSION
+                and checkpoint_runtime.get("base_payload_sha256")
+                != expected_initial_runtime.get("base_payload_sha256")
+            )
+            or receipt.get("training_report") != seed_report
+            or not isinstance(seed_report, dict)
+            or seed_report.get("initial", {}).get("runtime")
+            != expected_initial_runtime
+            or seed_report.get("selection")
+            not in {"feasible-trained-epoch", "exact-initial-runtime-fallback"}
+            or seed_report.get("retention_thresholds", {}).get("sign_tolerance")
+            != retention_sign_tolerance
+            or seed_report.get("retention_thresholds", {}).get("huber_ratio")
+            != retention_huber_ratio
+            or isinstance(seed_report.get("anchor_coverage_complete_epoch"), bool)
+            or not isinstance(seed_report.get("anchor_coverage_complete_epoch"), int)
+            or seed_report["anchor_coverage_complete_epoch"] <= 0
         ):
             raise ValueError("self-search seed checkpoint receipt is stale")
+        if retention_monitor is None:
+            retention_monitor = monitor
+        elif retention_monitor != monitor:
+            raise ValueError("self-search retention monitor identity changed across seeds")
+        if seed == training_report["chosen_seed"]:
+            chosen_checkpoint = checkpoint
     if {path.name for path in checkpoint_directory.iterdir()} != expected_files:
         raise ValueError("self-search seed checkpoint directory has unexpected files")
-    # This also validates the exact 6301->192->32->1 runtime layout.
-    import jacek_replay_train as training
-    training.load_runtime(runtime)
+    # These loads also validate the exact 6301->192->32->1 runtime layout.
+    _selected_parameters, selected_runtime_report = training.load_runtime(runtime)
+    if (
+        initial_runtime_version == training.RUNTIME_V2_VERSION
+        and selected_runtime_report.get("base_payload_sha256")
+        != expected_initial_runtime.get("base_payload_sha256")
+    ):
+        raise ValueError("self-search v2 selected runtime changed frozen base tensors")
+    if chosen_checkpoint is None or runtime.read_bytes() != chosen_checkpoint.read_bytes():
+        raise ValueError("self-search selected runtime does not match its chosen seed")
     return manifest
 
 
@@ -2158,7 +2546,11 @@ def run_training_arm(
     *, python: pathlib.Path, trainer: pathlib.Path,
     new_manifests: Sequence[pathlib.Path], anchor_manifests: Sequence[pathlib.Path],
     adjudicator_manifest: pathlib.Path, output_directory: pathlib.Path,
-    seeds: Sequence[int], new_rows: int, anchor_rows: int,
+    retention_validation_manifests: Sequence[pathlib.Path],
+    initial_runtime: pathlib.Path, seeds: Sequence[int],
+    new_rows: int, anchor_rows: int, learning_rate: float,
+    new_loss_coefficient: float, anchor_loss_coefficient: float,
+    retention_sign_tolerance: float, retention_huber_ratio: float,
 ) -> dict:
     output_directory.mkdir(parents=True, exist_ok=True)
     selected_runtime = output_directory / "jacek_replay_bfm.runtime"
@@ -2170,7 +2562,13 @@ def run_training_arm(
             output_directory, seeds=seeds, new_manifests=new_manifests,
             anchor_manifests=anchor_manifests,
             adjudicator_manifest=adjudicator_manifest,
-            new_rows=new_rows, anchor_rows=anchor_rows,
+            retention_validation_manifests=retention_validation_manifests,
+            initial_runtime=initial_runtime, new_rows=new_rows,
+            anchor_rows=anchor_rows, learning_rate=learning_rate,
+            new_loss_coefficient=new_loss_coefficient,
+            anchor_loss_coefficient=anchor_loss_coefficient,
+            retention_sign_tolerance=retention_sign_tolerance,
+            retention_huber_ratio=retention_huber_ratio,
         )
     command = [str(python), str(trainer)]
     for path in new_manifests:
@@ -2178,12 +2576,19 @@ def run_training_arm(
     for path in anchor_manifests:
         command.extend(("--anchor-shard-manifest", str(path)))
     command.extend(("--selection-validation-manifest", str(adjudicator_manifest)))
+    for path in retention_validation_manifests:
+        command.extend(("--retention-validation-manifest", str(path)))
     command.extend(
         (
             "--new-rows-per-batch", str(new_rows),
             "--anchor-rows-per-batch", str(anchor_rows),
+            "--initial-runtime", str(initial_runtime),
+            "--new-loss-coefficient", str(new_loss_coefficient),
+            "--anchor-loss-coefficient", str(anchor_loss_coefficient),
+            "--retention-sign-tolerance", str(retention_sign_tolerance),
+            "--retention-huber-ratio", str(retention_huber_ratio),
             "--batch-size", "256", "--seeds", ",".join(map(str, seeds)),
-            "--epochs", "50", "--patience", "8", "--learning-rate", "0.001",
+            "--epochs", "50", "--patience", "8", "--learning-rate", str(learning_rate),
             "--weight-decay", "1e-5", "--seed-workers", "2",
             "--seed-checkpoint-directory", str(output_directory / "training-seeds"),
             "--resume-seeds", "--output-directory", str(output_directory),
@@ -2194,18 +2599,29 @@ def run_training_arm(
         output_directory, seeds=seeds, new_manifests=new_manifests,
         anchor_manifests=anchor_manifests,
         adjudicator_manifest=adjudicator_manifest,
-        new_rows=new_rows, anchor_rows=anchor_rows,
+        retention_validation_manifests=retention_validation_manifests,
+        initial_runtime=initial_runtime, new_rows=new_rows,
+        anchor_rows=anchor_rows, learning_rate=learning_rate,
+        new_loss_coefficient=new_loss_coefficient,
+        anchor_loss_coefficient=anchor_loss_coefficient,
+        retention_sign_tolerance=retention_sign_tolerance,
+        retention_huber_ratio=retention_huber_ratio,
     )
 
 
 def anchor_metrics(
     *, candidate_runtime: pathlib.Path, incumbent_runtime: pathlib.Path,
     anchor_validation_manifests: Sequence[pathlib.Path],
+    expected_split: str = "validation",
 ) -> dict:
     import jacek_replay_train as training
 
     shards = [training.load_csr_shard(path) for path in anchor_validation_manifests]
-    if not shards or any(shard.split != "validation" or len(shard) == 0 for shard in shards):
+    if expected_split not in {"validation", "test"}:
+        raise ValueError("canonical anchor metric split is invalid")
+    if not shards or any(
+        shard.split != expected_split or len(shard) == 0 for shard in shards
+    ):
         raise ValueError("canonical anchor validation shards are invalid")
     dataset = training.combine_shards(shards)
     candidate, _ = training.load_runtime(candidate_runtime)
@@ -2648,8 +3064,10 @@ def run_phase(
     *, spec: PhaseSpec, output: pathlib.Path, resume: bool,
     roots_tsv: pathlib.Path, roots_manifest: pathlib.Path,
     actor: pathlib.Path, diversity: pathlib.Path,
+    original_incumbent: pathlib.Path | None = None,
     executables: CampaignExecutables,
     anchor_train_manifests: Sequence[pathlib.Path],
+    retention_validation_manifests: Sequence[pathlib.Path],
     anchor_validation_manifests: Sequence[pathlib.Path],
     canonical_prior_manifests: Sequence[pathlib.Path],
     opening_exclusions: Sequence[pathlib.Path],
@@ -2665,6 +3083,10 @@ def run_phase(
     output.mkdir(parents=True, exist_ok=True)
     if build_manifest is None or source_identities is None:
         raise ValueError("campaign phase has no frozen Release build identity")
+    if spec.name == "full" and original_incumbent is None:
+        raise ValueError("full campaign phase has no original incumbent retention reference")
+    if spec.name == "pilot" and original_incumbent is not None:
+        raise ValueError("pilot campaign phase must use its actor as retention reference")
     phase_environment = environment_identity()
     phase_environment["release_build"] = artifact_snapshot(build_manifest)
     manager = GuardedStageManager(
@@ -2707,6 +3129,7 @@ def run_phase(
     rank4_runtime = rank4_model_directory / "jacek_replay_bfm.runtime"
     rank4_model_manifest = rank4_model_directory / "jacek_replay_bfm.runtime.json"
     anchor_metrics_path = output / "anchor-metrics.json"
+    original_anchor_metrics_path = output / "anchor-metrics-original-incumbent.json"
     bank = output / "gate-openings.tsv"
     latency_report = output / "latency-audit.json"
     decision_path = output / "decision.json"
@@ -2790,7 +3213,9 @@ def run_phase(
             ordinal=ordinal, name=name,
             configuration={
                 "nodes": nodes, "workers": 10, "chunk_games": 25,
-                "safety_ms": SEARCH_SAFETY_MS,
+                "fixed_work_time_ms": FIXED_WORK_TIME_MS,
+                "label_process_idle_timeout_seconds":
+                    LABEL_PROCESS_IDLE_TIMEOUT_SECONDS,
                 "max_actions": SEARCH_MAX_ACTIONS if model else None,
                 "max_partial_paths": SEARCH_MAX_PARTIAL_PATHS if model else None,
                 "exploration": 0.5 if model else None,
@@ -2977,7 +3402,41 @@ def run_phase(
                 for index, path in enumerate(anchor_train_manifests)
             },
             "adjudicator": adjudicator_validation,
+            "initial_runtime": actor,
+            **{
+                f"retention_validation_{index}": path
+                for index, path in enumerate(retention_validation_manifests)
+            },
         })
+        learning_rate_policy = _training_learning_rate_policy(
+            base_learning_rate=float(
+                spec.configuration["training_learning_rate"]
+            ),
+            reference_new_samples=int(
+                spec.configuration["training_reference_new_samples"]
+            ),
+            actual_new_samples=_training_new_sample_count(
+                new_manifests, label=name
+            ),
+            new_rows_per_batch=int(
+                spec.configuration["new_rows_per_batch"]
+            ),
+        )
+        learning_rate = float(
+            learning_rate_policy["effective_learning_rate"]
+        )
+        new_loss_coefficient = float(
+            spec.configuration["new_loss_coefficient"]
+        )
+        anchor_loss_coefficient = float(
+            spec.configuration["anchor_loss_coefficient"]
+        )
+        retention_sign_tolerance = float(
+            spec.configuration["retention_sign_tolerance"]
+        )
+        retention_huber_ratio = float(
+            spec.configuration["retention_huber_ratio"]
+        )
         return manager.execute(
             ordinal=ordinal, name=name,
             configuration={
@@ -2985,7 +3444,26 @@ def run_phase(
                 "new_rows_per_batch": spec.configuration["new_rows_per_batch"],
                 "anchor_rows_per_batch": spec.configuration["anchor_rows_per_batch"],
                 "batch_size": 256, "epochs": 50, "patience": 8,
-                "learning_rate": 0.001, "weight_decay": 1e-5, "seed_workers": 2,
+                "learning_rate": learning_rate, "weight_decay": 1e-5,
+                "learning_rate_policy": learning_rate_policy,
+                "seed_workers": 2,
+                "initialization": {
+                    "kind": "exact-phase-actor-runtime",
+                    "runtime_sha256": sha256(actor),
+                },
+                "loss": {
+                    "kind": "separately-normalized-weighted-huber",
+                    "new_coefficient": new_loss_coefficient,
+                    "anchor_coefficient": anchor_loss_coefficient,
+                },
+                "retention": {
+                    "monitor": "explicit-disjoint-retention-validation",
+                    "sign_tolerance": retention_sign_tolerance,
+                    "huber_ratio": retention_huber_ratio,
+                    "minimum_training_anchor_permutations_before_stop": 1,
+                    "checkpoint_may_precede_complete_anchor_coverage": True,
+                    "fallback": "exact-phase-actor-epoch-zero",
+                },
             },
             producers={"workflow": workflow_source, "trainer": executables.trainer},
             inputs=inputs, outputs={"runtime": runtime, "manifest": manifest},
@@ -2994,9 +3472,16 @@ def run_phase(
                 new_manifests=new_manifests,
                 anchor_manifests=anchor_train_manifests,
                 adjudicator_manifest=adjudicator_validation, output_directory=directory,
+                retention_validation_manifests=retention_validation_manifests,
+                initial_runtime=actor,
                 seeds=list(spec.configuration["training_seeds"]),
                 new_rows=int(spec.configuration["new_rows_per_batch"]),
                 anchor_rows=int(spec.configuration["anchor_rows_per_batch"]),
+                learning_rate=learning_rate,
+                new_loss_coefficient=new_loss_coefficient,
+                anchor_loss_coefficient=anchor_loss_coefficient,
+                retention_sign_tolerance=retention_sign_tolerance,
+                retention_huber_ratio=retention_huber_ratio,
             ),
             validator=lambda _result: _validate_model_output(
                 directory,
@@ -3004,8 +3489,15 @@ def run_phase(
                 new_manifests=new_manifests,
                 anchor_manifests=anchor_train_manifests,
                 adjudicator_manifest=adjudicator_validation,
+                retention_validation_manifests=retention_validation_manifests,
+                initial_runtime=actor,
                 new_rows=int(spec.configuration["new_rows_per_batch"]),
                 anchor_rows=int(spec.configuration["anchor_rows_per_batch"]),
+                learning_rate=learning_rate,
+                new_loss_coefficient=new_loss_coefficient,
+                anchor_loss_coefficient=anchor_loss_coefficient,
+                retention_sign_tolerance=retention_sign_tolerance,
+                retention_huber_ratio=retention_huber_ratio,
             ),
         )
 
@@ -3017,31 +3509,71 @@ def run_phase(
         path for path in prior_rank4_manifests
         if _load_json(path, "prior Rank-4 shard").get("split") == "train"
     ]
-    training_stage(15, "train-search", [*prior_search_train, search_new],
+    search_training_new = [*prior_search_train, search_new]
+    rank4_training_new = [*prior_rank4_train, rank4_new]
+    if (
+        len(search_training_new) != len(rank4_training_new)
+        or any(
+            _training_new_sample_count([search_path], label="search arm")
+            != _training_new_sample_count([rank4_path], label="Rank-4 arm")
+            for search_path, rank4_path in zip(
+                search_training_new, rank4_training_new, strict=True
+            )
+        )
+    ):
+        raise ValueError(
+            "matched training arms have different new sample counts"
+        )
+    training_stage(15, "train-search", search_training_new,
                    search_model_directory, search_runtime, search_model_manifest)
-    training_stage(16, "train-rank4", [*prior_rank4_train, rank4_new],
+    training_stage(16, "train-rank4", rank4_training_new,
                    rank4_model_directory, rank4_runtime, rank4_model_manifest)
 
     def make_anchor_metrics() -> dict:
         report = anchor_metrics(
             candidate_runtime=search_runtime, incumbent_runtime=actor,
             anchor_validation_manifests=anchor_validation_manifests,
+            expected_split="test",
         )
         _atomic_json(anchor_metrics_path, report)
-        return report
+        if original_incumbent is None:
+            return report
+        original_report = anchor_metrics(
+            candidate_runtime=search_runtime,
+            incumbent_runtime=original_incumbent,
+            anchor_validation_manifests=anchor_validation_manifests,
+            expected_split="test",
+        )
+        if original_report["candidate_metrics"] != report["candidate_metrics"]:
+            raise ValueError("anchor candidate metrics changed across retention references")
+        _atomic_json(original_anchor_metrics_path, original_report)
+        return {"phase_actor": report, "original_incumbent": original_report}
 
-    manager.execute(
-        ordinal=17, name="anchor-metrics", configuration={"canonical_anchor": True},
-        producers={"workflow": workflow_source, "trainer": executables.trainer},
-        inputs={
-            "candidate": search_runtime,
-            "incumbent": actor,
-            **{
-                f"validation_{index}": path
-                for index, path in enumerate(anchor_validation_manifests)
-            },
+    anchor_metric_inputs = {
+        "candidate": search_runtime,
+        "incumbent": actor,
+        **{
+            f"validation_{index}": path
+            for index, path in enumerate(anchor_validation_manifests)
         },
-        outputs={"metrics": anchor_metrics_path}, action=make_anchor_metrics,
+    }
+    anchor_metric_outputs = {"metrics": anchor_metrics_path}
+    anchor_metric_configuration: dict[str, object] = {
+        "canonical_anchor": True,
+        "split": "test",
+        "phase_actor_reference": True,
+    }
+    if original_incumbent is not None:
+        anchor_metric_inputs["original_incumbent"] = original_incumbent
+        anchor_metric_outputs["original_incumbent_metrics"] = (
+            original_anchor_metrics_path
+        )
+        anchor_metric_configuration["original_incumbent_reference"] = True
+    manager.execute(
+        ordinal=17, name="anchor-metrics", configuration=anchor_metric_configuration,
+        producers={"workflow": workflow_source, "trainer": executables.trainer},
+        inputs=anchor_metric_inputs,
+        outputs=anchor_metric_outputs, action=make_anchor_metrics,
     )
 
     manager.execute(
@@ -3123,21 +3655,51 @@ def run_phase(
                 uncontended_max_ms=float(latency["candidate_max_ms"]),
             )
         else:
+            metrics = _load_json(anchor_metrics_path, "anchor metrics")
+            original_metrics = _load_json(
+                original_anchor_metrics_path,
+                "original incumbent anchor metrics",
+            )
+            if original_metrics.get("candidate_metrics") != metrics.get(
+                "candidate_metrics"
+            ):
+                raise ValueError(
+                    "full anchor evidence disagrees on candidate metrics"
+                )
             decision = final_decision(
                 pilot_report=gate_reports["pilot-teacher"],
                 matched_report=gate_reports["matched"],
                 rank4_report=gate_reports["rank4"],
                 jacek_nn_report=gate_reports["jacek-nn"],
+                anchor_candidate=metrics["candidate_metrics"],
+                anchor_incumbent=metrics["incumbent_metrics"],
+                original_anchor_candidate=original_metrics["candidate_metrics"],
+                original_anchor_incumbent=original_metrics["incumbent_metrics"],
                 uncontended_max_ms=float(latency["candidate_max_ms"]),
             )
         _atomic_json(decision_path, decision)
         return decision
 
+    decision_configuration: dict[str, object] = {"profile": spec.name}
+    if spec.name == "full":
+        decision_configuration["anchor_noninferiority"] = {
+            "sign_accuracy_margin": 0.005,
+            "weighted_huber_multiplier": 1.02,
+            "references": ["phase-actor", "original-incumbent"],
+        }
+    decision_inputs = {
+        **gate_reports,
+        "latency": latency_report,
+        "anchor_metrics": anchor_metrics_path,
+    }
+    if spec.name == "full":
+        decision_inputs["original_incumbent_anchor_metrics"] = (
+            original_anchor_metrics_path
+        )
     decision = manager.execute(
-        ordinal=21, name="decision", configuration={"profile": spec.name},
+        ordinal=21, name="decision", configuration=decision_configuration,
         producers={"workflow": workflow_source},
-        inputs={**gate_reports, "latency": latency_report,
-                "anchor_metrics": anchor_metrics_path},
+        inputs=decision_inputs,
         outputs={"decision": decision_path}, action=decide,
     )
     return {
@@ -3428,6 +3990,7 @@ def _validate_canonical_campaign_inputs(
     roots_manifest: pathlib.Path,
     anchor_train: Sequence[pathlib.Path],
     anchor_validation: Sequence[pathlib.Path],
+    anchor_test: Sequence[pathlib.Path],
 ) -> dict:
     workflow_path = (canonical_campaign / "round-2/workflow.json").resolve()
     chain = validate_canonical_workflow_chain(
@@ -3456,10 +4019,12 @@ def _validate_canonical_campaign_inputs(
         or teacher_tsv.get("sha256") != sha256(roots_tsv)
     ):
         raise ValueError("canonical roots or teacher TSV differ from validated ancestry")
-    current_train, current_validation = _canonical_anchor_manifests(
-        canonical_campaign
-    )
-    if tuple(anchor_train) != current_train or tuple(anchor_validation) != current_validation:
+    current = _canonical_split_manifests(canonical_campaign)
+    if (
+        tuple(anchor_train) != current["train"]
+        or tuple(anchor_validation) != current["validation"]
+        or tuple(anchor_test) != current["test"]
+    ):
         raise ValueError("canonical anchor set changed after ancestry validation")
     return {
         "workflow": artifact_snapshot(workflow_path),
@@ -3470,6 +4035,7 @@ def _validate_canonical_campaign_inputs(
         "anchor_validation": [
             artifact_snapshot(path) for path in anchor_validation
         ],
+        "anchor_test": [artifact_snapshot(path) for path in anchor_test],
     }
 
 
@@ -3480,13 +4046,67 @@ def _copy_atomic(source: pathlib.Path, target: pathlib.Path) -> None:
         raise RuntimeError("atomic campaign snapshot changed bytes")
 
 
+def validate_qualified_starting_actor(path: pathlib.Path) -> dict:
+    import jacek_replay_rebuild as rebuild
+
+    receipt = _load_json(path, "qualified v7 starting actor")
+    body = dict(receipt)
+    claimed = body.pop("body_sha256", None)
+    if (
+        set(receipt)
+        != {
+            "schema", "campaign_id", "pilot_campaign_id",
+            "full_campaign_id", "starting_actor", "qualification",
+            "pilot_games", "conditional_full_games", "external_upload",
+            "replace_rank4", "body_sha256",
+        }
+        or receipt.get("schema")
+        != "papersoccer.jacek-selfsearch-v7-starting-actor.v1"
+        or receipt.get("campaign_id") != QUALIFIED_AUTO_CAMPAIGN_ID
+        or receipt.get("pilot_campaign_id") != QUALIFIED_PILOT_CAMPAIGN_ID
+        or receipt.get("full_campaign_id") != QUALIFIED_FULL_CAMPAIGN_ID
+        or type(receipt.get("pilot_games")) is not int
+        or receipt.get("pilot_games") != 2_000
+        or type(receipt.get("conditional_full_games")) is not int
+        or receipt.get("conditional_full_games") != 10_000
+        or receipt.get("external_upload") is not False
+        or receipt.get("replace_rank4") is not False
+        or claimed != hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+    ):
+        raise ValueError("qualified v7 starting-actor receipt is invalid")
+    actor = receipt.get("starting_actor")
+    qualification = receipt.get("qualification")
+    if (
+        not isinstance(actor, dict)
+        or not isinstance(actor.get("path"), str)
+        or artifact_snapshot(pathlib.Path(actor["path"])) != actor
+        or not isinstance(qualification, dict)
+        or not isinstance(qualification.get("path"), str)
+        or artifact_snapshot(pathlib.Path(qualification["path"])) != qualification
+    ):
+        raise ValueError("qualified v7 starting-actor bindings are stale")
+    evidence = rebuild.validate_qualification_receipt(
+        pathlib.Path(qualification["path"])
+    )
+    if (
+        evidence.get("pass") is not True
+        or evidence.get("local_only") is not True
+        or evidence.get("external_upload") is not False
+        or evidence.get("canonical_rank4_replaced") is not False
+        or evidence.get("candidate", {}).get("sha256") != actor.get("sha256")
+        or evidence.get("candidate", {}).get("bytes") != actor.get("bytes")
+    ):
+        raise ValueError("v7 starting actor did not pass rebuild qualification")
+    return receipt
+
+
 def run_campaign(
     *, repository: pathlib.Path, expected_commit: str,
     evaluation_directory: pathlib.Path, canonical_campaign: pathlib.Path,
     output: pathlib.Path, executables: CampaignExecutables,
     build_manifest: pathlib.Path,
     resume: bool, wait_for_evaluation: bool, poll_seconds: float,
-    skip_power_check: bool,
+    skip_power_check: bool, starting_actor_receipt: pathlib.Path | None = None,
 ) -> dict:
     """Wait for the prerequisite audit, then run pilot and conditional full phase."""
 
@@ -3496,6 +4116,41 @@ def run_campaign(
     evaluation_directory = evaluation_directory.resolve()
     canonical_campaign = canonical_campaign.resolve()
     output = output.resolve()
+    qualified_start = (
+        validate_qualified_starting_actor(starting_actor_receipt.resolve())
+        if starting_actor_receipt is not None
+        else None
+    )
+    auto_campaign_id = (
+        QUALIFIED_AUTO_CAMPAIGN_ID if qualified_start is not None
+        else AUTO_CAMPAIGN_ID
+    )
+    pilot_spec = (
+        dataclasses.replace(
+            PILOT_SPEC,
+            campaign_id=QUALIFIED_PILOT_CAMPAIGN_ID,
+            configuration={
+                **PILOT_SPEC.configuration,
+                "campaign_id": QUALIFIED_PILOT_CAMPAIGN_ID,
+            },
+        )
+        if qualified_start is not None else PILOT_SPEC
+    )
+    full_spec = (
+        dataclasses.replace(
+            FULL_SPEC,
+            campaign_id=QUALIFIED_FULL_CAMPAIGN_ID,
+            configuration={
+                **FULL_SPEC.configuration,
+                "campaign_id": QUALIFIED_FULL_CAMPAIGN_ID,
+            },
+        )
+        if qualified_start is not None else FULL_SPEC
+    )
+    if output.name != auto_campaign_id:
+        raise ValueError(
+            f"campaign output directory must be named {auto_campaign_id}"
+        )
     output.mkdir(parents=True, exist_ok=True)
     status_path = output / "supervisor-status.json"
     lock_path = output / "supervisor.lock"
@@ -3558,6 +4213,7 @@ def run_campaign(
             canonical_splits = _canonical_split_manifests(canonical_campaign)
             anchor_train = canonical_splits["train"]
             anchor_validation = canonical_splits["validation"]
+            anchor_test = canonical_splits["test"]
             canonical_prior_manifests = tuple(
                 canonical_splits[split][round_index]
                 for round_index in range(3)
@@ -3569,10 +4225,11 @@ def run_campaign(
                 roots_manifest=roots_manifest,
                 anchor_train=anchor_train,
                 anchor_validation=anchor_validation,
+                anchor_test=anchor_test,
             )
             opening_exclusions = _evaluation_opening_banks(evaluation_directory)
             manager = GuardedStageManager(
-                output=output, campaign_id="selfsearch-auto-20260825-v1",
+                output=output, campaign_id=auto_campaign_id,
                 round_index=-1, resume=resume, environment=environment_identity(),
                 producer_guard=producer_guard,
             )
@@ -3592,9 +4249,14 @@ def run_campaign(
                     "anchor_validation": [
                         artifact_snapshot(path) for path in anchor_validation
                     ],
+                    "anchor_test": [artifact_snapshot(path) for path in anchor_test],
                     "canonical_prior_manifests": [
                         artifact_snapshot(path) for path in canonical_prior_manifests
                     ],
+                    "qualified_starting_actor": (
+                        artifact_snapshot(starting_actor_receipt.resolve())
+                        if starting_actor_receipt is not None else None
+                    ),
                 }
                 _atomic_json(trigger_path, record)
                 return record
@@ -3609,6 +4271,7 @@ def run_campaign(
                     roots_manifest=roots_manifest,
                     anchor_train=anchor_train,
                     anchor_validation=anchor_validation,
+                    anchor_test=anchor_test,
                 )
                 if result.get("canonical_ancestry") != current_canonical:
                     raise ValueError("canonical trigger ancestry is stale")
@@ -3634,10 +4297,21 @@ def run_campaign(
                     for index, path in enumerate(anchor_validation)
                 },
                 **{
+                    f"anchor_test_{index}": path
+                    for index, path in enumerate(anchor_test)
+                },
+                **{
                     f"canonical_prior_{index}": path
                     for index, path in enumerate(canonical_prior_manifests)
                 },
             }
+            if starting_actor_receipt is not None:
+                trigger_inputs["qualified_starting_actor_receipt"] = (
+                    starting_actor_receipt.resolve()
+                )
+                trigger_inputs["qualified_starting_actor_runtime"] = pathlib.Path(
+                    qualified_start["starting_actor"]["path"]
+                )
             evaluation_manifest = _load_json(
                 evaluation_directory / "run-manifest.json", "evaluation manifest"
             )
@@ -3683,7 +4357,11 @@ def run_campaign(
             planned = select_incumbent(
                 evaluation_directory / "final-summary.json", canonical_campaign
             )
-            original_incumbent = pathlib.Path(planned["incumbent"]["runtime"])
+            original_incumbent = (
+                pathlib.Path(qualified_start["starting_actor"]["path"])
+                if qualified_start is not None
+                else pathlib.Path(planned["incumbent"]["runtime"])
+            )
             original_runner = pathlib.Path(planned["runner_up"]["runtime"])
 
             def freeze_incumbent() -> dict:
@@ -3692,6 +4370,20 @@ def run_campaign(
                 )
                 if selected != planned:
                     raise ValueError("incumbent ranking changed during selection")
+                if qualified_start is not None:
+                    selected = {
+                        **selected,
+                        "ranking_policy": "qualified-rebuild-starting-actor-v1",
+                        "canonical_league_incumbent": selected["incumbent"],
+                        "incumbent": {
+                            "round": None,
+                            "runtime": str(original_incumbent),
+                            "runtime_sha256": sha256(original_incumbent),
+                            "qualification": artifact_snapshot(
+                                starting_actor_receipt.resolve()
+                            ),
+                        },
+                    }
                 _copy_atomic(original_incumbent, incumbent_snapshot)
                 _copy_atomic(original_runner, runner_snapshot)
                 selected["incumbent_snapshot"] = artifact_snapshot(incumbent_snapshot)
@@ -3701,11 +4393,21 @@ def run_campaign(
 
             manager.execute(
                 ordinal=1, name="incumbent-selection",
-                configuration={"policy": planned["ranking_policy"]},
+                configuration={
+                    "policy": (
+                        "qualified-rebuild-starting-actor-v1"
+                        if qualified_start is not None
+                        else planned["ranking_policy"]
+                    )
+                },
                 producers={"workflow": workflow_source},
                 inputs={
                     "evaluation": evaluation_directory / "final-summary.json",
                     "incumbent": original_incumbent, "runner_up": original_runner,
+                    **(
+                        {"qualification": starting_actor_receipt.resolve()}
+                        if starting_actor_receipt is not None else {}
+                    ),
                     **{f"round_{index}": canonical_campaign / f"round-{index}/workflow.json"
                        for index in range(3)},
                 },
@@ -3718,13 +4420,22 @@ def run_campaign(
             ):
                 frozen_input_records[str(path.resolve())] = artifact_snapshot(path)
             producer_guard()
-            _status(status_path, "running-pilot", incumbent_round=planned["incumbent"]["round"])
+            _status(
+                status_path,
+                "running-pilot",
+                incumbent_round=(
+                    None if qualified_start is not None
+                    else planned["incumbent"]["round"]
+                ),
+                qualified_rebuild_start=qualified_start is not None,
+            )
             pilot = run_phase(
-                spec=PILOT_SPEC, output=output / "pilot", resume=resume,
+                spec=pilot_spec, output=output / "pilot", resume=resume,
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=incumbent_snapshot, diversity=runner_snapshot,
                 executables=executables, anchor_train_manifests=anchor_train,
-                anchor_validation_manifests=anchor_validation,
+                retention_validation_manifests=anchor_validation,
+                anchor_validation_manifests=anchor_test,
                 canonical_prior_manifests=canonical_prior_manifests,
                 opening_exclusions=opening_exclusions,
                 producer_guard=producer_guard,
@@ -3773,11 +4484,13 @@ def run_campaign(
             )
             _status(status_path, "running-full", pilot_runtime_sha256=sha256(pilot_runtime))
             full = run_phase(
-                spec=FULL_SPEC, output=output / "full", resume=resume,
+                spec=full_spec, output=output / "full", resume=resume,
                 roots_tsv=roots_tsv, roots_manifest=roots_manifest,
                 actor=pilot_runtime, diversity=incumbent_snapshot,
+                original_incumbent=incumbent_snapshot,
                 executables=executables, anchor_train_manifests=anchor_train,
-                anchor_validation_manifests=anchor_validation,
+                retention_validation_manifests=anchor_validation,
+                anchor_validation_manifests=anchor_test,
                 canonical_prior_manifests=canonical_prior_manifests,
                 opening_exclusions=[*opening_exclusions, pathlib.Path(pilot["opening_bank"])],
                 prior_search_manifests=pilot_search_manifests,
@@ -3800,7 +4513,7 @@ def run_campaign(
                 _status(status_path, "full-rejected", summary=str(summary_path),
                         summary_sha256=sha256(summary_path))
                 return summary
-            publication_directory = output / "promoted/selfsearch-full-20260825-v1"
+            publication_directory = output / "promoted" / full_spec.campaign_id
             published_runtime = publication_directory / "jacek_replay_bfm.runtime"
             published_manifest = publication_directory / "jacek_replay_bfm.runtime.json"
             publication_receipt = publication_directory / "publication.json"
@@ -3816,7 +4529,7 @@ def run_campaign(
             panel_receipts = sorted(
                 (output / "full/receipts/19-game-gates-panels").rglob("*.json")
             )
-            expected_panel_receipts = 4 * (FULL_SPEC.pairs // 5)
+            expected_panel_receipts = 4 * (full_spec.pairs // 5)
             if len(panel_receipts) != expected_panel_receipts:
                 raise ValueError(
                     "full gate publication requires every sharded panel receipt"
@@ -3926,6 +4639,7 @@ def main() -> int:
     campaign.add_argument("--pack-tool", type=pathlib.Path, required=True)
     campaign.add_argument("--trainer", type=pathlib.Path, required=True)
     campaign.add_argument("--build-manifest", type=pathlib.Path, required=True)
+    campaign.add_argument("--starting-actor-receipt", type=pathlib.Path)
     campaign.add_argument("--resume", action="store_true")
     campaign.add_argument("--wait-for-evaluation", action="store_true")
     campaign.add_argument("--poll-seconds", type=float, default=30.0)
@@ -3996,6 +4710,7 @@ def main() -> int:
             wait_for_evaluation=arguments.wait_for_evaluation,
             poll_seconds=arguments.poll_seconds,
             skip_power_check=arguments.skip_power_check,
+            starting_actor_receipt=arguments.starting_actor_receipt,
         )
     elif arguments.command == "write-build-manifest":
         if (

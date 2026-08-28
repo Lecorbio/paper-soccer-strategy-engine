@@ -31,7 +31,6 @@ using PositionKey = detail::PositionKey;
 constexpr std::size_t kMaximumActions = 250;
 constexpr std::size_t kMaximumPartialPaths = 50'000;
 constexpr std::size_t kMaximumTreeNodes = 1'000'000;
-constexpr std::size_t kFifoPeriod = 10;
 constexpr std::size_t kProofPaths = 64;
 constexpr float kMateScore = 10'000.0F;
 
@@ -315,35 +314,115 @@ struct GeneratorStats {
   std::uint64_t fifo_extractions{};
   std::uint64_t lifo_extractions{};
   std::uint64_t truncations{};
+  std::uint64_t action_cap_stops{};
+  std::uint64_t partial_cap_stops{};
+  std::uint64_t deadline_stops{};
+  std::uint64_t queue_drops{};
+  std::uint64_t retention_drops{};
+  std::uint64_t boundary_replacements{};
+  std::uint64_t tactical_shortcuts{};
+  std::uint64_t fallbacks{};
+  std::uint64_t frontier_resumptions{};
+  std::uint64_t zero_action_resumptions{};
+  std::uint64_t max_frontier_depth{};
   bool deadline_reached{};
+};
+
+struct BoundaryReplacement {
+  std::size_t child{};
+  std::vector<Move> moves{};
+  std::string encoded{};
+};
+
+struct BoundaryReference {
+  PositionKey key{};
+  const SearchPosition *position{};
+  std::size_t child{};
+  std::string_view action_key{};
 };
 
 struct GenerationResult {
   std::vector<CompleteTurnAction> actions{};
+  std::vector<BoundaryReplacement> replacements{};
   GeneratorStats stats{};
   bool exhaustive{};
+  bool frontier_resumable{};
 };
 
+bool position_key_less(PositionKey left, PositionKey right) noexcept {
+  return left.first < right.first ||
+         (left.first == right.first && left.second < right.second);
+}
+
 class CompleteTurnGenerator {
+ private:
+  struct Partial {
+    SearchPosition position;
+    std::vector<Move> moves;
+  };
+
+  struct TraversalFrame {
+    std::array<std::uint8_t, detail::kMaximumMoves> slots{};
+    std::uint8_t count{};
+    std::uint8_t next{};
+    bool initialized{};
+  };
+
+  enum class TraversalStatus {
+    Action,
+    Exhausted,
+    PartialCap,
+    Deadline,
+  };
+
+  enum class RetainResult {
+    Retained,
+    Duplicate,
+    Full,
+  };
+
+  struct TraversalStep {
+    TraversalStatus status{TraversalStatus::Exhausted};
+    std::optional<Partial> action{};
+    bool count_completed{true};
+  };
+
  public:
   CompleteTurnGenerator(std::shared_ptr<const SearchTopology> topology,
                         const SearchPosition &root,
                         detail::ReplayBfmFeatureEncoder &canonicalizer,
-                        std::size_t max_actions,
                         std::size_t max_partial_paths,
                         SearchClock::time_point deadline,
                         std::uint64_t seed)
       : topology_(std::move(topology)), root_(root),
         canonicalizer_(canonicalizer),
-        max_actions_(max_actions), max_partial_paths_(max_partial_paths),
-        deadline_(deadline), seed_(seed), tactics_(topology_) {}
+        max_partial_paths_(max_partial_paths), deadline_(deadline),
+        seed_(seed), tactics_(topology_), traversal_position_(root_) {}
 
-  GenerationResult run() {
+  GenerationResult run(std::size_t max_actions,
+                       std::vector<BoundaryReference> existing) {
+    max_actions_ = max_actions;
+    existing_ = std::move(existing);
+    std::sort(existing_.begin(), existing_.end(),
+              [](const BoundaryReference &left,
+                 const BoundaryReference &right) {
+                return position_key_less(left.key, right.key);
+              });
+    retained_.clear();
+    retention_drops_ = 0U;
+
     GenerationResult output;
     output.actions.reserve(max_actions_);
-    retain_goal_path(output, root_.to_move());
-    retain_goal_path(output, opponent(root_.to_move()));
-    retain_witnesses(output);
+    output.stats.max_frontier_depth = traversal_frames_.size();
+    if (traversal_started_ && !traversal_complete_) {
+      ++output.stats.frontier_resumptions;
+    }
+    if (!tactical_complete_) {
+      retain_goal_path(output, root_.to_move());
+      retain_goal_path(output, opponent(root_.to_move()));
+      retain_witnesses(output);
+      tactical_complete_ = true;
+    }
 
     // Either class is a complete proof for the mover: an immediate goal wins
     // now, while a forced cutoff hands the ball to an opponent that cannot
@@ -367,67 +446,39 @@ class CompleteTurnGenerator {
       output.actions.push_back(std::move(proof));
       output.exhaustive = false;
       ++output.stats.truncations;
+      ++output.stats.tactical_shortcuts;
       output.stats.deadline_reached = deadline_reached_;
+      existing_.clear();
+      retained_.clear();
       return output;
     }
 
-    std::deque<Partial> pending;
-    pending.push_back(Partial{root_, {}});
     bool truncated = false;
-    while (!pending.empty()) {
-      // The action budget is a generation bound, not merely a retention
-      // bound.  Continuing to enumerate after it is full can visit tens of
-      // thousands of complete turns only to discard every one of them.  The
-      // tactical pre-pass above has already retained goal and handoff
-      // witnesses, so the seeded traversal can stop at the first full,
-      // deterministic action sample.
-      if (output.stats.partial_paths != 0U &&
-          output.actions.size() >= max_actions_) {
-        truncated = true;
-        break;
-      }
-      if (output.stats.partial_paths >= max_partial_paths_ || expired()) {
-        output.stats.deadline_reached = expired();
-        truncated = true;
-        break;
-      }
-      ++output.stats.partial_paths;
-      Partial partial = [&]() {
-        if (output.stats.partial_paths % kFifoPeriod == 0U) {
-          ++output.stats.fifo_extractions;
-          Partial result = std::move(pending.front());
-          pending.pop_front();
-          return result;
-        }
-        ++output.stats.lifo_extractions;
-        Partial result = std::move(pending.back());
-        pending.pop_back();
-        return result;
-      }();
-
-      std::array<std::uint8_t, detail::kMaximumMoves> slots{};
-      const std::uint8_t count = partial.position.legal_slots(slots);
-      shuffle(slots, count, partial.position);
-      for (std::uint8_t index = 0; index < count; ++index) {
-        Partial child = partial;
-        child.moves.push_back(child.position.move_for_slot(slots[index]));
-        child.position.make_move(slots[index]);
-        if (child.position.is_terminal() ||
-            child.position.to_move() != root_.to_move()) {
-          retain(output, std::move(child));
-          if (output.actions.size() >= max_actions_) {
-            truncated = truncated || index + 1U < count || !pending.empty();
-            break;
-          }
-        } else if (pending.size() < max_partial_paths_) {
-          pending.push_back(std::move(child));
-        } else {
+    bool action_cap_stopped = false;
+    while (!truncated) {
+      TraversalStep step = next_action(output.stats);
+      if (step.status == TraversalStatus::Action) {
+        const RetainResult retained =
+            retain(output, std::move(*step.action), false,
+                   step.count_completed);
+        if (retained == RetainResult::Full) {
+          action_cap_stopped = true;
           truncated = true;
         }
+        continue;
       }
+      if (step.status == TraversalStatus::PartialCap) {
+        ++output.stats.partial_cap_stops;
+        truncated = true;
+      } else if (step.status == TraversalStatus::Deadline) {
+        ++output.stats.deadline_stops;
+        output.stats.deadline_reached = true;
+        truncated = true;
+      }
+      break;
     }
 
-    if (output.actions.empty()) {
+    if (output.actions.empty() && existing_.empty()) {
       Partial fallback{root_, deterministic_turn()};
       fallback.position = root_;
       for (const Move move : fallback.moves) {
@@ -438,6 +489,7 @@ class CompleteTurnGenerator {
         fallback.position.make_move(slot);
       }
       retain(output, std::move(fallback));
+      ++output.stats.fallbacks;
       truncated = true;
     }
 
@@ -450,22 +502,27 @@ class CompleteTurnGenerator {
           }
           return left.encoded < right.encoded;
         });
-    truncated = truncated || cap_discarded_;
-    output.exhaustive = pending.empty() && !truncated;
+    output.stats.action_cap_stops = action_cap_stopped ? 1U : 0U;
+    output.stats.retention_drops = retention_drops_;
+    output.exhaustive =
+        traversal_complete_ && !deferred_action_.has_value() && !truncated;
+    output.frontier_resumable =
+        !output.exhaustive && output.stats.partial_cap_stops != 0U &&
+        !output.stats.deadline_reached;
+    if (output.actions.empty() && output.frontier_resumable) {
+      ++output.stats.zero_action_resumptions;
+    }
     output.stats.deadline_reached =
         output.stats.deadline_reached || deadline_reached_;
     if (truncated) {
       ++output.stats.truncations;
     }
+    existing_.clear();
+    retained_.clear();
     return output;
   }
 
  private:
-  struct Partial {
-    SearchPosition position;
-    std::vector<Move> moves;
-  };
-
   std::shared_ptr<const SearchTopology> topology_;
   SearchPosition root_;
   detail::ReplayBfmFeatureEncoder &canonicalizer_;
@@ -474,15 +531,85 @@ class CompleteTurnGenerator {
   SearchClock::time_point deadline_{};
   std::uint64_t seed_{};
   TacticalAnalyzer tactics_;
+  SearchPosition traversal_position_;
+  std::vector<Move> traversal_moves_{};
+  std::vector<TraversalFrame> traversal_frames_{};
+  std::optional<Partial> deferred_action_{};
+  std::vector<BoundaryReference> existing_{};
   std::vector<PositionKey> retained_{};
+  bool tactical_complete_{};
+  bool traversal_started_{};
+  bool traversal_complete_{};
   bool deadline_reached_{};
-  bool cap_discarded_{};
+  std::uint64_t retention_drops_{};
 
   bool expired() {
     if (!deadline_reached_ && SearchClock::now() >= deadline_) {
       deadline_reached_ = true;
     }
     return deadline_reached_;
+  }
+
+  TraversalStep next_action(GeneratorStats &stats) {
+    if (deferred_action_.has_value()) {
+      Partial action = std::move(*deferred_action_);
+      deferred_action_.reset();
+      return {TraversalStatus::Action, std::move(action), false};
+    }
+    if (traversal_complete_) {
+      return {TraversalStatus::Exhausted, std::nullopt};
+    }
+    if (!traversal_started_) {
+      traversal_started_ = true;
+      traversal_frames_.push_back(TraversalFrame{});
+    }
+
+    for (;;) {
+      if (expired()) {
+        return {TraversalStatus::Deadline, std::nullopt};
+      }
+      if (traversal_frames_.empty()) {
+        traversal_complete_ = true;
+        return {TraversalStatus::Exhausted, std::nullopt};
+      }
+
+      TraversalFrame &frame = traversal_frames_.back();
+      if (!frame.initialized) {
+        if (stats.partial_paths >= max_partial_paths_) {
+          return {TraversalStatus::PartialCap, std::nullopt};
+        }
+        ++stats.partial_paths;
+        ++stats.lifo_extractions;
+        frame.count = traversal_position_.legal_slots(frame.slots);
+        shuffle(frame.slots, frame.count, traversal_position_);
+        frame.initialized = true;
+        stats.max_frontier_depth = std::max<std::uint64_t>(
+            stats.max_frontier_depth, traversal_frames_.size());
+      }
+
+      if (frame.next >= frame.count) {
+        traversal_frames_.pop_back();
+        if (traversal_frames_.empty()) {
+          traversal_complete_ = true;
+          return {TraversalStatus::Exhausted, std::nullopt};
+        }
+        traversal_position_.unmake_move();
+        traversal_moves_.pop_back();
+        continue;
+      }
+
+      const std::uint8_t slot = frame.slots[frame.next++];
+      traversal_moves_.push_back(traversal_position_.move_for_slot(slot));
+      traversal_position_.make_move(slot);
+      if (traversal_position_.is_terminal() ||
+          traversal_position_.to_move() != root_.to_move()) {
+        Partial result{traversal_position_, traversal_moves_};
+        traversal_position_.unmake_move();
+        traversal_moves_.pop_back();
+        return {TraversalStatus::Action, std::move(result)};
+      }
+      traversal_frames_.push_back(TraversalFrame{});
+    }
   }
 
   void shuffle(std::array<std::uint8_t, detail::kMaximumMoves> &slots,
@@ -533,9 +660,45 @@ class CompleteTurnGenerator {
     return TacticalClass::SafeHandoff;
   }
 
-  void retain(GenerationResult &output, Partial partial) {
-    ++output.stats.completed_actions;
+  RetainResult retain(GenerationResult &output, Partial partial,
+                      bool replace_when_full = true,
+                      bool count_completed = true) {
+    output.stats.completed_actions += count_completed ? 1U : 0U;
     const PositionKey key = partial.position.position_key();
+    auto existing = std::lower_bound(
+        existing_.begin(), existing_.end(), key,
+        [](const BoundaryReference &candidate, PositionKey expected) {
+          return position_key_less(candidate.key, expected);
+        });
+    while (existing != existing_.end() && existing->key == key) {
+      if (existing->position != nullptr &&
+          existing->position->same_compact_state(partial.position)) {
+        ++output.stats.duplicate_boundaries;
+        std::string encoded = encode(partial.moves);
+        auto replacement = std::find_if(
+            output.replacements.begin(), output.replacements.end(),
+            [&](const BoundaryReplacement &candidate) {
+              return candidate.child == existing->child;
+            });
+        const std::string_view retained =
+            replacement == output.replacements.end()
+                ? existing->action_key
+                : std::string_view(replacement->encoded);
+        if (encoded < retained) {
+          if (replacement == output.replacements.end()) {
+            output.replacements.push_back(BoundaryReplacement{
+                existing->child, std::move(partial.moves),
+                std::move(encoded)});
+            ++output.stats.boundary_replacements;
+          } else {
+            replacement->moves = std::move(partial.moves);
+            replacement->encoded = std::move(encoded);
+          }
+        }
+        return RetainResult::Duplicate;
+      }
+      ++existing;
+    }
     for (std::size_t index = 0; index < retained_.size(); ++index) {
       if (retained_[index] != key ||
           !output.actions[index].result.same_compact_state(partial.position)) {
@@ -548,7 +711,12 @@ class CompleteTurnGenerator {
         output.actions[index].result = std::move(partial.position);
         output.actions[index].encoded = std::move(encoded);
       }
-      return;
+      return RetainResult::Duplicate;
+    }
+
+    if (output.actions.size() >= max_actions_ && !replace_when_full) {
+      deferred_action_ = std::move(partial);
+      return RetainResult::Full;
     }
 
     const TacticalClass tactical = classify(partial.position);
@@ -558,7 +726,7 @@ class CompleteTurnGenerator {
     if (output.actions.size() < max_actions_) {
       retained_.push_back(key);
       output.actions.push_back(std::move(candidate));
-      return;
+      return RetainResult::Retained;
     }
 
     const auto worse = [](const CompleteTurnAction &left,
@@ -579,7 +747,8 @@ class CompleteTurnGenerator {
       retained_[worst] = key;
       output.actions[worst] = std::move(candidate);
     }
-    cap_discarded_ = true;
+    ++retention_drops_;
+    return RetainResult::Retained;
   }
 
   void retain_goal_path(GenerationResult &output, Player goal_owner) {
@@ -677,10 +846,13 @@ class BestFirstMinimaxSearch {
       : config_(config), model_(model),
         topology_(std::make_shared<SearchTopology>(state.config)),
         root_(topology_, state), encoder_(topology_),
-        deadline_(SearchClock::now() +
-                  std::chrono::milliseconds(
-                      config.max_time_ms -
-                      finalization_reserve_ms(config.max_time_ms))) {
+        deadline_(
+            config.max_time_ms == 0U
+                ? SearchClock::time_point::max()
+                : SearchClock::now() +
+                      std::chrono::milliseconds(
+                          config.max_time_ms -
+                          finalization_reserve_ms(config.max_time_ms))) {
     nodes_.reserve(std::min<std::size_t>(config_.max_tree_nodes, 4096U));
   }
 
@@ -693,9 +865,25 @@ class BestFirstMinimaxSearch {
       throw std::logic_error("Jacek replay BFM could not expand its root");
     }
     refresh(0U);
-    while (!nodes_[0].closed && budget_available()) {
+    for (;;) {
+      if (nodes_[0].closed) {
+        stats_.termination =
+            nodes_[0].solved
+                ? JacekReplayBfmSearchTermination::RootSolved
+                : JacekReplayBfmSearchTermination::ClosedUnsolvedRoot;
+        break;
+      }
+      if (!budget_available()) {
+        stats_.termination =
+            stats_.tree_cap_reached
+                ? JacekReplayBfmSearchTermination::FixedWorkCap
+                : JacekReplayBfmSearchTermination::Deadline;
+        break;
+      }
       const auto path = select_path();
       if (!path.has_value()) {
+        stats_.termination =
+            JacekReplayBfmSearchTermination::NoSelectableFrontier;
         break;
       }
       for (const std::size_t index : *path) {
@@ -704,6 +892,15 @@ class BestFirstMinimaxSearch {
         ++stats_.visits;
       }
       if (!expand(path->back())) {
+        if (stats_.tree_cap_reached) {
+          stats_.termination =
+              JacekReplayBfmSearchTermination::FixedWorkCap;
+        } else if (stats_.deadline_reached) {
+          stats_.termination = JacekReplayBfmSearchTermination::Deadline;
+        } else {
+          stats_.termination =
+              JacekReplayBfmSearchTermination::ExpansionFailed;
+        }
         break;
       }
       backup(*path);
@@ -729,6 +926,7 @@ class BestFirstMinimaxSearch {
     bool exhaustive{};
     bool closed{};
     std::string action_key{};
+    std::unique_ptr<CompleteTurnGenerator> action_frontier{};
 
     Node(SearchPosition state, std::size_t parent_index,
          std::vector<Move> action, TacticalClass classification,
@@ -795,27 +993,84 @@ class BestFirstMinimaxSearch {
     stats_.lifo_extractions += source.lifo_extractions;
     stats_.tactical_proofs += source.proof_paths;
     stats_.truncations += source.truncations;
+    stats_.generation_action_cap_stops += source.action_cap_stops;
+    stats_.generation_partial_cap_stops += source.partial_cap_stops;
+    stats_.generation_deadline_stops += source.deadline_stops;
+    stats_.generation_queue_drops += source.queue_drops;
+    stats_.generation_retention_drops += source.retention_drops;
+    stats_.generation_boundary_replacements += source.boundary_replacements;
+    stats_.generation_tactical_shortcuts += source.tactical_shortcuts;
+    stats_.generation_fallbacks += source.fallbacks;
+    stats_.generation_frontier_resumptions += source.frontier_resumptions;
+    stats_.generation_zero_action_resumptions +=
+        source.zero_action_resumptions;
+    stats_.generation_max_frontier_depth = std::max(
+        stats_.generation_max_frontier_depth, source.max_frontier_depth);
     stats_.deadline_reached =
         stats_.deadline_reached || source.deadline_reached;
   }
 
   bool expand(std::size_t index) {
-    if (nodes_[index].expanded || nodes_[index].solved) {
+    if (nodes_[index].solved ||
+        (nodes_[index].expanded && nodes_[index].exhaustive)) {
       return true;
     }
     if (nodes_.size() >= config_.max_tree_nodes) {
       stats_.tree_cap_reached = true;
       return false;
     }
+    // A truncated complete-turn page leaves an implicit action frontier.  It
+    // becomes selectable only after every materialized child drains; resume
+    // its saved DFS cursor to materialize the next deterministic page of real
+    // tree nodes without replaying or dropping partial turns.
+    const bool widening = nodes_[index].expanded;
+    if (widening &&
+        std::any_of(nodes_[index].children.begin(),
+                    nodes_[index].children.end(),
+                    [&](std::size_t child) {
+                      return !nodes_[child].closed;
+                    })) {
+      throw std::logic_error(
+          "Jacek replay BFM widened before draining sampled children");
+    }
+    std::vector<BoundaryReference> existing;
+    existing.reserve(nodes_[index].children.size());
+    for (const std::size_t child : nodes_[index].children) {
+      existing.push_back(
+          BoundaryReference{nodes_[child].position.position_key(),
+                            &nodes_[child].position, child,
+                            nodes_[child].action_key});
+    }
     const std::size_t remaining = config_.max_tree_nodes - nodes_.size();
-    CompleteTurnGenerator generator(
-        topology_, nodes_[index].position, encoder_,
-        std::min(config_.max_actions, remaining),
-        config_.max_partial_paths, deadline_, config_.seed);
-    GenerationResult generated = generator.run();
+    if (!nodes_[index].action_frontier) {
+      nodes_[index].action_frontier =
+          std::make_unique<CompleteTurnGenerator>(
+              topology_, nodes_[index].position, encoder_,
+              config_.max_partial_paths, deadline_, config_.seed);
+    }
+    GenerationResult generated = nodes_[index].action_frontier->run(
+        std::min(config_.max_actions, remaining), std::move(existing));
+    if (widening) {
+      ++stats_.progressive_widenings;
+    }
+    for (BoundaryReplacement &replacement : generated.replacements) {
+      nodes_[replacement.child].action_key =
+          std::move(replacement.encoded);
+      if (index == 0U) {
+        nodes_[replacement.child].incoming_action =
+            std::move(replacement.moves);
+      }
+    }
     merge(generated.stats, generated.actions.size());
     if (generated.actions.empty()) {
-      return false;
+      nodes_[index].expanded = true;
+      nodes_[index].exhaustive = generated.exhaustive;
+      if (generated.exhaustive) {
+        refresh(index);
+      }
+      ++stats_.expansions;
+      stats_.tree_nodes = nodes_.size();
+      return generated.exhaustive || generated.frontier_resumable;
     }
 
     const Player child_perspective = opponent(nodes_[index].perspective);
@@ -839,6 +1094,7 @@ class BestFirstMinimaxSearch {
     std::size_t materialized_actions = 0;
     for (CompleteTurnAction &action : generated.actions) {
       if (materialized_actions != 0U && expired()) {
+        ++stats_.materialization_deadline_stops;
         break;
       }
       float value = 0.0F;
@@ -877,11 +1133,15 @@ class BestFirstMinimaxSearch {
           false, solved, true, std::move(action.encoded));
       ++materialized_actions;
     }
-    nodes_[index].children.reserve(materialized_actions);
+    nodes_[index].children.reserve(
+        nodes_[index].children.size() + materialized_actions);
     for (std::size_t child = first_child; child < nodes_.size(); ++child) {
       nodes_[index].children.push_back(child);
     }
     nodes_[index].expanded = true;
+    // Unexpanded children use exhaustive=true only as a leaf sentinel.  A
+    // real expansion must overwrite that sentinel; preserving it across a
+    // truncated page would turn sampled losses into a false universal proof.
     nodes_[index].exhaustive =
         generated.exhaustive &&
         materialized_actions == generated.actions.size();
@@ -900,6 +1160,7 @@ class BestFirstMinimaxSearch {
     bool proven_win = false;
     bool all_solved = node.exhaustive;
     bool all_closed = true;
+    std::size_t open_children = 0U;
     for (const std::size_t child_index : node.children) {
       const Node &child = nodes_[child_index];
       const float action_value = -child.value;
@@ -907,13 +1168,23 @@ class BestFirstMinimaxSearch {
       proven_win = proven_win || (child.solved && action_value > 0.0F);
       all_solved = all_solved && child.solved;
       all_closed = all_closed && child.closed;
+      open_children += child.closed ? 0U : 1U;
     }
+    if (open_children > config_.max_actions) {
+      throw std::logic_error(
+          "Jacek replay BFM exceeded its sampled frontier width");
+    }
+    stats_.max_open_children =
+        std::max(stats_.max_open_children, open_children);
     if (!node.exhaustive) {
       best = std::max(best, node.prior_value);
     }
     node.value = best;
     node.solved = proven_win || all_solved;
-    node.closed = node.solved || all_closed;
+    node.closed = node.solved || (node.exhaustive && all_closed);
+    if (node.solved || node.exhaustive) {
+      node.action_frontier.reset();
+    }
   }
 
   std::optional<std::vector<std::size_t>> select_path() const {
@@ -940,6 +1211,9 @@ class BestFirstMinimaxSearch {
         }
       }
       if (!best.has_value()) {
+        if (!parent.solved && !parent.exhaustive) {
+          return path;
+        }
         return std::nullopt;
       }
       current = *best;
@@ -984,6 +1258,24 @@ class BestFirstMinimaxSearch {
       stats_.proven_winner =
           root.value > 0.0F ? root_.to_move() : opponent(root_.to_move());
     }
+    for (const Node &node : nodes_) {
+      if (node.closed && !node.solved) {
+        ++stats_.closed_unsolved_nodes;
+        if (!node.exhaustive) {
+          ++stats_.closed_unsolved_nonexhaustive_nodes;
+        }
+      }
+      if (!node.closed && !node.solved && !node.expanded) {
+        ++stats_.open_unexpanded_nodes;
+      } else if (!node.closed && !node.solved && !node.exhaustive) {
+        const bool has_open_child = std::any_of(
+            node.children.begin(), node.children.end(),
+            [&](std::size_t child) { return !nodes_[child].closed; });
+        if (!has_open_child) {
+          ++stats_.implicit_action_frontiers;
+        }
+      }
+    }
     stats_.tree_nodes = nodes_.size();
     return SearchResult{nodes_[best].incoming_action, stats_};
   }
@@ -1012,8 +1304,7 @@ void validate_action(const GameState &state,
 }
 
 JacekReplayBfmConfig validate_config(JacekReplayBfmConfig config) {
-  if (config.model_path.empty() || config.max_time_ms == 0U ||
-      config.max_tree_nodes < 2U ||
+  if (config.model_path.empty() || config.max_tree_nodes < 2U ||
       config.max_tree_nodes > kMaximumTreeNodes ||
       config.max_actions == 0U || config.max_actions > kMaximumActions ||
       config.max_partial_paths == 0U ||
@@ -1027,6 +1318,27 @@ JacekReplayBfmConfig validate_config(JacekReplayBfmConfig config) {
 }
 
 }  // namespace
+
+std::string_view jacek_replay_bfm_search_termination_name(
+    JacekReplayBfmSearchTermination termination) noexcept {
+  switch (termination) {
+    case JacekReplayBfmSearchTermination::NotStarted:
+      return "not-started";
+    case JacekReplayBfmSearchTermination::RootSolved:
+      return "root-solved";
+    case JacekReplayBfmSearchTermination::FixedWorkCap:
+      return "fixed-work-cap";
+    case JacekReplayBfmSearchTermination::Deadline:
+      return "deadline";
+    case JacekReplayBfmSearchTermination::ClosedUnsolvedRoot:
+      return "closed-unsolved-root";
+    case JacekReplayBfmSearchTermination::NoSelectableFrontier:
+      return "no-selectable-frontier";
+    case JacekReplayBfmSearchTermination::ExpansionFailed:
+      return "expansion-failed";
+  }
+  return "invalid";
+}
 
 class JacekReplayBfmBot::Impl {
  public:

@@ -37,22 +37,68 @@ import jacek_replay_features as features  # noqa: E402
 HIDDEN_ONE = 192
 HIDDEN_TWO = 32
 OUTPUT_COUNT = 1
+RESIDUAL_RANK = 16
 LEAKY_SLOPE = np.float32(0.01)
 WEIGHT_COUNT = (
     features.INPUT_COUNT * HIDDEN_ONE
     + HIDDEN_ONE * HIDDEN_TWO
     + HIDDEN_TWO
 )
+RESIDUAL_PARAMETER_COUNT = 2 + HIDDEN_ONE * RESIDUAL_RANK + RESIDUAL_RANK
+RUNTIME_V2_WEIGHT_COUNT = WEIGHT_COUNT + RESIDUAL_PARAMETER_COUNT
+RESIDUAL_INITIALIZATION_SEED = 0x4A5242464D000002
 FIXED_SEEDS = (20260823, 20260824, 20260825)
 
 SHARD_SCHEMA = "papersoccer.jacek-replay-csr-shard.v1"
 MODEL_MANIFEST_SCHEMA = "papersoccer.jacek-replay-bfm-model.v1"
 SEED_CHECKPOINT_SCHEMA = "papersoccer.jacek-replay-bfm-seed-checkpoint.v1"
+RETENTION_MODEL_MANIFEST_SCHEMA = "papersoccer.jacek-replay-bfm-model.v2"
+RETENTION_SEED_CHECKPOINT_SCHEMA = (
+    "papersoccer.jacek-replay-bfm-seed-checkpoint.v2"
+)
 RUNTIME_MAGIC = b"JRBFM\0\0\x01"
 RUNTIME_VERSION = 1
+RUNTIME_V2_MAGIC = b"JRBFM\0\0\x02"
+RUNTIME_V2_VERSION = 2
 RUNTIME_HEADER = struct.Struct("<8s9IfQ32s32s8s")
 FEATURE_SCHEMA_HASH = hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).digest()
 ACTIVATION_IDS = (1, 2, 3)
+BASE_PARAMETER_NAMES = ("w1", "w2", "w3")
+RESIDUAL_PARAMETER_NAMES = (
+    "base_gain",
+    "residual_bias",
+    "adapter_a",
+    "adapter_b",
+)
+RUNTIME_V1_PAYLOAD_LAYOUT = "w1-input-major,w2-input-major,w3"
+RUNTIME_V2_PAYLOAD_LAYOUT = (
+    "w1-input-major,w2-input-major,w3,base_gain,residual_bias,"
+    "adapter_a-192x16-input-major,adapter_b-16"
+)
+
+
+def _residual_runtime_contract() -> dict[str, object]:
+    return {
+        "runtime_version": RUNTIME_V2_VERSION,
+        "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+        "biases": {
+            "base_network": False,
+            "residual_output_parameter": "residual_bias",
+        },
+        "residual_adapter": {
+            "input": "first-hidden-activation-h1",
+            "rank": RESIDUAL_RANK,
+            "activation": "leaky-relu-0.01",
+            "base_gain_parameter": "base_gain",
+            "residual_bias_parameter": "residual_bias",
+            "matrix_parameter": "adapter_a[192,16]-input-major",
+            "output_parameter": "adapter_b[16]",
+        },
+        "parameter_update": {
+            "trainable": list(RESIDUAL_PARAMETER_NAMES),
+            "frozen": list(BASE_PARAMETER_NAMES),
+        },
+    }
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -364,6 +410,46 @@ def concatenate_datasets(datasets: Sequence[Dataset]) -> Dataset:
     )
 
 
+def validate_retention_validation_independence(
+    retention_validation: Dataset,
+    compared: Mapping[str, Dataset],
+    *,
+    prevalidated_cross_split_roles: Sequence[str] = (),
+) -> None:
+    """Reject exact, rotated, or reflected overlap with selection retention."""
+
+    if len(retention_validation) == 0 or not compared:
+        raise ValueError("retention validation independence inputs are empty")
+    prevalidated = set(prevalidated_cross_split_roles)
+    if not prevalidated.issubset(compared):
+        raise ValueError("prevalidated retention roles are not comparison inputs")
+    retention_fingerprints = {
+        corpus.canonical_feature_fingerprint(
+            retention_validation.active_row(row).tolist()
+        )
+        for row in range(len(retention_validation))
+    }
+    retention_groups = set(map(int, retention_validation.group_ids))
+    for role, dataset in sorted(compared.items()):
+        if not role or len(dataset) == 0:
+            raise ValueError("retention validation comparison input is invalid")
+        if role in prevalidated:
+            continue
+        if retention_groups.intersection(map(int, dataset.group_ids)):
+            raise ValueError(
+                f"retention validation root group overlaps {role}"
+            )
+        for row in range(len(dataset)):
+            fingerprint = corpus.canonical_feature_fingerprint(
+                dataset.active_row(row).tolist()
+            )
+            if fingerprint in retention_fingerprints:
+                raise ValueError(
+                    "retention validation exact/rotated/reflected feature "
+                    f"overlap crosses {role}"
+                )
+
+
 @dataclasses.dataclass(frozen=True)
 class MixedTraining:
     new: Dataset
@@ -384,21 +470,118 @@ class MixedTraining:
             raise ValueError("mixed training row quotas must sum to batch_size")
 
 
+def _stream_cycle(count: int, *, seed: int, stream: str, cycle: int) -> np.ndarray:
+    if count <= 0 or cycle < 0 or not stream:
+        raise ValueError("continuous training stream arguments are invalid")
+    material = f"{seed}:{stream}:{cycle}".encode("utf-8")
+    cycle_seed = int.from_bytes(hashlib.sha256(material).digest()[:8], "little")
+    return np.random.default_rng(cycle_seed).permutation(count)
+
+
+def _continuous_rows(
+    count: int, total: int, *, seed: int, stream: str, start: int = 0
+) -> np.ndarray:
+    """Return a slice of a deterministic, permutation-cycled row stream.
+
+    Unlike independently resampling a prefix every epoch, adjacent calls with
+    adjacent ``start`` offsets cannot repeat a row until the current complete
+    permutation has been consumed.  The offset makes an epoch independently
+    reproducible, which is required by per-seed checkpoint validation.
+    """
+
+    if count <= 0 or total < 0 or start < 0 or not stream:
+        raise ValueError("continuous training stream arguments are invalid")
+    output = np.empty(total, dtype=np.int64)
+    offset = 0
+    cycle, cycle_offset = divmod(start, count)
+    while offset < total:
+        order = _stream_cycle(count, seed=seed, stream=stream, cycle=cycle)
+        take = min(count - cycle_offset, total - offset)
+        output[offset : offset + take] = order[cycle_offset : cycle_offset + take]
+        offset += take
+        cycle += 1
+        cycle_offset = 0
+    return output
+
+
 def _cycled_rows(
     count: int, total: int, *, seed: int, epoch: int, stream: str
 ) -> np.ndarray:
-    output = np.empty(total, dtype=np.int64)
-    offset = 0
-    cycle = 0
-    while offset < total:
-        material = f"{seed}:{epoch}:{stream}:{cycle}".encode("utf-8")
-        cycle_seed = int.from_bytes(hashlib.sha256(material).digest()[:8], "little")
-        order = np.random.default_rng(cycle_seed).permutation(count)
-        take = min(count, total - offset)
-        output[offset : offset + take] = order[:take]
-        offset += take
-        cycle += 1
-    return output
+    """Return a fresh epoch permutation followed by deterministic padding."""
+
+    if epoch <= 0:
+        raise ValueError("mixed training epoch must be positive")
+    return _continuous_rows(
+        count, total, seed=seed, stream=f"{stream}:epoch:{epoch}", start=0
+    )
+
+
+def mixed_epoch_coverage(
+    training: MixedTraining, *, batch_size: int, epoch: int
+) -> dict[str, dict[str, int]]:
+    """Describe exact cumulative coverage after ``epoch`` mixed epochs."""
+
+    training.validate(batch_size)
+    if epoch <= 0:
+        raise ValueError("mixed training epoch must be positive")
+    batch_count = math.ceil(len(training.new) / training.new_rows_per_batch)
+    new_rows = batch_count * training.new_rows_per_batch
+    anchor_rows = batch_count * training.anchor_rows_per_batch
+    return {
+        "new": {
+            "dataset_rows": len(training.new),
+            "rows_per_epoch": new_rows,
+            "cumulative_rows": epoch * new_rows,
+            "complete_epoch_permutations": epoch,
+            "padding_rows_per_epoch": new_rows - len(training.new),
+        },
+        "anchor": {
+            "dataset_rows": len(training.anchor),
+            "rows_per_epoch": anchor_rows,
+            "cumulative_rows": epoch * anchor_rows,
+            "complete_permutations": epoch * anchor_rows // len(training.anchor),
+            "permutation_offset": epoch * anchor_rows % len(training.anchor),
+        },
+    }
+
+
+def mixed_epoch_coverage_from_configuration(
+    inputs: Mapping[str, object],
+    configuration: Mapping[str, object],
+    epoch: int,
+) -> dict[str, dict[str, int]]:
+    """Reconstruct coverage using only receipt-bound counts and policy."""
+
+    try:
+        streams = inputs["training_streams"]
+        batching = configuration["batching"]
+        new_count = int(streams["new"]["samples"])
+        anchor_count = int(streams["anchor"]["samples"])
+        new_quota = int(batching["new_rows_per_batch"])
+        anchor_quota = int(batching["anchor_rows_per_batch"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("mixed coverage receipt binding is invalid") from error
+    if min(new_count, anchor_count, new_quota, anchor_quota, epoch) <= 0:
+        raise ValueError("mixed coverage receipt counts are invalid")
+    batch_count = math.ceil(new_count / new_quota)
+    new_rows = batch_count * new_quota
+    anchor_rows = batch_count * anchor_quota
+    return {
+        "new": {
+            "dataset_rows": new_count,
+            "rows_per_epoch": new_rows,
+            "cumulative_rows": epoch * new_rows,
+            "complete_epoch_permutations": epoch,
+            "padding_rows_per_epoch": new_rows - new_count,
+        },
+        "anchor": {
+            "dataset_rows": anchor_count,
+            "rows_per_epoch": anchor_rows,
+            "cumulative_rows": epoch * anchor_rows,
+            "complete_permutations": epoch * anchor_rows // anchor_count,
+            "permutation_offset": epoch * anchor_rows % anchor_count,
+        },
+    }
 
 
 def mixed_epoch_batches(
@@ -406,11 +589,9 @@ def mixed_epoch_batches(
 ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
     """Return exact, deterministic two-stream batches for one epoch.
 
-    An epoch visits every new row once before deterministic padding.  The
-    canonical anchor is sampled from independently seeded permutations and
-    cycles only when the requested anchor quota exhausts it.  This prevents a
-    much larger anchor corpus from multiplying the amount of new-data work in
-    every epoch while preserving the exact frozen batch composition.
+    The new stream receives a fresh complete permutation every epoch (plus
+    deterministic padding).  The anchor stream continues across epoch
+    boundaries and cannot repeat until its complete permutation is consumed.
     """
 
     training.validate(batch_size)
@@ -419,19 +600,21 @@ def mixed_epoch_batches(
     batch_count = math.ceil(
         len(training.new) / training.new_rows_per_batch
     )
+    new_total = batch_count * training.new_rows_per_batch
+    anchor_total = batch_count * training.anchor_rows_per_batch
     new_rows = _cycled_rows(
         len(training.new),
-        batch_count * training.new_rows_per_batch,
+        new_total,
         seed=seed,
         epoch=epoch,
         stream="new",
     )
-    anchor_rows = _cycled_rows(
+    anchor_rows = _continuous_rows(
         len(training.anchor),
-        batch_count * training.anchor_rows_per_batch,
+        anchor_total,
         seed=seed,
-        epoch=epoch,
         stream="anchor",
+        start=(epoch - 1) * anchor_total,
     )
     return tuple(
         (
@@ -596,6 +779,98 @@ def initialize(seed: int) -> dict[str, np.ndarray]:
     }
 
 
+def initialize_residual_adapter(
+    base_parameters: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Return a deterministic zero-output rank-16 adapter over a frozen base."""
+
+    _validate_parameters(base_parameters)
+    if set(base_parameters) != set(BASE_PARAMETER_NAMES):
+        raise ValueError("residual adapter initialization requires a v1 base runtime")
+    rng = np.random.default_rng(RESIDUAL_INITIALIZATION_SEED)
+    result = {
+        name: np.asarray(base_parameters[name], dtype=np.float32).copy()
+        for name in BASE_PARAMETER_NAMES
+    }
+    result.update(
+        {
+            "base_gain": np.asarray(1.0, dtype=np.float32),
+            "residual_bias": np.asarray(0.0, dtype=np.float32),
+            "adapter_a": rng.normal(
+                0.0,
+                math.sqrt(1.0 / HIDDEN_ONE),
+                (HIDDEN_ONE, RESIDUAL_RANK),
+            ).astype(np.float32),
+            "adapter_b": np.zeros(RESIDUAL_RANK, dtype=np.float32),
+        }
+    )
+    return result
+
+
+def _is_residual_runtime(parameters: Mapping[str, np.ndarray]) -> bool:
+    return set(parameters) == set((*BASE_PARAMETER_NAMES, *RESIDUAL_PARAMETER_NAMES))
+
+
+def _base_parameter_bytes(parameters: Mapping[str, np.ndarray]) -> bytes:
+    return b"".join(
+        np.asarray(parameters[name], dtype="<f4", order="C").tobytes(order="C")
+        for name in BASE_PARAMETER_NAMES
+    )
+
+
+def _base_parameters_are_byte_identical(
+    candidate: Mapping[str, np.ndarray], initial: Mapping[str, np.ndarray]
+) -> bool:
+    return _base_parameter_bytes(candidate) == _base_parameter_bytes(initial)
+
+
+def _runtime_report_version(report: Mapping[str, object]) -> int:
+    if report.get("runtime_version") == RUNTIME_V2_VERSION:
+        return RUNTIME_V2_VERSION
+    if (
+        "runtime_version" not in report
+        and report.get("weight_count") == WEIGHT_COUNT
+        and report.get("bytes") == RUNTIME_HEADER.size + WEIGHT_COUNT * 4
+    ):
+        return RUNTIME_VERSION
+    raise ValueError("runtime identity has an unknown version contract")
+
+
+def _require_v2_frozen_base_report(
+    candidate_report: Mapping[str, object],
+    initial_report: Mapping[str, object],
+    *,
+    context: str,
+) -> None:
+    if not initial_report:
+        return
+    initial_version = _runtime_report_version(initial_report)
+    if initial_version != RUNTIME_V2_VERSION:
+        return
+    candidate_version = _runtime_report_version(candidate_report)
+    expected = {
+        "runtime_version": RUNTIME_V2_VERSION,
+        "residual_rank": RESIDUAL_RANK,
+        "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+    }
+    if (
+        candidate_version != RUNTIME_V2_VERSION
+        or any(candidate_report.get(key) != value for key, value in expected.items())
+        or any(initial_report.get(key) != value for key, value in expected.items())
+        or any(
+            isinstance(report.get(name), bool)
+            or not isinstance(report.get(name), (int, float))
+            or not math.isfinite(float(report[name]))
+            for report in (candidate_report, initial_report)
+            for name in ("base_gain", "residual_bias")
+        )
+        or not isinstance(initial_report.get("base_payload_sha256"), str)
+        or candidate_report.get("base_payload_sha256")
+        != initial_report.get("base_payload_sha256")
+    ):
+        raise ValueError(f"{context} v2 frozen base parameters changed")
+
+
 def _hidden_one(value: np.ndarray) -> np.ndarray:
     return np.where(value >= 0.0, value * value, LEAKY_SLOPE * value).astype(np.float32)
 
@@ -621,9 +896,40 @@ def forward(
     first = _hidden_one(first_pre)
     second_pre = first @ parameters["w2"]
     second = _leaky(second_pre)
-    output_pre = second @ parameters["w3"]
+    base_output_pre = second @ parameters["w3"]
+    if not _is_residual_runtime(parameters):
+        output_pre = base_output_pre
+        output = np.tanh(output_pre).astype(np.float32)
+        return output, (first_pre, first, second_pre, second, output_pre)
+
+    adapter_pre = first @ parameters["adapter_a"]
+    adapter_hidden = _leaky(adapter_pre)
+    # Keep the freshly initialized adapter exactly prediction-equivalent to
+    # its v1 base, including the float32 output bits.
+    if (
+        parameters["base_gain"].item() == 1.0
+        and parameters["residual_bias"].item() == 0.0
+        and not np.any(parameters["adapter_b"])
+    ):
+        output_pre = base_output_pre
+    else:
+        residual = adapter_hidden @ parameters["adapter_b"]
+        output_pre = (
+            parameters["base_gain"] * base_output_pre
+            + parameters["residual_bias"]
+            + residual
+        ).astype(np.float32)
     output = np.tanh(output_pre).astype(np.float32)
-    return output, (first_pre, first, second_pre, second, output_pre)
+    return output, (
+        first_pre,
+        first,
+        second_pre,
+        second,
+        base_output_pre,
+        adapter_pre,
+        adapter_hidden,
+        output_pre,
+    )
 
 
 def _weighted_huber(
@@ -666,8 +972,10 @@ class AdamW:
         self.step += 1
         correction_one = 1.0 - 0.9**self.step
         correction_two = 1.0 - 0.999**self.step
-        for name, parameter in parameters.items():
-            gradient = gradients[name]
+        for name, gradient in gradients.items():
+            if name not in self.first or name not in parameters:
+                raise ValueError(f"optimizer has no state for parameter {name}")
+            parameter = parameters[name]
             self.first[name] = 0.9 * self.first[name] + 0.1 * gradient
             self.second[name] = 0.999 * self.second[name] + 0.001 * gradient * gradient
             first = self.first[name] / correction_one
@@ -686,25 +994,55 @@ def _apply_training_batch(
     huber_delta: float,
 ) -> float:
     prediction, cache = forward(parameters, active)
-    first_pre, first, second_pre, second, output_pre = cache
     loss, output_gradient = _weighted_huber(
         prediction,
         targets,
         weights,
         huber_delta,
     )
-    output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
-    gradients: dict[str, np.ndarray] = {
-        "w3": second.T @ output_pre_gradient,
-    }
-    second_gradient = output_pre_gradient[:, None] * parameters["w3"][None, :]
-    second_pre_gradient = second_gradient * _leaky_derivative(second_pre)
-    gradients["w2"] = first.T @ second_pre_gradient
-    first_gradient = second_pre_gradient @ parameters["w2"].T
-    first_pre_gradient = first_gradient * _hidden_one_derivative(first_pre)
-    gradients["w1"] = np.zeros_like(parameters["w1"])
-    for row, indices in enumerate(active):
-        np.add.at(gradients["w1"], indices, first_pre_gradient[row])
+    if _is_residual_runtime(parameters):
+        (
+            _first_pre,
+            first,
+            _second_pre,
+            _second,
+            base_output_pre,
+            adapter_pre,
+            adapter_hidden,
+            output_pre,
+        ) = cache
+        output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
+        adapter_hidden_gradient = (
+            output_pre_gradient[:, None] * parameters["adapter_b"][None, :]
+        )
+        adapter_pre_gradient = (
+            adapter_hidden_gradient * _leaky_derivative(adapter_pre)
+        )
+        gradients = {
+            "base_gain": np.asarray(
+                np.sum(output_pre_gradient * base_output_pre, dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "residual_bias": np.asarray(
+                np.sum(output_pre_gradient, dtype=np.float32), dtype=np.float32
+            ),
+            "adapter_a": first.T @ adapter_pre_gradient,
+            "adapter_b": adapter_hidden.T @ output_pre_gradient,
+        }
+    else:
+        first_pre, first, second_pre, second, output_pre = cache
+        output_pre_gradient = output_gradient * (1.0 - np.tanh(output_pre) ** 2)
+        gradients = {
+            "w3": second.T @ output_pre_gradient,
+        }
+        second_gradient = output_pre_gradient[:, None] * parameters["w3"][None, :]
+        second_pre_gradient = second_gradient * _leaky_derivative(second_pre)
+        gradients["w2"] = first.T @ second_pre_gradient
+        first_gradient = second_pre_gradient @ parameters["w2"].T
+        first_pre_gradient = first_gradient * _hidden_one_derivative(first_pre)
+        gradients["w1"] = np.zeros_like(parameters["w1"])
+        for row, indices in enumerate(active):
+            np.add.at(gradients["w1"], indices, first_pre_gradient[row])
     squared_norm = sum(float(np.sum(value * value)) for value in gradients.values())
     norm = math.sqrt(squared_norm)
     if norm > 5.0:
@@ -741,6 +1079,8 @@ def train_mixed_batch(
     anchor_rows: np.ndarray,
     *,
     huber_delta: float,
+    new_loss_coefficient: float = 0.5,
+    anchor_loss_coefficient: float = 0.5,
 ) -> float:
     if (
         len(new_rows) != training.new_rows_per_batch
@@ -754,8 +1094,11 @@ def train_mixed_batch(
     targets = np.concatenate(
         (training.new.targets[new_rows], training.anchor.targets[anchor_rows])
     )
-    weights = np.concatenate(
-        (training.new.weights[new_rows], training.anchor.weights[anchor_rows])
+    weights = _source_normalized_weights(
+        training.new.weights[new_rows],
+        training.anchor.weights[anchor_rows],
+        new_loss_coefficient=new_loss_coefficient,
+        anchor_loss_coefficient=anchor_loss_coefficient,
     )
     return _apply_training_batch(
         parameters,
@@ -764,6 +1107,67 @@ def train_mixed_batch(
         targets,
         weights,
         huber_delta=huber_delta,
+    )
+
+
+def _validate_loss_coefficients(
+    new_loss_coefficient: float, anchor_loss_coefficient: float
+) -> None:
+    values = (new_loss_coefficient, anchor_loss_coefficient)
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+        for value in values
+    ) or not math.isclose(
+        float(new_loss_coefficient) + float(anchor_loss_coefficient),
+        1.0,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("mixed loss coefficients must be positive and sum to one")
+
+
+def _source_normalized_weights(
+    new_weights: np.ndarray,
+    anchor_weights: np.ndarray,
+    *,
+    new_loss_coefficient: float,
+    anchor_loss_coefficient: float,
+) -> np.ndarray:
+    """Normalize each source independently before applying its fixed share."""
+
+    _validate_loss_coefficients(new_loss_coefficient, anchor_loss_coefficient)
+    new_weights = np.asarray(new_weights, dtype=np.float32)
+    anchor_weights = np.asarray(anchor_weights, dtype=np.float32)
+    if (
+        new_weights.ndim != 1
+        or anchor_weights.ndim != 1
+        or len(new_weights) == 0
+        or len(anchor_weights) == 0
+        or not np.all(np.isfinite(new_weights))
+        or not np.all(np.isfinite(anchor_weights))
+        or np.any(new_weights <= 0.0)
+        or np.any(anchor_weights <= 0.0)
+    ):
+        raise ValueError("mixed source weights must be finite, positive vectors")
+    normalized_new = (
+        new_weights
+        * np.float32(
+            float(new_loss_coefficient)
+            / float(np.sum(new_weights, dtype=np.float64))
+        )
+    )
+    normalized_anchor = (
+        anchor_weights
+        * np.float32(
+            float(anchor_loss_coefficient)
+            / float(np.sum(anchor_weights, dtype=np.float64))
+        )
+    )
+    return np.concatenate((normalized_new, normalized_anchor)).astype(
+        np.float32, copy=False
     )
 
 
@@ -796,6 +1200,58 @@ def metrics(
     }
 
 
+def _selection_key(metric_report: Mapping[str, float]) -> tuple[float, float, float]:
+    return (
+        float(metric_report["weighted_huber"]),
+        -float(metric_report["sign_accuracy"]),
+        -float(metric_report["correlation"]),
+    )
+
+
+def _retention_thresholds(
+    actor_metrics: Mapping[str, float],
+    *,
+    sign_tolerance: float,
+    huber_ratio: float,
+) -> dict[str, float]:
+    if (
+        isinstance(sign_tolerance, bool)
+        or not isinstance(sign_tolerance, (int, float))
+        or not math.isfinite(float(sign_tolerance))
+        or not 0.0 <= float(sign_tolerance) < 1.0
+        or isinstance(huber_ratio, bool)
+        or not isinstance(huber_ratio, (int, float))
+        or not math.isfinite(float(huber_ratio))
+        or float(huber_ratio) < 1.0
+    ):
+        raise ValueError("retention feasibility tolerances are invalid")
+    return {
+        "minimum_sign_accuracy": max(
+            0.0, float(actor_metrics["sign_accuracy"]) - float(sign_tolerance)
+        ),
+        "maximum_weighted_huber": (
+            float(actor_metrics["weighted_huber"]) * float(huber_ratio)
+        ),
+        "sign_tolerance": float(sign_tolerance),
+        "huber_ratio": float(huber_ratio),
+    }
+
+
+def _retention_is_feasible(
+    metric_report: Mapping[str, float],
+    thresholds: Mapping[str, float],
+    *,
+    complete_anchor_coverage: bool,
+) -> bool:
+    return bool(
+        complete_anchor_coverage
+        and float(metric_report["sign_accuracy"])
+        >= float(thresholds["minimum_sign_accuracy"])
+        and float(metric_report["weighted_huber"])
+        <= float(thresholds["maximum_weighted_huber"])
+    )
+
+
 def train_seed(
     datasets: Mapping[str, Dataset],
     seed: int,
@@ -806,9 +1262,45 @@ def train_seed(
     learning_rate: float,
     weight_decay: float,
     mixed_training: MixedTraining | None = None,
+    initial_parameters: Mapping[str, np.ndarray] | None = None,
+    initial_runtime_report: Mapping[str, object] | None = None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None = None,
+    new_loss_coefficient: float = 0.5,
+    anchor_loss_coefficient: float = 0.5,
+    retention_sign_tolerance: float = 0.0025,
+    retention_huber_ratio: float = 1.01,
+    retention_validation: Dataset | None = None,
 ) -> tuple[dict[str, np.ndarray], dict]:
-    parameters = initialize(seed)
-    optimizer = AdamW(parameters, learning_rate, weight_decay)
+    if mixed_training is None:
+        if (
+            initial_parameters is not None
+            or initial_runtime_report is not None
+            or initial_metrics is not None
+            or retention_validation is not None
+        ):
+            raise ValueError("supplied-runtime initialization requires mixed training")
+        parameters = initialize(seed)
+    else:
+        if initial_parameters is None or initial_runtime_report is None:
+            raise ValueError("mixed training requires an exact supplied runtime")
+        _validate_parameters(initial_parameters)
+        if dict(initial_runtime_report) != runtime_bytes(initial_parameters)[1]:
+            raise ValueError("mixed training initial runtime identity is stale")
+        _validate_loss_coefficients(
+            new_loss_coefficient, anchor_loss_coefficient
+        )
+        if retention_validation is None or len(retention_validation) == 0:
+            raise ValueError("mixed training requires retention validation data")
+        parameters = {
+            name: np.asarray(value, dtype=np.float32).copy()
+            for name, value in initial_parameters.items()
+        }
+    optimizer_parameters = (
+        {name: parameters[name] for name in RESIDUAL_PARAMETER_NAMES}
+        if _is_residual_runtime(parameters)
+        else parameters
+    )
+    optimizer = AdamW(optimizer_parameters, learning_rate, weight_decay)
     rng = np.random.default_rng(seed ^ 0xD1B54A32D192ED03)
     if mixed_training is not None:
         mixed_training.validate(batch_size)
@@ -816,6 +1308,43 @@ def train_seed(
     best_epoch = 0
     best_key = (float("inf"), 0.0, 0.0)
     history = []
+    initial: dict[str, object] | None = None
+    thresholds: dict[str, float] | None = None
+    coverage_complete_epoch: int | None = None
+    if mixed_training is not None:
+        fallback = {name: value.copy() for name, value in parameters.items()}
+        if initial_metrics is None:
+            initial_validation = metrics(parameters, datasets["validation"])
+            initial_retention = metrics(parameters, retention_validation)
+        else:
+            if set(initial_metrics) != {"validation", "retention"}:
+                raise ValueError("shared initial metric report is incomplete")
+            initial_validation = dict(initial_metrics["validation"])
+            initial_retention = dict(initial_metrics["retention"])
+        thresholds = _retention_thresholds(
+            initial_retention,
+            sign_tolerance=retention_sign_tolerance,
+            huber_ratio=retention_huber_ratio,
+        )
+        initial = {
+            "runtime": dict(initial_runtime_report),
+            "validation": initial_validation,
+            "retention": initial_retention,
+        }
+        # Epoch zero participates in the new-adjudicator comparison.  A
+        # feasible update must actually improve that frozen selection exam.
+        best_key = _selection_key(initial_validation)
+        anchor_rows_per_epoch = mixed_epoch_coverage(
+            mixed_training, batch_size=batch_size, epoch=1
+        )["anchor"]["rows_per_epoch"]
+        coverage_complete_epoch = math.ceil(
+            len(mixed_training.anchor) / anchor_rows_per_epoch
+        )
+        if epochs < coverage_complete_epoch:
+            raise ValueError(
+                "mixed training epochs do not permit one complete anchor coverage"
+            )
+        last_progress_epoch = coverage_complete_epoch
     for epoch in range(1, epochs + 1):
         losses = []
         if mixed_training is None:
@@ -842,84 +1371,193 @@ def train_seed(
                         new_rows,
                         anchor_rows,
                         huber_delta=0.25,
+                        new_loss_coefficient=new_loss_coefficient,
+                        anchor_loss_coefficient=anchor_loss_coefficient,
                     )
                 )
         validation = metrics(parameters, datasets["validation"])
-        key = (
-            validation["weighted_huber"],
-            -validation["sign_accuracy"],
-            -validation["correlation"],
+        if mixed_training is None:
+            key = _selection_key(validation)
+            history.append(
+                {
+                    "epoch": epoch,
+                    "training_weighted_huber": float(np.mean(losses)),
+                    "validation": validation,
+                }
+            )
+            if key < best_key:
+                best_key = key
+                best_epoch = epoch
+                best = {name: value.copy() for name, value in parameters.items()}
+            elif epoch - best_epoch >= patience:
+                break
+            continue
+
+        if thresholds is None or coverage_complete_epoch is None:
+            raise RuntimeError("mixed retention policy was not initialized")
+        coverage = mixed_epoch_coverage(
+            mixed_training, batch_size=batch_size, epoch=epoch
         )
+        complete_anchor_coverage = coverage["anchor"]["complete_permutations"] >= 1
+        key = _selection_key(validation)
+        retention = None
+        feasible = None
+        eligible = False
+        if key >= best_key:
+            retention_status = "not-evaluated-adjudicator-cannot-beat-current-best"
+        else:
+            retention = metrics(parameters, retention_validation)
+            feasible = _retention_is_feasible(
+                retention,
+                thresholds,
+                complete_anchor_coverage=True,
+            )
+            eligible = feasible
+            retention_status = "evaluated"
         history.append(
             {
                 "epoch": epoch,
                 "training_weighted_huber": float(np.mean(losses)),
                 "validation": validation,
+                "retention": retention,
+                "retention_status": retention_status,
+                "coverage": coverage,
+                "retention_feasible": feasible,
+                "eligible": eligible,
             }
         )
-        if key < best_key:
+        if eligible:
             best_key = key
             best_epoch = epoch
             best = {name: value.copy() for name, value in parameters.items()}
-        elif epoch - best_epoch >= patience:
+            last_progress_epoch = epoch
+        if complete_anchor_coverage and epoch - last_progress_epoch >= patience:
             break
+
+    if mixed_training is None:
+        if best is None:
+            raise RuntimeError("training did not produce a finite checkpoint")
+        return best, {
+            "seed": seed,
+            "best_epoch": best_epoch,
+            "history": history,
+            "training": metrics(best, datasets["train"]),
+            "validation": metrics(best, datasets["validation"]),
+        }
+
+    if initial is None or thresholds is None or coverage_complete_epoch is None:
+        raise RuntimeError("mixed training initialization report is incomplete")
+    selection = "feasible-trained-epoch"
     if best is None:
-        raise RuntimeError("training did not produce a finite checkpoint")
+        best = fallback
+        best_epoch = 0
+        selection = "exact-initial-runtime-fallback"
+        selected_validation = initial["validation"]
+        selected_retention = initial["retention"]
+    else:
+        selected_row = history[best_epoch - 1]
+        selected_validation = selected_row["validation"]
+        selected_retention = selected_row["retention"]
+    if _is_residual_runtime(initial_parameters) and (
+        not _is_residual_runtime(best)
+        or not _base_parameters_are_byte_identical(best, initial_parameters)
+    ):
+        raise RuntimeError("mixed v2 training changed frozen base parameters")
     return best, {
         "seed": seed,
         "best_epoch": best_epoch,
+        "selection": selection,
         "history": history,
         "training": metrics(best, datasets["train"]),
-        "validation": metrics(best, datasets["validation"]),
+        "validation": selected_validation,
+        "retention": selected_retention,
+        "anchor_training": metrics(best, mixed_training.anchor),
+        "initial": initial,
+        "retention_thresholds": thresholds,
+        "anchor_coverage_complete_epoch": coverage_complete_epoch,
     }
 
 
 def _validate_parameters(parameters: Mapping[str, np.ndarray]) -> None:
-    expected = {
+    base = {
         "w1": (features.INPUT_COUNT, HIDDEN_ONE),
         "w2": (HIDDEN_ONE, HIDDEN_TWO),
         "w3": (HIDDEN_TWO,),
     }
-    if set(parameters) != set(expected):
-        raise ValueError("runtime parameters must contain exactly w1, w2, and w3")
+    residual = {
+        "base_gain": (),
+        "residual_bias": (),
+        "adapter_a": (HIDDEN_ONE, RESIDUAL_RANK),
+        "adapter_b": (RESIDUAL_RANK,),
+    }
+    if set(parameters) == set(base):
+        expected = base
+    elif set(parameters) == set((*base, *residual)):
+        expected = {**base, **residual}
+    else:
+        raise ValueError(
+            "runtime parameters must contain exactly the v1 base tensors or "
+            "the v2 base plus residual adapter tensors"
+        )
     for name, shape in expected.items():
-        value = parameters[name]
+        value = np.asarray(parameters[name])
         if value.shape != shape or not np.all(np.isfinite(value)):
             raise ValueError(f"invalid or nonfinite runtime tensor {name}")
 
 
 def runtime_bytes(parameters: Mapping[str, np.ndarray]) -> tuple[bytes, dict]:
     _validate_parameters(parameters)
+    residual = _is_residual_runtime(parameters)
+    parameter_names = (
+        (*BASE_PARAMETER_NAMES, *RESIDUAL_PARAMETER_NAMES)
+        if residual
+        else BASE_PARAMETER_NAMES
+    )
+    weight_count = RUNTIME_V2_WEIGHT_COUNT if residual else WEIGHT_COUNT
     payload = b"".join(
         np.asarray(parameters[name], dtype="<f4", order="C").tobytes(order="C")
-        for name in ("w1", "w2", "w3")
+        for name in parameter_names
     )
-    if len(payload) != WEIGHT_COUNT * 4:
+    if len(payload) != weight_count * 4:
         raise RuntimeError("runtime payload weight count is inconsistent")
     payload_hash = hashlib.sha256(payload).digest()
     header = RUNTIME_HEADER.pack(
-        RUNTIME_MAGIC,
+        RUNTIME_V2_MAGIC if residual else RUNTIME_MAGIC,
         RUNTIME_HEADER.size,
-        RUNTIME_VERSION,
+        RUNTIME_V2_VERSION if residual else RUNTIME_VERSION,
         features.INPUT_COUNT,
         HIDDEN_ONE,
         HIDDEN_TWO,
         OUTPUT_COUNT,
         *ACTIVATION_IDS,
         float(LEAKY_SLOPE),
-        WEIGHT_COUNT,
+        weight_count,
         FEATURE_SCHEMA_HASH,
         payload_hash,
         b"\0" * 8,
     )
     artifact = header + payload
-    return artifact, {
+    report = {
         "artifact_sha256": _sha256(artifact),
         "payload_sha256": payload_hash.hex(),
         "feature_schema_sha256": FEATURE_SCHEMA_HASH.hex(),
         "bytes": len(artifact),
-        "weight_count": WEIGHT_COUNT,
+        "weight_count": weight_count,
     }
+    if residual:
+        report.update(
+            {
+                "runtime_version": RUNTIME_V2_VERSION,
+                "residual_rank": RESIDUAL_RANK,
+                "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+                "base_payload_sha256": _sha256(payload[: WEIGHT_COUNT * 4]),
+                "base_gain": float(np.asarray(parameters["base_gain"])),
+                "residual_bias": float(
+                    np.asarray(parameters["residual_bias"])
+                ),
+            }
+        )
+    return artifact, report
 
 
 def export_runtime(path: pathlib.Path, parameters: Mapping[str, np.ndarray]) -> dict:
@@ -963,22 +1601,29 @@ def load_runtime(path: pathlib.Path) -> tuple[dict[str, np.ndarray], dict]:
         payload_hash,
         reserved,
     ) = fields
-    expected = (
-        magic == RUNTIME_MAGIC
-        and header_size == RUNTIME_HEADER.size
-        and version == RUNTIME_VERSION
+    common = (
+        header_size == RUNTIME_HEADER.size
         and (inputs, hidden_one, hidden_two, outputs)
         == (features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT)
         and (activation_one, activation_two, activation_out) == ACTIVATION_IDS
         and struct.pack("<f", slope) == struct.pack("<f", float(LEAKY_SLOPE))
-        and weight_count == WEIGHT_COUNT
         and schema_hash == FEATURE_SCHEMA_HASH
         and reserved == b"\0" * 8
     )
-    if not expected:
+    is_v1 = (
+        magic == RUNTIME_MAGIC
+        and version == RUNTIME_VERSION
+        and weight_count == WEIGHT_COUNT
+    )
+    is_v2 = (
+        magic == RUNTIME_V2_MAGIC
+        and version == RUNTIME_V2_VERSION
+        and weight_count == RUNTIME_V2_WEIGHT_COUNT
+    )
+    if not common or not (is_v1 or is_v2):
         raise ValueError("runtime header contract mismatch")
     payload = artifact[RUNTIME_HEADER.size :]
-    if len(payload) != WEIGHT_COUNT * 4:
+    if len(payload) != weight_count * 4:
         raise ValueError("runtime is truncated or has trailing bytes")
     if hashlib.sha256(payload).digest() != payload_hash:
         raise ValueError("runtime payload SHA-256 mismatch")
@@ -990,15 +1635,50 @@ def load_runtime(path: pathlib.Path) -> tuple[dict[str, np.ndarray], dict]:
     parameters = {
         "w1": values[:first_end].reshape(features.INPUT_COUNT, HIDDEN_ONE).copy(),
         "w2": values[first_end:second_end].reshape(HIDDEN_ONE, HIDDEN_TWO).copy(),
-        "w3": values[second_end:].copy(),
+        "w3": values[second_end : second_end + HIDDEN_TWO].copy(),
     }
-    return parameters, {
+    if is_v2:
+        adapter_start = second_end + HIDDEN_TWO
+        parameters.update(
+            {
+                "base_gain": np.asarray(
+                    values[adapter_start], dtype=np.float32
+                ).copy(),
+                "residual_bias": np.asarray(
+                    values[adapter_start + 1], dtype=np.float32
+                ).copy(),
+                "adapter_a": values[
+                    adapter_start + 2 :
+                    adapter_start + 2 + HIDDEN_ONE * RESIDUAL_RANK
+                ]
+                .reshape(HIDDEN_ONE, RESIDUAL_RANK)
+                .copy(),
+                "adapter_b": values[
+                    adapter_start + 2 + HIDDEN_ONE * RESIDUAL_RANK :
+                ].copy(),
+            }
+        )
+    report = {
         "artifact_sha256": _sha256(artifact),
         "payload_sha256": payload_hash.hex(),
         "feature_schema_sha256": schema_hash.hex(),
         "bytes": len(artifact),
         "weight_count": weight_count,
     }
+    if is_v2:
+        report.update(
+            {
+                "runtime_version": RUNTIME_V2_VERSION,
+                "residual_rank": RESIDUAL_RANK,
+                "payload_layout": RUNTIME_V2_PAYLOAD_LAYOUT,
+                "base_payload_sha256": _sha256(payload[: WEIGHT_COUNT * 4]),
+                "base_gain": float(np.asarray(parameters["base_gain"])),
+                "residual_bias": float(
+                    np.asarray(parameters["residual_bias"])
+                ),
+            }
+        )
+    return parameters, report
 
 
 def _training_producer_identity() -> dict[str, str]:
@@ -1014,9 +1694,21 @@ def _seed_training_configuration(
 ) -> dict:
     new_rows = int(training_arguments.get("new_rows_per_batch", 0))
     anchor_rows = int(training_arguments.get("anchor_rows_per_batch", 0))
+    initial_runtime_version = int(
+        training_arguments.get("initial_runtime_version", RUNTIME_VERSION)
+    )
     if (new_rows == 0) != (anchor_rows == 0):
         raise ValueError("mixed batch configuration is incomplete")
-    return {
+    if initial_runtime_version not in {RUNTIME_VERSION, RUNTIME_V2_VERSION}:
+        raise ValueError("mixed initial runtime version is unsupported")
+    if not new_rows and initial_runtime_version != RUNTIME_VERSION:
+        raise ValueError("legacy training cannot declare a v2 initial runtime")
+    if new_rows:
+        _validate_loss_coefficients(
+            float(training_arguments["new_loss_coefficient"]),
+            float(training_arguments["anchor_loss_coefficient"]),
+        )
+    configuration = {
         "architecture": {
             "dimensions": [
                 features.INPUT_COUNT,
@@ -1039,21 +1731,86 @@ def _seed_training_configuration(
         "loss": {"name": "weighted-huber", "delta": 0.25},
         "metrics_batch_size": 4_096,
         "augmentation": "reflection rows inherit root game split",
-        "batching": (
-            {
-                "kind": "deterministic-two-stream-cycling-v1",
-                "new_rows_per_batch": new_rows,
-                "anchor_rows_per_batch": anchor_rows,
-                "epoch_length": "new-stream-covered-once-anchor-sampled",
-                "row_order": "new-then-anchor",
-            }
-            if new_rows
-            else {"kind": "single-stream-permutation-v1"}
-        ),
+        "batching": {"kind": "single-stream-permutation-v1"},
         "selection_validation": training_arguments.get(
             "selection_validation", "legacy-validation-split"
         ),
     }
+    if not new_rows:
+        return configuration
+    configuration.update(
+        {
+            "initialization": {
+                "kind": "exact-supplied-runtime-all-seeds-order-only-v1"
+            },
+            "loss": {
+                "name": "separately-normalized-weighted-huber",
+                "delta": 0.25,
+                "new_coefficient": float(
+                    training_arguments["new_loss_coefficient"]
+                ),
+                "anchor_coefficient": float(
+                    training_arguments["anchor_loss_coefficient"]
+                ),
+            },
+            "batching": {
+                "kind": "deterministic-continuous-two-stream-coverage-v2",
+                "new_rows_per_batch": new_rows,
+                "anchor_rows_per_batch": anchor_rows,
+                "epoch_length": "ceil-new-rows/new-quota-batches",
+                "row_order": "new-then-anchor",
+                "new_stream": (
+                    "fresh-complete-permutation-each-epoch-with-padding"
+                ),
+                "anchor_cross_epoch": (
+                    "continuous-no-repeat-until-permutation-complete"
+                ),
+            },
+            "retention_selection": {
+                "monitor": "explicit-disjoint-retention-validation",
+                "minimum_training_anchor_permutations_before-stop": 1,
+                "checkpoint_may_precede_complete_anchor_coverage": True,
+                "minimum_sign_accuracy": "actor-sign-minus-tolerance",
+                "sign_tolerance": float(
+                    training_arguments["retention_sign_tolerance"]
+                ),
+                "maximum_weighted_huber": "actor-huber-times-ratio",
+                "huber_ratio": float(
+                    training_arguments["retention_huber_ratio"]
+                ),
+                "trained_checkpoint_order": (
+                    "minimum-new-adjudicator-Huber-then-sign-correlation"
+                ),
+                "epoch_zero_comparator": "new-adjudicator-selection-key",
+                "fallback": (
+                    "exact-supplied-runtime-when-no-feasible-trained-epoch-beats-epoch-zero"
+                ),
+                "patience_starts_after_complete-anchor-coverage": True,
+            },
+        }
+    )
+    if initial_runtime_version == RUNTIME_V2_VERSION:
+        contract = _residual_runtime_contract()
+        configuration["architecture"].update(contract)
+        configuration["optimizer"].update(
+            {
+                "trainable_parameters": list(RESIDUAL_PARAMETER_NAMES),
+                "frozen_parameters": list(BASE_PARAMETER_NAMES),
+            }
+        )
+        configuration["initialization"] = {
+            "kind": "exact-supplied-runtime-v2-adapter-only-all-seeds-order-only-v1",
+            **contract,
+        }
+    return configuration
+
+
+def _seed_checkpoint_schema(configuration: Mapping[str, object]) -> str:
+    return (
+        RETENTION_SEED_CHECKPOINT_SCHEMA
+        if configuration.get("retention_selection") is not None
+        else SEED_CHECKPOINT_SCHEMA
+    )
 
 
 def _seed_checkpoint_paths(
@@ -1120,14 +1877,33 @@ def _validate_seed_report(
     inputs: Mapping[str, object],
     runtime_report: Mapping[str, object],
 ) -> dict:
-    if not isinstance(report, dict) or set(report) != {
+    mixed = configuration.get("retention_selection") is not None
+    if mixed:
+        _require_v2_frozen_base_report(
+            runtime_report,
+            inputs.get("initial_runtime", {}),
+            context=f"seed {seed} checkpoint",
+        )
+    expected_fields = {
         "seed",
         "best_epoch",
         "history",
         "training",
         "validation",
         "checkpoint",
-    }:
+    }
+    if mixed:
+        expected_fields.update(
+            {
+                "selection",
+                "retention",
+                "anchor_training",
+                "initial",
+                "retention_thresholds",
+                "anchor_coverage_complete_epoch",
+            }
+        )
+    if not isinstance(report, dict) or set(report) != expected_fields:
         raise ValueError(f"seed {seed} checkpoint training report is invalid")
     epochs = configuration["optimizer"]["epochs"]
     best_epoch = report.get("best_epoch")
@@ -1136,7 +1912,7 @@ def _validate_seed_report(
         report.get("seed") != seed
         or isinstance(best_epoch, bool)
         or not isinstance(best_epoch, int)
-        or best_epoch <= 0
+        or best_epoch < (0 if mixed else 1)
         or best_epoch > epochs
         or not isinstance(history, list)
         or not history
@@ -1151,10 +1927,85 @@ def _validate_seed_report(
         report.get("validation"), dataset_inputs["validation"]["samples"]
     ):
         raise ValueError(f"seed {seed} checkpoint metrics are stale or corrupt")
+    if mixed:
+        retention_input = inputs.get("retention_monitor")
+        anchor_training_input = inputs.get("anchor_training_monitor")
+        initial_runtime = inputs.get("initial_runtime")
+        bound_initial_metrics = inputs.get("initial_metrics")
+        initial = report.get("initial")
+        thresholds = report.get("retention_thresholds")
+        complete_epoch = report.get("anchor_coverage_complete_epoch")
+        if (
+            not isinstance(retention_input, dict)
+            or not isinstance(anchor_training_input, dict)
+            or not isinstance(initial_runtime, dict)
+            or not isinstance(bound_initial_metrics, dict)
+            or set(bound_initial_metrics) != {"validation", "retention"}
+            or not isinstance(initial, dict)
+            or set(initial) != {"runtime", "validation", "retention"}
+            or initial.get("runtime") != initial_runtime
+            or initial.get("validation") != bound_initial_metrics["validation"]
+            or initial.get("retention") != bound_initial_metrics["retention"]
+            or not _metric_report_is_valid(
+                initial.get("validation"), dataset_inputs["validation"]["samples"]
+            )
+            or not _metric_report_is_valid(
+                initial.get("retention"), retention_input.get("samples", -1)
+            )
+            or not _metric_report_is_valid(
+                report.get("retention"), retention_input.get("samples", -1)
+            )
+            or not _metric_report_is_valid(
+                report.get("anchor_training"),
+                anchor_training_input.get("samples", -1),
+            )
+            or not isinstance(thresholds, dict)
+            or set(thresholds)
+            != {
+                "minimum_sign_accuracy",
+                "maximum_weighted_huber",
+                "sign_tolerance",
+                "huber_ratio",
+            }
+            or thresholds
+            != _retention_thresholds(
+                initial["retention"],
+                sign_tolerance=configuration["retention_selection"][
+                    "sign_tolerance"
+                ],
+                huber_ratio=configuration["retention_selection"]["huber_ratio"],
+            )
+            or isinstance(complete_epoch, bool)
+            or not isinstance(complete_epoch, int)
+            or complete_epoch <= 0
+            or report.get("selection")
+            not in {
+                "feasible-trained-epoch",
+                "exact-initial-runtime-fallback",
+            }
+        ):
+            raise ValueError(f"seed {seed} checkpoint retention report is stale or corrupt")
+    expected_best_epoch = 0
+    expected_best_key = (
+        _selection_key(report["initial"]["validation"])
+        if mixed
+        else None
+    )
     for expected_epoch, row in enumerate(history, 1):
+        expected_row_fields = {"epoch", "training_weighted_huber", "validation"}
+        if mixed:
+            expected_row_fields.update(
+                {
+                    "retention",
+                    "retention_status",
+                    "coverage",
+                    "retention_feasible",
+                    "eligible",
+                }
+            )
         if (
             not isinstance(row, dict)
-            or set(row) != {"epoch", "training_weighted_huber", "validation"}
+            or set(row) != expected_row_fields
             or row.get("epoch") != expected_epoch
             or isinstance(row.get("training_weighted_huber"), bool)
             or not isinstance(row.get("training_weighted_huber"), (int, float))
@@ -1165,8 +2016,90 @@ def _validate_seed_report(
             )
         ):
             raise ValueError(f"seed {seed} checkpoint history is stale or corrupt")
+        if mixed:
+            coverage = row.get("coverage")
+            expected_coverage = {
+                name: {
+                    field: int(value)
+                    for field, value in record.items()
+                }
+                for name, record in mixed_epoch_coverage_from_configuration(
+                    inputs, configuration, expected_epoch
+                ).items()
+            }
+            if expected_best_key is None:
+                raise RuntimeError("mixed checkpoint selection key is unavailable")
+            candidate_key = _selection_key(row["validation"])
+            evaluation_required = candidate_key < expected_best_key
+            if not evaluation_required:
+                expected_status = (
+                    "not-evaluated-adjudicator-cannot-beat-current-best"
+                )
+            else:
+                expected_status = "evaluated"
+            if evaluation_required:
+                retention_valid = _metric_report_is_valid(
+                    row.get("retention"), inputs["retention_monitor"]["samples"]
+                )
+                feasible = (
+                    _retention_is_feasible(
+                        row["retention"],
+                        report["retention_thresholds"],
+                        complete_anchor_coverage=True,
+                    )
+                    if retention_valid
+                    else False
+                )
+                expected_feasible: bool | None = feasible
+                expected_eligible = feasible
+            else:
+                retention_valid = row.get("retention") is None
+                expected_feasible = None
+                expected_eligible = False
+            if (
+                coverage != expected_coverage
+                or row.get("retention_status") != expected_status
+                or not retention_valid
+                or row.get("retention_feasible") is not expected_feasible
+                or row.get("eligible") is not expected_eligible
+            ):
+                raise ValueError(
+                    f"seed {seed} checkpoint coverage history is stale or corrupt"
+                )
+            if expected_eligible:
+                expected_best_key = candidate_key
+                expected_best_epoch = expected_epoch
     if best_epoch > len(history):
         raise ValueError(f"seed {seed} checkpoint best epoch is not in its history")
+    if mixed:
+        if report["anchor_coverage_complete_epoch"] != math.ceil(
+            inputs["training_streams"]["anchor"]["samples"]
+            / (
+                math.ceil(
+                    inputs["training_streams"]["new"]["samples"]
+                    / configuration["batching"]["new_rows_per_batch"]
+                )
+                * configuration["batching"]["anchor_rows_per_batch"]
+            )
+        ):
+            raise ValueError(f"seed {seed} checkpoint coverage epoch is stale")
+        if best_epoch != expected_best_epoch:
+            raise ValueError(f"seed {seed} checkpoint selected epoch is stale")
+        if best_epoch == 0:
+            if (
+                report["selection"] != "exact-initial-runtime-fallback"
+                or report["checkpoint"] != inputs["initial_runtime"]
+                or report["validation"] != report["initial"]["validation"]
+                or report["retention"] != report["initial"]["retention"]
+            ):
+                raise ValueError(f"seed {seed} checkpoint fallback is stale or corrupt")
+        elif (
+            report["selection"] != "feasible-trained-epoch"
+            or not history[best_epoch - 1]["eligible"]
+            or report["validation"] != history[best_epoch - 1]["validation"]
+            or report["retention"] != history[best_epoch - 1]["retention"]
+        ):
+            raise ValueError(f"seed {seed} checkpoint selection is stale or corrupt")
     return report
 
 
@@ -1181,10 +2114,15 @@ def _publish_seed_checkpoint(
         raise RuntimeError("seed checkpoint producer changed during training")
     checkpoint_path, receipt_path = _seed_checkpoint_paths(directory, seed)
     checkpoint_payload, runtime_report = runtime_bytes(candidate)
+    _require_v2_frozen_base_report(
+        runtime_report,
+        receipt_binding.get("inputs", {}).get("initial_runtime", {}),
+        context=f"seed {seed} checkpoint publication",
+    )
     if report.get("checkpoint") != runtime_report:
         raise RuntimeError("seed report checkpoint identity changed before publication")
     body = {
-        "schema": SEED_CHECKPOINT_SCHEMA,
+        "schema": _seed_checkpoint_schema(receipt_binding["configuration"]),
         "seed": seed,
         "configuration": receipt_binding["configuration"],
         "inputs": receipt_binding["inputs"],
@@ -1212,6 +2150,11 @@ def _load_seed_checkpoint(
     directory: pathlib.Path,
     seed: int,
     receipt_binding: Mapping[str, object],
+    datasets: Mapping[str, Dataset],
+    mixed_training: MixedTraining | None,
+    retention_validation: Dataset | None,
+    initial_parameters: Mapping[str, np.ndarray] | None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None,
 ) -> tuple[dict[str, np.ndarray], dict, dict]:
     checkpoint_path, receipt_path = _seed_checkpoint_paths(directory, seed)
     try:
@@ -1219,7 +2162,8 @@ def _load_seed_checkpoint(
         receipt = json.loads(receipt_payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"seed {seed} checkpoint receipt is invalid") from error
-    if not isinstance(receipt, dict) or receipt.get("schema") != SEED_CHECKPOINT_SCHEMA:
+    expected_schema = _seed_checkpoint_schema(receipt_binding["configuration"])
+    if not isinstance(receipt, dict) or receipt.get("schema") != expected_schema:
         raise ValueError(f"seed {seed} checkpoint receipt schema is invalid")
     try:
         canonical_receipt = canonical_json_bytes(receipt)
@@ -1249,6 +2193,16 @@ def _load_seed_checkpoint(
         raise ValueError(f"seed {seed} checkpoint parameters are corrupt") from error
     if receipt.get("checkpoint") != {"file": checkpoint_path.name, **runtime_report}:
         raise ValueError(f"seed {seed} checkpoint hash is stale or corrupt")
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        if (
+            not _is_residual_runtime(candidate)
+            or not _base_parameters_are_byte_identical(
+                candidate, initial_parameters
+            )
+        ):
+            raise ValueError(
+                f"seed {seed} checkpoint v2 frozen base parameters changed"
+            )
     report = _validate_seed_report(
         receipt.get("training_report"),
         seed,
@@ -1256,6 +2210,41 @@ def _load_seed_checkpoint(
         receipt_binding["inputs"],
         runtime_report,
     )
+    recomputed_training = metrics(candidate, datasets["train"])
+    recomputed_validation = metrics(candidate, datasets["validation"])
+    if (
+        report.get("training") != recomputed_training
+        or report.get("validation") != recomputed_validation
+    ):
+        raise ValueError(f"seed {seed} checkpoint recomputed metrics disagree")
+    if mixed_training is not None:
+        if (
+            initial_parameters is None
+            or initial_metrics is None
+            or retention_validation is None
+        ):
+            raise RuntimeError("mixed checkpoint verification lacks initial evidence")
+        initial_runtime_report = runtime_bytes(initial_parameters)[1]
+        if (
+            receipt_binding["inputs"].get("initial_runtime")
+            != initial_runtime_report
+            or receipt_binding["inputs"].get("initial_metrics")
+            != initial_metrics
+            or report["initial"]["validation"] != initial_metrics["validation"]
+            or report["initial"]["retention"] != initial_metrics["retention"]
+            or report.get("retention") != metrics(candidate, retention_validation)
+            or report.get("anchor_training")
+            != metrics(candidate, mixed_training.anchor)
+        ):
+            raise ValueError(
+                f"seed {seed} checkpoint recomputed retention metrics disagree"
+            )
+    elif (
+        initial_parameters is not None
+        or initial_metrics is not None
+        or retention_validation is not None
+    ):
+        raise RuntimeError("legacy checkpoint verification received retention evidence")
     publication = _seed_checkpoint_publication(
         seed,
         checkpoint_path,
@@ -1271,6 +2260,10 @@ def _train_seed_and_report(
     seed: int,
     training_arguments: Mapping[str, int | float | str],
     mixed_training: MixedTraining | None = None,
+    retention_validation: Dataset | None = None,
+    initial_parameters: Mapping[str, np.ndarray] | None = None,
+    initial_runtime_report: Mapping[str, object] | None = None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None = None,
     checkpoint_directory: pathlib.Path | None = None,
     receipt_binding: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict, dict | None]:
@@ -1289,7 +2282,33 @@ def _train_seed_and_report(
         learning_rate=float(training_arguments["learning_rate"]),
         weight_decay=float(training_arguments["weight_decay"]),
         mixed_training=mixed_training,
+        initial_parameters=initial_parameters,
+        initial_runtime_report=initial_runtime_report,
+        initial_metrics=initial_metrics,
+        new_loss_coefficient=float(
+            training_arguments.get("new_loss_coefficient", 0.5)
+        ),
+        anchor_loss_coefficient=float(
+            training_arguments.get("anchor_loss_coefficient", 0.5)
+        ),
+        retention_sign_tolerance=float(
+            training_arguments.get("retention_sign_tolerance", 0.0025)
+        ),
+        retention_huber_ratio=float(
+            training_arguments.get("retention_huber_ratio", 1.01)
+        ),
+        retention_validation=retention_validation,
     )
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        if (
+            not _is_residual_runtime(candidate)
+            or not _base_parameters_are_byte_identical(
+                candidate, initial_parameters
+            )
+        ):
+            raise RuntimeError(
+                f"seed {seed} candidate v2 frozen base parameters changed"
+            )
     report["checkpoint"] = runtime_bytes(candidate)[1]
     publication = None
     if checkpoint_directory is not None:
@@ -1304,6 +2323,10 @@ def _train_seed_and_report(
 _SEED_WORKER_DATASETS: Mapping[str, Dataset] | None = None
 _SEED_WORKER_ARGUMENTS: Mapping[str, int | float | str] | None = None
 _SEED_WORKER_MIXED_TRAINING: MixedTraining | None = None
+_SEED_WORKER_RETENTION_VALIDATION: Dataset | None = None
+_SEED_WORKER_INITIAL_PARAMETERS: Mapping[str, np.ndarray] | None = None
+_SEED_WORKER_INITIAL_RUNTIME_REPORT: Mapping[str, object] | None = None
+_SEED_WORKER_INITIAL_METRICS: Mapping[str, Mapping[str, float]] | None = None
 _SEED_WORKER_CHECKPOINT_DIRECTORY: pathlib.Path | None = None
 _SEED_WORKER_RECEIPT_BINDING: Mapping[str, object] | None = None
 
@@ -1312,17 +2335,27 @@ def _initialize_seed_worker(
     datasets: Mapping[str, Dataset],
     training_arguments: Mapping[str, int | float | str],
     mixed_training: MixedTraining | None,
+    retention_validation: Dataset | None,
+    initial_parameters: Mapping[str, np.ndarray] | None,
+    initial_runtime_report: Mapping[str, object] | None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None,
     checkpoint_directory: pathlib.Path | None,
     receipt_binding: Mapping[str, object] | None,
 ) -> None:
     """Install one read-only dataset copy per long-lived worker process."""
 
     global _SEED_WORKER_DATASETS, _SEED_WORKER_ARGUMENTS
-    global _SEED_WORKER_MIXED_TRAINING
+    global _SEED_WORKER_MIXED_TRAINING, _SEED_WORKER_RETENTION_VALIDATION
+    global _SEED_WORKER_INITIAL_PARAMETERS, _SEED_WORKER_INITIAL_RUNTIME_REPORT
+    global _SEED_WORKER_INITIAL_METRICS
     global _SEED_WORKER_CHECKPOINT_DIRECTORY, _SEED_WORKER_RECEIPT_BINDING
     _SEED_WORKER_DATASETS = datasets
     _SEED_WORKER_ARGUMENTS = training_arguments
     _SEED_WORKER_MIXED_TRAINING = mixed_training
+    _SEED_WORKER_RETENTION_VALIDATION = retention_validation
+    _SEED_WORKER_INITIAL_PARAMETERS = initial_parameters
+    _SEED_WORKER_INITIAL_RUNTIME_REPORT = initial_runtime_report
+    _SEED_WORKER_INITIAL_METRICS = initial_metrics
     _SEED_WORKER_CHECKPOINT_DIRECTORY = checkpoint_directory
     _SEED_WORKER_RECEIPT_BINDING = receipt_binding
 
@@ -1337,6 +2370,10 @@ def _train_seed_worker(
         seed,
         _SEED_WORKER_ARGUMENTS,
         _SEED_WORKER_MIXED_TRAINING,
+        _SEED_WORKER_RETENTION_VALIDATION,
+        _SEED_WORKER_INITIAL_PARAMETERS,
+        _SEED_WORKER_INITIAL_RUNTIME_REPORT,
+        _SEED_WORKER_INITIAL_METRICS,
         _SEED_WORKER_CHECKPOINT_DIRECTORY,
         _SEED_WORKER_RECEIPT_BINDING,
     )
@@ -1347,6 +2384,10 @@ def _train_seeds_parallel(
     seeds: Sequence[int],
     training_arguments: Mapping[str, int | float | str],
     mixed_training: MixedTraining | None,
+    retention_validation: Dataset | None,
+    initial_parameters: Mapping[str, np.ndarray] | None,
+    initial_runtime_report: Mapping[str, object] | None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None,
     seed_workers: int,
     checkpoint_directory: pathlib.Path | None,
     receipt_binding: Mapping[str, object] | None,
@@ -1362,6 +2403,10 @@ def _train_seeds_parallel(
             datasets,
             training_arguments,
             mixed_training,
+            retention_validation,
+            initial_parameters,
+            initial_runtime_report,
+            initial_metrics,
             checkpoint_directory,
             receipt_binding,
         ),
@@ -1405,6 +2450,9 @@ def _checkpoint_receipt_binding(
     training_arguments: Mapping[str, int | float | str],
     input_shard_identities: Sequence[Mapping[str, object]],
     mixed_training: MixedTraining | None = None,
+    retention_validation: Dataset | None = None,
+    initial_runtime_report: Mapping[str, object] | None = None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None = None,
 ) -> dict:
     try:
         normalized_shards = json.loads(
@@ -1416,21 +2464,53 @@ def _checkpoint_receipt_binding(
         not isinstance(identity, dict) for identity in normalized_shards
     ):
         raise ValueError("input shard identities must be JSON objects")
-    return {
-        "configuration": _seed_training_configuration(training_arguments),
-        "inputs": {
-            "feature_schema": features.FEATURE_SCHEMA,
-            "datasets": _dataset_identities(datasets),
-            "training_streams": (
-                {
+    if (
+        (mixed_training is None) != (initial_runtime_report is None)
+        or (mixed_training is None) != (initial_metrics is None)
+        or (mixed_training is None) != (retention_validation is None)
+    ):
+        raise ValueError(
+            "mixed checkpoint binding requires exactly one supplied-runtime identity"
+        )
+    normalized_initial = None
+    normalized_initial_metrics = None
+    if initial_runtime_report is not None:
+        try:
+            normalized_initial = json.loads(
+                canonical_json_bytes(dict(initial_runtime_report))
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("initial runtime identity must be finite") from error
+        try:
+            normalized_initial_metrics = json.loads(
+                canonical_json_bytes(dict(initial_metrics or {}))
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("initial metric identity must be finite") from error
+    inputs = {
+        "feature_schema": features.FEATURE_SCHEMA,
+        "datasets": _dataset_identities(datasets),
+        "training_streams": None,
+        "shards": normalized_shards,
+    }
+    if mixed_training is not None:
+        inputs.update(
+            {
+                "training_streams": {
                     "new": _dataset_identity(mixed_training.new),
                     "anchor": _dataset_identity(mixed_training.anchor),
-                }
-                if mixed_training is not None
-                else None
-            ),
-            "shards": normalized_shards,
-        },
+                },
+                "initial_runtime": normalized_initial,
+                "initial_metrics": normalized_initial_metrics,
+                "retention_monitor": _dataset_identity(retention_validation),
+                "anchor_training_monitor": _dataset_identity(
+                    mixed_training.anchor
+                ),
+            }
+        )
+    return {
+        "configuration": _seed_training_configuration(training_arguments),
+        "inputs": inputs,
         "producer": _training_producer_identity(),
     }
 
@@ -1440,6 +2520,11 @@ def _prepare_seed_checkpoints(
     seeds: Sequence[int],
     resume: bool,
     receipt_binding: Mapping[str, object],
+    datasets: Mapping[str, Dataset],
+    mixed_training: MixedTraining | None,
+    retention_validation: Dataset | None,
+    initial_parameters: Mapping[str, np.ndarray] | None,
+    initial_metrics: Mapping[str, Mapping[str, float]] | None,
 ) -> dict[int, tuple[dict[str, np.ndarray], dict, dict]]:
     if directory.exists() and not directory.is_dir():
         raise ValueError("seed checkpoint path exists but is not a directory")
@@ -1471,7 +2556,16 @@ def _prepare_seed_checkpoints(
                 f"seed {seed} checkpoint already exists; use --resume-seeds or "
                 "a fresh checkpoint directory"
             )
-        completed[seed] = _load_seed_checkpoint(directory, seed, receipt_binding)
+        completed[seed] = _load_seed_checkpoint(
+            directory,
+            seed,
+            receipt_binding,
+            datasets,
+            mixed_training,
+            retention_validation,
+            initial_parameters,
+            initial_metrics,
+        )
     return completed
 
 
@@ -1491,6 +2585,13 @@ def train_three_seeds(
     input_shard_identities: Sequence[Mapping[str, object]] = (),
     mixed_training: MixedTraining | None = None,
     selection_validation: Dataset | None = None,
+    retention_validation: Dataset | None = None,
+    initial_runtime: pathlib.Path | None = None,
+    new_loss_coefficient: float = 0.5,
+    anchor_loss_coefficient: float = 0.5,
+    retention_sign_tolerance: float = 0.0025,
+    retention_huber_ratio: float = 1.01,
+    prevalidated_cross_split_retention: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict]:
     if len(seeds) != 3 or len(set(seeds)) != 3:
         raise ValueError("the frozen training campaign requires exactly three seeds")
@@ -1500,12 +2601,32 @@ def train_three_seeds(
         or seed_workers <= 0
     ):
         raise ValueError("seed_workers must be a positive integer")
+    if not isinstance(prevalidated_cross_split_retention, bool):
+        raise ValueError("retention prevalidation flag must be boolean")
     datasets = dict(datasets)
+    initial_parameters: dict[str, np.ndarray] | None = None
+    initial_runtime_report: dict | None = None
+    initial_metric_report: dict[str, dict] | None = None
     if selection_validation is not None:
         if len(selection_validation) == 0:
             raise ValueError("selection validation dataset must be nonempty")
         datasets["validation"] = selection_validation
     if mixed_training is not None:
+        if initial_runtime is None:
+            raise ValueError("mixed training requires an exact supplied runtime")
+        _validate_loss_coefficients(
+            new_loss_coefficient, anchor_loss_coefficient
+        )
+        if retention_validation is None or len(retention_validation) == 0:
+            raise ValueError("mixed training requires retention validation data")
+        # Validate the feasibility policy before starting any worker.
+        _retention_thresholds(
+            {"sign_accuracy": 0.5, "weighted_huber": 0.5},
+            sign_tolerance=retention_sign_tolerance,
+            huber_ratio=retention_huber_ratio,
+        )
+        initial_runtime = initial_runtime.resolve()
+        initial_parameters, initial_runtime_report = load_runtime(initial_runtime)
         mixed_training.validate(batch_size)
         datasets["train"] = concatenate_datasets(
             (mixed_training.new, mixed_training.anchor)
@@ -1514,12 +2635,43 @@ def train_three_seeds(
             raise ValueError(
                 "mixed training requires a separate nonempty selection validation"
             )
-        if reveal_test and ("test" not in datasets or len(datasets["test"]) == 0):
-            raise ValueError("test reveal requires a nonempty test dataset")
-    elif set(datasets) != {"train", "validation", "test"} or any(
-        len(dataset) == 0 for dataset in datasets.values()
-    ):
-        raise ValueError("training, validation, and test datasets must be nonempty")
+        if reveal_test:
+            raise ValueError("mixed training cannot reveal a protected test split")
+        validate_retention_validation_independence(
+            retention_validation,
+            {
+                "new-training": mixed_training.new,
+                "anchor-training": mixed_training.anchor,
+                "new-adjudicator": datasets["validation"],
+            },
+            prevalidated_cross_split_roles=(
+                ("new-training", "anchor-training")
+                if prevalidated_cross_split_retention
+                else ()
+            ),
+        )
+        initial_metric_report = {
+            "validation": metrics(initial_parameters, datasets["validation"]),
+            "retention": metrics(initial_parameters, retention_validation),
+        }
+    else:
+        if (
+            initial_runtime is not None
+            or retention_validation is not None
+            or prevalidated_cross_split_retention
+        ):
+            raise ValueError("supplied runtime initialization requires mixed training")
+        if (
+            new_loss_coefficient != 0.5
+            or anchor_loss_coefficient != 0.5
+            or retention_sign_tolerance != 0.0025
+            or retention_huber_ratio != 1.01
+        ):
+            raise ValueError("mixed retention policy options require mixed training")
+        if set(datasets) != {"train", "validation", "test"} or any(
+            len(dataset) == 0 for dataset in datasets.values()
+        ):
+            raise ValueError("training, validation, and test datasets must be nonempty")
     normalized_seeds = tuple(int(seed) for seed in seeds)
     if any(seed < 0 or seed >= 1 << 64 for seed in normalized_seeds):
         raise ValueError("training seeds must fit uint64")
@@ -1531,6 +2683,10 @@ def train_three_seeds(
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
+        "new_loss_coefficient": new_loss_coefficient,
+        "anchor_loss_coefficient": anchor_loss_coefficient,
+        "retention_sign_tolerance": retention_sign_tolerance,
+        "retention_huber_ratio": retention_huber_ratio,
         "new_rows_per_batch": (
             mixed_training.new_rows_per_batch if mixed_training is not None else 0
         ),
@@ -1543,6 +2699,8 @@ def train_three_seeds(
             else "dataset-validation-split"
         ),
     }
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        training_arguments["initial_runtime_version"] = RUNTIME_V2_VERSION
     receipt_binding = None
     completed: dict[
         int, tuple[dict[str, np.ndarray], dict, dict | None]
@@ -1550,13 +2708,24 @@ def train_three_seeds(
     if seed_checkpoint_directory is not None:
         seed_checkpoint_directory = seed_checkpoint_directory.resolve()
         receipt_binding = _checkpoint_receipt_binding(
-            datasets, training_arguments, input_shard_identities, mixed_training
+            datasets,
+            training_arguments,
+            input_shard_identities,
+            mixed_training,
+            retention_validation,
+            initial_runtime_report,
+            initial_metric_report,
         )
         completed = _prepare_seed_checkpoints(
             seed_checkpoint_directory,
             normalized_seeds,
             resume_seeds,
             receipt_binding,
+            datasets,
+            mixed_training,
+            retention_validation,
+            initial_parameters,
+            initial_metric_report,
         )
     pending_seeds = [seed for seed in normalized_seeds if seed not in completed]
     if pending_seeds:
@@ -1566,9 +2735,13 @@ def train_three_seeds(
                     datasets,
                     seed,
                     training_arguments,
-                    mixed_training,
-                    seed_checkpoint_directory,
-                    receipt_binding,
+                    mixed_training=mixed_training,
+                    retention_validation=retention_validation,
+                    initial_parameters=initial_parameters,
+                    initial_runtime_report=initial_runtime_report,
+                    initial_metrics=initial_metric_report,
+                    checkpoint_directory=seed_checkpoint_directory,
+                    receipt_binding=receipt_binding,
                 )
                 for seed in pending_seeds
             ]
@@ -1578,6 +2751,10 @@ def train_three_seeds(
                 pending_seeds,
                 training_arguments,
                 mixed_training,
+                retention_validation,
+                initial_parameters,
+                initial_runtime_report,
+                initial_metric_report,
                 seed_workers,
                 seed_checkpoint_directory,
                 receipt_binding,
@@ -1586,8 +2763,24 @@ def train_three_seeds(
     seed_results = [completed[seed] for seed in normalized_seeds]
     candidates = [result[0] for result in seed_results]
     reports = [result[1] for result in seed_results]
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        for seed, candidate in zip(normalized_seeds, candidates, strict=True):
+            if (
+                not _is_residual_runtime(candidate)
+                or not _base_parameters_are_byte_identical(
+                    candidate, initial_parameters
+                )
+            ):
+                raise RuntimeError(
+                    f"seed {seed} selected v2 frozen base parameters changed"
+                )
+    trained_indices = [
+        index for index, report in enumerate(reports)
+        if int(report["best_epoch"]) > 0
+    ]
+    selection_pool = trained_indices or list(range(3))
     chosen_index = min(
-        range(3),
+        selection_pool,
         key=lambda index: (
             reports[index]["validation"]["weighted_huber"],
             -reports[index]["validation"]["sign_accuracy"],
@@ -1601,32 +2794,61 @@ def train_three_seeds(
         reports[chosen_index]["test"] = metrics(
             candidates[chosen_index], datasets["test"]
         )
+    selected_configuration = _seed_training_configuration(training_arguments)
+    optimizer_report = {
+        "name": "adamw",
+        "epochs": epochs,
+        "patience": patience,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "gradient_norm_clip": 5.0,
+    }
+    if initial_parameters is not None and _is_residual_runtime(initial_parameters):
+        optimizer_report.update(
+            {
+                "trainable_parameters": list(RESIDUAL_PARAMETER_NAMES),
+                "frozen_parameters": list(BASE_PARAMETER_NAMES),
+            }
+        )
     selection_report = {
         "seeds": list(normalized_seeds),
         "seed_reports": reports,
         "chosen_seed": reports[chosen_index]["seed"],
         "selection": (
-            "minimum validation weighted Huber; then maximum sign accuracy; "
+            "choose each seed's best epoch that beats epoch zero on the new "
+            "adjudicator and passes disjoint retention validation; continue "
+            "training through complete anchor coverage; then choose minimum "
+            "adjudicator Huber followed by sign, correlation, and seed"
+            if mixed_training is not None
+            else "minimum validation weighted Huber; then maximum sign accuracy; "
             "then maximum correlation; then seed"
         ),
         "test_revealed_after_selection": reveal_test,
-        "optimizer": {
-            "name": "adamw",
-            "epochs": epochs,
-            "patience": patience,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "weight_decay": weight_decay,
-            "gradient_norm_clip": 5.0,
-        },
-        "loss": {"name": "weighted-huber", "delta": 0.25},
+        "optimizer": optimizer_report,
+        "loss": selected_configuration["loss"],
         "augmentation": "reflection rows inherit root game split",
-        "batching": _seed_training_configuration(training_arguments)["batching"],
+        "batching": selected_configuration["batching"],
         "selection_validation": {
             "kind": training_arguments["selection_validation"],
             "dataset": _dataset_identity(datasets["validation"]),
         },
     }
+    if mixed_training is not None:
+        selection_report.update(
+            {
+                "initialization": selected_configuration["initialization"],
+                "initial_runtime": initial_runtime_report,
+                "initial_metrics": initial_metric_report,
+                "retention_selection": {
+                    "policy": selected_configuration["retention_selection"],
+                    "dataset": _dataset_identity(retention_validation),
+                },
+                "anchor_training_monitor": _dataset_identity(
+                    mixed_training.anchor
+                ),
+            }
+        )
     if seed_checkpoint_directory is not None:
         publications = [result[2] for result in seed_results]
         if any(publication is None for publication in publications):
@@ -1700,7 +2922,11 @@ def _declared_target_policies(manifest: Mapping[str, object]) -> list[dict]:
         if (
             policy.get("schema") != corpus.TARGET_POLICY_SCHEMA
             or policy.get("teacher_schema")
-            not in {corpus.TEACHER_SCHEMA, corpus.SEARCH_TEACHER_SCHEMA}
+            not in {
+                corpus.TEACHER_SCHEMA,
+                corpus.RANK4_TEACHER_SCHEMA,
+                corpus.SEARCH_TEACHER_SCHEMA,
+            }
             or policy.get("mixture")
             != {
                 "teacher_weight": 0.75,
@@ -1715,7 +2941,10 @@ def _declared_target_policies(manifest: Mapping[str, object]) -> list[dict]:
 
 
 def target_metadata_from_shard_provenance(
-    manifests: Sequence[Mapping[str, object]], roles: Sequence[str]
+    manifests: Sequence[Mapping[str, object]],
+    roles: Sequence[str],
+    *,
+    loss: str = "weighted-huber-delta-0.25",
 ) -> dict:
     if len(manifests) != len(roles):
         raise ValueError("source shard roles do not align with manifests")
@@ -1742,7 +2971,7 @@ def target_metadata_from_shard_provenance(
         "policy_provenance": "source-shard-manifest-provenance",
         "declared_policies": bound_policies,
         "undeclared_roles": sorted(undeclared_roles),
-        "loss": "weighted-huber-delta-0.25",
+        "loss": loss,
         "policy_head": False,
     }
 
@@ -1763,8 +2992,19 @@ def main() -> int:
         type=pathlib.Path,
         default=[],
     )
+    parser.add_argument(
+        "--retention-validation-manifest",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+    )
     parser.add_argument("--new-rows-per-batch", type=int)
     parser.add_argument("--anchor-rows-per-batch", type=int)
+    parser.add_argument("--initial-runtime", type=pathlib.Path)
+    parser.add_argument("--new-loss-coefficient", type=float, default=0.5)
+    parser.add_argument("--anchor-loss-coefficient", type=float, default=0.5)
+    parser.add_argument("--retention-sign-tolerance", type=float, default=0.0025)
+    parser.add_argument("--retention-huber-ratio", type=float, default=1.01)
     parser.add_argument("--output-directory", type=pathlib.Path, required=True)
     parser.add_argument("--tiny-fixture", action="store_true")
     parser.add_argument("--bootstrap-only", action="store_true")
@@ -1791,6 +3031,7 @@ def main() -> int:
         arguments.new_shard_manifest,
         arguments.anchor_shard_manifest,
         arguments.selection_validation_manifest,
+        arguments.retention_validation_manifest,
         arguments.new_rows_per_batch,
         arguments.anchor_rows_per_batch,
     )
@@ -1802,12 +3043,15 @@ def main() -> int:
         not arguments.new_shard_manifest
         or not arguments.anchor_shard_manifest
         or not arguments.selection_validation_manifest
+        or not arguments.retention_validation_manifest
         or arguments.new_rows_per_batch is None
         or arguments.anchor_rows_per_batch is None
+        or arguments.initial_runtime is None
     ):
         parser.error(
-            "mixed training requires new, anchor, and selection-validation "
-            "manifests plus both per-batch row quotas"
+            "mixed training requires new, anchor, selection-validation, and "
+            "retention-validation manifests, both per-batch row quotas, and "
+            "an initial runtime"
         )
     if mixed_requested and (
         arguments.shard_manifests
@@ -1818,6 +3062,15 @@ def main() -> int:
         parser.error("mixed training cannot be combined with legacy training inputs")
     if mixed_requested and arguments.reveal_test:
         parser.error("mixed training has no protected test input to reveal")
+    if not mixed_requested and arguments.initial_runtime is not None:
+        parser.error("--initial-runtime requires mixed training")
+    if not mixed_requested and (
+        arguments.new_loss_coefficient != 0.5
+        or arguments.anchor_loss_coefficient != 0.5
+        or arguments.retention_sign_tolerance != 0.0025
+        or arguments.retention_huber_ratio != 1.01
+    ):
+        parser.error("mixed retention policy options require mixed training")
     if mixed_requested and (
         arguments.new_rows_per_batch <= 0
         or arguments.anchor_rows_per_batch <= 0
@@ -1832,6 +3085,7 @@ def main() -> int:
         or arguments.seed_checkpoint_directory
         or arguments.resume_seeds
         or mixed_requested
+        or arguments.initial_runtime
     ):
         parser.error("--bootstrap-only does not accept training or checkpoint inputs")
     if arguments.resume_seeds and arguments.seed_checkpoint_directory is None:
@@ -1857,6 +3111,17 @@ def main() -> int:
         or arguments.weight_decay < 0.0
     ):
         parser.error("learning rate and weight decay are invalid")
+    try:
+        _validate_loss_coefficients(
+            arguments.new_loss_coefficient, arguments.anchor_loss_coefficient
+        )
+        _retention_thresholds(
+            {"sign_accuracy": 0.5, "weighted_huber": 0.5},
+            sign_tolerance=arguments.retention_sign_tolerance,
+            huber_ratio=arguments.retention_huber_ratio,
+        )
+    except ValueError as error:
+        parser.error(str(error))
 
     arguments.output_directory.mkdir(parents=True, exist_ok=True)
     if arguments.bootstrap_only:
@@ -1901,11 +3166,18 @@ def main() -> int:
             new_manifests = arguments.new_shard_manifest
             anchor_manifests = arguments.anchor_shard_manifest
             validation_manifests = arguments.selection_validation_manifest
-            manifests = [*new_manifests, *anchor_manifests, *validation_manifests]
+            retention_manifests = arguments.retention_validation_manifest
+            manifests = [
+                *new_manifests,
+                *anchor_manifests,
+                *validation_manifests,
+                *retention_manifests,
+            ]
             source_roles = (
                 ["new"] * len(new_manifests)
                 + ["anchor"] * len(anchor_manifests)
                 + ["selection-validation"] * len(validation_manifests)
+                + ["retention-validation"] * len(retention_manifests)
             )
         else:
             manifests = arguments.shard_manifests
@@ -1915,16 +3187,23 @@ def main() -> int:
         if mixed_requested:
             new_count = len(arguments.new_shard_manifest)
             anchor_count = len(arguments.anchor_shard_manifest)
+            validation_count = len(arguments.selection_validation_manifest)
             new_shards = loaded[:new_count]
             anchor_shards = loaded[new_count : new_count + anchor_count]
-            validation_shards = loaded[new_count + anchor_count :]
+            validation_start = new_count + anchor_count
+            retention_start = validation_start + validation_count
+            validation_shards = loaded[validation_start:retention_start]
+            retention_shards = loaded[retention_start:]
             if any(shard.split != "train" for shard in (*new_shards, *anchor_shards)):
                 parser.error("new and anchor shard manifests must have split=train")
             if any(shard.split != "validation" for shard in validation_shards):
                 parser.error("selection validation manifests must have split=validation")
+            if any(shard.split != "validation" for shard in retention_shards):
+                parser.error("retention validation manifests must have split=validation")
             new_dataset = combine_shards(new_shards)
             anchor_dataset = combine_shards(anchor_shards)
             selection_validation = combine_shards(validation_shards)
+            retention_validation = combine_shards(retention_shards)
             mixed_training = MixedTraining(
                 new_dataset,
                 anchor_dataset,
@@ -1933,6 +3212,7 @@ def main() -> int:
             )
             datasets = {"validation": selection_validation}
         else:
+            retention_validation = None
             datasets = {
                 split: combine_shards(
                     [shard for shard in loaded if shard.split == split]
@@ -1956,27 +3236,55 @@ def main() -> int:
             input_shard_identities=_shard_identities(manifests),
             mixed_training=mixed_training,
             selection_validation=selection_validation,
+            retention_validation=retention_validation,
+            initial_runtime=arguments.initial_runtime,
+            new_loss_coefficient=arguments.new_loss_coefficient,
+            anchor_loss_coefficient=arguments.anchor_loss_coefficient,
+            retention_sign_tolerance=arguments.retention_sign_tolerance,
+            retention_huber_ratio=arguments.retention_huber_ratio,
+            prevalidated_cross_split_retention=mixed_requested,
         )
         runtime_name = "jacek_replay_bfm.runtime"
 
     runtime_path = arguments.output_directory / runtime_name
     runtime_report = export_runtime(runtime_path, selected)
+    if _is_residual_runtime(selected):
+        _require_v2_frozen_base_report(
+            runtime_report,
+            training_report.get("initial_runtime", {}),
+            context="selected model publication",
+        )
+    architecture = {
+        "dimensions": [features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT],
+        "biases": False,
+        "activations": ["square-leaky-0.01", "leaky-relu-0.01", "tanh"],
+        "payload_layout": RUNTIME_V1_PAYLOAD_LAYOUT,
+    }
+    if _is_residual_runtime(selected):
+        architecture.update(_residual_runtime_contract())
     manifest = {
-        "schema": MODEL_MANIFEST_SCHEMA,
+        "schema": (
+            RETENTION_MODEL_MANIFEST_SCHEMA
+            if mixed_requested
+            else MODEL_MANIFEST_SCHEMA
+        ),
         "status": (
             "bootstrap-not-trained-not-selected"
             if arguments.bootstrap_only
             else "research-candidate-not-game-gated"
         ),
         "feature_schema": features.FEATURE_SCHEMA,
-        "architecture": {
-            "dimensions": [features.INPUT_COUNT, HIDDEN_ONE, HIDDEN_TWO, OUTPUT_COUNT],
-            "biases": False,
-            "activations": ["square-leaky-0.01", "leaky-relu-0.01", "tanh"],
-            "payload_layout": "w1-input-major,w2-input-major,w3",
-        },
+        "architecture": architecture,
         "target": target_metadata_from_shard_provenance(
-            source_manifests, source_roles
+            source_manifests,
+            source_roles,
+            loss=(
+                "separately-normalized-weighted-huber-delta-0.25:"
+                f"new={arguments.new_loss_coefficient}:"
+                f"anchor={arguments.anchor_loss_coefficient}"
+                if mixed_requested
+                else "weighted-huber-delta-0.25"
+            ),
         ) if not arguments.bootstrap_only else {
             "policy_provenance": "bootstrap-has-no-training-targets",
             "declared_policies": [],

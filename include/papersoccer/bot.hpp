@@ -264,6 +264,19 @@ struct JacekReplayBfmConfig {
   double fpu{0.5};
 };
 
+enum class JacekReplayBfmSearchTermination {
+  NotStarted,
+  RootSolved,
+  FixedWorkCap,
+  Deadline,
+  ClosedUnsolvedRoot,
+  NoSelectableFrontier,
+  ExpansionFailed,
+};
+
+std::string_view jacek_replay_bfm_search_termination_name(
+    JacekReplayBfmSearchTermination termination) noexcept;
+
 struct JacekReplayBfmSearchStats {
   std::uint64_t expansions{};
   std::uint64_t generated_actions{};
@@ -278,6 +291,24 @@ struct JacekReplayBfmSearchStats {
   std::uint64_t tactical_proofs{};
   std::uint64_t tactical_solutions{};
   std::uint64_t truncations{};
+  std::uint64_t generation_action_cap_stops{};
+  std::uint64_t generation_partial_cap_stops{};
+  std::uint64_t generation_deadline_stops{};
+  std::uint64_t materialization_deadline_stops{};
+  std::uint64_t generation_queue_drops{};
+  std::uint64_t generation_retention_drops{};
+  std::uint64_t generation_boundary_replacements{};
+  std::uint64_t generation_tactical_shortcuts{};
+  std::uint64_t generation_fallbacks{};
+  std::uint64_t generation_frontier_resumptions{};
+  std::uint64_t generation_zero_action_resumptions{};
+  std::uint64_t generation_max_frontier_depth{};
+  std::uint64_t progressive_widenings{};
+  std::uint64_t closed_unsolved_nodes{};
+  std::uint64_t closed_unsolved_nonexhaustive_nodes{};
+  std::uint64_t open_unexpanded_nodes{};
+  std::uint64_t implicit_action_frontiers{};
+  std::size_t max_open_children{};
   std::size_t tree_nodes{};
   std::uint32_t max_complete_turn_depth{};
   float root_value{};
@@ -285,6 +316,8 @@ struct JacekReplayBfmSearchStats {
   std::optional<Player> proven_winner{};
   bool deadline_reached{};
   bool tree_cap_reached{};
+  JacekReplayBfmSearchTermination termination{
+      JacekReplayBfmSearchTermination::NotStarted};
   bool cached_continuation{};
   std::size_t planned_action_length{};
   std::size_t current_edge_index{};
