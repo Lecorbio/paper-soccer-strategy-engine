@@ -3,6 +3,18 @@
 #include "../submissions/codingame/bots/rank_4/bot.cpp"
 #undef turn_action_v2
 
+#if defined(__GNUC__) && !defined(__clang__)
+namespace papersoccer::jacek_replay_continuation_jacek_nn {
+namespace replay_book {
+using namespace ::papersoccer::jacek_replay_continuation_teacher::replay_book;
+}
+namespace replay_value_model {
+using namespace
+    ::papersoccer::jacek_replay_continuation_teacher::replay_value_model;
+}
+}  // namespace papersoccer::jacek_replay_continuation_jacek_nn
+#endif
+
 #define PAPER_SOCCER_TURN_ACTION_V2_NO_MAIN
 #define turn_action_v2 jacek_replay_continuation_jacek_nn
 #include "../submissions/codingame/bots/jacek_nn/bot.cpp"

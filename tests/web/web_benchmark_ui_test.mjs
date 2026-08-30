@@ -356,6 +356,19 @@ test("the overview provides semantic, accessible, responsive result structures",
   assert.ok(elementWithId(benchmarkHtml, "details", "paretoDetails"));
   assert.ok(elementWithId(benchmarkHtml, "details", "calibrationDetails"));
   assert.ok(elementWithId(benchmarkHtml, "details", "methodologyDetails"));
+  assert.ok(elementWithId(benchmarkHtml, "section", "largeTeacherCampaign"));
+  assert.match(
+    elementWithId(benchmarkHtml, "a", "largeTeacherReportLink"),
+    /benchmarks\/large_teacher_campaign\/REPORT\.md/,
+  );
+  assert.match(benchmarkHtml, /981\.945875 ms/);
+  assert.match(benchmarkHtml, /20 ms\s+pilot did not pass/);
+  assert.match(benchmarkHtml, /Matched<\/th><td>531<\/td><td>270 \/ 261<\/td>/);
+  assert.match(benchmarkHtml, /Pilot teacher<\/th><td>536<\/td><td>262 \/ 274<\/td>/);
+  assert.match(benchmarkHtml, /Rank-4<\/th><td>651<\/td><td>336 \/ 315<\/td>/);
+  assert.match(benchmarkHtml, /Jacek NN<\/th><td>668<\/td><td>344 \/ 324<\/td>/);
+  assert.match(benchmarkHtml, /local teacher candidate—not a canonical bot/i);
+  assert.match(benchmarkHtml, /no promotion, deployment, model upload, or\s+leaderboard change/i);
 
   assert.match(benchmarkSource, /setAttribute\("role",\s*"img"\)/);
   assert.match(benchmarkSource, /setAttribute\("aria-label",\s*[^)]+\)/);

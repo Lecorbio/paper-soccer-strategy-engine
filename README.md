@@ -20,6 +20,9 @@ submission that finished **4th of 208** and, separately, a preregistered
 - **[4,800 decisive study games](benchmarks/flagship_study/REPORT.md):**
   2,400 color-swapped opening pairs, disjoint selection/test data, and zero
   truncations.
+- **[Accepted local large-teacher candidate](benchmarks/large_teacher_campaign/REPORT.md):**
+  four 1,000-game strength panels passed with zero illegal or unfinished games,
+  followed by a 981.945875 ms uncontended maximum under the strict 1,000 ms gate.
 - **[Possession-aware Game Review](docs/demo-and-replays.md#review-a-finished-game):**
   complete-turn recommendations, exact late-game proofs, grading, replay
   export, and reversible “Try this line” analysis.
@@ -131,6 +134,7 @@ On other systems, open `web/index.html` in a modern browser.
 - [CodinGame submission archive](submissions/codingame/README.md)
 - [Model artifacts and provenance](models/README.md)
 - [Offline Jacek replay BFM](docs/jacek-replay-bfm.md)
+- [Large-teacher self-search outcome](benchmarks/large_teacher_campaign/REPORT.md)
 
 ## License
 

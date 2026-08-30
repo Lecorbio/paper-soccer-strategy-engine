@@ -43,6 +43,11 @@ jobs:
             tests.codingame.test_jacek_replay_baseline \
             tests.codingame.test_jacek_replay_tuning
 
+      - name: Verify compact large-teacher evidence
+        run: |
+          python3 benchmarks/large_teacher_campaign/publish.py verify
+          python3 benchmarks/large_teacher_campaign/publish.py test
+
   leaderboard-contract:
     name: Leaderboard contracts
     runs-on: ubuntu-latest
@@ -91,6 +96,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pinned research dependency
+        run: python3 -m pip install -r requirements-research.txt
+
       - name: Stabilize duplicate pragma-once headers
         run: |
           find submissions/codingame/bots -type f \
@@ -116,6 +124,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pinned research dependency
+        run: python3 -m pip install -r requirements-research.txt
+
       - name: Build and test
         run: ./scripts/build-and-test.sh
 
@@ -137,6 +148,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Install pinned research dependency
+        run: python3 -m pip install -r requirements-research.txt
 
       - name: Build and test
         run: ./scripts/build-and-test.sh

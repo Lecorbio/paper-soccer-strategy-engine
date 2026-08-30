@@ -22,6 +22,50 @@ teacher for one 10,000-game iteration with at most 20 positions per game.
 Final publication remains local and requires fresh 980 ms gates; no external
 upload or replacement of Rank-4 is automatic.
 
+## Recorded large-teacher outcome
+
+The exploratory pilot did **not** pass, including its 20 ms latency target. A
+separate teacher-only continuation allowed exactly its recorded matched and
+incumbent primary-strength failures; it did not waive legality, completion,
+external-strength, retention, p99, or uncontended-latency failures. The pilot
+truth and every copied input remained receipt-bound.
+
+The full 10,000-game campaign subsequently reached the local terminal
+`teacher-candidate-accepted`. Its four fresh 500-pair panels were:
+
+| Panel | Candidate wins | Wins by candidate color | Required |
+| --- | ---: | ---: | ---: |
+| Matched | 531 / 1,000 | 270 / 261 | 527 total; 260/color |
+| Pilot teacher | 536 / 1,000 | 262 / 274 | 527 total; 260/color |
+| Rank-4 | 651 / 1,000 | 336 / 315 | 501 total; 238/color |
+| Jacek NN | 668 / 1,000 | 344 / 324 | 501 total; 238/color |
+
+All 4,000 panel games were legal and finished. The separate single-worker
+latency audit recorded 334 candidate decisions and a 981.945875 ms maximum,
+strictly below the 1,000 ms limit. Canonical retention also passed against both
+the pilot actor and the original v6 reference:
+
+| Runtime | Sign accuracy | Weighted Huber |
+| --- | ---: | ---: |
+| Selected teacher | 0.8676271354 | 0.0487084053 |
+| Pilot actor | 0.8670571325 | 0.0488501489 |
+| Original v6 reference | 0.8671066979 | 0.0487790965 |
+
+A host update from macOS 26.5.2 to 26.6.2 occurred after 151 of 400 final-gate
+shards had completed, leaving stage 19 incomplete. Those pre-update shards were
+archived as diagnostic-only evidence, and all 400 authoritative shards were
+rerun from offset zero under one homogeneous 26.6.2 environment. The transition
+and subsequent delayed-import runner repair remain chained into stages 19–21
+and the final summary.
+
+The accepted runtime remains a **local, noncanonical teacher candidate**.
+Student training is eligible but has not started. The campaign performed no
+canonical promotion, model deployment, external model upload, Rank-4
+replacement, or leaderboard update. A later, explicitly authorized
+post-campaign documentation release publishes only compact path-normalized
+evidence and hashes; it does not rewrite the frozen terminal receipts. See the
+[curated report](../benchmarks/large_teacher_campaign/REPORT.md).
+
 ## Data contracts
 
 Frozen position TSV columns are:

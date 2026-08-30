@@ -12,6 +12,14 @@ tracked allowlists under `results/rank_4_jacek_hybrid/` and
 `results/jacek_arena_bfm/`. Verified CodinGame source artifacts and their
 bot-specific historical ledgers stay under `submissions/codingame/`.
 
+The accepted local large-teacher campaign follows that split: its multi-gigabyte
+models, labels, banks, shards, and logs remain ignored locally, while a compact
+self-verifying outcome is tracked under
+[`benchmarks/large_teacher_campaign/`](../benchmarks/large_teacher_campaign/REPORT.md).
+That record publishes scores, paired outcomes, latency samples, retention
+metrics, and provenance hashes without publishing the teacher runtime or
+changing its noncanonical status.
+
 For a reader-focused presentation of the current frozen four-bot result, see
 the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/).
 The [flagship study report](../benchmarks/flagship_study/REPORT.md) retains the

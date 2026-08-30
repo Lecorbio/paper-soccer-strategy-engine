@@ -520,6 +520,17 @@ tracked under `results/jacek_arena_bfm/`. Other compact benchmark summaries stay
 under `benchmarks/`; source-owned experiment records stay beside the relevant
 CodinGame bot.
 
+The large-teacher campaign keeps its raw tree under ignored `results/` storage.
+Its post-campaign GitHub record is a path-normalized compact bundle under
+`benchmarks/large_teacher_campaign/`. Verify its file hashes, paired panel
+totals, latency samples, retention inequalities, and policy flags without the
+raw campaign tree:
+
+```bash
+python3 benchmarks/large_teacher_campaign/publish.py verify
+python3 benchmarks/large_teacher_campaign/publish.py test
+```
+
 ## What is deterministic
 
 The following are intended to reproduce exactly when inputs and implementation
@@ -560,14 +571,17 @@ Before publishing documentation or code that changes evidence paths:
    referee, rules, submissions, tournament contract, artifact, or page changed.
 6. Run the Python import validation and model generator check if research code
    or dependencies changed.
-7. Confirm raw outputs remain in ignored paths and that only the explicit
+7. Run `benchmarks/large_teacher_campaign/publish.py verify` and
+   `benchmarks/large_teacher_campaign/publish.py test` if its report, compact
+   evidence, verifier, or benchmark-page note changed.
+8. Confirm raw outputs remain in ignored paths and that only the explicit
    `.gitignore` allowlists add curated campaign evidence under `results/`;
    general benchmark reports remain tracked under `benchmarks/`.
-8. Recheck Markdown links from their containing file; paths inside `docs/`
+9. Recheck Markdown links from their containing file; paths inside `docs/`
    require `../` to reach repository-root artifacts.
-9. Review claims against [Experiments](experiments.md) and the specialized
+10. Review claims against [Experiments](experiments.md) and the specialized
    source records, preserving limitations and bot provenance.
-10. Treat the completed Game Review gate as a frozen record. Run full
+11. Treat the completed Game Review gate as a frozen record. Run full
     `validate --require-complete` only with its exact source snapshot and
     preserved raw shards; on current `main`, run the gate unit tests and review
     the checked-in lock, compact result, and report instead.
