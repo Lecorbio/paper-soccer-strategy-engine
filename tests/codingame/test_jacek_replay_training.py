@@ -73,9 +73,9 @@ class JacekReplayTrainingTests(unittest.TestCase):
             dtype=np.int32,
         )
         prediction, _ = training.forward(parameters, [active])
-        # NumPy's float32 reduction may differ by one ULP across supported
+        # NumPy's float32 reduction may drift slightly across supported
         # compiler/platform combinations. The runtime bytes and manifest hash
-        # above remain exact; keep the value regression narrowly bounded.
+        # above remain exact; keep the derived value narrowly bounded.
         self.assertAlmostEqual(
             float(prediction[0]), 0.000798130698967725, delta=2e-9
         )
