@@ -16,6 +16,18 @@ cmake_args=(
   "-DPAPERSOCCER_ENABLE_SANITIZERS=${sanitizers}"
 )
 
+python_executable="${PAPERSOCCER_PYTHON:-}"
+if [[ -z "${python_executable}" && -x "${repository_dir}/.venv/bin/python" ]]; then
+  python_executable="${repository_dir}/.venv/bin/python"
+fi
+if [[ -n "${python_executable}" ]]; then
+  if [[ ! -x "${python_executable}" ]]; then
+    printf 'Configured Python is not executable: %s\n' "${python_executable}" >&2
+    exit 1
+  fi
+  cmake_args+=("-DPython3_EXECUTABLE:FILEPATH=${python_executable}")
+fi
+
 printf 'Configuring %s build in %s\n' "${build_type}" "${build_dir}"
 cmake "${cmake_args[@]}"
 

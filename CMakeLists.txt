@@ -221,6 +221,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     COMMAND ${CMAKE_COMMAND} -E env
             PYTHONDONTWRITEBYTECODE=1
             ${Python3_EXECUTABLE} -m unittest discover
+            # Start here deliberately: tests/codingame is not a Python package,
+            # so discovery rooted at tests does not recurse into this suite.
             -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame
             -p test_*.py)
   set_tests_properties(papersoccer_codingame_promotion_unit_tests PROPERTIES
@@ -372,6 +374,15 @@ set(PAPERSOCCER_CODINGAME_BOTS
   safe_inward rebound_proof defensive_proof shell_proof all_depth_proof
   reply_proof exchange_proof frontier_proof conservative_frontier_proof)
 
+# Research-only entrants are built and tested but are deliberately outside the
+# frozen published leaderboard roster until a separate leaderboard campaign
+# reviews them.  Their own campaign receipts must not imply a leaderboard claim.
+set(PAPERSOCCER_CODINGAME_RESEARCH_BOTS
+  compact_value_bfm)
+set(PAPERSOCCER_CODINGAME_BUILD_BOTS
+  ${PAPERSOCCER_CODINGAME_BOTS}
+  ${PAPERSOCCER_CODINGAME_RESEARCH_BOTS})
+
 function(papersoccer_codingame_target_prefix output_variable bot_name)
   if(bot_name STREQUAL "alpha_beta")
     set(prefix papersoccer_codingame)
@@ -489,7 +500,7 @@ if(NOT EMSCRIPTEN)
   add_test(NAME papersoccer_arena_smoke_test
            COMMAND papersoccer_arena_smoke_test)
 
-  foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
+  foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
     papersoccer_codingame_target_prefix(
       PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
     set(PAPERSOCCER_CODINGAME_BOT_DIRECTORY
@@ -519,7 +530,8 @@ if(NOT EMSCRIPTEN)
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
         "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       if(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_native_bfm" OR
-         PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm" OR
+         PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe 0)
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe_player1
@@ -552,7 +564,8 @@ if(NOT EMSCRIPTEN)
         target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
           PRIVATE papersoccer_opening_bank_support)
       endif()
-      if(NOT PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+      if(NOT PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm" AND
+         NOT PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm")
         target_include_directories(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
           PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
         target_link_libraries(${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate
@@ -658,7 +671,8 @@ if(NOT EMSCRIPTEN)
         set_tests_properties(
           ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_rejects_score
           PROPERTIES WILL_FAIL TRUE)
-      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm")
+      elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "jacek_arena_bfm" OR
+             PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm")
         add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate_smoke
           COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_comparison_gate)
       elseif(PAPERSOCCER_CODINGAME_BOT STREQUAL "topology" OR
@@ -780,8 +794,46 @@ if(NOT EMSCRIPTEN)
     submissions/codingame/bots/jacek_arena_bfm/generator_benchmark.cpp)
   add_executable(papersoccer_codingame_jacek_arena_bfm_selfplay_generator
     submissions/codingame/bots/jacek_arena_bfm/selfplay_generator.cpp)
+  add_executable(papersoccer_codingame_compact_value_bfm_feature_probe
+    submissions/codingame/bots/compact_value_bfm/feature_probe.cpp)
+  add_executable(papersoccer_codingame_compact_value_bfm_inference_probe
+    submissions/codingame/bots/compact_value_bfm/inference_probe.cpp)
+  add_executable(papersoccer_codingame_compact_value_bfm_rank4_gate
+    submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp)
+  add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_self_test
+    COMMAND papersoccer_codingame_compact_value_bfm_rank4_gate --self-test)
 
   if(Python3_Interpreter_FOUND)
+    add_test(NAME papersoccer_codingame_compact_value_bfm_exporter_tests
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE} -m unittest
+        submissions.codingame.bots.compact_value_bfm.test_exporters)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_exporter_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME papersoccer_codingame_compact_value_bfm_feature_parity
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/feature_parity.py
+        --probe $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_feature_probe>
+        --states 4096)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_feature_parity PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
+    add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_support_tests
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE} -m unittest
+        submissions.codingame.bots.compact_value_bfm.test_rank4_gate_support)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_rank4_gate_support_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME papersoccer_codingame_compact_value_bfm_development_runner_tests
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE} -m unittest
+        submissions.codingame.bots.compact_value_bfm.test_development_runner)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_development_runner_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
     add_test(NAME papersoccer_codingame_jacek_arena_bfm_purity
       COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
@@ -891,6 +943,16 @@ if(NOT EMSCRIPTEN)
     PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256
     ${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS})
 
+  set(PAPERSOCCER_SELFSEARCH_COMPACT_ACTOR_SOURCE_PATHS
+    submissions/codingame/bots/compact_value_bfm/model.hpp
+    submissions/codingame/bots/compact_value_bfm/engine.hpp
+    submissions/codingame/bots/compact_value_bfm/engine.cpp
+    tools/compact_value_bfm_runtime_loader.hpp
+    tools/compact_value_bfm_runtime_loader.cpp)
+  papersoccer_hash_source_closure(
+    PAPERSOCCER_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256
+    ${PAPERSOCCER_SELFSEARCH_COMPACT_ACTOR_SOURCE_PATHS})
+
   set(PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_PATHS
     include/papersoccer/bot.hpp
     src/bots/bot.cpp
@@ -901,7 +963,8 @@ if(NOT EMSCRIPTEN)
     tools/jacek_replay_continuations.cpp
     tools/jacek_replay_continuations_internal.hpp
     ${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_PATHS}
-    ${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS})
+    ${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_PATHS}
+    ${PAPERSOCCER_SELFSEARCH_COMPACT_ACTOR_SOURCE_PATHS})
   papersoccer_hash_source_closure(
     PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_SHA256
     ${PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_PATHS})
@@ -980,15 +1043,21 @@ if(NOT EMSCRIPTEN)
     COMMAND papersoccer_jacek_replay_search_teacher_contract_test)
 
   add_executable(papersoccer_jacek_replay_continuations
-    tools/jacek_replay_continuations.cpp)
+    tools/jacek_replay_continuations.cpp
+    tools/compact_value_bfm_runtime_loader.cpp
+    submissions/codingame/bots/compact_value_bfm/engine.cpp)
   target_include_directories(papersoccer_jacek_replay_continuations
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/bots")
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/bots"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+            "${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm")
   target_link_libraries(papersoccer_jacek_replay_continuations
     PRIVATE papersoccer_core)
   target_compile_definitions(papersoccer_jacek_replay_continuations PRIVATE
     PAPERSOCCER_JACEK_SELFSEARCH_CONTINUATION_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_CONTINUATION_SOURCE_SHA256}"
     PAPERSOCCER_JACEK_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256}"
-    PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256}")
+    PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256}"
+    PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256="${PAPERSOCCER_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256}")
   add_executable(papersoccer_jacek_replay_continuations_contract_test
     tests/codingame/jacek_replay_continuations_contract_test.cpp)
   target_include_directories(
@@ -1556,7 +1625,7 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       TIMEOUT 330
     )
     if(NOT EMSCRIPTEN)
-      foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BOTS)
+      foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
         papersoccer_codingame_target_prefix(
           PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
         add_test(

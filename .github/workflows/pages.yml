@@ -43,6 +43,11 @@ jobs:
             tests.codingame.test_jacek_replay_baseline \
             tests.codingame.test_jacek_replay_tuning
 
+      - name: Test Compact Value-BFM campaign contracts
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+            -s tests/codingame -p 'test_compact_value_bfm*.py'
+
       - name: Verify compact large-teacher evidence
         run: |
           python3 benchmarks/large_teacher_campaign/publish.py verify
@@ -51,10 +56,18 @@ jobs:
   leaderboard-contract:
     name: Leaderboard contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Install pinned research dependency
+        run: python3 -m pip install -r requirements-research.txt
+
+      - name: Test Compact Value-BFM campaign contracts
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+            -s tests/codingame -p 'test_compact_value_bfm*.py'
 
       - name: Validate roster, schedule, ratings, and runner
         run: |

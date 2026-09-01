@@ -4,7 +4,7 @@ CodinGame support is split into reusable tooling and self-contained bots:
 
 ```text
 submissions/codingame/
-├── bots/                 22 registered source artifacts and their evidence
+├── bots/                 22 leaderboard artifacts plus research-only entrants
 ├── promotion/            historical rank-5-baseline promotion evidence
 └── tools/                shared generation, protocol, and replay utilities
 ```
