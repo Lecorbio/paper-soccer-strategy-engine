@@ -172,6 +172,13 @@ class DeploymentPreflightTest(unittest.TestCase):
             cwd=repository, check=True,
         )
         base_receipt = maintained_receipt(root, generated, runtime)
+        # Match the common Linux layout where clang++ is a symlink to the
+        # clang driver binary.  The invocation spelling must survive sealing:
+        # resolving this link selects the C driver and breaks C++ linkage.
+        compiler_links = root / "compiler-links"
+        compiler_links.mkdir()
+        clang_link = compiler_links / "clang++"
+        clang_link.symlink_to(self.tool("clang").resolve())
         return {
             "output_root": root / "evidence",
             "base_preflight_path": base_receipt,
@@ -181,7 +188,7 @@ class DeploymentPreflightTest(unittest.TestCase):
             "profile": profile, "work": work,
             "python_path": pathlib.Path(sys.executable),
             "gcc_path": self.tool("g++-15", "g++-14", "g++-13", "g++"),
-            "clang_path": self.tool("clang++"),
+            "clang_path": clang_link,
             "node_path": self.tool("node"),
         }
 
@@ -208,6 +215,14 @@ class DeploymentPreflightTest(unittest.TestCase):
                 repository=context["repository"], source_repository=ROOT,
                 search_tuple=context["search_tuple"], profile=context["profile"],
                 work=context["work"],
+            )
+            self.assertEqual(
+                validated["plan"]["inputs"]["tools"]["clang"]["path"],
+                str(context["clang_path"].absolute()),
+            )
+            self.assertEqual(
+                validated["plan"]["inputs"]["tools"]["clang"]["resolved_path"],
+                str(context["clang_path"].resolve()),
             )
             self.assertEqual(
                 validated["derivation"]["configuration"]["candidate_fpu"], 0.75

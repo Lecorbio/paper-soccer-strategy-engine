@@ -156,8 +156,15 @@ def _verify_record(value: Any, label: str, *, ascii_required: bool = False,
 
 def _compiler_record(path: pathlib.Path, family: str) -> dict[str, Any]:
     record = _record(path, executable=True, allow_symlink=True)
+    # Compiler-driver semantics depend on argv[0].  In particular, Linux
+    # installations commonly expose clang++ as a symlink to clang; invoking
+    # the resolved target silently selects the C driver and omits the C++
+    # runtime at link time.  Seal both identities, but preserve the exact
+    # absolute invocation spelling for every command.
+    invocation_path = str(path.absolute())
+    resolved_path = record["path"]
     completed = subprocess.run(
-        [record["path"], "--version"], capture_output=True, check=False,
+        [invocation_path, "--version"], capture_output=True, check=False,
         timeout=30,
     )
     try:
@@ -174,7 +181,8 @@ def _compiler_record(path: pathlib.Path, family: str) -> dict[str, Any]:
     if not matches:
         raise DeploymentPreflightError(f"compiler is not exact {family}")
     return {
-        **record, "family": family,
+        **record, "path": invocation_path, "resolved_path": resolved_path,
+        "family": family,
         "version_sha256": hashlib.sha256(completed.stdout).hexdigest(),
     }
 
