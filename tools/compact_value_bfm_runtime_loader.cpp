@@ -9,6 +9,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -25,7 +26,11 @@ namespace cv = ::compact_value_bfm;
 struct Json {
   enum class Kind { Object, Array, String, Number, Boolean, Null };
   Kind kind{Kind::Null};
-  std::vector<std::pair<std::string, Json>> object;
+  // Keep recursive object values behind a complete, copyable handle.  A
+  // vector<pair<string, Json>> recursively asks libstdc++ whether Json is
+  // default-constructible while Json itself is still incomplete; Clang with
+  // libstdc++ correctly rejects that instantiation.
+  std::vector<std::pair<std::string, std::shared_ptr<Json>>> object;
   std::vector<Json> array;
   std::string text;
   bool boolean{};
@@ -163,7 +168,8 @@ class Parser {
       }
       previous = key;
       if (!consume(':')) fail("missing object colon");
-      result.object.emplace_back(std::move(key), value());
+      result.object.emplace_back(
+          std::move(key), std::make_shared<Json>(value()));
       if (consume('}')) return result;
       if (!consume(',')) fail("missing object comma");
     }
@@ -271,7 +277,8 @@ std::string serialize(const Json &value, std::string_view omitted = {}) {
         first = false;
         result += quote(key);
         result.push_back(':');
-        result += serialize(child);
+        if (!child) throw std::logic_error("null JSON object child");
+        result += serialize(*child);
       }
       result.push_back('}');
       return result;
@@ -320,7 +327,10 @@ const Json &field(const Json &object, std::string_view key) {
     throw std::invalid_argument("compact runtime is missing field " +
                                 std::string(key));
   }
-  return found->second;
+  if (!found->second) {
+    throw std::logic_error("compact runtime contains a null object child");
+  }
+  return *found->second;
 }
 
 void keys(const Json &object,
