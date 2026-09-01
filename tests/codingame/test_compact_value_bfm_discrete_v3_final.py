@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 import fcntl
 import os
 import pathlib
@@ -51,16 +52,44 @@ def synthetic_banks(root, fresh_variants):
 
 
 class Fixture:
-    def __init__(self, root):
+    def __init__(
+        self, root, *, search_tuple=("0.95", "0.5", "1"),
+        profile="default",
+    ):
         self.root = root.resolve()
+        self.search_tuple = tuple(search_tuple)
+        self.profile = profile
+        self.profile_work = dict(bridge.campaign.PROFILE_ROSTER[profile])
         self.repository = self.root / "repository"
         self.repository.mkdir()
         self.generated = self.root / "candidate/generated.cpp"
         self.candidate = self.repository / "candidate.cpp"
         self.generated.parent.mkdir(parents=True)
-        source = b"// synthetic discrete-v3 finalist\nint main(){return 0;}\n"
+        source = b"""\
+inline constexpr std::size_t kRootPartialPaths = 4'000;
+inline constexpr std::size_t kNonrootPartialPaths = 512;
+inline constexpr std::size_t kProductionTreeNodes = 80'000;
+inline constexpr double kExploration = 0.95;
+inline constexpr double kFirstPlayUrgency = 0.5;
+inline constexpr double kFinalVisitWeight = 1.0;
+std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
+int main(){return 0;}
+"""
         self.generated.write_bytes(source)
-        self.candidate.write_bytes(source)
+        self.candidate.write_bytes(bridge.deployment.derive_source(
+            source, search_tuple=self.search_tuple, profile=self.profile,
+            work=self.profile_work,
+        ))
+        self.manifest = self.root / "candidate/deployment.json"
+        self.manifest_value = bridge.deployment.create_manifest(
+            source, self.candidate.read_bytes(), search_tuple=self.search_tuple,
+            profile=self.profile, work=self.profile_work,
+        )
+        self.manifest.write_text(
+            __import__("json").dumps(
+                self.manifest_value, sort_keys=True, separators=(",", ":")
+            ), encoding="ascii",
+        )
         self.runtime = self.root / "candidate/runtime.json"
         q.write_sealed(self.runtime, {
             "schema": "papersoccer.synthetic-runtime.v1",
@@ -71,7 +100,7 @@ class Fixture:
         self.gate.chmod(0o700)
         self.preflight = self.root / "preflight.json"
         q.write_sealed(self.preflight, {
-            "schema": bridge.preflight_tools.RECEIPT_SCHEMA,
+            "schema": bridge.deployment_preflight.REFERENCE_SCHEMA,
             "synthetic": True,
         })
 
@@ -217,10 +246,10 @@ class Fixture:
                 for stage, path in self.banks.items()
             },
             "binary": bridge.development._regular(binary),
-            "tuple": ["0.95", "0.5", "1"],
+            "tuple": list(self.search_tuple),
             "tuple_candidate_id": "synthetic-tuple",
-            "profile": "default",
-            "profile_work": dict(bridge.campaign.PROFILE_ROSTER["default"]),
+            "profile": self.profile,
+            "profile_work": self.profile_work,
             "actual_clock": {
                 "pairs": 200, "games": 400, "wins": 211,
                 "color_wins": {"0": 104, "1": 107}, "failures": 0,
@@ -314,8 +343,10 @@ class Fixture:
             "candidate": bridge._record(self.candidate, ascii_required=True),
             "runtime": bridge._record(self.runtime, ascii_required=True),
             "preflight": q.artifact_reference(
-                self.preflight, bridge.preflight_tools.RECEIPT_SCHEMA
+                self.preflight, bridge.deployment_preflight.REFERENCE_SCHEMA
             ),
+            "manifest": bridge._record(self.manifest, ascii_required=True),
+            "manifest_body_sha256": self.manifest_value["body_sha256"],
             "gate": bridge._record(self.gate, executable=True),
             "git": {"commit": COMMIT, "tracked_clean": True},
             "uncontended_timing": {"first_max_ms": 100.0, "later_max_ms": 20.0},
@@ -458,7 +489,10 @@ class DiscreteV3FinalBridgeTest(unittest.TestCase):
 
     def test_prepare_is_precommitted_resumable_and_has_no_upload_authority(self):
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = Fixture(pathlib.Path(temporary))
+            fixture = Fixture(
+                pathlib.Path(temporary),
+                search_tuple=("0.95", "0.75", "1"), profile="heavy",
+            )
             plan = fixture.prepare()
             self.assertEqual(plan, fixture.prepare())
             value = q.load_sealed(plan, bridge.PLAN_SCHEMA)
@@ -468,16 +502,140 @@ class DiscreteV3FinalBridgeTest(unittest.TestCase):
             )
             self.assertEqual(auth["uploads_authorized"], 0)
             self.assertFalse(value["policy"]["upload_authorized"])
+            derivation = value["inputs"]["deployment_derivation"]
+            self.assertEqual(
+                derivation["base_source"]["sha256"], q.sha256_file(fixture.generated)
+            )
+            self.assertEqual(
+                derivation["deployed_source"]["sha256"],
+                q.sha256_file(fixture.candidate),
+            )
+            self.assertEqual(
+                value["configuration"]["deployment"], derivation["configuration"]
+            )
+            self.assertEqual(auth["deployment_derivation"], derivation)
             self.assertFalse(
                 (fixture.root / bridge.BRIDGE_DIRECTORY / "bank-claim.json").exists()
             )
             self.assertNotIn(next(iter(fixture.fresh)), plan.read_text(encoding="ascii"))
 
+    def test_nondefault_winner_is_gated_as_the_exact_deployed_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(
+                pathlib.Path(temporary),
+                search_tuple=("0.95", "0.75", "1"), profile="heavy",
+            )
+            plan_path = fixture.prepare()
+            plan = q.load_sealed(plan_path, bridge.PLAN_SCHEMA)
+            configured = plan["inputs"]["deployment_derivation"]["configuration"]
+            self.assertEqual(configured["candidate_fpu"], 0.75)
+            self.assertEqual(configured["candidate_root_partial_paths"], 8_000)
+            self.assertEqual(configured["candidate_nodes"], 120_000)
+            self.assertEqual(configured["candidate_shuffle_seed"], 1)
+            command = bridge.gate_command(
+                plan,
+                {"gate_bank": {"path": "/bank", "sha256": "a" * 64}},
+                3,
+                pathlib.Path("/raw.json"),
+            )
+
+            def argument(name):
+                return command[command.index(name) + 1]
+
+            self.assertEqual(argument("--candidate-fpu"), "0.75")
+            self.assertEqual(argument("--candidate-root-partial-paths"), "8000")
+            self.assertEqual(argument("--candidate-nodes"), "120000")
+            self.assertEqual(argument("--candidate-seed"), "1")
+            self.assertEqual(
+                argument("--expected-candidate-sha256"),
+                q.sha256_file(fixture.candidate),
+            )
+
+    def test_raw_gate_result_rejects_each_deployment_configuration_mismatch(self):
+        def engine(decisions):
+            return {
+                "decisions": decisions, "deadline_stops": 0,
+                "soft_overruns": 0, "headroom_failures": 0,
+                "hard_timeouts": 0, "work": 0, "generated_children": 0,
+                "evaluated_children": 0, "maximum_first_ms": 0.0,
+                "maximum_later_ms": 0.0, "times_ms": [0.0] * decisions,
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(
+                pathlib.Path(temporary),
+                search_tuple=("0.95", "0.75", "1"), profile="heavy",
+            )
+            plan = q.load_sealed(fixture.prepare(), bridge.PLAN_SCHEMA)
+            runtime = q.load_sealed(fixture.runtime)
+            games = []
+            for pair in range(5):
+                for color in (0, 1):
+                    games.append({
+                        "opening_id": f"opening-{pair}", "pair_index": pair,
+                        "candidate_player": color, "winner": color,
+                        "turns": 10, "failure": None,
+                        "candidate": engine(1), "rank4": engine(1),
+                    })
+            document = {
+                "schema": bridge.gate_support.RESULT_SCHEMA,
+                "bindings": {
+                    "candidate_source_sha256": plan["inputs"]["candidate"]["sha256"],
+                    "candidate_source_bytes": plan["inputs"]["candidate"]["bytes"],
+                    "candidate_runtime_body_sha256": runtime["body_sha256"],
+                    "candidate_payload_sha256": runtime["quantization"]["payload_sha256"],
+                    "rank4_source_sha256": bridge.qualification.RANK4_SHA256,
+                    "rank4_source_bytes": bridge.qualification.RANK4_BYTES,
+                    "opponent_sha256": bridge.qualification.RANK4_SHA256,
+                    "bank_sha256": "4" * 64, "bank_bytes": 1,
+                },
+                "config": bridge._expected_gate_configuration(
+                    plan, pair_offset=0, pair_count=5
+                ),
+                "games": games,
+                "result": {
+                    "games": 10, "candidate_wins": 10, "rank4_wins": 0,
+                    "candidate_wins_player0": 5,
+                    "candidate_wins_player1": 5, "failures": 0,
+                    "unfinished": 0, "failure_categories": {},
+                    "candidate": engine(10), "rank4": engine(10),
+                    "passed": True,
+                },
+            }
+            raw = fixture.root / "raw-gate.json"
+            bank = {"gate_bank": {"sha256": "4" * 64}}
+            raw.write_text(json.dumps(document), encoding="ascii")
+            self.assertEqual(
+                len(bridge.adapt_gate_result(
+                    raw, plan=plan, bank=bank, index=0
+                )), 10,
+            )
+            for field, value in (
+                ("candidate_fpu", 0.5),
+                ("candidate_root_partial_paths", 4_000),
+                ("candidate_nodes", 80_000),
+                ("candidate_shuffle_seed", 2),
+            ):
+                changed = json.loads(json.dumps(document))
+                changed["config"][field] = value
+                raw.write_text(json.dumps(changed), encoding="ascii")
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    bridge.BridgeError, "configuration"
+                ):
+                    bridge.adapt_gate_result(
+                        raw, plan=plan, bank=bank, index=0
+                    )
+
     def test_source_byte_mismatch_and_finalist_drift_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
             fixture.candidate.write_text("different\n", encoding="ascii")
-            with self.assertRaisesRegex(bridge.BridgeError, "differs"):
+            with self.assertRaisesRegex(bridge.BridgeError, "exact finalist-configured"):
+                fixture.prepare()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.candidate.write_bytes(fixture.generated.read_bytes())
+            with self.assertRaisesRegex(bridge.BridgeError, "exact finalist-configured"):
                 fixture.prepare()
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
@@ -617,7 +775,10 @@ class DiscreteV3FinalBridgeTest(unittest.TestCase):
 
     def test_strict_rank4_pass_emits_v3_qualified_without_upload_and_resumes(self):
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = Fixture(pathlib.Path(temporary))
+            fixture = Fixture(
+                pathlib.Path(temporary),
+                search_tuple=("0.95", "0.75", "1"), profile="heavy",
+            )
             fixture.prepare()
             fixture.materialize()
             aggregate = fixture.run(wins=527)
@@ -629,6 +790,14 @@ class DiscreteV3FinalBridgeTest(unittest.TestCase):
             )
             qualified = q.load_sealed(qualified_path, bridge.QUALIFIED_SCHEMA)
             self.assertEqual(qualified["uploads_authorized"], 0)
+            self.assertEqual(
+                qualified["deployment_derivation"]["configuration"]
+                ["candidate_fpu"], 0.75,
+            )
+            self.assertEqual(
+                qualified["deployment_manifest_body_sha256"],
+                fixture.manifest_value["body_sha256"],
+            )
             self.assertEqual(qualified["strict_thresholds"]["candidate_wins_min"], 527)
             self.assertNotIn(
                 next(iter(fixture.fresh)), qualified_path.read_text(encoding="ascii")

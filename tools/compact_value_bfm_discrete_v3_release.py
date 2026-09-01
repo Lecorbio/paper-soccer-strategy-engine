@@ -97,7 +97,8 @@ PUBLICATION_SCHEMA = (
 
 QUALIFIED_FIELDS = {
     "schema", "namespace", "campaign_id", "status", "candidate_commit",
-    "candidate", "runtime", "development_plan", "finalist_reference",
+    "candidate", "runtime", "deployment_derivation", "deployment_manifest",
+    "deployment_manifest_body_sha256", "development_plan", "finalist_reference",
     "finalist", "handoff", "evaluation_completion", "exclusion_receipt",
     "plan", "bank_receipt", "aggregate", "preflight", "strict_thresholds",
     "uploads_authorized", "rank4_replacement_authorized", "body_sha256",
@@ -251,6 +252,19 @@ def _tool_closure() -> dict[str, Any]:
         "qualification": _record(pathlib.Path(qualification.__file__).resolve()),
         "final_bridge": _record(pathlib.Path(final_bridge.__file__).resolve()),
         "final_bridge_tests": _record(final_bridge.TEST_PATH),
+        "deployment_source": _record(
+            pathlib.Path(final_bridge.deployment.__file__).resolve()
+        ),
+        "deployment_source_tests": _record(
+            REPOSITORY
+            / "tests/codingame/test_compact_value_bfm_discrete_v3_deployment.py"
+        ),
+        "deployment_preflight": _record(
+            pathlib.Path(final_bridge.deployment_preflight.__file__).resolve()
+        ),
+        "deployment_preflight_tests": _record(
+            final_bridge.deployment_preflight.TEST_PATH
+        ),
         "development": _record(pathlib.Path(development.__file__).resolve()),
         "development_tests": _record(development.TEST_PATH),
         "adapter_v2": _record(pathlib.Path(adapter.__file__).resolve()),
@@ -363,6 +377,65 @@ def _validate_qualified_records(
     }
 
 
+def _validate_deployment_binding(
+    qualified: Mapping[str, Any], plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    inputs = plan.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise ReleaseError("strict-final plan has no deployment inputs")
+    derivation = inputs.get("deployment_derivation")
+    generated = inputs.get("generated_source")
+    candidate = qualified.get("candidate")
+    manifest_record = qualified.get("deployment_manifest")
+    try:
+        configured = final_bridge.deployment.deployment_configuration(
+            inputs["tuple"], inputs["profile"], inputs["profile_work"]
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ReleaseError("strict-final deployment configuration is invalid") from error
+    if (
+        not isinstance(derivation, Mapping)
+        or not isinstance(generated, Mapping)
+        or not isinstance(candidate, Mapping)
+        or not isinstance(manifest_record, Mapping)
+        or manifest_record != inputs.get("deployment_manifest")
+        or qualified.get("deployment_manifest_body_sha256")
+        != inputs.get("deployment_manifest_body_sha256")
+        or derivation.get("schema")
+        != final_bridge.deployment.DERIVATION_SCHEMA
+        or derivation.get("configuration") != configured
+        or derivation.get("deployed_source")
+        != {
+            key: candidate.get(key) for key in ("bytes", "sha256", "ascii")
+        }
+        or derivation.get("base_source")
+        != {
+            key: generated.get(key) for key in ("bytes", "sha256", "ascii")
+        }
+        or plan.get("configuration", {}).get("deployment") != configured
+    ):
+        raise ReleaseError("qualified source is not the finalist deployment derivative")
+    manifest_path = _verify_record(
+        manifest_record, "qualified deployment manifest", ascii_required=True
+    )
+    candidate_path = pathlib.Path(str(candidate.get("path", "")))
+    try:
+        manifest = final_bridge.deployment.verify_manifest_file(
+            manifest_path, candidate_path
+        )
+    except Exception as error:
+        raise ReleaseError("qualified deployment manifest did not validate") from error
+    if (
+        manifest.get("body_sha256")
+        != qualified.get("deployment_manifest_body_sha256")
+        or manifest.get("base_source") != derivation.get("base_source")
+        or manifest.get("deployed_source") != derivation.get("deployed_source")
+        or manifest.get("configuration") != configured
+    ):
+        raise ReleaseError("qualified deployment manifest binding changed")
+    return configured
+
+
 def validate_qualified_chain(
     campaign_root: pathlib.Path, qualified_path: pathlib.Path,
     repository: pathlib.Path, *, git_verifier: GitVerifier = verify_release_git,
@@ -408,6 +481,12 @@ def validate_qualified_chain(
         )
         or qualified.get("candidate") != plan.get("inputs", {}).get("candidate")
         or qualified.get("runtime") != plan.get("inputs", {}).get("runtime")
+        or qualified.get("deployment_derivation")
+        != plan.get("inputs", {}).get("deployment_derivation")
+        or qualified.get("deployment_manifest")
+        != plan.get("inputs", {}).get("deployment_manifest")
+        or qualified.get("deployment_manifest_body_sha256")
+        != plan.get("inputs", {}).get("deployment_manifest_body_sha256")
         or qualified.get("preflight") != plan.get("inputs", {}).get("preflight")
     ):
         raise ReleaseError("qualified inputs differ from their strict-final plan")
@@ -424,8 +503,10 @@ def validate_qualified_chain(
     paths = plan.get("paths")
     if not isinstance(inputs, Mapping) or not isinstance(paths, Mapping):
         raise ReleaseError("strict-final plan has no input/path closure")
+    _validate_deployment_binding(qualified, plan)
     preflight_path = _verify_reference(
-        qualified["preflight"], final_bridge.preflight_tools.RECEIPT_SCHEMA,
+        qualified["preflight"],
+        final_bridge.deployment_preflight.REFERENCE_SCHEMA,
         "source-bound preflight",
     )
     historical_paths = [
@@ -621,11 +702,18 @@ def _authorization_inputs_body(
         ),
         "preflight": _reference(
             pathlib.Path(chain["preflight_path"]),
-            final_bridge.preflight_tools.RECEIPT_SCHEMA,
+            final_bridge.deployment_preflight.REFERENCE_SCHEMA,
         ),
         "candidate_commit": chain["qualified"]["candidate_commit"],
         "candidate": dict(chain["qualified"]["candidate"]),
         "runtime": dict(chain["qualified"]["runtime"]),
+        "deployment_derivation": dict(
+            chain["qualified"]["deployment_derivation"]
+        ),
+        "deployment_manifest": dict(chain["qualified"]["deployment_manifest"]),
+        "deployment_manifest_body_sha256": chain["qualified"][
+            "deployment_manifest_body_sha256"
+        ],
         "git": dict(chain["git"]),
         "ci": _reference(ci_path, upload_primitives.CI_SCHEMA),
         "ci_run_id": ci["run_id"],
@@ -711,12 +799,27 @@ def authorize_release(
     )
     if any(authorized < _parse_utc(value, label) for value, label in chronological):
         raise ReleaseError("upload authorization predates a required sealed input")
-    preflight = qualification.load_sealed(
+    preflight_reference = qualification.load_sealed(
         pathlib.Path(chain["preflight_path"]),
-        final_bridge.preflight_tools.RECEIPT_SCHEMA,
+        final_bridge.deployment_preflight.REFERENCE_SCHEMA,
     )
-    preflight_claim = preflight.get("claim")
-    if isinstance(preflight_claim, Mapping) and authorized < _parse_utc(
+    preflight_receipt_path = _verify_reference(
+        preflight_reference.get("receipt"),
+        final_bridge.deployment_preflight.RECEIPT_SCHEMA,
+        "deployment preflight receipt",
+    )
+    preflight_receipt = qualification.load_sealed(
+        preflight_receipt_path, final_bridge.deployment_preflight.RECEIPT_SCHEMA
+    )
+    preflight_claim_path = _verify_reference(
+        preflight_receipt.get("claim"),
+        final_bridge.deployment_preflight.CLAIM_SCHEMA,
+        "deployment preflight claim",
+    )
+    preflight_claim = qualification.load_sealed(
+        preflight_claim_path, final_bridge.deployment_preflight.CLAIM_SCHEMA
+    )
+    if authorized < _parse_utc(
         preflight_claim.get("claimed_at_utc"), "preflight claim time"
     ):
         raise ReleaseError("upload authorization predates preflight")
@@ -803,12 +906,27 @@ def validate_release_authorization(
     )
     if any(authorized < _parse_utc(value, label) for value, label in chronological):
         raise ReleaseError("sealed upload authorization chronology changed")
-    preflight = qualification.load_sealed(
+    preflight_reference = qualification.load_sealed(
         pathlib.Path(chain["preflight_path"]),
-        final_bridge.preflight_tools.RECEIPT_SCHEMA,
+        final_bridge.deployment_preflight.REFERENCE_SCHEMA,
     )
-    preflight_claim = preflight.get("claim")
-    if isinstance(preflight_claim, Mapping) and authorized < _parse_utc(
+    preflight_receipt_path = _verify_reference(
+        preflight_reference.get("receipt"),
+        final_bridge.deployment_preflight.RECEIPT_SCHEMA,
+        "deployment preflight receipt",
+    )
+    preflight_receipt = qualification.load_sealed(
+        preflight_receipt_path, final_bridge.deployment_preflight.RECEIPT_SCHEMA
+    )
+    preflight_claim_path = _verify_reference(
+        preflight_receipt.get("claim"),
+        final_bridge.deployment_preflight.CLAIM_SCHEMA,
+        "deployment preflight claim",
+    )
+    preflight_claim = qualification.load_sealed(
+        preflight_claim_path, final_bridge.deployment_preflight.CLAIM_SCHEMA
+    )
+    if authorized < _parse_utc(
         preflight_claim.get("claimed_at_utc"), "preflight claim time"
     ):
         raise ReleaseError("sealed upload authorization predates preflight")

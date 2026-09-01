@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
@@ -67,7 +68,42 @@ class Fixture:
         self.repository = self.root / "repository"
         self.repository.mkdir()
         self.source = self.repository / "submission.cpp"
-        self.source.write_text("int main(){return 0;}\n", encoding="ascii")
+        self.generated = self.root / "generated.cpp"
+        base_source = b"""\
+inline constexpr std::size_t kRootPartialPaths = 4'000;
+inline constexpr std::size_t kNonrootPartialPaths = 512;
+inline constexpr std::size_t kProductionTreeNodes = 80'000;
+inline constexpr double kExploration = 0.95;
+inline constexpr double kFirstPlayUrgency = 0.5;
+inline constexpr double kFinalVisitWeight = 1.0;
+std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
+"""
+        self.generated.write_bytes(base_source)
+        self.selected_tuple = ["0.95", "0.75", "1"]
+        self.profile = "heavy"
+        self.profile_work = release.final_bridge.deployment.PROFILE_ROSTER[
+            self.profile
+        ]
+        self.source.write_bytes(release.final_bridge.deployment.derive_source(
+            base_source, search_tuple=self.selected_tuple,
+            profile=self.profile, work=self.profile_work,
+        ))
+        self.derivation = release.final_bridge.deployment.attest_derivation(
+            base_source, self.source.read_bytes(),
+            search_tuple=self.selected_tuple, profile=self.profile,
+            work=self.profile_work,
+        )
+        self.manifest_value = release.final_bridge.deployment.create_manifest(
+            base_source, self.source.read_bytes(),
+            search_tuple=self.selected_tuple, profile=self.profile,
+            work=self.profile_work,
+        )
+        self.manifest = self.root / "deployment.json"
+        self.manifest.write_text(
+            json.dumps(
+                self.manifest_value, sort_keys=True, separators=(",", ":")
+            ), encoding="ascii",
+        )
         self.runtime = self.root / "runtime.json"
         self.runtime.write_text('{"runtime":true}\n', encoding="ascii")
 
@@ -107,7 +143,23 @@ class Fixture:
         q.write_sealed(self.plan, {
             "schema": release.final_bridge.PLAN_SCHEMA,
             "namespace": q.NAMESPACE,
-            "inputs": {},
+            "inputs": {
+                "candidate": release._record(self.source, ascii_required=True),
+                "generated_source": release._record(
+                    self.generated, ascii_required=True
+                ),
+                "deployment_derivation": self.derivation,
+                "deployment_manifest": release._record(
+                    self.manifest, ascii_required=True
+                ),
+                "deployment_manifest_body_sha256": self.manifest_value[
+                    "body_sha256"
+                ],
+                "tuple": self.selected_tuple,
+                "profile": self.profile,
+                "profile_work": self.profile_work,
+            },
+            "configuration": {"deployment": self.derivation["configuration"]},
             "paths": {"ledger": str(self.ledger)},
         })
         self.bank_receipt = self.final_root / "bank-receipt.json"
@@ -144,11 +196,32 @@ class Fixture:
             "one_launch_only": True,
             "upload_authorized": False,
         })
+        self.preflight_claim = self.root / "deployment-preflight-claim.json"
+        q.write_sealed(self.preflight_claim, {
+            "schema": release.final_bridge.deployment_preflight.CLAIM_SCHEMA,
+            "namespace": q.NAMESPACE,
+            "status": "deployment-preflight-claimed-before-execution",
+            "claimed_at_utc": "2026-09-01T08:00:00Z",
+        })
+        self.preflight_receipt = self.root / "deployment-preflight-receipt.json"
+        q.write_sealed(self.preflight_receipt, {
+            "schema": release.final_bridge.deployment_preflight.RECEIPT_SCHEMA,
+            "namespace": q.NAMESPACE,
+            "status": "deployment-preflight-passed",
+            "claim": q.artifact_reference(
+                self.preflight_claim,
+                release.final_bridge.deployment_preflight.CLAIM_SCHEMA,
+            ),
+        })
         self.preflight = self.root / "preflight.json"
         q.write_sealed(self.preflight, {
-            "schema": release.final_bridge.preflight_tools.RECEIPT_SCHEMA,
+            "schema": release.final_bridge.deployment_preflight.REFERENCE_SCHEMA,
             "namespace": q.NAMESPACE,
-            "status": "passed",
+            "status": "deployment-preflight-passed-awaiting-final",
+            "receipt": q.artifact_reference(
+                self.preflight_receipt,
+                release.final_bridge.deployment_preflight.RECEIPT_SCHEMA,
+            ),
         })
 
         def sealed(name, schema):
@@ -198,6 +271,13 @@ class Fixture:
             "candidate_commit": COMMIT,
             "candidate": candidate,
             "runtime": runtime,
+            "deployment_derivation": self.derivation,
+            "deployment_manifest": release._record(
+                self.manifest, ascii_required=True
+            ),
+            "deployment_manifest_body_sha256": self.manifest_value[
+                "body_sha256"
+            ],
             "development_plan": q.artifact_reference(
                 self.development_plan, release.development.PLAN_SCHEMA
             ),
@@ -225,7 +305,8 @@ class Fixture:
                 self.aggregate, q.FINAL_AGGREGATE_SCHEMA
             ),
             "preflight": q.artifact_reference(
-                self.preflight, release.final_bridge.preflight_tools.RECEIPT_SCHEMA
+                self.preflight,
+                release.final_bridge.deployment_preflight.REFERENCE_SCHEMA,
             ),
             "strict_thresholds": q.strict_gate_verdict(summary)["thresholds"],
             "uploads_authorized": 0,
@@ -279,6 +360,9 @@ class Fixture:
                 path, release.adapter.HANDOFF_SCHEMA
             ),
         )
+        release._validate_deployment_binding(
+            self.chain["qualified"], self.chain["plan"]
+        )
         return dict(self.chain)
 
     def prereqs(self):
@@ -330,6 +414,73 @@ class Fixture:
 
 
 class ReleaseBridgeTest(unittest.TestCase):
+    def test_release_requires_the_finalist_configured_source_derivative(self):
+        base = b"""\
+inline constexpr std::size_t kRootPartialPaths = 4'000;
+inline constexpr std::size_t kNonrootPartialPaths = 512;
+inline constexpr std::size_t kProductionTreeNodes = 80'000;
+inline constexpr double kExploration = 0.95;
+inline constexpr double kFirstPlayUrgency = 0.5;
+inline constexpr double kFinalVisitWeight = 1.0;
+std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
+"""
+        work = release.final_bridge.deployment.PROFILE_ROSTER["heavy"]
+        selected_tuple = ["0.95", "0.75", "1"]
+        deployed = release.final_bridge.deployment.derive_source(
+            base, search_tuple=selected_tuple, profile="heavy", work=work
+        )
+        derivation = release.final_bridge.deployment.attest_derivation(
+            base, deployed, search_tuple=selected_tuple,
+            profile="heavy", work=work,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            candidate_path = root / "candidate.cpp"
+            candidate_path.write_bytes(deployed)
+            manifest_value = release.final_bridge.deployment.create_manifest(
+                base, deployed, search_tuple=selected_tuple,
+                profile="heavy", work=work,
+            )
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    manifest_value, sort_keys=True, separators=(",", ":")
+                ), encoding="ascii",
+            )
+            candidate_record = release._record(
+                candidate_path, ascii_required=True
+            )
+            manifest_record = release._record(
+                manifest_path, ascii_required=True
+            )
+            plan = {
+                "inputs": {
+                    "tuple": selected_tuple,
+                    "profile": "heavy",
+                    "profile_work": work,
+                    "generated_source": derivation["base_source"],
+                    "candidate": candidate_record,
+                    "deployment_derivation": derivation,
+                    "deployment_manifest": manifest_record,
+                    "deployment_manifest_body_sha256": manifest_value[
+                        "body_sha256"
+                    ],
+                },
+                "configuration": {"deployment": derivation["configuration"]},
+            }
+            qualified = {
+                "candidate": candidate_record,
+                "deployment_manifest": manifest_record,
+                "deployment_manifest_body_sha256": manifest_value["body_sha256"],
+            }
+            self.assertEqual(
+                release._validate_deployment_binding(qualified, plan),
+                derivation["configuration"],
+            )
+            wrong = {**qualified, "candidate": derivation["base_source"]}
+            with self.assertRaisesRegex(release.ReleaseError, "derivative"):
+                release._validate_deployment_binding(wrong, plan)
+
     def test_real_five_field_qualified_handoff_record_is_required(self):
         with tempfile.TemporaryDirectory() as raw:
             fixture = Fixture(pathlib.Path(raw))
@@ -474,6 +625,12 @@ class ReleaseBridgeTest(unittest.TestCase):
                 release.attest_copyback(
                     **fixture.state_kwargs(), generated_source=fixture.source,
                     copied_back_source=bad,
+                    created_at_utc="2026-09-01T12:02:00Z",
+                )
+            with self.assertRaisesRegex(release.ReleaseError, "qualified"):
+                release.attest_copyback(
+                    **fixture.state_kwargs(), generated_source=fixture.generated,
+                    copied_back_source=fixture.generated,
                     created_at_utc="2026-09-01T12:02:00Z",
                 )
 

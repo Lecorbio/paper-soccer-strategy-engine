@@ -73,6 +73,14 @@ development = _load(
     HERE / "compact_value_bfm_discrete_v3_development.py",
     "compact_v3_final_development",
 )
+deployment = _load(
+    HERE / "compact_value_bfm_discrete_v3_deployment.py",
+    "compact_v3_final_deployment",
+)
+deployment_preflight = _load(
+    HERE / "compact_value_bfm_discrete_v3_deployment_preflight.py",
+    "compact_v3_final_deployment_preflight",
+)
 gate_support = legacy_final.gate_support
 
 
@@ -243,35 +251,47 @@ def _default_historical_validator(paths: Sequence[pathlib.Path]) -> Mapping[str,
 
 def _default_preflight_validator(
     *, preflight_path: pathlib.Path, candidate_source: pathlib.Path,
-    runtime_path: pathlib.Path, repository: pathlib.Path,
+    generated_source: pathlib.Path, runtime_path: pathlib.Path,
+    search_tuple: Sequence[Any], profile: Any, work: Mapping[str, Any],
+    repository: pathlib.Path,
     gate_path: pathlib.Path, git_verifier: GitVerifier,
 ) -> Mapping[str, Any]:
     candidate = _record(candidate_source, ascii_required=True)
     runtime = _record(runtime_path, ascii_required=True)
-    header = legacy_final._load_content_addressed(
-        preflight_path, preflight_tools.RECEIPT_SCHEMA
-    )
-    commit = header.get("inputs_before", {}).get("candidate_commit")
-    if not isinstance(commit, str):
-        raise BridgeError("preflight omits candidate commit")
-    receipt = legacy_final._validate_preflight(
-        preflight_path, candidate=candidate, candidate_commit=commit,
-        runtime_sha256=runtime["sha256"],
-    )
+    try:
+        validated = deployment_preflight.validate_reference(
+            preflight_path, generated_source=generated_source,
+            candidate_source=candidate_source, runtime_path=runtime_path,
+            repository=repository, source_repository=REPOSITORY,
+            search_tuple=search_tuple, profile=profile, work=work,
+        )
+    except Exception as error:
+        raise BridgeError("deployment-aware preflight did not validate") from error
+    commit = validated.get("candidate_commit")
+    if (
+        validated.get("candidate") != candidate
+        or validated.get("runtime") != runtime
+        or validated.get("derivation", {}).get("configuration")
+        != deployment.deployment_configuration(search_tuple, profile, work)
+        or not isinstance(commit, str)
+    ):
+        raise BridgeError("deployment-aware preflight differs from finalist inputs")
     git = dict(git_verifier(repository, candidate_source, commit))
     if git.get("commit") != commit or git.get("tracked_clean") is not True:
         raise BridgeError("clean Git verifier did not bind final candidate")
     gate = _record(gate_path, executable=True)
-    expected_gate = (
-        receipt.get("panels", {}).get("clang-release", {}).get("binaries", {})
-        .get("papersoccer_codingame_compact_value_bfm_rank4_gate")
-    )
+    expected_gate = validated.get("reference", {}).get("gate")
     if expected_gate != gate:
         raise BridgeError("gate executable differs from source-specific preflight")
-    timing_samples = receipt["timing"]["samples"]
+    timing_samples = validated["timing"]["samples"]
     return {
         "commit": commit, "candidate": candidate, "runtime": runtime,
-        "preflight": _reference(preflight_path, preflight_tools.RECEIPT_SCHEMA),
+        "preflight": _reference(
+            preflight_path, deployment_preflight.REFERENCE_SCHEMA
+        ),
+        "manifest": dict(validated["plan"]["inputs"]["manifest"]),
+        "manifest_body_sha256": validated["plan"]["inputs"]
+        ["manifest_body_sha256"],
         "gate": gate, "git": git,
         "uncontended_timing": {
             "first_max_ms": max(row["first_ms"] for row in timing_samples),
@@ -443,13 +463,31 @@ def _normalized_inputs(
     runtime = pathlib.Path(finalist["runtime_path"])
     generated_record = _record(generated, ascii_required=True)
     candidate_record = _record(candidate_source, ascii_required=True)
+    finalist_body = finalist["finalist"]
     if (
-        generated.read_bytes() != candidate_source.read_bytes()
-        or generated_record["sha256"] != candidate_record["sha256"]
-        or generated_record["bytes"] != candidate_record["bytes"]
+        deployment.TUPLE_ROSTER != tuple(campaign.TUPLE_ROSTER)
+        or deployment.PROFILE_ROSTER != campaign.PROFILE_ROSTER
+    ):
+        raise BridgeError("deployment-source roster differs from development")
+    try:
+        deployment_derivation = deployment.attest_derivation(
+            generated.read_bytes(), candidate_source.read_bytes(),
+            search_tuple=finalist_body["tuple"],
+            profile=finalist_body["profile"],
+            work=finalist_body["profile_work"],
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise BridgeError(
+            "committed candidate is not the exact finalist-configured deployment source"
+        ) from error
+    if (
+        deployment_derivation["base_source"]
+        != {key: generated_record[key] for key in ("bytes", "sha256", "ascii")}
+        or deployment_derivation["deployed_source"]
+        != {key: candidate_record[key] for key in ("bytes", "sha256", "ascii")}
         or not 0 < candidate_record["bytes"] < 95_000
     ):
-        raise BridgeError("committed candidate source differs from finalist generated source")
+        raise BridgeError("deployment-source derivation record contradicts its files")
     rank4 = _record(rank4_source, ascii_required=True)
     if (
         rank4["sha256"] != qualification.RANK4_SHA256
@@ -458,12 +496,14 @@ def _normalized_inputs(
         raise BridgeError("v3 final bridge Rank-4 identity changed")
     preflight = dict(preflight_validator(
         preflight_path=preflight_path, candidate_source=candidate_source,
-        runtime_path=runtime, repository=repository, gate_path=gate_path,
+        generated_source=generated, runtime_path=runtime,
+        search_tuple=finalist_body["tuple"], profile=finalist_body["profile"],
+        work=finalist_body["profile_work"], repository=repository, gate_path=gate_path,
         git_verifier=git_verifier,
     ))
     if set(preflight) != {
-        "commit", "candidate", "runtime", "preflight", "gate", "git",
-        "uncontended_timing",
+        "commit", "candidate", "runtime", "preflight", "manifest",
+        "manifest_body_sha256", "gate", "git", "uncontended_timing",
     }:
         raise BridgeError("preflight validator returned an incomplete context")
     if preflight["candidate"] != candidate_record or preflight["runtime"] != _record(
@@ -499,6 +539,9 @@ def _normalized_inputs(
         "candidate_commit": preflight["commit"],
         "candidate": candidate_record,
         "generated_source": generated_record,
+        "deployment_derivation": deployment_derivation,
+        "deployment_manifest": preflight["manifest"],
+        "deployment_manifest_body_sha256": preflight["manifest_body_sha256"],
         "runtime": preflight["runtime"],
         "rank4": rank4,
         "preflight": preflight["preflight"],
@@ -512,10 +555,10 @@ def _normalized_inputs(
             _record(path) for path in historical["paths"]
         ],
         "historical_body_sha256": historical["loaded"]["body_sha256"],
-        "tuple": list(finalist["finalist"]["tuple"]),
-        "profile": finalist["finalist"]["profile"],
-        "profile_work": dict(finalist["finalist"]["profile_work"]),
-        "actual_clock": dict(finalist["finalist"]["actual_clock"]),
+        "tuple": list(finalist_body["tuple"]),
+        "profile": finalist_body["profile"],
+        "profile_work": dict(finalist_body["profile_work"]),
+        "actual_clock": dict(finalist_body["actual_clock"]),
     }
 
 
@@ -534,6 +577,19 @@ def _tool_closure() -> dict[str, Any]:
         "development_runner": _record(
             REPOSITORY / "submissions/codingame/bots/compact_value_bfm"
             / "discrete_v3_development_runner.py"
+        ),
+        "deployment_source": _record(
+            pathlib.Path(deployment.__file__).resolve()
+        ),
+        "deployment_source_tests": _record(
+            REPOSITORY
+            / "tests/codingame/test_compact_value_bfm_discrete_v3_deployment.py"
+        ),
+        "deployment_preflight": _record(
+            pathlib.Path(deployment_preflight.__file__).resolve()
+        ),
+        "deployment_preflight_tests": _record(
+            deployment_preflight.TEST_PATH
         ),
         "gate_support": _record(pathlib.Path(gate_support.__file__).resolve()),
     }
@@ -555,12 +611,21 @@ def _authorization_body(inputs: Mapping[str, Any], authorized_at_utc: str) -> di
         "exclusion_receipt": inputs["exclusion_receipt"],
         "candidate_commit": inputs["candidate_commit"],
         "candidate": inputs["candidate"],
+        "generated_source": inputs["generated_source"],
+        "deployment_derivation": inputs["deployment_derivation"],
+        "deployment_manifest": inputs["deployment_manifest"],
+        "deployment_manifest_body_sha256": inputs[
+            "deployment_manifest_body_sha256"
+        ],
         "runtime": inputs["runtime"],
         "rank4": inputs["rank4"],
         "preflight": inputs["preflight"],
         "source_binding": inputs["source_binding"],
         "development_banks": inputs["development_banks"],
         "historical_exclusions": inputs["historical_exclusions"],
+        "tuple": inputs["tuple"],
+        "profile": inputs["profile"],
+        "profile_work": inputs["profile_work"],
         "tool_closure": _tool_closure(),
         "secret_bank_materializations_authorized": 1,
         "strict_rank4_gate_attempts_authorized": 1,
@@ -571,6 +636,7 @@ def _authorization_body(inputs: Mapping[str, Any], authorized_at_utc: str) -> di
 
 def _plan_body(inputs: Mapping[str, Any], authorization_path: pathlib.Path,
                planned_at_utc: str, bridge_root: pathlib.Path) -> dict[str, Any]:
+    deployed = inputs["deployment_derivation"]["configuration"]
     return {
         "schema": PLAN_SCHEMA,
         "namespace": NAMESPACE,
@@ -583,8 +649,11 @@ def _plan_body(inputs: Mapping[str, Any], authorization_path: pathlib.Path,
         "configuration": {
             "openings": 500, "pairs": 500, "games": 1_000,
             "shards": 100, "pairs_per_shard": 5, "workers": 4,
-            "candidate_actions": 250, "candidate_expansions": 2_000_000,
-            "candidate_seed": 1, "rank4_nodes": 3_000_000,
+            "candidate_actions": deployed["candidate_actions"],
+            "candidate_expansions": deployed["candidate_expansions"],
+            "candidate_seed": deployed["candidate_shuffle_seed"],
+            "deployment": dict(deployed),
+            "rank4_nodes": 3_000_000,
             "maximum_turns": 320,
         },
         "paths": {
@@ -1243,12 +1312,77 @@ def consume_bank(plan_path: pathlib.Path, plan: Mapping[str, Any],
     return path
 
 
+def _deployment_configuration(plan: Mapping[str, Any]) -> dict[str, Any]:
+    inputs = plan.get("inputs")
+    planned = plan.get("configuration")
+    if not isinstance(inputs, Mapping) or not isinstance(planned, Mapping):
+        raise BridgeError("strict final deployment configuration is absent")
+    try:
+        expected = deployment.deployment_configuration(
+            inputs["tuple"], inputs["profile"], inputs["profile_work"]
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise BridgeError("strict final deployment configuration changed") from error
+    derivation = inputs.get("deployment_derivation")
+    candidate = inputs.get("candidate")
+    generated = inputs.get("generated_source")
+    if (
+        not isinstance(derivation, Mapping)
+        or not isinstance(candidate, Mapping)
+        or not isinstance(generated, Mapping)
+        or derivation.get("schema") != deployment.DERIVATION_SCHEMA
+        or derivation.get("configuration") != expected
+        or derivation.get("deployed_source")
+        != {
+            key: candidate.get(key) for key in ("bytes", "sha256", "ascii")
+        }
+        or derivation.get("base_source")
+        != {
+            key: generated.get(key) for key in ("bytes", "sha256", "ascii")
+        }
+        or planned.get("deployment") != expected
+        or planned.get("candidate_actions") != expected["candidate_actions"]
+        or planned.get("candidate_expansions") != expected["candidate_expansions"]
+        or planned.get("candidate_seed") != expected["candidate_shuffle_seed"]
+    ):
+        raise BridgeError("strict final source/configuration binding changed")
+    return expected
+
+
+def _expected_gate_configuration(
+    plan: Mapping[str, Any], *, pair_offset: int, pair_count: int,
+) -> dict[str, Any]:
+    configured = _deployment_configuration(plan)
+    return {
+        "mode": "actual-clock",
+        "pair_offset": pair_offset,
+        "pair_count": pair_count,
+        "candidate_c": configured["candidate_c"],
+        "candidate_fpu": configured["candidate_fpu"],
+        "candidate_lambda": configured["candidate_lambda"],
+        "candidate_actions": configured["candidate_actions"],
+        "candidate_root_partial_paths": configured[
+            "candidate_root_partial_paths"
+        ],
+        "candidate_nonroot_partial_paths": configured[
+            "candidate_nonroot_partial_paths"
+        ],
+        "candidate_nodes": configured["candidate_nodes"],
+        "candidate_expansions": configured["candidate_expansions"],
+        "candidate_shuffle_seed": configured["candidate_shuffle_seed"],
+        "candidate_clocks_ms": [800, 155],
+        "rank4_nodes": plan["configuration"]["rank4_nodes"],
+        "rank4_clocks_ms": [800, 165],
+        "max_turns": plan["configuration"]["maximum_turns"],
+        "minimum_candidate_wins": -1,
+        "minimum_wins_per_color": -1,
+    }
+
+
 def gate_command(plan: Mapping[str, Any], bank: Mapping[str, Any], index: int,
                  output: pathlib.Path) -> list[str]:
-    work = plan["inputs"]["profile_work"]
-    search_tuple = plan["inputs"]["tuple"]
-    if tuple(str(value) for value in search_tuple) not in campaign.TUPLE_ROSTER:
-        raise BridgeError("strict final tuple changed")
+    configured = _deployment_configuration(plan)
+    search_tuple = configured["tuple"]
     return [
         plan["inputs"]["gate"]["path"],
         "--bank", bank["gate_bank"]["path"],
@@ -1261,12 +1395,16 @@ def gate_command(plan: Mapping[str, Any], bank: Mapping[str, Any], index: int,
         "--candidate-c", str(search_tuple[0]),
         "--candidate-fpu", str(search_tuple[1]),
         "--candidate-lambda", str(search_tuple[2]),
-        "--candidate-actions", "250",
-        "--candidate-root-partial-paths", str(work["root_partial_paths"]),
-        "--candidate-nonroot-partial-paths", str(work["nonroot_partial_paths"]),
-        "--candidate-nodes", str(work["nodes"]),
-        "--candidate-expansions", "2000000", "--candidate-seed", "1",
-        "--rank4-nodes", "3000000", "--max-turns", "320",
+        "--candidate-actions", str(configured["candidate_actions"]),
+        "--candidate-root-partial-paths",
+        str(configured["candidate_root_partial_paths"]),
+        "--candidate-nonroot-partial-paths",
+        str(configured["candidate_nonroot_partial_paths"]),
+        "--candidate-nodes", str(configured["candidate_nodes"]),
+        "--candidate-expansions", str(configured["candidate_expansions"]),
+        "--candidate-seed", str(configured["candidate_shuffle_seed"]),
+        "--rank4-nodes", str(plan["configuration"]["rank4_nodes"]),
+        "--max-turns", str(plan["configuration"]["maximum_turns"]),
         "--output", str(output),
     ]
 
@@ -1299,11 +1437,11 @@ def adapt_gate_result(raw: Any, *, plan: Mapping[str, Any],
         != runtime.get("body_sha256")
         or document.get("bindings", {}).get("candidate_payload_sha256")
         != runtime.get("quantization", {}).get("payload_sha256")
-        or document.get("config", {}).get("pair_offset") != index * 5
-        or document.get("config", {}).get("pair_count") != 5
-        or document.get("config", {}).get("mode") != "actual-clock"
+        or document.get("config") != _expected_gate_configuration(
+            plan, pair_offset=index * 5, pair_count=5
+        )
     ):
-        raise BridgeError("v3 gate result runtime/range binding changed")
+        raise BridgeError("v3 gate result runtime/configuration binding changed")
     games = []
     for game in document["games"]:
         failure = game["failure"]
@@ -1511,6 +1649,10 @@ def run_final(
             "candidate_commit": plan["inputs"]["candidate_commit"],
             "candidate": plan["inputs"]["candidate"],
             "runtime": plan["inputs"]["runtime"],
+            "deployment_derivation": plan["inputs"]["deployment_derivation"],
+            "deployment_manifest": plan["inputs"]["deployment_manifest"],
+            "deployment_manifest_body_sha256": plan["inputs"]
+            ["deployment_manifest_body_sha256"],
             "development_plan": plan["inputs"]["development_plan"],
             "finalist_reference": plan["inputs"]["finalist_reference"],
             "finalist": plan["inputs"]["finalist"],
@@ -1557,6 +1699,24 @@ def validate_qualified(path: pathlib.Path, *, plan_path: pathlib.Path,
     )
     _verify_record(plan["inputs"]["candidate"], "qualified candidate", ascii_required=True)
     _verify_record(plan["inputs"]["runtime"], "qualified runtime", ascii_required=True)
+    manifest_path = _verify_record(
+        plan["inputs"]["deployment_manifest"], "qualified deployment manifest",
+        ascii_required=True,
+    )
+    manifest = deployment.verify_manifest_file(
+        manifest_path, pathlib.Path(plan["inputs"]["candidate"]["path"])
+    )
+    if (
+        manifest.get("body_sha256")
+        != plan["inputs"]["deployment_manifest_body_sha256"]
+        or manifest.get("base_source")
+        != plan["inputs"]["deployment_derivation"]["base_source"]
+        or manifest.get("deployed_source")
+        != plan["inputs"]["deployment_derivation"]["deployed_source"]
+        or manifest.get("configuration")
+        != plan["inputs"]["deployment_derivation"]["configuration"]
+    ):
+        raise BridgeError("qualified deployment manifest changed")
     development._verify_sealed_record(
         plan["inputs"]["finalist"], development.FINALIST_SCHEMA,
         "qualified finalist",
@@ -1585,6 +1745,10 @@ def validate_qualified(path: pathlib.Path, *, plan_path: pathlib.Path,
         "candidate_commit": plan["inputs"]["candidate_commit"],
         "candidate": plan["inputs"]["candidate"],
         "runtime": plan["inputs"]["runtime"],
+        "deployment_derivation": plan["inputs"]["deployment_derivation"],
+        "deployment_manifest": plan["inputs"]["deployment_manifest"],
+        "deployment_manifest_body_sha256": plan["inputs"]
+        ["deployment_manifest_body_sha256"],
         "development_plan": plan["inputs"]["development_plan"],
         "finalist_reference": plan["inputs"]["finalist_reference"],
         "finalist": plan["inputs"]["finalist"],
