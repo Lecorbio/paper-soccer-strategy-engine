@@ -1542,9 +1542,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ci = commands.add_parser("seal-ci")
     _common(ci)
-    ci.add_argument("--gh-json", type=pathlib.Path, required=True)
+    ci.add_argument("--run-id", type=int)
+    ci.add_argument("--gh-json", type=pathlib.Path)
     ci.add_argument("--expected-head", required=True)
     ci.add_argument("--fetched-at-utc", default=utc_now())
+    ci.add_argument("--gh", type=pathlib.Path, default=pathlib.Path("gh"))
 
     authorize = commands.add_parser("authorize")
     _common(authorize)
@@ -1607,8 +1609,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 frozen_at_utc=args.frozen_at_utc,
             )
         elif args.command == "seal-ci":
+            if (args.run_id is None) == (args.gh_json is None):
+                raise ReleaseError(
+                    "seal-ci requires exactly one of --run-id/--gh-json"
+                )
+            payload = (
+                _json(args.gh_json)
+                if args.gh_json is not None
+                else upload_primitives.fetch_gh_run(
+                    args.run_id, gh_executable=args.gh
+                )
+            )
             result = seal_ci_evidence(
-                args.campaign_root, gh_payload=_json(args.gh_json),
+                args.campaign_root, gh_payload=payload,
                 expected_head=args.expected_head,
                 fetched_at_utc=args.fetched_at_utc,
             )
@@ -1677,7 +1690,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         print(json.dumps(result, sort_keys=True, allow_nan=False))
         return 0
-    except (ReleaseError, OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (
+        ReleaseError,
+        upload_primitives.UploadError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as error:
         print(f"compact discrete-v3 release failure: {error}", file=sys.stderr)
         return 2
 

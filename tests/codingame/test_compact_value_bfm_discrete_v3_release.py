@@ -5,6 +5,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -64,6 +65,117 @@ def strict_summary():
             "first_max_ms": 899.0, "later_max_ms": 179.0,
         },
     }
+
+
+class CommandLineTest(unittest.TestCase):
+    def test_seal_ci_run_id_uses_authoritative_fetch(self):
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            release.upload_primitives, "fetch_gh_run", return_value=gh_payload()
+        ) as fetch, mock.patch.object(
+            release, "seal_ci_evidence", return_value={"status": "sealed"}
+        ) as seal, mock.patch("builtins.print"):
+            root = pathlib.Path(raw)
+            result = release.main([
+                "seal-ci", "--campaign-root", str(root),
+                "--run-id", "123", "--expected-head", COMMIT,
+                "--fetched-at-utc", "2026-09-02T01:00:00Z",
+                "--gh", "/opt/gh",
+            ])
+        self.assertEqual(result, 0)
+        fetch.assert_called_once_with(
+            123, gh_executable=pathlib.Path("/opt/gh")
+        )
+        seal.assert_called_once_with(
+            root, gh_payload=gh_payload(), expected_head=COMMIT,
+            fetched_at_utc="2026-09-02T01:00:00Z",
+        )
+
+    def test_seal_ci_fetch_failure_returns_two_without_sealing(self):
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            release.upload_primitives, "fetch_gh_run",
+            side_effect=release.upload_primitives.UploadError("fetch failed"),
+        ) as fetch, mock.patch.object(
+            release, "seal_ci_evidence"
+        ) as seal, mock.patch("builtins.print"):
+            result = release.main([
+                "seal-ci", "--campaign-root", raw,
+                "--run-id", "123", "--expected-head", COMMIT,
+            ])
+        self.assertEqual(result, 2)
+        fetch.assert_called_once()
+        seal.assert_not_called()
+
+    def test_seal_ci_nonpositive_run_id_returns_two_without_sealing(self):
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            release.upload_primitives.subprocess, "run"
+        ) as subprocess_run, mock.patch.object(
+            release, "seal_ci_evidence"
+        ) as seal, mock.patch("builtins.print"):
+            result = release.main([
+                "seal-ci", "--campaign-root", raw,
+                "--run-id", "0", "--expected-head", COMMIT,
+            ])
+        self.assertEqual(result, 2)
+        subprocess_run.assert_not_called()
+        seal.assert_not_called()
+
+    def test_seal_ci_invalid_fetched_payload_returns_two_without_artifact(self):
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            release.upload_primitives, "fetch_gh_run", return_value={}
+        ) as fetch, mock.patch("builtins.print"):
+            root = pathlib.Path(raw)
+            result = release.main([
+                "seal-ci", "--campaign-root", str(root),
+                "--run-id", "123", "--expected-head", COMMIT,
+            ])
+            evidence = root / release.RELEASE_DIRECTORY / "github-ci.json"
+            self.assertFalse(evidence.exists())
+        self.assertEqual(result, 2)
+        fetch.assert_called_once()
+
+    def test_seal_ci_requires_exactly_one_input(self):
+        with tempfile.TemporaryDirectory() as raw:
+            payload_path = pathlib.Path(raw) / "run.json"
+            payload_path.write_text(json.dumps(gh_payload()), encoding="ascii")
+            base = [
+                "seal-ci", "--campaign-root", raw, "--expected-head", COMMIT,
+            ]
+            for inputs in (
+                [],
+                ["--run-id", "123", "--gh-json", str(payload_path)],
+            ):
+                with self.subTest(inputs=inputs), mock.patch.object(
+                    release.upload_primitives, "fetch_gh_run"
+                ) as fetch, mock.patch.object(
+                    release, "seal_ci_evidence"
+                ) as seal, mock.patch("builtins.print"):
+                    self.assertEqual(release.main(base + inputs), 2)
+                    fetch.assert_not_called()
+                    seal.assert_not_called()
+
+    def test_seal_ci_gh_json_remains_supported(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            payload = gh_payload()
+            payload_path = root / "run.json"
+            payload_path.write_text(json.dumps(payload), encoding="ascii")
+            with mock.patch.object(
+                release.upload_primitives, "fetch_gh_run"
+            ) as fetch, mock.patch.object(
+                release, "seal_ci_evidence", return_value={"status": "sealed"}
+            ) as seal, mock.patch("builtins.print"):
+                result = release.main([
+                    "seal-ci", "--campaign-root", str(root),
+                    "--gh-json", str(payload_path),
+                    "--expected-head", COMMIT,
+                    "--fetched-at-utc", "2026-09-02T01:00:00Z",
+                ])
+        self.assertEqual(result, 0)
+        fetch.assert_not_called()
+        seal.assert_called_once_with(
+            root, gh_payload=payload, expected_head=COMMIT,
+            fetched_at_utc="2026-09-02T01:00:00Z",
+        )
 
 
 class Fixture:
