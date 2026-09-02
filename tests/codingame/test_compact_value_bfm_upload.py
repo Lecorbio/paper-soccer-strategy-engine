@@ -29,12 +29,15 @@ def digest(value):
 def gh_run(head=COMMIT):
     jobs = [
         {"name": name, "status": "completed", "conclusion": "success",
-         "databaseId": index + 10, "url": f"https://github.com/job/{index}"}
+         "databaseId": index + 10,
+         "url": f"{upload.RUN_URL_PREFIX}12345/job/{index + 10}"}
         for index, name in enumerate(upload.JOB_NAMES)
     ]
     jobs.append({"name": "deploy", "status": "completed", "conclusion": "skipped"})
     return {
         "databaseId": 12345,
+        "workflowDatabaseId": upload.WORKFLOW_DATABASE_ID,
+        "attempt": 1,
         "name": "CI and Pages",
         "workflowName": "CI and Pages",
         "event": "workflow_dispatch",
@@ -42,7 +45,7 @@ def gh_run(head=COMMIT):
         "headSha": head,
         "status": "completed",
         "conclusion": "success",
-        "url": "https://github.com/example/actions/runs/12345",
+        "url": f"{upload.RUN_URL_PREFIX}12345",
         "jobs": jobs,
     }
 
@@ -305,6 +308,11 @@ class GitHubEvidenceTest(unittest.TestCase):
         normalized = upload.validate_gh_run(gh_run(), expected_head=COMMIT)
         self.assertEqual(tuple(normalized["jobs"]), upload.REQUIRED_JOB_IDS)
         self.assertEqual(normalized["head_branch"], "compact-value-bfm")
+        self.assertEqual(normalized["repository"], upload.REPOSITORY_SLUG)
+        self.assertEqual(
+            normalized["workflow_database_id"], upload.WORKFLOW_DATABASE_ID
+        )
+        self.assertEqual(normalized["attempt"], 1)
 
     def test_wrong_event_branch_head_or_failed_job_is_rejected(self):
         for field, value in (
@@ -325,6 +333,75 @@ class GitHubEvidenceTest(unittest.TestCase):
         payload["databaseId"] = True
         with self.assertRaises(upload.UploadError):
             upload.validate_gh_run(payload, expected_head=COMMIT)
+
+    def test_wrong_or_bool_workflow_identity_and_attempt_are_rejected(self):
+        for field, value in (
+            ("workflowDatabaseId", upload.WORKFLOW_DATABASE_ID + 1),
+            ("workflowDatabaseId", True),
+            ("attempt", 2),
+            ("attempt", True),
+        ):
+            payload = gh_run()
+            payload[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(
+                upload.UploadError
+            ):
+                upload.validate_gh_run(payload, expected_head=COMMIT)
+
+    def test_same_name_wrong_workflow_and_wrong_repository_urls_are_rejected(self):
+        payload = gh_run()
+        payload["workflowDatabaseId"] += 1
+        self.assertEqual(payload["workflowName"], upload.WORKFLOW_NAME)
+        with self.assertRaises(upload.UploadError):
+            upload.validate_gh_run(payload, expected_head=COMMIT)
+        for target in ("run", "job"):
+            payload = gh_run()
+            if target == "run":
+                payload["url"] = "https://github.com/other/repository/actions/runs/12345"
+            else:
+                payload["jobs"][0]["url"] = (
+                    "https://github.com/other/repository/actions/runs/12345/job/10"
+                )
+            with self.subTest(target=target), self.assertRaises(upload.UploadError):
+                upload.validate_gh_run(payload, expected_head=COMMIT)
+
+    def test_fetch_requests_authoritative_workflow_fields_and_repository(self):
+        payload = gh_run()
+        completed = upload.subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=json.dumps(payload).encode("ascii"), stderr=b"",
+        )
+        with mock.patch.object(upload.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(upload.fetch_gh_run(12345), payload)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["gh", "run", "view", "12345"])
+        self.assertEqual(argv[argv.index("--repo") + 1], upload.REPOSITORY_SLUG)
+        fields = argv[argv.index("--json") + 1].split(",")
+        self.assertIn("workflowDatabaseId", fields)
+        self.assertIn("attempt", fields)
+
+    def test_sealed_evidence_revalidates_repository_workflow_and_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "ci.json"
+            evidence = upload.seal_ci_evidence(
+                path, gh_payload=gh_run(), expected_head=COMMIT,
+                fetched_at_utc="2026-09-02T01:00:00Z",
+            )
+            self.assertEqual(
+                upload.validate_ci_evidence(path, expected_head=COMMIT), evidence
+            )
+            for field, value in (
+                ("repository", "other/repository"),
+                ("workflow_database_id", True),
+                ("attempt", 2),
+            ):
+                changed = dict(evidence)
+                changed.pop("body_sha256")
+                changed[field] = value
+                path.write_bytes(q.canonical_json_bytes(q.seal(changed)))
+                with self.subTest(field=field), self.assertRaises(upload.UploadError):
+                    upload.validate_ci_evidence(path, expected_head=COMMIT)
+                path.write_bytes(q.canonical_json_bytes(evidence))
 
 
 class AuthorizationChainTest(unittest.TestCase):

@@ -648,6 +648,9 @@ def seal_ci_evidence(
 def _normalized_ci(ci: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "run_id": ci["run_id"],
+        "repository": ci["repository"],
+        "workflow_database_id": ci["workflow_database_id"],
+        "attempt": ci["attempt"],
         "head_sha": ci["head_sha"],
         "conclusion": "success",
         "jobs": {

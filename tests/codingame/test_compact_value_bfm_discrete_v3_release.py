@@ -27,7 +27,9 @@ def gh_payload(head=COMMIT, conclusion="success"):
             "status": "completed",
             "conclusion": conclusion if index == 0 else "success",
             "databaseId": 100 + index,
-            "url": f"https://github.com/example/job/{index}",
+            "url": (
+                f"{release.upload_primitives.RUN_URL_PREFIX}123/job/{100 + index}"
+            ),
         }
         for index, name in enumerate(release.upload_primitives.JOB_NAMES)
     ]
@@ -36,6 +38,8 @@ def gh_payload(head=COMMIT, conclusion="success"):
     })
     return {
         "databaseId": 123,
+        "workflowDatabaseId": release.upload_primitives.WORKFLOW_DATABASE_ID,
+        "attempt": 1,
         "name": "CI and Pages",
         "workflowName": "CI and Pages",
         "event": "workflow_dispatch",
@@ -43,7 +47,7 @@ def gh_payload(head=COMMIT, conclusion="success"):
         "headSha": head,
         "status": "completed",
         "conclusion": conclusion,
-        "url": "https://github.com/example/actions/runs/123",
+        "url": f"{release.upload_primitives.RUN_URL_PREFIX}123",
         "jobs": jobs,
     }
 
@@ -515,6 +519,15 @@ std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
             authorization = fixture.authorize()
             self.assertEqual(authorization["uploads_authorized"], 1)
             self.assertFalse(authorization["rank4_replacement_authorized"])
+            self.assertEqual(
+                authorization["ci"]["repository"],
+                release.upload_primitives.REPOSITORY_SLUG,
+            )
+            self.assertEqual(
+                authorization["ci"]["workflow_database_id"],
+                release.upload_primitives.WORKFLOW_DATABASE_ID,
+            )
+            self.assertEqual(authorization["ci"]["attempt"], 1)
             self.assertEqual(authorization, fixture.authorize())
             inputs = q.load_sealed(
                 fixture.root / release.RELEASE_DIRECTORY / "authorization-inputs.json",
@@ -568,6 +581,46 @@ std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
                         fixture.root, gh_payload=payload, expected_head=COMMIT,
                         fetched_at_utc="2026-09-01T11:30:00Z",
                     )
+
+    def test_wrong_workflow_attempt_and_repository_ci_provenance_rejects(self):
+        mutations = (
+            ("workflowDatabaseId", release.upload_primitives.WORKFLOW_DATABASE_ID + 1),
+            ("workflowDatabaseId", True),
+            ("attempt", 2),
+            ("attempt", True),
+            ("url", "https://github.com/other/repository/actions/runs/123"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as raw:
+                fixture = Fixture(pathlib.Path(raw))
+                payload = gh_payload()
+                payload[field] = value
+                if field == "workflowDatabaseId":
+                    self.assertEqual(payload["workflowName"], "CI and Pages")
+                release.freeze_live_exclusions(
+                    fixture.root, registry_path=fixture.registry,
+                    frozen_at_utc="2026-09-01T11:00:00Z",
+                )
+                with self.assertRaises(Exception):
+                    release.seal_ci_evidence(
+                        fixture.root, gh_payload=payload, expected_head=COMMIT,
+                        fetched_at_utc="2026-09-01T11:30:00Z",
+                    )
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = Fixture(pathlib.Path(raw))
+            payload = gh_payload()
+            payload["jobs"][0]["url"] = (
+                "https://github.com/other/repository/actions/runs/123/job/1"
+            )
+            release.freeze_live_exclusions(
+                fixture.root, registry_path=fixture.registry,
+                frozen_at_utc="2026-09-01T11:00:00Z",
+            )
+            with self.assertRaises(Exception):
+                release.seal_ci_evidence(
+                    fixture.root, gh_payload=payload, expected_head=COMMIT,
+                    fetched_at_utc="2026-09-01T11:30:00Z",
+                )
 
     def test_incomplete_qualified_context_and_late_exclusion_fail_closed(self):
         with tempfile.TemporaryDirectory() as raw:

@@ -53,6 +53,10 @@ COMPLETION_SCHEMA = "papersoccer.compact-value-bfm.completion.v1"
 BRANCH = "compact-value-bfm"
 WORKFLOW_FILE = "pages.yml"
 WORKFLOW_NAME = "CI and Pages"
+WORKFLOW_DATABASE_ID = 316333312
+REPOSITORY_SLUG = "Lecorbio/paper-soccer-strategy-engine"
+REPOSITORY_URL = f"https://github.com/{REPOSITORY_SLUG}"
+RUN_URL_PREFIX = f"{REPOSITORY_URL}/actions/runs/"
 TERMINAL_INTEGRITY_BLOCKERS = (
     pathlib.Path("iteration-governance/iteration/02-integrity-failure.json"),
     pathlib.Path("compact-value-family-invalidated.json"),
@@ -118,7 +122,12 @@ def validate_gh_run(payload: Mapping[str, Any], *, expected_head: str) -> dict[s
             or qualification.COMMIT_RE.fullmatch(expected_head) is None):
         raise UploadError("expected GitHub head is not an exact commit")
     run_id = payload.get("databaseId")
+    workflow_id = payload.get("workflowDatabaseId")
+    attempt = payload.get("attempt")
     if (type(run_id) is not int or run_id <= 0
+            or type(workflow_id) is not int
+            or workflow_id != WORKFLOW_DATABASE_ID
+            or type(attempt) is not int or attempt != 1
             or payload.get("workflowName") != WORKFLOW_NAME
             or payload.get("name") != WORKFLOW_NAME
             or payload.get("event") != "workflow_dispatch"
@@ -127,7 +136,7 @@ def validate_gh_run(payload: Mapping[str, Any], *, expected_head: str) -> dict[s
             or payload.get("status") != "completed"
             or payload.get("conclusion") != "success"
             or not isinstance(payload.get("url"), str)
-            or not payload["url"].startswith("https://github.com/")):
+            or payload["url"] != f"{RUN_URL_PREFIX}{run_id}"):
         raise UploadError("GitHub run does not bind pages.yml workflow_dispatch/head")
     jobs = payload.get("jobs")
     if not isinstance(jobs, list):
@@ -146,7 +155,8 @@ def validate_gh_run(payload: Mapping[str, Any], *, expected_head: str) -> dict[s
                     or job.get("conclusion") != "success"
                     or type(database_id) is not int or database_id <= 0
                     or not isinstance(job.get("url"), str)
-                    or not job["url"].startswith("https://github.com/")):
+                    or job["url"]
+                    != f"{RUN_URL_PREFIX}{run_id}/job/{database_id}"):
                 raise UploadError(f"required GitHub job did not pass: {job_id}")
             normalized[job_id] = {
                 "name": name,
@@ -164,6 +174,9 @@ def validate_gh_run(payload: Mapping[str, Any], *, expected_head: str) -> dict[s
         raise UploadError("GitHub run repeats an actual job database ID")
     return {
         "run_id": run_id,
+        "repository": REPOSITORY_SLUG,
+        "workflow_database_id": workflow_id,
+        "attempt": attempt,
         "workflow_file": WORKFLOW_FILE,
         "workflow_name": WORKFLOW_NAME,
         "event": "workflow_dispatch",
@@ -199,11 +212,15 @@ def fetch_gh_run(
     if type(run_id) is not int or run_id <= 0:
         raise UploadError("GitHub run ID must be a positive integer")
     fields = (
-        "databaseId,name,workflowName,event,headBranch,headSha,status,"
+        "databaseId,name,workflowName,workflowDatabaseId,attempt,event,"
+        "headBranch,headSha,status,"
         "conclusion,url,jobs"
     )
     completed = subprocess.run(
-        [str(gh_executable), "run", "view", str(run_id), "--json", fields],
+        [
+            str(gh_executable), "run", "view", str(run_id),
+            "--repo", REPOSITORY_SLUG, "--json", fields,
+        ],
         capture_output=True, check=False,
     )
     if completed.returncode != 0:
@@ -226,6 +243,11 @@ def validate_ci_evidence(path: pathlib.Path, *, expected_head: str) -> dict[str,
     if (evidence.get("namespace") != NAMESPACE
             or type(evidence.get("run_id")) is not int
             or evidence["run_id"] <= 0
+            or evidence.get("repository") != REPOSITORY_SLUG
+            or type(evidence.get("workflow_database_id")) is not int
+            or evidence.get("workflow_database_id") != WORKFLOW_DATABASE_ID
+            or type(evidence.get("attempt")) is not int
+            or evidence.get("attempt") != 1
             or evidence.get("workflow_file") != WORKFLOW_FILE
             or evidence.get("workflow_name") != WORKFLOW_NAME
             or evidence.get("event") != "workflow_dispatch"
@@ -234,7 +256,7 @@ def validate_ci_evidence(path: pathlib.Path, *, expected_head: str) -> dict[str,
             or evidence.get("status") != "completed"
             or evidence.get("conclusion") != "success"
             or not isinstance(evidence.get("url"), str)
-            or not evidence["url"].startswith("https://github.com/")
+            or evidence["url"] != f"{RUN_URL_PREFIX}{evidence['run_id']}"
             or qualification.SHA256_RE.fullmatch(
                 str(evidence.get("raw_sha256"))
             ) is None
@@ -255,7 +277,10 @@ def validate_ci_evidence(path: pathlib.Path, *, expected_head: str) -> dict[str,
                 or type(job.get("database_id")) is not int
                 or job["database_id"] <= 0
                 or not isinstance(job.get("url"), str)
-                or not job["url"].startswith("https://github.com/")):
+                or job["url"] != (
+                    f"{RUN_URL_PREFIX}{evidence['run_id']}/job/"
+                    f"{job['database_id']}"
+                )):
             raise UploadError("sealed CI job evidence changed")
         database_ids.append(job["database_id"])
     if len(set(database_ids)) != len(REQUIRED_JOB_IDS):
@@ -446,6 +471,9 @@ def authorize_upload(
     authorization_path = directory / "one-upload-authorization.json"
     normalized_ci = {
         "run_id": ci["run_id"],
+        "repository": ci["repository"],
+        "workflow_database_id": ci["workflow_database_id"],
+        "attempt": ci["attempt"],
         "head_sha": ci["head_sha"],
         "conclusion": "success",
         "jobs": {job_id: "success" for job_id in REQUIRED_JOB_IDS},
