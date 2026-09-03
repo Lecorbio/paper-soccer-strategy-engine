@@ -1421,7 +1421,33 @@ def _inline_source_fingerprints(
     """Read fingerprints embedded in an explicit local source, never references."""
 
     try:
-        value = json.loads(path.read_bytes())
+        raw = path.read_bytes()
+    except OSError as error:
+        raise PilotPipelineError("fingerprint-union source is unreadable") from error
+    if raw.startswith(b"# papersoccer.jacek-replay-bfm-opening-bank.v1\n"):
+        if classification != "mixed-development":
+            raise PilotPipelineError(
+                "historical opening exclusions may only feed mixed development"
+            )
+        try:
+            historical = challenger.openings.load_exclusion_bank(path)
+        except Exception as error:
+            raise PilotPipelineError(
+                "historical opening exclusion failed validation"
+            ) from error
+        result = set()
+        for opening in historical["openings"]:
+            state, _primitive_plies = challenger.openings.replay_transcript(
+                opening["transcript"]
+            )
+            result.add(
+                corpus.canonical_feature_fingerprint(
+                    features.encode_active(state)
+                ).hex()
+            )
+        return result
+    try:
+        value = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PilotPipelineError("fingerprint-union source is unreadable") from error
     if not isinstance(value, dict):

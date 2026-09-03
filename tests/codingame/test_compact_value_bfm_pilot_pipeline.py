@@ -958,6 +958,29 @@ class PilotPipelineTests(unittest.TestCase):
                 {canonical},
             )
 
+            historical = root / "historical.tsv"
+            historical.write_text(
+                "# papersoccer.jacek-replay-bfm-opening-bank.v1\n"
+                f"# rules={challenger.openings.RULES}\n"
+                "# classification=historical-development\n"
+                "# seed=fixture\n"
+                "# minimum-physical-plies=12\n"
+                "opening_id\ttranscript\tstate_identity\n"
+                f"historical-0\t{bank_rows[0]['transcript']}\t{'e' * 64}\n"
+            )
+            historical_union = pipeline.materialize_fingerprint_set(
+                output_directory=root / "frozen-historical",
+                classification="mixed-development",
+                sources=[historical],
+            )
+            historical.unlink()
+            self.assertEqual(
+                pipeline._fingerprint_values(
+                    historical_union, "mixed-development"
+                ),
+                {canonical},
+            )
+
     @unittest.skipUnless(importlib.util.find_spec("numpy"), "NumPy unavailable")
     def test_prior_csr_fingerprint_sets_survive_source_deletion(self):
         from tools import jacek_replay_train as replay_train

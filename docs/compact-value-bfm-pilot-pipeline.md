@@ -73,6 +73,9 @@ python3 tools/compact_value_bfm_pilot_pipeline.py build-fingerprint-set \
 
 Opening-bank inputs are replayed and converted to canonical sparse-feature
 hashes; their older state-serialization hashes are not mixed with that domain.
+The command also accepts validated historical replay-BFM exclusion TSVs for
+the mixed-development set, so all earlier development openings remain excluded
+without following paths back into an old worktree.
 The same command accepts standard unprotected CSR shard manifests for
 `prior-train` and `prior-validation`; it loads and validates the adjacent NPZ
 and hashes each row's four-way canonical active-feature representation. The
