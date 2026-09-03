@@ -25,6 +25,11 @@ std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
 MODEL_PAYLOAD_MUST_NOT_CHANGE
 """
 
+COMPACT_MACRO_PREFIXED = b"""\
+#define COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT 1
+inline constexpr std::size_t kRootPartialPaths=4'000;inline constexpr std::size_t kNonrootPartialPaths=512;inline constexpr std::size_t kProductionTreeNodes=80'000;inline constexpr double kExploration=0.95;inline constexpr double kFirstPlayUrgency=0.5;inline constexpr double kFinalVisitWeight=1.0;std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};MODEL_PAYLOAD_MUST_NOT_CHANGE
+"""
+
 
 class DiscreteV3DeploymentSourceTest(unittest.TestCase):
     @staticmethod
@@ -101,6 +106,54 @@ class DiscreteV3DeploymentSourceTest(unittest.TestCase):
                 BASE, BASE, search_tuple=("0.95", "0.5", "1"),
                 profile="default", work=work,
             )
+
+    def test_compacted_macro_prefixed_source_uses_same_strict_seven_slots(self):
+        selected_tuple = ("0.95", "0.75", "1")
+        profile = "light"
+        work = deployment.PROFILE_ROSTER[profile]
+        deployed = deployment.derive_source(
+            COMPACT_MACRO_PREFIXED, search_tuple=selected_tuple,
+            profile=profile, work=work,
+        )
+        self.assertTrue(deployed.startswith(
+            b"#define COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT 1\n"
+        ))
+        self.assertIn(b"kRootPartialPaths=2'000;", deployed)
+        self.assertIn(b"kNonrootPartialPaths=256;", deployed)
+        self.assertIn(b"kProductionTreeNodes=60'000;", deployed)
+        self.assertIn(b"kExploration=0.95;", deployed)
+        self.assertIn(b"kFirstPlayUrgency=0.75;", deployed)
+        self.assertIn(b"kFinalVisitWeight=1.0;", deployed)
+        self.assertIn(b"shuffle_seed{1ULL};", deployed)
+        self.assertEqual(
+            deployment.recover_generated_source(
+                deployed, search_tuple=selected_tuple,
+                profile=profile, work=work,
+            ),
+            COMPACT_MACRO_PREFIXED,
+        )
+        manifest = deployment.create_manifest(
+            COMPACT_MACRO_PREFIXED, deployed,
+            search_tuple=selected_tuple, profile=profile, work=work,
+        )
+        self.assertEqual(deployment.validate_manifest(manifest, deployed), manifest)
+
+    def test_compacted_source_duplicate_or_wrong_default_still_fails_closed(self):
+        work = deployment.PROFILE_ROSTER["default"]
+        duplicate = COMPACT_MACRO_PREFIXED + (
+            b"inline constexpr double kExploration = 0.95;\n"
+        )
+        wrong = COMPACT_MACRO_PREFIXED.replace(
+            b"kFirstPlayUrgency=0.5", b"kFirstPlayUrgency=0.5001"
+        )
+        for source in (duplicate, wrong):
+            with self.subTest(source=source[-80:]), self.assertRaisesRegex(
+                deployment.DeploymentSourceError, "exactly one frozen default"
+            ):
+                deployment.derive_source(
+                    source, search_tuple=("0.95", "0.5", "1"),
+                    profile="default", work=work,
+                )
 
     def test_any_extra_change_missing_slot_or_roster_drift_fails_closed(self):
         work = deployment.PROFILE_ROSTER["light"]

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import concurrent.futures
 import dataclasses
 import hashlib
 import io
@@ -48,6 +49,9 @@ BUNDLE_SCHEMA = "papersoccer.compact-value-bfm-input-bundle.v1"
 SHARD_SCHEMA = "papersoccer.jacek-replay-csr-shard.v1"
 SIDECAR_SCHEMA = "papersoccer.compact-value-bfm-teacher-sidecar.v1"
 SIDECAR_INDEX_SCHEMA = "papersoccer.compact-value-bfm-sidecar-index.v1"
+SUCCESSOR_LABEL_SCHEMA = (
+    "papersoccer.compact-value-bfm-complete-turn-successor-labels.v1"
+)
 INPUT_AUDIT_SCHEMA = "papersoccer.compact-value-bfm-input-audit.v1"
 RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v1"
 SEED_RECEIPT_SCHEMA = "papersoccer.compact-value-bfm-seed-receipt.v1"
@@ -78,6 +82,10 @@ WEIGHT_DECAY = 1e-5
 GRADIENT_CLIP = 5.0
 QAT_EPOCHS = 4
 QAT_LEARNING_RATE = 0.00025
+RANKING_LOSS_WEIGHTS = (0.0, 0.10, 0.25)
+RANKING_PAIR_CAP = 8
+RANKING_FLOAT_EPOCHS = 1
+RANKING_FLOAT_LEARNING_RATE = 0.00006
 
 QUANTIZATION_BITS = 3
 QUANTIZATION_MINIMUM = -3
@@ -522,6 +530,209 @@ class Dataset:
         return tuple(self.active_row(int(row)) for row in rows)
 
 
+@dataclasses.dataclass(frozen=True)
+class CompleteTurnSuccessor:
+    successor_id: str
+    active: np.ndarray
+    teacher_value: float
+    value_mover: int
+    evidence: Mapping[str, object]
+
+
+@dataclasses.dataclass(frozen=True)
+class CompleteTurnGroup:
+    group_id: str
+    parent_mover: int
+    successors: tuple[CompleteTurnSuccessor, ...]
+    successors_exhaustive: bool = True
+    evidence: Mapping[str, object] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class SuccessorRankingLabels:
+    train: tuple[CompleteTurnGroup, ...]
+    validation: tuple[CompleteTurnGroup, ...]
+    teacher: Mapping[str, object]
+    source_bundle_body_sha256: str
+    artifact_sha256: str
+    body_sha256: str
+
+
+def _ranking_weight(value: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TrainingError("successor ranking loss weight is not numeric")
+    normalized = float(value)
+    if normalized not in RANKING_LOSS_WEIGHTS:
+        raise TrainingError(
+            "successor ranking loss weight must be exactly 0, 0.10, or 0.25"
+        )
+    return normalized
+
+
+def validate_successor_label_document(
+    value: object,
+    *,
+    source_bundle_body_sha256: str,
+    artifact_sha256: str = "0" * 64,
+) -> SuccessorRankingLabels:
+    """Validate the corpus-owned rich aggregate and project its training core."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema", "feature_schema", "source_bundle_body_sha256", "teacher",
+        "ranking", "splits", "protected_tests_opened", "body_sha256",
+    }:
+        raise TrainingError("successor label document field roster changed")
+    verify_body_hash(
+        value, schema=SUCCESSOR_LABEL_SCHEMA, label="successor label document"
+    )
+    teacher = value.get("teacher")
+    ranking = value.get("ranking")
+    splits = value.get("splits")
+    if (
+        value.get("feature_schema") != FEATURE_SCHEMA
+        or value.get("source_bundle_body_sha256") != source_bundle_body_sha256
+        or not isinstance(teacher, Mapping)
+        or set(teacher) != {
+            "kind", "artifact_sha256", "payload_sha256",
+            "feature_schema_sha256", "source_sha256",
+        }
+        or teacher.get("kind") != "jacek_replay_bfm_search"
+        or any(
+            not valid_sha256(teacher.get(name))
+            for name in set(teacher) - {"kind"}
+        )
+        or ranking != {
+            "complete_turn_boundaries": True,
+            "teacher_value_frame": "explicit-mover-relative",
+            "successor_aliases": "canonical-boundary-state",
+            "best_tie_break": "successor-id-ascending",
+        }
+        or not isinstance(splits, Mapping)
+        or set(splits) != {"train", "validation"}
+        or value.get("protected_tests_opened") is not False
+        or not valid_sha256(artifact_sha256)
+    ):
+        raise TrainingError("successor label document binding changed")
+    try:
+        import jacek_replay_corpus as action_corpus
+    except ImportError as error:
+        raise TrainingError("complete-turn action corpus validator is unavailable") from error
+    if action_corpus.COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA != SUCCESSOR_LABEL_SCHEMA:
+        raise TrainingError("trainer and corpus successor schemas disagree")
+    try:
+        validated_document = action_corpus.validate_complete_turn_successor_labels(
+            dict(value)
+        )
+    except (TypeError, ValueError) as error:
+        raise TrainingError("rich successor-label aggregate validation failed") from error
+    if validated_document != dict(value):
+        raise TrainingError("successor-label aggregate normalization changed content")
+
+    observed_groups: set[str] = set()
+    normalized: dict[str, tuple[CompleteTurnGroup, ...]] = {}
+    total_groups = 0
+    for split in ("train", "validation"):
+        rows = splits.get(split)
+        if not isinstance(rows, list):
+            raise TrainingError("successor label split is malformed")
+        group_ids = [
+            row.get("group_id") if isinstance(row, Mapping) else None
+            for row in rows
+        ]
+        if (
+            any(not valid_sha256(group_id) for group_id in group_ids)
+            or group_ids != sorted(group_ids)
+            or len(set(group_ids)) != len(group_ids)
+        ):
+            raise TrainingError("successor label groups are not unique sorted IDs")
+        groups: list[CompleteTurnGroup] = []
+        for group_value in rows:
+            group_id = str(group_value["group_id"])
+            if group_id in observed_groups:
+                raise TrainingError("successor label group crosses frozen splits")
+            row = {
+                "schema": action_corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA,
+                "feature_schema": value["feature_schema"],
+                "source_bundle_body_sha256": value[
+                    "source_bundle_body_sha256"
+                ],
+                "teacher": dict(teacher),
+                "ranking": dict(ranking),
+                "split": split,
+                "group": dict(group_value),
+            }
+            try:
+                validated_row = action_corpus.validate_complete_turn_action_group(row)
+            except (TypeError, ValueError) as error:
+                raise TrainingError("rich complete-turn group validation failed") from error
+            group = validated_row["group"]
+            normalized_successors = tuple(CompleteTurnSuccessor(
+                successor_id=str(successor["successor_id"]),
+                active=np.asarray(successor["active"], dtype="<u2"),
+                teacher_value=float(successor["teacher_value"]),
+                value_mover=int(successor["value_mover"]),
+                evidence={
+                    key: value
+                    for key, value in successor.items()
+                    if key not in {
+                        "successor_id", "active", "teacher_value", "value_mover"
+                    }
+                },
+            ) for successor in group["successors"])
+            groups.append(CompleteTurnGroup(
+                group_id=group_id,
+                parent_mover=int(group["parent_mover"]),
+                successors=normalized_successors,
+                successors_exhaustive=bool(group["successors_exhaustive"]),
+                evidence={
+                    key: item
+                    for key, item in group.items()
+                    if key not in {
+                        "group_id", "parent_mover", "successors",
+                        "successors_exhaustive",
+                    }
+                },
+            ))
+            observed_groups.add(group_id)
+            total_groups += 1
+        normalized[split] = tuple(groups)
+    if total_groups == 0:
+        raise TrainingError("successor label document contains no groups")
+    return SuccessorRankingLabels(
+        train=normalized["train"],
+        validation=normalized["validation"],
+        teacher=dict(teacher),
+        source_bundle_body_sha256=source_bundle_body_sha256,
+        artifact_sha256=artifact_sha256,
+        body_sha256=str(value["body_sha256"]),
+    )
+
+
+def load_successor_ranking_labels(
+    path: pathlib.Path, bundle: FrozenBundle,
+) -> SuccessorRankingLabels:
+    if path.is_symlink() or not path.is_file():
+        raise TrainingError("successor label document is absent or redirected")
+    payload, value = _load_canonical_json(path, "successor label document")
+    digest = sha256_bytes(payload)
+    if path.name != f"{digest}.successor-labels.json":
+        raise TrainingError("successor label document is not content addressed")
+    labels = validate_successor_label_document(
+        value,
+        source_bundle_body_sha256=bundle.body_sha256,
+        artifact_sha256=digest,
+    )
+    teacher_core = {
+        name: labels.teacher[name]
+        for name in (
+            "artifact_sha256", "payload_sha256", "feature_schema_sha256"
+        )
+    }
+    if teacher_core != _validate_teacher_identity(bundle, teacher_core):
+        raise TrainingError("successor label teacher binding changed")
+    return labels
+
+
 def _validate_active_rows(indptr: np.ndarray, indices: np.ndarray) -> None:
     expected_vertices = np.arange(VERTEX_COUNT, dtype=np.int64)
     for row in range(len(indptr) - 1):
@@ -796,6 +1007,26 @@ def mixed_epoch_batches(
                 (batch + 1) * ANCHOR_ROWS_PER_BATCH
             ],
         )
+
+
+def successor_ranking_epoch_schedule(
+    group_count: int,
+    batch_count: int,
+    *,
+    seed: int,
+    epoch: int,
+) -> np.ndarray:
+    """Choose one ranking group per scalar batch with a deterministic cursor."""
+
+    if group_count <= 0 or batch_count <= 0 or epoch <= 0:
+        raise TrainingError("successor ranking schedule arguments are invalid")
+    return _continuous_rows(
+        group_count,
+        batch_count,
+        seed=seed,
+        stream="successor-ranking",
+        start=(epoch - 1) * batch_count,
+    )
 
 
 def mixed_epoch_coverage(new_count: int, anchor_count: int, epoch: int) -> dict[str, Any]:
@@ -1806,6 +2037,7 @@ class TrainingInputs:
     )
     split_isolation: dict[str, object] = dataclasses.field(default_factory=dict)
     input_audit: dict[str, object] = dataclasses.field(default_factory=dict)
+    successor_rankings: SuccessorRankingLabels | None = None
 
 
 def _array_identity(value: np.ndarray) -> str:
@@ -2069,6 +2301,7 @@ def load_training_inputs(
     *,
     sidecar_index: pathlib.Path | None = None,
     input_audit: pathlib.Path | None = None,
+    successor_labels: pathlib.Path | None = None,
 ) -> TrainingInputs:
     if isinstance(arm, str):
         try:
@@ -2121,6 +2354,11 @@ def load_training_inputs(
             "sha256": sha256_file(input_audit),
             "body_sha256": audit["body_sha256"],
         },
+        successor_rankings=(
+            None
+            if successor_labels is None
+            else load_successor_ranking_labels(successor_labels, bundle)
+        ),
     )
     expected = bundle.manifest.get("row_counts", {})
     if (
@@ -2220,6 +2458,146 @@ def arm_loss_gradient(
     }
 
 
+def _parent_frame_sign(parent_mover: int, value_mover: int) -> np.float32:
+    if (
+        isinstance(parent_mover, bool)
+        or isinstance(value_mover, bool)
+        or parent_mover not in (0, 1)
+        or value_mover not in (0, 1)
+    ):
+        raise TrainingError("successor ranking mover perspective is invalid")
+    return np.float32(1.0 if parent_mover == value_mover else -1.0)
+
+
+def _parent_frame_values(
+    group: CompleteTurnGroup, values: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    values = np.asarray(values, dtype=np.float32)
+    if (
+        values.shape != (len(group.successors),)
+        or not np.all(np.isfinite(values))
+    ):
+        raise TrainingError("successor ranking predictions are invalid")
+    signs = np.asarray([
+        _parent_frame_sign(group.parent_mover, successor.value_mover)
+        for successor in group.successors
+    ], dtype=np.float32)
+    return (values * signs).astype(np.float32), signs
+
+
+def _teacher_parent_values(group: CompleteTurnGroup) -> np.ndarray:
+    values = np.asarray(
+        [successor.teacher_value for successor in group.successors],
+        dtype=np.float32,
+    )
+    parent, _signs = _parent_frame_values(group, values)
+    return parent
+
+
+def _deterministic_best(group: CompleteTurnGroup, values: np.ndarray) -> int:
+    values = np.asarray(values, dtype=np.float32)
+    if values.shape != (len(group.successors),) or not np.all(np.isfinite(values)):
+        raise TrainingError("successor ranking best-action values are invalid")
+    return min(
+        range(len(group.successors)),
+        key=lambda index: (
+            -float(values[index]), group.successors[index].successor_id
+        ),
+    )
+
+
+def _ranking_pairs(
+    group: CompleteTurnGroup,
+    *,
+    pair_cap: int = RANKING_PAIR_CAP,
+) -> tuple[int, tuple[int, ...], np.ndarray]:
+    if isinstance(pair_cap, bool) or pair_cap != RANKING_PAIR_CAP:
+        raise TrainingError(
+            f"successor ranking pair cap must be exactly {RANKING_PAIR_CAP}"
+        )
+    teacher = _teacher_parent_values(group)
+    best = _deterministic_best(group, teacher)
+    if not group.successors_exhaustive:
+        return best, (), np.asarray([], dtype=np.float32)
+    candidates = []
+    for index, successor in enumerate(group.successors):
+        if index == best:
+            continue
+        gap = float(teacher[best] - teacher[index])
+        if gap > 0.0:
+            candidates.append((index, gap, successor.successor_id))
+    candidates.sort(key=lambda row: (-row[1], row[2]))
+    selected = tuple(row[0] for row in candidates[:pair_cap])
+    gaps = np.asarray(
+        [float(teacher[best] - teacher[index]) for index in selected],
+        dtype=np.float32,
+    )
+    return best, selected, gaps
+
+
+def _comparable_ranking_groups(
+    groups: Sequence[CompleteTurnGroup],
+) -> tuple[CompleteTurnGroup, ...]:
+    return tuple(
+        group
+        for group in groups
+        if group.successors_exhaustive and bool(_ranking_pairs(group)[1])
+    )
+
+
+def pairwise_successor_ranking_loss_gradient(
+    group: CompleteTurnGroup,
+    predictions: np.ndarray,
+    *,
+    pair_cap: int = RANKING_PAIR_CAP,
+) -> tuple[float, np.ndarray, dict[str, object]]:
+    """Gap-weighted logistic best-vs-other loss in the parent's frame."""
+
+    parent_predictions, signs = _parent_frame_values(group, predictions)
+    best, alternatives, gaps = _ranking_pairs(group, pair_cap=pair_cap)
+    gradient_parent = np.zeros(len(group.successors), dtype=np.float32)
+    if not alternatives:
+        return 0.0, gradient_parent, {
+            "group_id": group.group_id,
+            "teacher_best_successor_id": group.successors[best].successor_id,
+            "pair_count": 0,
+            "selected_successor_ids": [],
+            "gap_weighting": "teacher-gap-normalized",
+            "pair_cap": pair_cap,
+            "successors_exhaustive": group.successors_exhaustive,
+            "skipped_nonexhaustive": not group.successors_exhaustive,
+        }
+    denominator = float(np.sum(gaps, dtype=np.float64))
+    if not math.isfinite(denominator) or denominator <= 0.0:
+        raise TrainingError("successor ranking teacher gaps are invalid")
+    gap_weights = (gaps / np.float32(denominator)).astype(np.float32)
+    loss = 0.0
+    for weight, other in zip(gap_weights, alternatives, strict=True):
+        margin = float(parent_predictions[best] - parent_predictions[other])
+        pair_loss = float(np.logaddexp(0.0, -margin))
+        derivative = -1.0 / (1.0 + math.exp(margin))
+        loss += float(weight) * pair_loss
+        gradient_parent[best] += np.float32(float(weight) * derivative)
+        gradient_parent[other] -= np.float32(float(weight) * derivative)
+    gradient = (gradient_parent * signs).astype(np.float32)
+    if not math.isfinite(loss) or not np.all(np.isfinite(gradient)):
+        raise TrainingError("successor ranking loss produced a nonfinite result")
+    return loss, gradient, {
+        "group_id": group.group_id,
+        "teacher_best_successor_id": group.successors[best].successor_id,
+        "pair_count": len(alternatives),
+        "selected_successor_ids": [
+            group.successors[index].successor_id for index in alternatives
+        ],
+        "teacher_gaps": [float(value) for value in gaps],
+        "normalized_gap_weights": [float(value) for value in gap_weights],
+        "gap_weighting": "teacher-gap-normalized",
+        "pair_cap": pair_cap,
+        "successors_exhaustive": True,
+        "skipped_nonexhaustive": False,
+    }
+
+
 class AdamW:
     def __init__(
         self,
@@ -2281,6 +2659,41 @@ class AdamW:
                 raise TrainingError("AdamW update produced a nonfinite parameter")
 
 
+def _network_gradients(
+    parameters: Mapping[str, np.ndarray],
+    architecture: Architecture,
+    active: Sequence[np.ndarray],
+    cache: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    output_gradient: np.ndarray,
+    effective: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    output_gradient = np.asarray(output_gradient, dtype=np.float32)
+    first_pre, first, second_pre, second, output_pre = cache
+    if output_gradient.shape != output_pre.shape:
+        raise TrainingError("compact output gradient shape changed")
+    output_pre_gradient = output_gradient * fast_tanh_derivative(output_pre)
+    gradients: dict[str, np.ndarray] = {
+        "w3": np.asarray(second.T @ output_pre_gradient, dtype=np.float32),
+    }
+    second_gradient = (
+        output_pre_gradient[:, None] * effective["w3"][None, :]
+    ).astype(np.float32)
+    second_pre_gradient = (
+        second_gradient * second_activation_derivative(second_pre)
+    )
+    gradients["w2"] = np.asarray(first.T @ second_pre_gradient, dtype=np.float32)
+    first_gradient = np.asarray(
+        second_pre_gradient @ effective["w2"].T, dtype=np.float32
+    )
+    first_pre_gradient = (
+        first_gradient * first_activation_derivative(first_pre)
+    )
+    gradients["w1"] = np.zeros_like(parameters["w1"], dtype=np.float32)
+    for row, indices in enumerate(active):
+        np.add.at(gradients["w1"], indices, first_pre_gradient[row])
+    return gradients
+
+
 def _train_mixed_batch(
     parameters: dict[str, np.ndarray],
     architecture: Architecture,
@@ -2291,6 +2704,8 @@ def _train_mixed_batch(
     anchor_rows: np.ndarray,
     *,
     fixed_scales: Mapping[str, object] | None = None,
+    ranking_group: CompleteTurnGroup | None = None,
+    ranking_weight: float = 0.0,
 ) -> float:
     if (
         new_rows.shape != (NEW_ROWS_PER_BATCH,)
@@ -2323,28 +2738,53 @@ def _train_mixed_batch(
         if fixed_scales is not None
         else None
     )
+    ranking_weight = _ranking_weight(ranking_weight)
+    if (ranking_group is None) != (ranking_weight == 0.0):
+        raise TrainingError(
+            "positive successor ranking weight requires exactly one ranking group"
+        )
     predictions, cache = forward(
         parameters, architecture, active, quantized=quantized
     )
     loss, output_gradient, _ = arm_loss_gradient(
         arm, predictions, targets, weights, teacher
     )
-    first_pre, first, second_pre, second, output_pre = cache
-    output_pre_gradient = output_gradient * fast_tanh_derivative(output_pre)
     effective = quantized.effective() if quantized is not None else parameters
-    gradients: dict[str, np.ndarray] = {
-        "w3": np.asarray(second.T @ output_pre_gradient, dtype=np.float32),
-    }
-    second_gradient = (
-        output_pre_gradient[:, None] * effective["w3"][None, :]
-    ).astype(np.float32)
-    second_pre_gradient = second_gradient * second_activation_derivative(second_pre)
-    gradients["w2"] = np.asarray(first.T @ second_pre_gradient, dtype=np.float32)
-    first_gradient = np.asarray(second_pre_gradient @ effective["w2"].T, dtype=np.float32)
-    first_pre_gradient = first_gradient * first_activation_derivative(first_pre)
-    gradients["w1"] = np.zeros_like(parameters["w1"], dtype=np.float32)
-    for row, indices in enumerate(active):
-        np.add.at(gradients["w1"], indices, first_pre_gradient[row])
+    gradients = _network_gradients(
+        parameters,
+        architecture,
+        active,
+        cache,
+        output_gradient,
+        effective,
+    )
+    objective = loss
+    if ranking_group is not None:
+        ranking_active = tuple(
+            successor.active for successor in ranking_group.successors
+        )
+        ranking_predictions, ranking_cache = forward(
+            parameters,
+            architecture,
+            ranking_active,
+            quantized=quantized,
+        )
+        ranking_loss, ranking_output_gradient, _ranking_report = (
+            pairwise_successor_ranking_loss_gradient(
+                ranking_group, ranking_predictions
+            )
+        )
+        ranking_gradients = _network_gradients(
+            parameters,
+            architecture,
+            ranking_active,
+            ranking_cache,
+            ranking_output_gradient * np.float32(ranking_weight),
+            effective,
+        )
+        for name in gradients:
+            gradients[name] += ranking_gradients[name]
+        objective += ranking_weight * ranking_loss
     norm = math.sqrt(
         sum(
             float(np.sum(value * value, dtype=np.float64))
@@ -2358,7 +2798,7 @@ def _train_mixed_batch(
         for gradient in gradients.values():
             gradient *= scale
     optimizer.update(parameters, gradients)
-    return loss
+    return float(objective)
 
 
 def predict_dataset(
@@ -2381,6 +2821,91 @@ def predict_dataset(
             quantized=quantized,
         )
     return predictions
+
+
+def successor_ranking_metrics(
+    parameters: Mapping[str, np.ndarray],
+    architecture: Architecture,
+    groups: Sequence[CompleteTurnGroup],
+    *,
+    quantized: QuantizedWeights | None = None,
+) -> dict[str, float | int | bool]:
+    if not groups:
+        raise TrainingError("successor ranking metrics require nonempty groups")
+    agreements = 0
+    regrets = []
+    losses = []
+    pair_count = 0
+    flips = 0
+    comparable_groups = 0
+    singleton_groups = 0
+    skipped_nonexhaustive_groups = 0
+    skipped_tied_groups = 0
+    for group in groups:
+        if len(group.successors) == 1:
+            singleton_groups += 1
+        if not group.successors_exhaustive:
+            skipped_nonexhaustive_groups += 1
+            continue
+        _best, alternatives, _gaps = _ranking_pairs(group)
+        if not alternatives:
+            skipped_tied_groups += int(len(group.successors) > 1)
+            continue
+        comparable_groups += 1
+        active = tuple(successor.active for successor in group.successors)
+        float_raw, _float_cache = forward(
+            parameters, architecture, active, quantized=None
+        )
+        evaluated_raw = float_raw
+        if quantized is not None:
+            evaluated_raw, _quantized_cache = forward(
+                parameters, architecture, active, quantized=quantized
+            )
+        teacher_parent = _teacher_parent_values(group)
+        float_parent, _float_signs = _parent_frame_values(group, float_raw)
+        evaluated_parent, _evaluated_signs = _parent_frame_values(
+            group, evaluated_raw
+        )
+        teacher_best = _deterministic_best(group, teacher_parent)
+        float_best = _deterministic_best(group, float_parent)
+        evaluated_best = _deterministic_best(group, evaluated_parent)
+        agreements += int(evaluated_best == teacher_best)
+        flips += int(evaluated_best != float_best)
+        regrets.append(float(
+            teacher_parent[teacher_best] - teacher_parent[evaluated_best]
+        ))
+        loss, _gradient, report = pairwise_successor_ranking_loss_gradient(
+            group, evaluated_raw
+        )
+        losses.append(loss)
+        pair_count += int(report["pair_count"])
+    group_count = len(groups)
+    denominator = max(1, comparable_groups)
+    report: dict[str, float | int | bool] = {
+        "groups": group_count,
+        "comparable_groups": comparable_groups,
+        "singleton_groups": singleton_groups,
+        "skipped_nonexhaustive_groups": skipped_nonexhaustive_groups,
+        "skipped_tied_groups": skipped_tied_groups,
+        "pairs": pair_count,
+        "top1_agreement": float(agreements / denominator),
+        "mean_teacher_regret": (
+            0.0 if not regrets else float(np.mean(regrets, dtype=np.float64))
+        ),
+        "pairwise_loss": (
+            0.0 if not losses else float(np.mean(losses, dtype=np.float64))
+        ),
+        "float_vs_quantized_action_flips": flips,
+        "float_vs_quantized_action_flip_rate": float(flips / denominator),
+        "quantized_comparison": quantized is not None,
+        "pair_cap": RANKING_PAIR_CAP,
+    }
+    if any(
+        isinstance(value, float) and not math.isfinite(value)
+        for value in report.values()
+    ):
+        raise TrainingError("successor ranking metric is nonfinite")
+    return report
 
 
 def metrics_from_predictions(
@@ -2438,8 +2963,18 @@ def evaluate_validation_pair(
     arm: Arm,
     *,
     quantized: QuantizedWeights | None = None,
-) -> dict[str, dict[str, float | int]]:
-    return {
+    ranking_weight: float = 0.0,
+) -> dict[str, dict[str, Any]]:
+    ranking_weight = _ranking_weight(ranking_weight)
+    if ranking_weight > 0.0 and inputs.successor_rankings is None:
+        raise TrainingError("successor ranking labels are required by the loss weight")
+    if (
+        ranking_weight > 0.0
+        and inputs.successor_rankings is not None
+        and not _comparable_ranking_groups(inputs.successor_rankings.validation)
+    ):
+        raise TrainingError("positive ranking loss has no comparable validation groups")
+    report: dict[str, dict[str, Any]] = {
         "common_adjudicator": metrics_from_predictions(
             predict_dataset(
                 parameters,
@@ -2461,18 +2996,39 @@ def evaluate_validation_pair(
             arm,
         ),
     }
+    if inputs.successor_rankings is not None:
+        report["successor_ranking"] = {
+            **successor_ranking_metrics(
+                parameters,
+                architecture,
+                inputs.successor_rankings.validation,
+                quantized=quantized,
+            ),
+            "loss_weight": ranking_weight,
+        }
+    return report
 
 
 def _validation_key(
     report: Mapping[str, Mapping[str, float | int]]
-) -> tuple[float, float, float, float]:
+) -> tuple[float, ...]:
     common = report["common_adjudicator"]
     canonical = report["canonical_validation"]
-    return (
+    result = (
         float(common["objective_weighted_huber"]),
         float(canonical["objective_weighted_huber"]),
         -float(common["sign_accuracy"]),
         -float(canonical["sign_accuracy"]),
+    )
+    ranking = report.get("successor_ranking")
+    if ranking is None or float(ranking.get("loss_weight", 0.0)) == 0.0:
+        return result
+    return (
+        *result,
+        float(ranking["mean_teacher_regret"]),
+        -float(ranking["top1_agreement"]),
+        float(ranking["float_vs_quantized_action_flip_rate"]),
+        float(ranking["pairwise_loss"]),
     )
 
 
@@ -2482,6 +3038,52 @@ class FloatTrainingResult:
     epoch: int
     metrics: dict[str, dict[str, float | int]]
     report: dict[str, object]
+
+
+def _parameter_update_evidence(
+    before: Mapping[str, np.ndarray],
+    after: Mapping[str, np.ndarray],
+) -> dict[str, dict[str, object]]:
+    if set(before) != {"w1", "w2", "w3"} or set(after) != set(before):
+        raise TrainingError("per-layer update evidence tensor roster changed")
+    report: dict[str, dict[str, object]] = {}
+    for name in ("w1", "w2", "w3"):
+        first = np.asarray(before[name], dtype="<f4")
+        last = np.asarray(after[name], dtype="<f4")
+        if first.shape != last.shape or not np.all(np.isfinite(last)):
+            raise TrainingError("per-layer update evidence shape/value changed")
+        delta = np.asarray(last - first, dtype=np.float32)
+        report[name] = {
+            "parameters": int(first.size),
+            "changed_parameters": int(np.count_nonzero(first != last)),
+            "changed": bool(np.any(first != last)),
+            "l2_delta": float(np.linalg.norm(delta.astype(np.float64))),
+            "maximum_absolute_delta": float(
+                np.max(np.abs(delta)) if delta.size else 0.0
+            ),
+            "before_sha256": sha256_bytes(first.tobytes(order="C")),
+            "after_sha256": sha256_bytes(last.tobytes(order="C")),
+        }
+    return report
+
+
+def _parameter_identity(
+    parameters: Mapping[str, np.ndarray], architecture: Architecture,
+) -> dict[str, object]:
+    normalized = _validate_parameters(parameters, architecture)
+    layers = {}
+    for name in ("w1", "w2", "w3"):
+        value = np.asarray(normalized[name], dtype="<f4")
+        layers[name] = {
+            "shape": list(value.shape),
+            "dtype": "little-endian-float32",
+            "sha256": sha256_bytes(value.tobytes(order="C")),
+        }
+    return {
+        "architecture": architecture.name,
+        "dimensions": list(architecture.dimensions),
+        "layers": layers,
+    }
 
 
 def train_float_seed(
@@ -2494,15 +3096,51 @@ def train_float_seed(
     patience: int = PATIENCE,
     learning_rate: float = LEARNING_RATE,
     weight_decay: float = WEIGHT_DECAY,
+    ranking_weight: float = 0.0,
+    initial_parameters: Mapping[str, np.ndarray] | None = None,
 ) -> FloatTrainingResult:
     if seed not in FIXED_SEEDS:
         raise TrainingError("compact training requires one of the three fixed seeds")
     if maximum_epochs <= 0 or maximum_epochs > MAX_FLOAT_EPOCHS or patience <= 0:
         raise TrainingError("float training epoch configuration is invalid")
+    ranking_weight = _ranking_weight(ranking_weight)
+    successor_mode = inputs.successor_rankings is not None
+    if successor_mode:
+        if (
+            architecture.name != "capacity-12x8"
+            or maximum_epochs != RANKING_FLOAT_EPOCHS
+            or not math.isfinite(learning_rate)
+            or not 0.0 < learning_rate <= RANKING_FLOAT_LEARNING_RATE
+            or initial_parameters is None
+        ):
+            raise TrainingError(
+                "successor ranking requires bound 12x8 initialization, one "
+                "float epoch, and learning rate at most 6e-5"
+            )
+    elif initial_parameters is not None:
+        raise TrainingError("legacy scalar training cannot inject an initial checkpoint")
+    all_ranking_groups = (
+        () if inputs.successor_rankings is None else inputs.successor_rankings.train
+    )
+    ranking_groups = _comparable_ranking_groups(all_ranking_groups)
+    if ranking_weight > 0.0 and not ranking_groups:
+        raise TrainingError("positive ranking loss has no training groups")
     coverage_epoch = anchor_coverage_complete_epoch(len(inputs.new), len(inputs.anchor))
-    if maximum_epochs < coverage_epoch:
+    if not successor_mode and maximum_epochs < coverage_epoch:
         raise TrainingError("float training cannot cover the complete anchor stream")
-    parameters = initialize_parameters(architecture, seed)
+    parameters = (
+        initialize_parameters(architecture, seed)
+        if initial_parameters is None
+        else {
+            name: value.copy()
+            for name, value in _validate_parameters(
+                initial_parameters, architecture
+            ).items()
+        }
+    )
+    starting_parameters = {
+        name: value.copy() for name, value in parameters.items()
+    }
     optimizer = AdamW(
         parameters, learning_rate=learning_rate, weight_decay=weight_decay
     )
@@ -2514,9 +3152,17 @@ def train_float_seed(
     history: list[dict[str, object]] = []
     for epoch in range(1, maximum_epochs + 1):
         losses = []
-        for new_rows, anchor_rows in mixed_epoch_batches(
+        batch_count = math.ceil(len(inputs.new) / NEW_ROWS_PER_BATCH)
+        ranking_schedule = (
+            None
+            if ranking_weight == 0.0
+            else successor_ranking_epoch_schedule(
+                len(ranking_groups), batch_count, seed=seed, epoch=epoch
+            )
+        )
+        for batch_index, (new_rows, anchor_rows) in enumerate(mixed_epoch_batches(
             len(inputs.new), len(inputs.anchor), seed=seed, epoch=epoch
-        ):
+        )):
             losses.append(_train_mixed_batch(
                 parameters,
                 architecture,
@@ -2525,12 +3171,26 @@ def train_float_seed(
                 inputs,
                 new_rows,
                 anchor_rows,
+                ranking_group=(
+                    None
+                    if ranking_schedule is None
+                    else ranking_groups[int(ranking_schedule[batch_index])]
+                ),
+                ranking_weight=ranking_weight,
             ))
         validation = evaluate_validation_pair(
-            parameters, architecture, inputs, arm
+            parameters,
+            architecture,
+            inputs,
+            arm,
+            ranking_weight=ranking_weight,
         )
         coverage = mixed_epoch_coverage(len(inputs.new), len(inputs.anchor), epoch)
-        complete = coverage["anchor"]["complete_permutations"] >= 1
+        complete = (
+            True
+            if successor_mode
+            else coverage["anchor"]["complete_permutations"] >= 1
+        )
         key = _validation_key(validation)
         eligible = complete and (best_key is None or key < best_key)
         history.append({
@@ -2550,18 +3210,15 @@ def train_float_seed(
             last_progress_epoch = epoch
         if complete and epoch - last_progress_epoch >= patience:
             break
-    if best_parameters is None or best_metrics is None or best_epoch < coverage_epoch:
-        raise TrainingError("float training produced no anchor-covered checkpoint")
-    return FloatTrainingResult(
-        parameters=best_parameters,
-        epoch=best_epoch,
-        metrics=best_metrics,
-        report={
-            "seed": seed,
-            "best_float_epoch": best_epoch,
-            "anchor_coverage_complete_epoch": coverage_epoch,
-            "history": history,
-            "optimizer": {
+    minimum_epoch = 1 if successor_mode else coverage_epoch
+    if best_parameters is None or best_metrics is None or best_epoch < minimum_epoch:
+        raise TrainingError("float training produced no selectable checkpoint")
+    training_report: dict[str, object] = {
+        "seed": seed,
+        "best_float_epoch": best_epoch,
+        "anchor_coverage_complete_epoch": coverage_epoch,
+        "history": history,
+        "optimizer": {
                 "name": "adamw",
                 "batch_size": BATCH_SIZE,
                 "maximum_epochs": maximum_epochs,
@@ -2569,17 +3226,58 @@ def train_float_seed(
                 "learning_rate": learning_rate,
                 "weight_decay": weight_decay,
                 "gradient_norm_clip": GRADIENT_CLIP,
-            },
-            "batching": {
-                "new_rows_per_batch": NEW_ROWS_PER_BATCH,
-                "anchor_rows_per_batch": ANCHOR_ROWS_PER_BATCH,
-                "new_loss_share": 0.25,
-                "anchor_loss_share": 0.75,
-                "sources_normalized_separately": True,
-                "anchor_stream": "continuous-no-repeat-until-permutation-complete",
-            },
-            "validation": best_metrics,
         },
+        "batching": {
+            "new_rows_per_batch": NEW_ROWS_PER_BATCH,
+            "anchor_rows_per_batch": ANCHOR_ROWS_PER_BATCH,
+            "new_loss_share": 0.25,
+            "anchor_loss_share": 0.75,
+            "sources_normalized_separately": True,
+            "anchor_stream": "continuous-no-repeat-until-permutation-complete",
+        },
+        "validation": best_metrics,
+    }
+    if successor_mode:
+        training_report.update({
+            "selected_epoch_anchor_coverage": mixed_epoch_coverage(
+                len(inputs.new), len(inputs.anchor), best_epoch
+            ),
+            "initialization": {
+                "kind": "frozen-float-checkpoint",
+                "seed_affects": "row-order-only",
+                "parameters": _parameter_identity(
+                    starting_parameters, architecture
+                ),
+            },
+            "successor_ranking": {
+                "labels_present": True,
+                "loss_active": ranking_weight > 0.0,
+                "loss_weight": ranking_weight,
+                "composition": "scalar-loss-plus-lambda-ranking-loss",
+                "pair_cap": RANKING_PAIR_CAP,
+                "gap_weighting": "teacher-gap-normalized",
+                "train_groups": len(all_ranking_groups),
+                "comparable_train_groups": len(ranking_groups),
+                "skipped_nonexhaustive_train_groups": sum(
+                    not group.successors_exhaustive
+                    for group in all_ranking_groups
+                ),
+                "validation_groups": (
+                    len(inputs.successor_rankings.validation)
+                ),
+                "float_warmup_epochs": RANKING_FLOAT_EPOCHS,
+                "float_learning_rate": learning_rate,
+                "legacy_full_anchor_pass_required": False,
+            },
+            "per_layer_update_evidence": _parameter_update_evidence(
+                starting_parameters, best_parameters
+            ),
+        })
+    return FloatTrainingResult(
+        parameters=best_parameters,
+        epoch=best_epoch,
+        metrics=best_metrics,
+        report=training_report,
     )
 
 
@@ -2588,6 +3286,8 @@ def select_fixed_scales(
     architecture: Architecture,
     inputs: TrainingInputs,
     arm: Arm,
+    *,
+    ranking_weight: float = 0.0,
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     parameters = _validate_parameters(parameters, architecture)
     candidates = {
@@ -2604,7 +3304,12 @@ def select_fixed_scales(
                 trial_scales[name] = candidate
                 quantized = quantize_fixed(parameters, architecture, trial_scales)
                 metrics = evaluate_validation_pair(
-                    parameters, architecture, inputs, arm, quantized=quantized
+                    parameters,
+                    architecture,
+                    inputs,
+                    arm,
+                    quantized=quantized,
+                    ranking_weight=ranking_weight,
                 )
                 key = (*_validation_key(metrics), float(candidate))
                 trials.append({
@@ -2623,7 +3328,12 @@ def select_fixed_scales(
             requested[name] = best[1]
     selected = quantize_fixed(parameters, architecture, requested)
     selected_metrics = evaluate_validation_pair(
-        parameters, architecture, inputs, arm, quantized=selected
+        parameters,
+        architecture,
+        inputs,
+        arm,
+        quantized=selected,
+        ranking_weight=ranking_weight,
     )
     return selected, {
         "scheme": (
@@ -2653,6 +3363,27 @@ class QuantizedTrainingResult:
     report: dict[str, object]
 
 
+def _quantized_update_evidence(
+    before: QuantizedWeights,
+    after: QuantizedWeights,
+) -> dict[str, dict[str, object]]:
+    report: dict[str, dict[str, object]] = {}
+    for name in ("w1", "w2", "w3"):
+        first = np.asarray(before.integer[name], dtype=np.int8)
+        last = np.asarray(after.integer[name], dtype=np.int8)
+        if first.shape != last.shape:
+            raise TrainingError("quantized update evidence tensor shape changed")
+        report[name] = {
+            "codes": int(first.size),
+            "changed_codes": int(np.count_nonzero(first != last)),
+            "changed": bool(np.any(first != last)),
+            "before_sha256": sha256_bytes(first.tobytes(order="C")),
+            "after_sha256": sha256_bytes(last.tobytes(order="C")),
+            "scale": float(after.scales[name]),
+        }
+    return report
+
+
 def run_fixed_scale_qat(
     float_result: FloatTrainingResult,
     inputs: TrainingInputs,
@@ -2661,11 +3392,23 @@ def run_fixed_scale_qat(
     seed: int,
     *,
     qat_epochs: int = QAT_EPOCHS,
+    ranking_weight: float = 0.0,
 ) -> QuantizedTrainingResult:
     if qat_epochs != QAT_EPOCHS:
         raise TrainingError("compact deployment requires exactly four QAT epochs")
+    ranking_weight = _ranking_weight(ranking_weight)
+    all_ranking_groups = (
+        () if inputs.successor_rankings is None else inputs.successor_rankings.train
+    )
+    ranking_groups = _comparable_ranking_groups(all_ranking_groups)
+    if ranking_weight > 0.0 and not ranking_groups:
+        raise TrainingError("positive ranking loss has no QAT training groups")
     pre_qat, scale_report = select_fixed_scales(
-        float_result.parameters, architecture, inputs, arm
+        float_result.parameters,
+        architecture,
+        inputs,
+        arm,
+        ranking_weight=ranking_weight,
     )
     selected = pre_qat
     selected_epoch = 0
@@ -2675,6 +3418,7 @@ def run_fixed_scale_qat(
         inputs,
         arm,
         quantized=pre_qat,
+        ranking_weight=ranking_weight,
     )
     selected_key = _validation_key(selected_metrics)
     fixed_scales = dict(pre_qat.scales)
@@ -2687,12 +3431,23 @@ def run_fixed_scale_qat(
     history = []
     for qat_epoch in range(1, qat_epochs + 1):
         schedule_epoch = MAX_FLOAT_EPOCHS + qat_epoch
-        for new_rows, anchor_rows in mixed_epoch_batches(
+        batch_count = math.ceil(len(inputs.new) / NEW_ROWS_PER_BATCH)
+        ranking_schedule = (
+            None
+            if ranking_weight == 0.0
+            else successor_ranking_epoch_schedule(
+                len(ranking_groups),
+                batch_count,
+                seed=seed,
+                epoch=schedule_epoch,
+            )
+        )
+        for batch_index, (new_rows, anchor_rows) in enumerate(mixed_epoch_batches(
             len(inputs.new),
             len(inputs.anchor),
             seed=seed,
             epoch=schedule_epoch,
-        ):
+        )):
             _train_mixed_batch(
                 master,
                 architecture,
@@ -2702,10 +3457,21 @@ def run_fixed_scale_qat(
                 new_rows,
                 anchor_rows,
                 fixed_scales=fixed_scales,
+                ranking_group=(
+                    None
+                    if ranking_schedule is None
+                    else ranking_groups[int(ranking_schedule[batch_index])]
+                ),
+                ranking_weight=ranking_weight,
             )
         candidate = quantize_fixed(master, architecture, fixed_scales)
         metrics = evaluate_validation_pair(
-            master, architecture, inputs, arm, quantized=candidate
+            master,
+            architecture,
+            inputs,
+            arm,
+            quantized=candidate,
+            ranking_weight=ranking_weight,
         )
         key = _validation_key(metrics)
         history.append({
@@ -2722,21 +3488,42 @@ def run_fixed_scale_qat(
             selected_epoch = qat_epoch
             selected_metrics = metrics
             selected_key = key
+    qat_report: dict[str, object] = {
+        "qat_epochs": qat_epochs,
+        "learning_rate": QAT_LEARNING_RATE,
+        "fixed_scale_qat": True,
+        "selected_qat_epoch": selected_epoch,
+        "pre_qat_retained": selected_epoch == 0,
+        "tie_break": "prefer-pre-qat-on-exact-tie",
+        "scale_search": scale_report,
+        "history": history,
+        "selected_validation": selected_metrics,
+    }
+    if inputs.successor_rankings is not None:
+        qat_report.update({
+            "successor_ranking": {
+                "labels_present": True,
+                "loss_active": ranking_weight > 0.0,
+                "loss_weight": ranking_weight,
+                "composition": "scalar-loss-plus-lambda-ranking-loss",
+                "pair_cap": RANKING_PAIR_CAP,
+                "gap_weighting": "teacher-gap-normalized",
+                "train_groups": len(all_ranking_groups),
+                "comparable_train_groups": len(ranking_groups),
+                "skipped_nonexhaustive_train_groups": sum(
+                    not group.successors_exhaustive
+                    for group in all_ranking_groups
+                ),
+            },
+            "per_layer_update_evidence": _quantized_update_evidence(
+                pre_qat, selected
+            ),
+        })
     return QuantizedTrainingResult(
         quantized=selected,
         qat_epoch=selected_epoch,
         metrics=selected_metrics,
-        report={
-            "qat_epochs": qat_epochs,
-            "learning_rate": QAT_LEARNING_RATE,
-            "fixed_scale_qat": True,
-            "selected_qat_epoch": selected_epoch,
-            "pre_qat_retained": selected_epoch == 0,
-            "tie_break": "prefer-pre-qat-on-exact-tie",
-            "scale_search": scale_report,
-            "history": history,
-            "selected_validation": selected_metrics,
-        },
+        report=qat_report,
     )
 
 
@@ -2866,6 +3653,20 @@ def load_float_checkpoint(
     return parameters
 
 
+def _bound_initial_checkpoint(
+    path: pathlib.Path, architecture: Architecture,
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+    if path.is_symlink() or not path.is_file():
+        raise TrainingError("initial float checkpoint is absent or redirected")
+    parameters = load_float_checkpoint(path, architecture)
+    return parameters, {
+        "path": str(path.resolve()),
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+        "parameters": _parameter_identity(parameters, architecture),
+    }
+
+
 def training_binding(
     bundle: FrozenBundle,
     inputs: TrainingInputs,
@@ -2873,7 +3674,10 @@ def training_binding(
     arm: Arm,
     seed: int,
     sidecar_index: pathlib.Path | None,
+    ranking_weight: float = 0.0,
+    initial_checkpoint: pathlib.Path | None = None,
 ) -> dict[str, object]:
+    ranking_weight = _ranking_weight(ranking_weight)
     sidecar = None
     if sidecar_index is not None:
         sidecar = {
@@ -2927,6 +3731,52 @@ def training_binding(
             "qat_learning_rate": QAT_LEARNING_RATE,
         },
     }
+    labels = inputs.successor_rankings
+    if ranking_weight > 0.0 and labels is None:
+        raise TrainingError("positive ranking loss has no bound label artifact")
+    if (labels is None) != (initial_checkpoint is None):
+        raise TrainingError(
+            "successor labels require exactly one frozen initial checkpoint"
+        )
+    if labels is not None:
+        if architecture.name != "capacity-12x8":
+            raise TrainingError("successor ranking requires capacity-12x8")
+        assert initial_checkpoint is not None
+        _initial_parameters, checkpoint = _bound_initial_checkpoint(
+            initial_checkpoint, architecture
+        )
+        body["successor_ranking"] = {
+            "schema": SUCCESSOR_LABEL_SCHEMA,
+            "artifact_sha256": labels.artifact_sha256,
+            "body_sha256": labels.body_sha256,
+            "source_bundle_body_sha256": labels.source_bundle_body_sha256,
+            "teacher": dict(labels.teacher),
+            "train_groups": len(labels.train),
+            "validation_groups": len(labels.validation),
+            "comparable_train_groups": len(
+                _comparable_ranking_groups(labels.train)
+            ),
+            "comparable_validation_groups": len(
+                _comparable_ranking_groups(labels.validation)
+            ),
+            "skipped_nonexhaustive_groups": sum(
+                not group.successors_exhaustive
+                for group in (*labels.train, *labels.validation)
+            ),
+            "loss_weight": ranking_weight,
+            "composition": "scalar-loss-plus-lambda-ranking-loss",
+            "allowed_loss_weights": list(RANKING_LOSS_WEIGHTS),
+            "pair_cap": RANKING_PAIR_CAP,
+            "gap_weighting": "teacher-gap-normalized",
+            "runtime_architecture_changed": False,
+            "initial_checkpoint": checkpoint,
+            "float_warmup": {
+                "epochs": RANKING_FLOAT_EPOCHS,
+                "learning_rate": RANKING_FLOAT_LEARNING_RATE,
+                "seeds_affect_row_order_only": True,
+                "legacy_full_anchor_pass_required": False,
+            },
+        }
     return body_hashed(body)
 
 
@@ -3039,10 +3889,19 @@ def train_seed_candidate(
     output_directory: pathlib.Path,
     *,
     sidecar_index: pathlib.Path | None = None,
+    ranking_weight: float = 0.0,
+    initial_checkpoint: pathlib.Path | None = None,
     resume: bool = False,
 ) -> dict[str, Any]:
     binding = training_binding(
-        bundle, inputs, architecture, arm, seed, sidecar_index
+        bundle,
+        inputs,
+        architecture,
+        arm,
+        seed,
+        sidecar_index,
+        ranking_weight,
+        initial_checkpoint,
     )
     reference_path = _seed_reference_path(
         output_directory, architecture, arm, seed
@@ -3056,9 +3915,29 @@ def train_seed_candidate(
     # No intermediate optimizer/epoch state is persisted.  Any orphaned
     # content-addressed files left by interruption are harmless; without the
     # final reference this seed always restarts deterministically at epoch zero.
-    float_result = train_float_seed(inputs, architecture, arm, seed)
+    float_arguments: dict[str, Any] = {"ranking_weight": ranking_weight}
+    if inputs.successor_rankings is not None:
+        if initial_checkpoint is None:
+            raise TrainingError("successor ranking initial checkpoint is absent")
+        initial_parameters, _checkpoint = _bound_initial_checkpoint(
+            initial_checkpoint, architecture
+        )
+        float_arguments.update({
+            "maximum_epochs": RANKING_FLOAT_EPOCHS,
+            "patience": 1,
+            "learning_rate": RANKING_FLOAT_LEARNING_RATE,
+            "initial_parameters": initial_parameters,
+        })
+    float_result = train_float_seed(
+        inputs, architecture, arm, seed, **float_arguments
+    )
     quantized_result = run_fixed_scale_qat(
-        float_result, inputs, architecture, arm, seed
+        float_result,
+        inputs,
+        architecture,
+        arm,
+        seed,
+        ranking_weight=ranking_weight,
     )
     gate = offline_advancement_gate(
         float_result.metrics, quantized_result.metrics
@@ -3114,6 +3993,22 @@ def train_seed_candidate(
         "protected_tests_opened": False,
         "resume_policy": "completed-receipt-reused;interrupted-seed-restarts-epoch-zero",
     }
+    if inputs.successor_rankings is not None:
+        body["successor_ranking"] = {
+            "labels_present": True,
+            "loss_active": ranking_weight > 0.0,
+            "loss_weight": _ranking_weight(ranking_weight),
+            "float_validation": float_result.metrics["successor_ranking"],
+            "quantized_validation": quantized_result.metrics[
+                "successor_ranking"
+            ],
+            "float_per_layer_update_evidence": float_result.report[
+                "per_layer_update_evidence"
+            ],
+            "qat_per_layer_update_evidence": quantized_result.report[
+                "per_layer_update_evidence"
+            ],
+        }
     receipt_document = body_hashed(body)
     receipt_path = _write_content_addressed(
         output_directory / "seed-receipts",
@@ -3138,6 +4033,70 @@ def _receipt_selection_key(receipt: Mapping[str, Any]) -> tuple[float, ...]:
     return (*_validation_key(metrics), float(receipt["seed"]))
 
 
+def _seed_worker_count(value: int, *, successor_mode: bool) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value not in (1, 2):
+        raise TrainingError("seed workers must be exactly 1 or 2")
+    if successor_mode and value != 2:
+        raise TrainingError("successor-label training requires exactly two seed workers")
+    return value
+
+
+def _train_seed_roster(
+    bundle: FrozenBundle,
+    inputs: TrainingInputs,
+    architecture: Architecture,
+    arm: Arm,
+    output_directory: pathlib.Path,
+    *,
+    seed_workers: int,
+    sidecar_index: pathlib.Path | None,
+    ranking_weight: float,
+    initial_checkpoint: pathlib.Path | None,
+    resume: bool,
+) -> list[dict[str, Any]]:
+    """Run independent seeds with shared read-only inputs and stable ordering."""
+
+    workers = _seed_worker_count(
+        seed_workers, successor_mode=inputs.successor_rankings is not None
+    )
+
+    def one(seed: int) -> dict[str, Any]:
+        return train_seed_candidate(
+            bundle,
+            inputs,
+            architecture,
+            arm,
+            seed,
+            output_directory,
+            sidecar_index=sidecar_index,
+            ranking_weight=ranking_weight,
+            initial_checkpoint=initial_checkpoint,
+            resume=resume,
+        )
+
+    if workers == 1:
+        return [one(seed) for seed in FIXED_SEEDS]
+    ordered: list[dict[str, Any] | None] = [None] * len(FIXED_SEEDS)
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="compact-value-bfm-seed",
+    ) as executor:
+        futures = {
+            executor.submit(one, seed): index
+            for index, seed in enumerate(FIXED_SEEDS)
+        }
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                ordered[futures[future]] = future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    if any(receipt is None for receipt in ordered):
+        raise TrainingError("seed worker pool returned an incomplete receipt roster")
+    return [receipt for receipt in ordered if receipt is not None]
+
+
 def train_arm_campaign(
     bundle: FrozenBundle,
     architecture: Architecture,
@@ -3145,7 +4104,11 @@ def train_arm_campaign(
     output_directory: pathlib.Path,
     *,
     sidecar_index: pathlib.Path | None = None,
+    successor_labels: pathlib.Path | None = None,
+    ranking_weight: float = 0.0,
+    initial_checkpoint: pathlib.Path | None = None,
     input_audit: pathlib.Path | None = None,
+    seed_workers: int = 1,
     resume: bool = False,
     generated_source_ascii_bytes: int | None = None,
 ) -> pathlib.Path:
@@ -3154,20 +4117,32 @@ def train_arm_campaign(
         arm,
         sidecar_index=sidecar_index,
         input_audit=input_audit,
+        successor_labels=successor_labels,
     )
-    receipts = [
-        train_seed_candidate(
-            bundle,
-            inputs,
-            architecture,
-            arm,
-            seed,
-            output_directory,
-            sidecar_index=sidecar_index,
-            resume=resume,
+    ranking_weight = _ranking_weight(ranking_weight)
+    if successor_labels is None and ranking_weight > 0.0:
+        raise TrainingError(
+            "positive ranking weight requires successor labels"
         )
-        for seed in FIXED_SEEDS
-    ]
+    if (successor_labels is None) != (initial_checkpoint is None):
+        raise TrainingError(
+            "successor labels require --initial-checkpoint and legacy mode forbids it"
+        )
+    seed_workers = _seed_worker_count(
+        seed_workers, successor_mode=inputs.successor_rankings is not None
+    )
+    receipts = _train_seed_roster(
+        bundle,
+        inputs,
+        architecture,
+        arm,
+        output_directory,
+        seed_workers=seed_workers,
+        sidecar_index=sidecar_index,
+        ranking_weight=ranking_weight,
+        initial_checkpoint=initial_checkpoint,
+        resume=resume,
+    )
     passing = [
         receipt for receipt in receipts
         if receipt.get("offline_gate", {}).get("passed") is True
@@ -3233,7 +4208,18 @@ def train_arm_campaign(
         "protected_tests_opened": False,
         "game_gated": False,
         "policy_head": False,
+        "seed_execution_policy": {
+            "seed_workers": seed_workers,
+            "maximum_seed_workers": 2,
+            "worker_model": "shared-read-only-input-thread-pool",
+            "receipt_order": "fixed-seed-order",
+            "selection_order": "validation-key-then-seed",
+            "resume": "per-seed-content-addressed-reference",
+            "per_seed_numerical_binding_includes_worker_count": False,
+        },
     }
+    if chosen.get("successor_ranking", {}).get("labels_present") is True:
+        body["successor_ranking"] = dict(chosen["successor_ranking"])
     document = body_hashed(body)
     path = _write_content_addressed(
         output_directory / "selections",
@@ -3266,8 +4252,11 @@ def validate_selection(
         "quantized_validation", "offline_gate", "status",
         "deployment_eligible", "rank4_control_never_deployment_eligible",
         "source_size_eligibility", "immutable_before_protected_test",
-        "protected_tests_opened", "game_gated", "policy_head", "body_sha256",
+        "protected_tests_opened", "game_gated", "policy_head",
+        "seed_execution_policy", "body_sha256",
     }
+    if "successor_ranking" in selection:
+        expected_fields.add("successor_ranking")
     if (
         set(selection) != expected_fields
         or selection.get("campaign_id") != CAMPAIGN_ID
@@ -3285,6 +4274,31 @@ def validate_selection(
         or set(selected_receipt) != {"path", "sha256", "body_sha256"}
     ):
         raise TrainingError("compact immutable selection contract changed")
+    seed_policy = selection.get("seed_execution_policy")
+    seed_workers = seed_policy.get("seed_workers") if isinstance(
+        seed_policy, Mapping
+    ) else None
+    if (
+        not isinstance(seed_policy, Mapping)
+        or set(seed_policy) != {
+            "seed_workers", "maximum_seed_workers", "worker_model",
+            "receipt_order", "selection_order", "resume",
+            "per_seed_numerical_binding_includes_worker_count",
+        }
+        or isinstance(seed_workers, bool)
+        or seed_workers not in (1, 2)
+        or seed_policy.get("maximum_seed_workers") != 2
+        or seed_policy.get("worker_model")
+        != "shared-read-only-input-thread-pool"
+        or seed_policy.get("receipt_order") != "fixed-seed-order"
+        or seed_policy.get("selection_order") != "validation-key-then-seed"
+        or seed_policy.get("resume")
+        != "per-seed-content-addressed-reference"
+        or seed_policy.get("per_seed_numerical_binding_includes_worker_count")
+        is not False
+        or ("successor_ranking" in selection and seed_workers != 2)
+    ):
+        raise TrainingError("compact seed execution policy changed")
     runtime_path = _output_artifact(
         artifact_root,
         runtime.get("path"),
@@ -3324,6 +4338,12 @@ def validate_selection(
         or receipt.get("float_validation") != selection["float_validation"]
         or receipt.get("quantized_validation") != selection["quantized_validation"]
         or receipt.get("offline_gate") != selection["offline_gate"]
+        or selection.get("successor_ranking")
+        != (
+            receipt.get("successor_ranking")
+            if receipt.get("successor_ranking", {}).get("labels_present") is True
+            else None
+        )
     ):
         raise TrainingError("selected runtime identity disagrees with selection")
     runtime_scales = {
@@ -3450,6 +4470,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     train.add_argument("--arm", type=_parse_arm, required=True)
     train.add_argument("--input-audit", type=pathlib.Path, required=True)
     train.add_argument("--sidecar-index", type=pathlib.Path)
+    train.add_argument("--successor-labels", type=pathlib.Path)
+    train.add_argument("--initial-checkpoint", type=pathlib.Path)
+    train.add_argument(
+        "--ranking-weight",
+        type=float,
+        choices=RANKING_LOSS_WEIGHTS,
+        default=0.0,
+    )
+    train.add_argument("--seed-workers", type=int, choices=(1, 2), default=1)
     train.add_argument("--resume", action="store_true")
     train.add_argument("--generated-source-ascii-bytes", type=int)
 
@@ -3498,6 +4527,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         arguments.arm,
                         arguments.output_directory,
                         sidecar_index=arguments.sidecar_index,
+                        successor_labels=arguments.successor_labels,
+                        ranking_weight=arguments.ranking_weight,
+                        initial_checkpoint=arguments.initial_checkpoint,
+                        seed_workers=arguments.seed_workers,
                         input_audit=arguments.input_audit,
                         resume=arguments.resume,
                         generated_source_ascii_bytes=(

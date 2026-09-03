@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Complete and verify the single Compact Value-BFM upload lifecycle."""
+"""Complete and verify the single Compact Value-BFM upload lifecycle.
+
+The maintained lifecycle accepts either its legacy strict-final authorization
+directory or the Rank-4 teacher challenger's direct release authorization.  The
+latter is lazily and recursively revalidated before every editor/Play/Submit
+transition; schema compatibility never bypasses the dual-gate release proof.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +56,10 @@ CI_SCHEMA = "papersoccer.compact-value-bfm.github-ci-evidence.v1"
 AUTH_INPUT_SCHEMA = "papersoccer.compact-value-bfm.upload-authorization-inputs.v1"
 FRESH_EDITOR_SCHEMA = "papersoccer.compact-value-bfm.fresh-editor.v1"
 COMPLETION_SCHEMA = "papersoccer.compact-value-bfm.completion.v1"
+RANK4_TEACHER_UPLOAD_INPUT_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "one-upload-authorization-inputs.v1"
+)
 BRANCH = "compact-value-bfm"
 WORKFLOW_FILE = "pages.yml"
 WORKFLOW_NAME = "CI and Pages"
@@ -91,7 +101,18 @@ def parse_utc(value: Any, field: str) -> dt.datetime:
 
 
 def authorization_directory(ledger_root: pathlib.Path) -> pathlib.Path:
-    return ledger_root.resolve() / "upload-authorization"
+    root = ledger_root.resolve()
+    # The persistent Rank-4 challenger release bridge writes its already-deeply
+    # validated authorization directly in its fixed upload root.  Detect that
+    # route lazily so the maintained editor/Play/Submit lifecycle can consume
+    # it without weakening or duplicating the legacy authorization path.
+    direct = (
+        root / "one-upload-authorization.json",
+        root / "authorization-inputs.json",
+    )
+    if any(path.exists() or path.is_symlink() for path in direct):
+        return root
+    return root / "upload-authorization"
 
 
 def reject_terminal_integrity_failure(ledger_root: pathlib.Path) -> None:
@@ -518,17 +539,69 @@ def _authorization(
     ledger_root: pathlib.Path,
 ) -> tuple[pathlib.Path, dict[str, Any], dict[str, Any]]:
     directory = authorization_directory(ledger_root)
-    inputs = qualification.load_sealed(
-        directory / "authorization-inputs.json", AUTH_INPUT_SCHEMA
-    )
+    inputs_path = directory / "authorization-inputs.json"
     path = directory / "one-upload-authorization.json"
+    if inputs_path.is_symlink() or path.is_symlink():
+        raise UploadError("upload authorization route is redirected")
+    inputs = qualification.load_sealed(inputs_path)
     authorization = qualification.load_sealed(path, qualification.UPLOAD_AUTH_SCHEMA)
-    if (inputs.get("authorization_directory") != str(directory)
-            or inputs.get("authorization") != _artifact(
-                path, qualification.UPLOAD_AUTH_SCHEMA
-            ) or inputs.get("uploads_authorized") != 1
-            or inputs.get("status") != "one-upload-authorized"):
-        raise UploadError("fixed upload authorization directory changed")
+    if inputs.get("schema") == AUTH_INPUT_SCHEMA:
+        if (inputs.get("authorization_directory") != str(directory)
+                or inputs.get("authorization") != _artifact(
+                    path, qualification.UPLOAD_AUTH_SCHEMA
+                ) or inputs.get("uploads_authorized") != 1
+                or inputs.get("status") != "one-upload-authorized"):
+            raise UploadError("fixed upload authorization directory changed")
+    elif inputs.get("schema") == RANK4_TEACHER_UPLOAD_INPUT_SCHEMA:
+        try:
+            release = _load(
+                HERE / "compact_value_bfm_rank4_teacher_release.py",
+                "compact_upload_rank4_teacher_release",
+            )
+            release_path = pathlib.Path(inputs["release_evidence"]["path"])
+            release_value = qualification.load_sealed(
+                release_path, release.RELEASE_EVIDENCE_SCHEMA
+            )
+            state = release.validate_upload_authorization(
+                directory,
+                release_evidence_path=release_path,
+                campaign_plan_path=pathlib.Path(
+                    release_value["campaign_plan"]["path"]
+                ),
+                attempt=int(inputs["attempt"]),
+                candidate_runtime=pathlib.Path(
+                    release_value["candidate"]["runtime"]["path"]
+                ),
+                candidate_source=pathlib.Path(
+                    release_value["candidate"]["generated_source"]["path"]
+                ),
+                dual_qualified_path=pathlib.Path(
+                    inputs["dual_qualification"]["path"]
+                ),
+            )
+        except Exception as error:
+            raise UploadError(
+                "Rank-4 challenger upload authorization failed deep validation"
+            ) from error
+        if (
+            pathlib.Path(state.get("authorization_path", "")).resolve()
+            != path.resolve()
+            or pathlib.Path(state.get("inputs_path", "")).resolve()
+            != inputs_path.resolve()
+            or state.get("authorization") != authorization
+            or state.get("inputs") != inputs
+            or inputs.get("status")
+            != "exactly-one-upload-authorized-after-dual-qualification"
+            or inputs.get("uploads_authorized") != 1
+            or inputs.get("submit_clicks_authorized") != 1
+            or inputs.get("second_upload_authorized") is not False
+            or authorization.get("upload_ledger_root") != str(directory)
+            or authorization.get("uploads_authorized") != 1
+            or authorization.get("two_independent_rank4_gates_passed") is not True
+        ):
+            raise UploadError("Rank-4 challenger upload authorization changed")
+    else:
+        raise UploadError("unsupported upload authorization input schema")
     return path, authorization, inputs
 
 

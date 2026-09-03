@@ -716,6 +716,7 @@ class BfmSearch {
     if (parent.closed) return false;
     if (!parent.expanded) return true;
 
+#if defined(COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT)
     struct Choice {
       int child{};
       double score{};
@@ -743,6 +744,45 @@ class BfmSearch {
       path.pop_back();
     }
     return false;
+#else
+    const double parent_log = std::log(static_cast<double>(
+        std::max<std::uint32_t>(1, parent.selection_visits)));
+    bool have_previous = false;
+    double previous_score = 0.0;
+    std::uint32_t previous_order = 0;
+    while (true) {
+      int selected = -1;
+      double selected_score = -std::numeric_limits<double>::infinity();
+      std::uint32_t selected_order = 0;
+      for (const int child_index : parent.children) {
+        const Node &child = nodes_[child_index];
+        if (child.closed) continue;
+        const double value = static_cast<double>(-child.value);
+        const double score = child.selection_visits == 0
+            ? value + config_.fpu
+            : value + config_.exploration * std::sqrt(
+                parent_log / static_cast<double>(child.selection_visits));
+        if (have_previous &&
+            !(score < previous_score ||
+              (score == previous_score && child.order > previous_order))) {
+          continue;
+        }
+        if (selected < 0 || score > selected_score ||
+            (score == selected_score && child.order < selected_order)) {
+          selected = child_index;
+          selected_score = score;
+          selected_order = child.order;
+        }
+      }
+      if (selected < 0) return false;
+      path.push_back(selected);
+      if (select_descendant(selected, path)) return true;
+      path.pop_back();
+      have_previous = true;
+      previous_score = selected_score;
+      previous_order = selected_order;
+    }
+#endif
   }
 
   std::optional<std::vector<int>> select_path() const {
@@ -1052,7 +1092,9 @@ SparseFeatures active_features(const State &state, std::uint8_t perspective) {
     result.indices[result.count++] = static_cast<std::uint16_t>(
         kEdgeCount + canonical * kVertexCategories + category);
   }
+#if defined(COMPACT_VALUE_BFM_REFERENCE_FEATURE_SORT)
   std::sort(result.indices.begin(), result.indices.begin() + result.count);
+#endif
   return result;
 }
 

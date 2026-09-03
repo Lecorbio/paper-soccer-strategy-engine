@@ -836,6 +836,8 @@ class CompleteTurnGenerator {
 struct SearchResult {
   std::vector<Move> action{};
   JacekReplayBfmSearchStats stats{};
+  std::vector<JacekReplayBfmRootActionAnalysis> root_actions{};
+  bool root_actions_exhaustive{};
 };
 
 class BestFirstMinimaxSearch {
@@ -856,7 +858,7 @@ class BestFirstMinimaxSearch {
     nodes_.reserve(std::min<std::size_t>(config_.max_tree_nodes, 4096U));
   }
 
-  SearchResult run() {
+  SearchResult run(bool include_root_actions = false) {
     const float root_value = evaluate(root_);
     nodes_.emplace_back(root_, no_parent(), std::vector<Move>{},
                         TacticalClass::SafeHandoff, root_.to_move(),
@@ -905,7 +907,7 @@ class BestFirstMinimaxSearch {
       }
       backup(*path);
     }
-    return make_result();
+    return make_result(include_root_actions);
   }
 
  private:
@@ -1228,7 +1230,7 @@ class BestFirstMinimaxSearch {
     }
   }
 
-  SearchResult make_result() {
+  SearchResult make_result(bool include_root_actions) {
     if (nodes_.empty() || nodes_[0].children.empty()) {
       throw std::logic_error("Jacek replay BFM has no root action");
     }
@@ -1277,7 +1279,30 @@ class BestFirstMinimaxSearch {
       }
     }
     stats_.tree_nodes = nodes_.size();
-    return SearchResult{nodes_[best].incoming_action, stats_};
+    SearchResult result{nodes_[best].incoming_action, stats_};
+    if (include_root_actions) {
+      result.root_actions.reserve(root.children.size());
+      for (const std::size_t child_index : root.children) {
+        const Node &child = nodes_[child_index];
+        const float action_value = -child.value;
+        std::optional<Player> proven_winner;
+        if (child.solved) {
+          if (!std::isfinite(action_value) || action_value == 0.0F) {
+            throw std::logic_error(
+                "Jacek replay BFM solved root action has no winner sign");
+          }
+          proven_winner = action_value > 0.0F
+                              ? root_.to_move()
+                              : opponent(root_.to_move());
+        }
+        result.root_actions.push_back(JacekReplayBfmRootActionAnalysis{
+            child.incoming_action, child.action_key, action_value,
+            child.visits, child.selection_visits, child.solved,
+            proven_winner});
+      }
+      result.root_actions_exhaustive = root.exhaustive;
+    }
+    return result;
   }
 };
 
@@ -1420,12 +1445,41 @@ class JacekReplayBfmBot::Impl {
     return result.stats;
   }
 
+  JacekReplayBfmPositionAnalysis analyze_position_actions(
+      const GameState &state, std::uint64_t seed) const {
+    if (!supports_rules(state.config)) {
+      throw std::invalid_argument(
+          "JacekReplayBfmBot requires 8x10 CodinGame rules");
+    }
+    if (is_terminal(state)) {
+      throw std::invalid_argument(
+          "JacekReplayBfmBot cannot analyze a terminal state");
+    }
+
+    JacekReplayBfmConfig analysis_config = config_;
+    analysis_config.seed = seed;
+    BestFirstMinimaxSearch search(state, analysis_config, model_);
+    SearchResult result = search.run(true);
+    validate_action(state, result.action);
+    for (const JacekReplayBfmRootActionAnalysis &successor :
+         result.root_actions) {
+      validate_action(state, successor.action);
+    }
+    result.stats.planned_action_length = result.action.size();
+    return JacekReplayBfmPositionAnalysis{
+        std::move(result.stats), std::move(result.root_actions),
+        result.root_actions_exhaustive};
+  }
+
   const JacekReplayBfmConfig &config() const noexcept { return config_; }
   const JacekReplayBfmSearchStats &stats() const noexcept {
     return last_stats_;
   }
   std::string_view model_sha256() const noexcept {
     return model_.model_sha256();
+  }
+  std::string_view model_payload_sha256() const noexcept {
+    return model_.payload_sha256();
   }
 
  private:
@@ -1465,6 +1519,11 @@ JacekReplayBfmSearchStats JacekReplayBfmBot::analyze_position(
   return impl_->analyze_position(state, seed);
 }
 
+JacekReplayBfmPositionAnalysis JacekReplayBfmBot::analyze_position_actions(
+    const GameState &state, std::uint64_t seed) const {
+  return impl_->analyze_position_actions(state, seed);
+}
+
 const JacekReplayBfmConfig &JacekReplayBfmBot::config() const noexcept {
   return impl_->config();
 }
@@ -1476,6 +1535,10 @@ JacekReplayBfmBot::last_search_stats() const noexcept {
 
 std::string_view JacekReplayBfmBot::model_sha256() const noexcept {
   return impl_->model_sha256();
+}
+
+std::string_view JacekReplayBfmBot::model_payload_sha256() const noexcept {
+  return impl_->model_payload_sha256();
 }
 
 std::string_view JacekReplayBfmBot::feature_schema_sha256() noexcept {

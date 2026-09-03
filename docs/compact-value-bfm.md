@@ -86,6 +86,12 @@ Raw shards, sidecars, checkpoints, opening banks, games, and transcripts stay
 under ignored `results/compact_value_bfm/`.  Only a selected deployable source,
 its compact public evidence, and non-sensitive receipts may be tracked.
 
+The submission exporter uses a deterministic token-boundary-preserving C++
+compaction pass.  Preprocessor directives and literals remain byte-exact while
+comments and non-semantic whitespace are removed.  The hard CodinGame limit is
+still 95,000 ASCII characters; new search candidates target at least 2,000
+characters of reserve before qualification.
+
 ## Advancement and local/live limits
 
 Offline evaluator metrics are necessary but not sufficient.  A candidate that

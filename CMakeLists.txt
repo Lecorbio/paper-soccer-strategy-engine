@@ -346,6 +346,58 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
       LABELS "selfsearch;acceptance")
   endif()
 
+  if(PAPERSOCCER_JACEK_NATIVE_NUMPY_STATUS EQUAL 0)
+    add_test(
+      NAME papersoccer_compact_value_bfm_pilot_pipeline_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_pilot_pipeline)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_pilot_pipeline_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
+      NAME papersoccer_compact_value_bfm_rank4_teacher_challenger_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_rank4_teacher_challenger)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_rank4_teacher_challenger_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
+      NAME papersoccer_compact_value_bfm_rank4_teacher_dual_final_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_rank4_teacher_dual_final)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_rank4_teacher_dual_final_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
+      NAME papersoccer_compact_value_bfm_rank4_teacher_release_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_rank4_teacher_release)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_rank4_teacher_release_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
+      NAME papersoccer_compact_value_bfm_teacher_training_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_teacher_training)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_teacher_training_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  endif()
+
   add_test(
     NAME papersoccer_codingame_promotion_banks_current
     COMMAND ${CMAKE_COMMAND} -E env
@@ -525,6 +577,38 @@ if(NOT EMSCRIPTEN)
     endif()
     add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
              COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test)
+    if(PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm")
+      add_executable(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_feature_reference
+        "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+      target_compile_definitions(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_feature_reference
+        PRIVATE COMPACT_VALUE_BFM_REFERENCE_FEATURE_SORT=1)
+      add_test(
+        NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_feature_reference
+        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_feature_reference)
+
+      add_executable(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_selection_reference
+        "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+      target_compile_definitions(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_selection_reference
+        PRIVATE COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT=1)
+      add_test(
+        NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_selection_reference
+        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_selection_reference)
+
+      add_executable(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_search_baseline
+        "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
+      target_compile_definitions(
+        ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_search_baseline PRIVATE
+        COMPACT_VALUE_BFM_REFERENCE_FEATURE_SORT=1
+        COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT=1)
+      add_test(
+        NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_search_baseline
+        COMMAND ${PAPERSOCCER_CODINGAME_PREFIX}_submission_test_search_baseline)
+    endif()
 
     if(EXISTS "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/timing_probe.cpp")
       add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_timing_probe
@@ -1035,6 +1119,7 @@ if(NOT EMSCRIPTEN)
   target_compile_definitions(
     papersoccer_jacek_replay_search_teacher_contract_test PRIVATE
     PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_NO_MAIN=1
+    PAPERSOCCER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256="${PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256}")
   target_link_libraries(
     papersoccer_jacek_replay_search_teacher_contract_test
@@ -1628,13 +1713,21 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
         papersoccer_codingame_target_prefix(
           PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
-        add_test(
-          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
-          COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                  ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_submission.mjs
-                  ${PAPERSOCCER_CODINGAME_BOT}
-                  --check
-        )
+        if(PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm" AND
+           Python3_Interpreter_FOUND)
+          add_test(
+            NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/export_submission.py
+                    --check)
+        else()
+          add_test(
+            NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
+            COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_submission.mjs
+                    ${PAPERSOCCER_CODINGAME_BOT}
+                    --check)
+        endif()
         add_test(
           NAME ${PAPERSOCCER_CODINGAME_PREFIX}_protocol_smoke_test
           COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}

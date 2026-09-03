@@ -18,6 +18,10 @@ class RecoveryGovernanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         original_plan_path = CAMPAIGN_ROOT / "development-v3/plan.json"
+        if not original_plan_path.is_file():
+            raise unittest.SkipTest(
+                "discrete-v3 recovery forensics require the ignored local campaign"
+            )
         original_plan = recovery.qualification.load_sealed(
             original_plan_path, recovery.development.PLAN_SCHEMA
         )

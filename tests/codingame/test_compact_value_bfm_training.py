@@ -10,6 +10,8 @@ import importlib.util
 import pathlib
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -302,6 +304,573 @@ class LossAndLeakageTests(unittest.TestCase):
             self.assertTrue(audit["paired_row_validation"]["passed"])
             self.assertTrue(audit["split_isolation"]["passed"])
             self.assertFalse(audit["protected_tests_opened"])
+
+
+class SuccessorRankingTests(unittest.TestCase):
+    @staticmethod
+    def group(
+        teacher_values,
+        *,
+        parent_mover=0,
+        value_movers=None,
+        exhaustive=True,
+    ):
+        value_movers = value_movers or [parent_mover] * len(teacher_values)
+        successors = tuple(
+            trainer.CompleteTurnSuccessor(
+                successor_id=f"{index + 1:064x}",
+                active=active_row(index % 8, index % 16),
+                teacher_value=float(value),
+                value_mover=int(value_movers[index]),
+                evidence={"bound": True},
+            )
+            for index, value in enumerate(teacher_values)
+        )
+        return trainer.CompleteTurnGroup(
+            group_id="f" * 64,
+            parent_mover=parent_mover,
+            successors=successors,
+            successors_exhaustive=exhaustive,
+            evidence={"rich": True},
+        )
+
+    @classmethod
+    def ranking_inputs(cls):
+        group = cls.group([1.0, -1.0])
+        labels = trainer.SuccessorRankingLabels(
+            train=(group,),
+            validation=(group,),
+            teacher={"artifact_sha256": "1" * 64},
+            source_bundle_body_sha256="a" * 64,
+            artifact_sha256="b" * 64,
+            body_sha256="c" * 64,
+        )
+        return trainer.TrainingInputs(
+            new=dataset([active_row(0, 1)]),
+            anchor=dataset(
+                [active_row(1, index % 16) for index in range(1_000)],
+                groups=[f"warmup-anchor-{index}" for index in range(1_000)],
+            ),
+            common_adjudicator=dataset(
+                [active_row(2, 20)], split="validation", groups=["warmup-common"]
+            ),
+            canonical_validation=dataset(
+                [active_row(3, 21)],
+                split="validation",
+                groups=["warmup-canonical"],
+            ),
+            source_routes={},
+            successor_rankings=labels,
+        )
+
+    def test_pairwise_gradient_matches_finite_difference_and_improves_margin(self):
+        group = self.group([1.0, -1.0])
+        predictions = np.asarray([0.0, 0.0], dtype=np.float32)
+        loss, gradient, report = trainer.pairwise_successor_ranking_loss_gradient(
+            group, predictions
+        )
+        self.assertAlmostEqual(loss, np.log(2.0), places=6)
+        np.testing.assert_allclose(gradient, [-0.5, 0.5], atol=1e-7)
+        self.assertEqual(report["pair_count"], 1)
+        epsilon = 1e-3
+        numerical = []
+        for index in range(2):
+            plus = predictions.copy()
+            minus = predictions.copy()
+            plus[index] += epsilon
+            minus[index] -= epsilon
+            plus_loss = trainer.pairwise_successor_ranking_loss_gradient(
+                group, plus
+            )[0]
+            minus_loss = trainer.pairwise_successor_ranking_loss_gradient(
+                group, minus
+            )[0]
+            numerical.append((plus_loss - minus_loss) / (2 * epsilon))
+        np.testing.assert_allclose(gradient, numerical, atol=2e-4)
+
+    def test_parent_to_successor_mover_perspective_flips_targets_and_gradients(self):
+        group = self.group(
+            [-0.8, 0.4], parent_mover=0, value_movers=[1, 1]
+        )
+        teacher_parent = trainer._teacher_parent_values(group)
+        np.testing.assert_allclose(teacher_parent, [0.8, -0.4])
+        loss, gradient, report = trainer.pairwise_successor_ranking_loss_gradient(
+            group, np.asarray([0.2, -0.1], dtype=np.float32)
+        )
+        self.assertGreater(loss, 0.0)
+        self.assertEqual(
+            report["teacher_best_successor_id"], group.successors[0].successor_id
+        )
+        # Parent-frame best gradient is negative. Both successor values are in
+        # the opponent frame, so the raw-network gradient must reverse sign.
+        self.assertGreater(float(gradient[0]), 0.0)
+        self.assertLess(float(gradient[1]), 0.0)
+
+    def test_pair_cap_gap_weighting_and_schedule_are_deterministic(self):
+        group = self.group([1.0] + [-1.0 + index * 0.1 for index in range(10)])
+        first = trainer._ranking_pairs(group)
+        second = trainer._ranking_pairs(group)
+        self.assertEqual(first[0], 0)
+        self.assertEqual(first[1], tuple(range(1, 9)))
+        self.assertEqual(first[1], second[1])
+        np.testing.assert_array_equal(first[2], second[2])
+        schedule = trainer.successor_ranking_epoch_schedule(
+            5, 17, seed=20260907, epoch=3
+        )
+        np.testing.assert_array_equal(
+            schedule,
+            trainer.successor_ranking_epoch_schedule(
+                5, 17, seed=20260907, epoch=3
+            ),
+        )
+        self.assertFalse(np.array_equal(
+            schedule,
+            trainer.successor_ranking_epoch_schedule(
+                5, 17, seed=20260907, epoch=4
+            ),
+        ))
+
+    def test_metrics_exclude_singleton_and_nonexhaustive_groups_and_report_flips(self):
+        comparable = self.group([1.0, -1.0])
+        singleton = self.group([0.5])
+        nonexhaustive = self.group([1.0, -1.0], exhaustive=False)
+        skipped_loss, skipped_gradient, skipped = (
+            trainer.pairwise_successor_ranking_loss_gradient(
+                nonexhaustive, np.asarray([0.0, 0.0], dtype=np.float32)
+            )
+        )
+        self.assertEqual(skipped_loss, 0.0)
+        np.testing.assert_array_equal(skipped_gradient, [0.0, 0.0])
+        self.assertTrue(skipped["skipped_nonexhaustive"])
+        architecture = trainer.ARCHITECTURES["compact-8x8"]
+        parameters = trainer.initialize_parameters(architecture, 20260907)
+        quantized = trainer.quantize_fixed(
+            parameters,
+            architecture,
+            {"w1": 0.1, "w2": 0.1, "w3": 0.1},
+        )
+        with mock.patch.object(
+            trainer,
+            "forward",
+            side_effect=(
+                (np.asarray([0.0, 0.5], dtype=np.float32), None),
+                (np.asarray([0.5, 0.0], dtype=np.float32), None),
+            ),
+        ):
+            report = trainer.successor_ranking_metrics(
+                parameters,
+                architecture,
+                (comparable, singleton, nonexhaustive),
+                quantized=quantized,
+            )
+        self.assertEqual(report["groups"], 3)
+        self.assertEqual(report["comparable_groups"], 1)
+        self.assertEqual(report["singleton_groups"], 1)
+        self.assertEqual(report["skipped_nonexhaustive_groups"], 1)
+        self.assertEqual(report["float_vs_quantized_action_flips"], 1)
+        self.assertEqual(report["top1_agreement"], 1.0)
+        self.assertEqual(report["mean_teacher_regret"], 0.0)
+
+    def test_weight_config_and_per_layer_evidence_fail_closed(self):
+        self.assertEqual([trainer._ranking_weight(value) for value in (
+            0, 0.10, 0.25
+        )], [0.0, 0.10, 0.25])
+        for value in (-0.1, 0.2, 1.0, True, "0.1"):
+            with self.subTest(value=value), self.assertRaises(
+                trainer.TrainingError
+            ):
+                trainer._ranking_weight(value)
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        before = trainer.initialize_parameters(architecture, 20260907)
+        after = {name: value.copy() for name, value in before.items()}
+        after["w1"][0, 0] += np.float32(0.25)
+        evidence = trainer._parameter_update_evidence(before, after)
+        self.assertTrue(evidence["w1"]["changed"])
+        self.assertEqual(evidence["w1"]["changed_parameters"], 1)
+        self.assertFalse(evidence["w2"]["changed"])
+        self.assertFalse(evidence["w3"]["changed"])
+
+    def test_qat_batch_adds_lambda_ranking_without_scaling_scalar_gradient(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        parameters = trainer.initialize_parameters(architecture, 20260907)
+        inputs = trainer.TrainingInputs(
+            new=dataset([active_row(0, index % 16) for index in range(64)]),
+            anchor=dataset(
+                [active_row(1, index % 16) for index in range(192)],
+                groups=[f"ranking-anchor-{index}" for index in range(192)],
+            ),
+            common_adjudicator=dataset(
+                [active_row(2, 20)], split="validation", groups=["common"]
+            ),
+            canonical_validation=dataset(
+                [active_row(3, 21)], split="validation", groups=["canonical"]
+            ),
+            source_routes={},
+        )
+        group = self.group([1.0, -1.0])
+        scalar_gradients = {
+            name: np.full_like(value, 1e-4) for name, value in parameters.items()
+        }
+        ranking_gradients = {
+            name: np.full_like(value, 0.5e-4) for name, value in parameters.items()
+        }
+        quantized = mock.Mock()
+        quantized.effective.return_value = parameters
+        optimizer = mock.Mock()
+        with (
+            mock.patch.object(trainer, "quantize_fixed", return_value=quantized),
+            mock.patch.object(
+                trainer,
+                "forward",
+                side_effect=(
+                    (np.zeros(256, dtype=np.float32), mock.Mock()),
+                    (np.zeros(2, dtype=np.float32), mock.Mock()),
+                ),
+            ),
+            mock.patch.object(
+                trainer,
+                "arm_loss_gradient",
+                return_value=(
+                    2.0, np.zeros(256, dtype=np.float32), {}
+                ),
+            ),
+            mock.patch.object(
+                trainer,
+                "pairwise_successor_ranking_loss_gradient",
+                return_value=(3.0, np.zeros(2, dtype=np.float32), {}),
+            ),
+            mock.patch.object(
+                trainer,
+                "_network_gradients",
+                side_effect=(scalar_gradients, ranking_gradients),
+            ),
+        ):
+            objective = trainer._train_mixed_batch(
+                parameters,
+                architecture,
+                trainer.ARMS["search-target"],
+                optimizer,
+                inputs,
+                np.arange(64, dtype=np.int64),
+                np.arange(192, dtype=np.int64),
+                fixed_scales={"w1": 0.1, "w2": 0.1, "w3": 0.1},
+                ranking_group=group,
+                ranking_weight=0.25,
+            )
+        self.assertEqual(objective, 2.75)
+        optimizer.update.assert_called_once()
+        combined = optimizer.update.call_args.args[1]
+        for name in ("w1", "w2", "w3"):
+            np.testing.assert_allclose(
+                combined[name], np.full_like(parameters[name], 1.5e-4),
+                rtol=1e-6, atol=0.0,
+            )
+
+    def test_successor_mode_uses_same_bound_initialization_and_one_epoch(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        initial = trainer.initialize_parameters(architecture, 20260907)
+        inputs = self.ranking_inputs()
+        validation = {
+            "common_adjudicator": {
+                "objective_weighted_huber": 0.1,
+                "weighted_huber": 0.1,
+                "sign_accuracy": 0.5,
+            },
+            "canonical_validation": {
+                "objective_weighted_huber": 0.1,
+                "weighted_huber": 0.1,
+                "sign_accuracy": 0.5,
+            },
+            "successor_ranking": {
+                "loss_weight": 0.0,
+                "mean_teacher_regret": 0.0,
+                "top1_agreement": 1.0,
+                "float_vs_quantized_action_flip_rate": 0.0,
+                "pairwise_loss": 0.1,
+            },
+        }
+        results = []
+        with (
+            mock.patch.object(trainer, "_train_mixed_batch", return_value=0.0),
+            mock.patch.object(
+                trainer, "evaluate_validation_pair", return_value=validation
+            ),
+        ):
+            for seed in trainer.FIXED_SEEDS[:2]:
+                results.append(trainer.train_float_seed(
+                    inputs,
+                    architecture,
+                    trainer.ARMS["search-target"],
+                    seed,
+                    maximum_epochs=1,
+                    patience=1,
+                    learning_rate=trainer.RANKING_FLOAT_LEARNING_RATE,
+                    ranking_weight=0.0,
+                    initial_parameters=initial,
+                ))
+        self.assertEqual([result.epoch for result in results], [1, 1])
+        self.assertEqual(
+            results[0].report["initialization"]["parameters"],
+            results[1].report["initialization"]["parameters"],
+        )
+        self.assertEqual(
+            results[0].report["initialization"]["seed_affects"],
+            "row-order-only",
+        )
+        self.assertEqual(
+            results[0].report["selected_epoch_anchor_coverage"]["anchor"][
+                "complete_permutations"
+            ],
+            0,
+        )
+        for kwargs in (
+            {"initial_parameters": None},
+            {"maximum_epochs": 2, "initial_parameters": initial},
+            {"learning_rate": 6.1e-5, "initial_parameters": initial},
+        ):
+            arguments = {
+                "maximum_epochs": 1,
+                "patience": 1,
+                "learning_rate": trainer.RANKING_FLOAT_LEARNING_RATE,
+                "ranking_weight": 0.0,
+                "initial_parameters": initial,
+                **kwargs,
+            }
+            with self.subTest(arguments=arguments), self.assertRaisesRegex(
+                trainer.TrainingError, "bound 12x8 initialization"
+            ):
+                trainer.train_float_seed(
+                    inputs,
+                    architecture,
+                    trainer.ARMS["search-target"],
+                    trainer.FIXED_SEEDS[0],
+                    **arguments,
+                )
+
+    def test_training_binding_requires_content_addressed_initial_checkpoint(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        parameters = trainer.initialize_parameters(architecture, 20260907)
+        inputs = self.ranking_inputs()
+        bundle = mock.Mock(body_sha256="a" * 64)
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = trainer.write_float_checkpoint(
+                pathlib.Path(temporary), parameters, architecture
+            )
+            first = trainer.training_binding(
+                bundle,
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                trainer.FIXED_SEEDS[0],
+                None,
+                0.0,
+                checkpoint,
+            )
+            second = trainer.training_binding(
+                bundle,
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                trainer.FIXED_SEEDS[1],
+                None,
+                0.25,
+                checkpoint,
+            )
+            first_checkpoint = first["successor_ranking"]["initial_checkpoint"]
+            second_checkpoint = second["successor_ranking"]["initial_checkpoint"]
+            self.assertEqual(first_checkpoint, second_checkpoint)
+            self.assertEqual(
+                first["successor_ranking"]["float_warmup"],
+                {
+                    "epochs": 1,
+                    "learning_rate": 0.00006,
+                    "seeds_affect_row_order_only": True,
+                    "legacy_full_anchor_pass_required": False,
+                },
+            )
+            with self.assertRaisesRegex(
+                trainer.TrainingError, "initial checkpoint"
+            ):
+                trainer.training_binding(
+                    bundle,
+                    inputs,
+                    architecture,
+                    trainer.ARMS["search-target"],
+                    trainer.FIXED_SEEDS[0],
+                    None,
+                    0.0,
+                    None,
+                )
+
+
+class SeedWorkerOrchestrationTests(unittest.TestCase):
+    @staticmethod
+    def inputs(*, successor_mode: bool):
+        inputs = SuccessorRankingTests.ranking_inputs()
+        return inputs if successor_mode else trainer.dataclasses.replace(
+            inputs, successor_rankings=None
+        )
+
+    @staticmethod
+    def run_roster(inputs, workers):
+        return trainer._train_seed_roster(
+            mock.Mock(),
+            inputs,
+            trainer.ARCHITECTURES["capacity-12x8"],
+            trainer.ARMS["search-target"],
+            pathlib.Path("/unused"),
+            seed_workers=workers,
+            sidecar_index=None,
+            ranking_weight=0.0,
+            initial_checkpoint=None,
+            resume=True,
+        )
+
+    def test_successor_seed_pool_caps_concurrency_and_preserves_seed_order(self):
+        lock = threading.Lock()
+        active = 0
+        maximum = 0
+        input_ids = set()
+
+        def fake(_bundle, _inputs, _architecture, _arm, seed, _output, **_kwargs):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                input_ids.add(id(_inputs))
+            try:
+                # Force completion order to differ from the frozen seed order.
+                time.sleep({
+                    trainer.FIXED_SEEDS[0]: 0.03,
+                    trainer.FIXED_SEEDS[1]: 0.01,
+                    trainer.FIXED_SEEDS[2]: 0.0,
+                }[seed])
+                return {"seed": seed}
+            finally:
+                with lock:
+                    active -= 1
+
+        with mock.patch.object(
+            trainer, "train_seed_candidate", side_effect=fake
+        ):
+            receipts = self.run_roster(
+                self.inputs(successor_mode=True), 2
+            )
+        self.assertEqual(maximum, 2)
+        self.assertEqual(len(input_ids), 1)
+        self.assertEqual(
+            [receipt["seed"] for receipt in receipts],
+            list(trainer.FIXED_SEEDS),
+        )
+
+    def test_seed_pool_propagates_failure_and_cancels_pending_work(self):
+        failure = trainer.TrainingError("synthetic seed failure")
+
+        def fake(_bundle, _inputs, _architecture, _arm, seed, _output, **_kwargs):
+            if seed == trainer.FIXED_SEEDS[1]:
+                raise failure
+            time.sleep(0.01)
+            return {"seed": seed}
+
+        with mock.patch.object(
+            trainer, "train_seed_candidate", side_effect=fake
+        ), self.assertRaisesRegex(trainer.TrainingError, "synthetic seed failure"):
+            self.run_roster(self.inputs(successor_mode=True), 2)
+
+    def test_legacy_defaults_to_serial_and_worker_policy_rejects_bad_values(self):
+        active = 0
+        maximum = 0
+        order = []
+
+        def fake(_bundle, _inputs, _architecture, _arm, seed, _output, **_kwargs):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            order.append(seed)
+            active -= 1
+            return {"seed": seed}
+
+        with mock.patch.object(
+            trainer, "train_seed_candidate", side_effect=fake
+        ):
+            receipts = self.run_roster(
+                self.inputs(successor_mode=False), 1
+            )
+        self.assertEqual(maximum, 1)
+        self.assertEqual(order, list(trainer.FIXED_SEEDS))
+        self.assertEqual(receipts, [{"seed": seed} for seed in trainer.FIXED_SEEDS])
+        self.assertEqual(
+            trainer._seed_worker_count(2, successor_mode=False), 2
+        )
+        for value in (0, 3, True):
+            with self.subTest(value=value), self.assertRaises(
+                trainer.TrainingError
+            ):
+                trainer._seed_worker_count(value, successor_mode=False)
+        with self.assertRaisesRegex(
+            trainer.TrainingError, "exactly two"
+        ):
+            trainer._seed_worker_count(1, successor_mode=True)
+
+    def test_rich_corpus_aggregate_loads_and_unknown_evidence_rejects(self):
+        from tools import jacek_replay_corpus as corpus
+        from tests.codingame.test_jacek_replay_corpus import (
+            JacekReplayCorpusTests,
+        )
+
+        fixture = JacekReplayCorpusTests()
+        train = fixture.complete_turn_action_group_row(root_action="0")
+        validation = fixture.complete_turn_action_group_row(
+            position_id="position:" + "b" * 64,
+            split="validation",
+            root_action="2",
+        )
+        document = corpus.build_complete_turn_successor_labels(
+            [train, validation]
+        )
+        document["source_bundle_body_sha256"] = "a" * 64
+        body = dict(document)
+        body.pop("body_sha256")
+        document["body_sha256"] = corpus.sha256_bytes(
+            corpus.canonical_json_bytes(body)
+        )
+        labels = trainer.validate_successor_label_document(
+            document,
+            source_bundle_body_sha256="a" * 64,
+            artifact_sha256="b" * 64,
+        )
+        self.assertEqual(len(labels.train), 1)
+        self.assertEqual(len(labels.validation), 1)
+        successor = labels.train[0].successors[0]
+        self.assertNotEqual(labels.train[0].parent_mover, successor.value_mover)
+        self.assertIn("proof", successor.evidence)
+        self.assertIn("work_budget", labels.train[0].evidence)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            payload = trainer.canonical_json_bytes(document)
+            digest = trainer.sha256_bytes(payload)
+            path = root / f"{digest}.successor-labels.json"
+            path.write_bytes(payload)
+            loaded = trainer.load_successor_ranking_labels(
+                path, bundle_fixture(root)
+            )
+            self.assertEqual(loaded.artifact_sha256, digest)
+
+        changed = copy.deepcopy(document)
+        changed["splits"]["train"][0]["unknown_evidence"] = True
+        changed_body = dict(changed)
+        changed_body.pop("body_sha256")
+        changed["body_sha256"] = corpus.sha256_bytes(
+            corpus.canonical_json_bytes(changed_body)
+        )
+        with self.assertRaisesRegex(
+            trainer.TrainingError, "rich successor-label|rich complete-turn"
+        ):
+            trainer.validate_successor_label_document(
+                changed,
+                source_bundle_body_sha256="a" * 64,
+                artifact_sha256="b" * 64,
+            )
 
 
 class PackingAndRuntimeTests(unittest.TestCase):

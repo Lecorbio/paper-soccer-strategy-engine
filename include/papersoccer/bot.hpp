@@ -325,6 +325,27 @@ struct JacekReplayBfmSearchStats {
   std::uint64_t searches{};
 };
 
+// Root-child analysis is exposed separately from the normal search stats so
+// the production move path does not pay to copy every complete-turn action.
+// Values are from the root mover's perspective and retain the search's raw
+// mate-distance magnitude; consumers that publish training labels must map a
+// proven value to an exact +/-1 target while preserving the proof separately.
+struct JacekReplayBfmRootActionAnalysis {
+  std::vector<Move> action{};
+  std::string canonical_transcript{};
+  float backed_up_value{};
+  std::uint32_t visits{};
+  std::uint32_t selection_visits{};
+  bool solved{};
+  std::optional<Player> proven_winner{};
+};
+
+struct JacekReplayBfmPositionAnalysis {
+  JacekReplayBfmSearchStats stats{};
+  std::vector<JacekReplayBfmRootActionAnalysis> successors{};
+  bool successors_exhaustive{};
+};
+
 class JacekReplayBfmBot final : public Bot {
  public:
   explicit JacekReplayBfmBot(JacekReplayBfmConfig config);
@@ -341,9 +362,15 @@ class JacekReplayBfmBot final : public Bot {
   // complete-action cache or last_search_stats().
   JacekReplayBfmSearchStats analyze_position(
       const GameState &state, std::uint64_t seed) const;
+  // Runs the same fresh search as analyze_position(), additionally returning
+  // every canonical-boundary root successor retained by that search. This is
+  // an offline teacher interface and does not alter the move cache.
+  JacekReplayBfmPositionAnalysis analyze_position_actions(
+      const GameState &state, std::uint64_t seed) const;
   const JacekReplayBfmConfig &config() const noexcept;
   const JacekReplayBfmSearchStats &last_search_stats() const noexcept;
   std::string_view model_sha256() const noexcept;
+  std::string_view model_payload_sha256() const noexcept;
 
   static constexpr std::string_view feature_schema() noexcept {
     return "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"

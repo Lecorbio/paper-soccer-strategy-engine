@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import math
@@ -154,6 +155,218 @@ class JacekReplayCorpusTests(unittest.TestCase):
         }
         row.update(overrides)
         return row
+
+    @staticmethod
+    def complete_turn_action_group_row(
+        *, position_id="position:" + "a" * 64, split="train", root_action="0"
+    ):
+        campaign_id = "complete-turn-label-fixture"
+        max_tree_nodes = 64_000
+        seed_material = f"{campaign_id}\0{position_id}\0{max_tree_nodes}".encode()
+        root = features.ReplayState()
+        features.apply_complete_turn(root, 0, root_action)
+        successor = copy.deepcopy(root)
+        # The parent mover is Player Two, so canonical direction 4 maps back
+        # to physical direction 0.
+        features.apply_complete_turn(successor, 1, "0")
+        teacher = {
+            "kind": "jacek_replay_bfm_search",
+            "artifact_sha256": "1" * 64,
+            "payload_sha256": "2" * 64,
+            "feature_schema_sha256": hashlib.sha256(
+                features.FEATURE_SCHEMA.encode()
+            ).hexdigest(),
+            "source_sha256": "3" * 64,
+        }
+        return {
+            "schema": corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA,
+            "feature_schema": features.FEATURE_SCHEMA,
+            "source_bundle_body_sha256": "4" * 64,
+            "teacher": teacher,
+            "ranking": {
+                "complete_turn_boundaries": True,
+                "teacher_value_frame": "explicit-mover-relative",
+                "successor_aliases": "canonical-boundary-state",
+                "best_tie_break": "successor-id-ascending",
+            },
+            "split": split,
+            "group": {
+                "group_id": corpus._mover_canonical_position_identity(root),
+                "parent_identity": corpus._mover_canonical_position_identity(root),
+                "identity_algorithm": "sha256-mover-canonical-boundary-v1",
+                "parent_mover": 1,
+                "root_value": 0.2,
+                "root_solved": False,
+                "proven_winner": None,
+                "termination_reason": "fixed-work-cap",
+                "successors_exhaustive": True,
+                "work_budget": {
+                    "seed": int(hashlib.sha256(seed_material).hexdigest()[:16], 16),
+                    "max_time_ms": 0,
+                    "max_tree_nodes": max_tree_nodes,
+                    "max_actions": 250,
+                    "max_partial_paths": 50_000,
+                    "exploration": 0.5,
+                    "fpu": 0.5,
+                },
+                "source_binding": {
+                    "campaign_id": campaign_id,
+                    "position_id": position_id,
+                    "root_group_id": "root:fixture",
+                    "group_id": "continuation:fixture",
+                    "source": "fixture",
+                    "split": split,
+                    "winner": 0,
+                    "prefix": [{"player_id": 0, "action": root_action}],
+                },
+                "successors": [
+                    {
+                        "successor_id": corpus._mover_canonical_position_identity(
+                            successor
+                        ),
+                        "active": list(features.encode_active(successor)),
+                        "transcript": "4",
+                        "teacher_value": -0.3,
+                        "value_mover": 0,
+                        "proof": {"solved": False, "proven_winner": None},
+                        "termination": {
+                            "reason": "fixed-work-cap",
+                            "value_status": "backed-up-at-root-termination",
+                        },
+                        "visits": 1,
+                        "selection_visits": 0,
+                    }
+                ],
+            },
+        }
+
+    def test_complete_turn_action_group_is_strict_and_mover_relative(self):
+        row = self.complete_turn_action_group_row()
+        self.assertEqual(corpus.validate_complete_turn_action_group(row), row)
+        for mutate, message in (
+            (
+                lambda value: value["group"]["successors"][0]["active"].append(6301),
+                "features disagree|outside",
+            ),
+            (
+                lambda value: value["group"]["successors"][0]["proof"].update(
+                    solved=True
+                ),
+                "proof disagrees",
+            ),
+            (
+                lambda value: value["group"]["work_budget"].update(seed=1),
+                "seed is not bound",
+            ),
+            (
+                lambda value: value.update(split="test"),
+                "row is malformed",
+            ),
+        ):
+            broken = copy.deepcopy(row)
+            mutate(broken)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                corpus.validate_complete_turn_action_group(broken)
+
+    def test_complete_turn_action_group_remains_a_scalar_value_label(self):
+        row = self.complete_turn_action_group_row()
+        sample, reflected = corpus.sample_from_teacher_row(row)
+        self.assertAlmostEqual(sample.target, -0.1)
+        self.assertEqual(reflected.active, features.reflect_active(sample.active))
+        self.assertEqual(sample.group_id, "root:fixture")
+        self.assertEqual(sample.lineages, reflected.lineages)
+        lineage = sample.lineages[0]
+        self.assertEqual(lineage.schema, corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA)
+        self.assertEqual(lineage.position_id, row["group"]["source_binding"]["position_id"])
+        self.assertEqual(lineage.group_id, "continuation:fixture")
+        self.assertEqual(lineage.root_group_id, "root:fixture")
+        policy = corpus.target_policy_for_schema(
+            corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA
+        )
+        self.assertEqual(policy["teacher_value"]["transform"], "identity")
+
+    def test_deep_action_groups_replace_shallow_by_canonical_group(self):
+        first = self.complete_turn_action_group_row(
+            position_id="position:" + "a" * 64, root_action="0"
+        )
+        second = self.complete_turn_action_group_row(
+            position_id="position:" + "b" * 64, root_action="1"
+        )
+        deep = copy.deepcopy(second)
+        deep["group"]["root_value"] = 0.6
+        deep["group"]["work_budget"]["max_tree_nodes"] = 500_000
+        source = deep["group"]["source_binding"]
+        material = (
+            f"{source['campaign_id']}\0{source['position_id']}\0{500_000}".encode()
+        )
+        deep["group"]["work_budget"]["seed"] = int(
+            hashlib.sha256(material).hexdigest()[:16], 16
+        )
+        merged = corpus.merge_complete_turn_action_groups([second, first], [deep])
+        self.assertEqual(len(merged), 2)
+        by_id = {row["group"]["group_id"]: row for row in merged}
+        self.assertEqual(by_id[second["group"]["group_id"]]["group"]["root_value"], 0.6)
+        self.assertEqual(by_id[first["group"]["group_id"]], first)
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            shallow_path = directory / "shallow.jsonl"
+            deep_path = directory / "deep.jsonl"
+            shallow_path.write_bytes(
+                corpus.canonical_json_bytes(second)
+                + corpus.canonical_json_bytes(first)
+            )
+            deep_path.write_bytes(corpus.canonical_json_bytes(deep))
+            self.assertEqual(
+                corpus.merge_complete_turn_action_group_files(
+                    shallow=shallow_path, deep=deep_path
+                ),
+                b"".join(corpus.canonical_json_bytes(row) for row in merged),
+            )
+        with self.assertRaisesRegex(ValueError, "strict subset"):
+            corpus.merge_complete_turn_action_groups([second], [deep])
+
+    def test_complete_turn_action_groups_aggregate_deterministically(self):
+        later = self.complete_turn_action_group_row(
+            position_id="position:" + "b" * 64, root_action="1"
+        )
+        later["group"]["successors_exhaustive"] = False
+        earlier = self.complete_turn_action_group_row(position_id="position:" + "a" * 64)
+        validation = self.complete_turn_action_group_row(
+            position_id="position:" + "c" * 64,
+            split="validation",
+            root_action="2",
+        )
+        artifact = corpus.build_complete_turn_successor_labels(
+            [later, validation, earlier]
+        )
+        self.assertEqual(
+            artifact["schema"], corpus.COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA
+        )
+        self.assertFalse(artifact["protected_tests_opened"])
+        self.assertEqual(
+            [group["group_id"] for group in artifact["splits"]["train"]],
+            sorted([earlier["group"]["group_id"], later["group"]["group_id"]]),
+        )
+        by_id = {
+            group["group_id"]: group for group in artifact["splits"]["train"]
+        }
+        self.assertFalse(
+            by_id[later["group"]["group_id"]]["successors_exhaustive"]
+        )
+        body = dict(artifact)
+        body_hash = body.pop("body_sha256")
+        self.assertEqual(body_hash, corpus.sha256_bytes(corpus.canonical_json_bytes(body)))
+        self.assertEqual(
+            artifact,
+            corpus.build_complete_turn_successor_labels([earlier, later, validation]),
+        )
+        self.assertEqual(
+            artifact, corpus.validate_complete_turn_successor_labels(artifact)
+        )
+        tampered = copy.deepcopy(artifact)
+        tampered["splits"]["train"][0]["root_value"] = 0.9
+        with self.assertRaisesRegex(ValueError, "body SHA-256 mismatch"):
+            corpus.validate_complete_turn_successor_labels(tampered)
 
     def make_sources(self, directory):
         repository = pathlib.Path(directory)
