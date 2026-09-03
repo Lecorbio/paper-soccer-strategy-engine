@@ -2088,7 +2088,12 @@ def validate_campaign(path: pathlib.Path) -> dict[str, Any]:
         for role, expected in {
             **ALLOWLIST, **ATTEMPT_ONE_INPUT_ALLOWLIST,
         }.items():
-            record = inputs["allowlisted_inputs"].get(role)
+            frozen_role = (
+                "attempt_one_initial_checkpoint"
+                if role == "initial_float_checkpoint"
+                else role
+            )
+            record = inputs["allowlisted_inputs"].get(frozen_role)
             if not isinstance(record, Mapping) or any(
                 record.get(key) != value
                 for key, value in expected.items() if key != "body_sha256"
