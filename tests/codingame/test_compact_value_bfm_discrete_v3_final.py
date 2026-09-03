@@ -458,6 +458,414 @@ int main(){return 0;}
 
 
 class DiscreteV3FinalBridgeTest(unittest.TestCase):
+    def test_development_lineage_dispatch_is_exact_and_never_mixes_schemas(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            lineages = {}
+            for kind, schemas, plan_key in (
+                (
+                    "original",
+                    (
+                        bridge.development.PLAN_SCHEMA,
+                        bridge.development.FINALIST_REFERENCE_SCHEMA,
+                        bridge.development.FINALIST_SCHEMA,
+                    ),
+                    "development_plan",
+                ),
+                (
+                    "recovery",
+                    (
+                        bridge.recovery.PLAN_SCHEMA,
+                        bridge.recovery.FINALIST_REFERENCE_SCHEMA,
+                        bridge.recovery.FINALIST_SCHEMA,
+                    ),
+                    "recovery_plan",
+                ),
+            ):
+                plan_schema, reference_schema, finalist_schema = schemas
+                plan = root / f"{kind}-plan.json"
+                finalist = root / f"{kind}-finalist.json"
+                reference = root / f"{kind}-reference.json"
+                q.write_sealed(plan, {"schema": plan_schema, "kind": kind})
+                q.write_sealed(
+                    finalist, {"schema": finalist_schema, "kind": kind}
+                )
+                q.write_sealed(reference, {
+                    "schema": reference_schema,
+                    plan_key: bridge.development._sealed_record(
+                        plan, plan_schema
+                    ),
+                    "finalist": bridge.development._sealed_record(
+                        finalist, finalist_schema
+                    ),
+                })
+                inputs = {
+                    "development_plan": q.artifact_reference(plan, plan_schema),
+                    "finalist_reference": q.artifact_reference(
+                        reference, reference_schema
+                    ),
+                    "finalist": bridge.development._sealed_record(
+                        finalist, finalist_schema
+                    ),
+                }
+                self.assertEqual(
+                    bridge._verify_development_lineage_records(inputs)["kind"],
+                    kind,
+                )
+                lineages[kind] = inputs
+
+            for plan_kind, reference_kind in (
+                ("original", "recovery"), ("recovery", "original")
+            ):
+                wrong = dict(lineages[plan_kind])
+                wrong["finalist_reference"] = lineages[reference_kind][
+                    "finalist_reference"
+                ]
+                with self.subTest(
+                    plan_kind=plan_kind, reference_kind=reference_kind
+                ):
+                    with self.assertRaises(bridge.BridgeError):
+                        bridge._verify_development_lineage_records(wrong)
+
+            unknown = root / "unknown-plan.json"
+            q.write_sealed(unknown, {"schema": "papersoccer.unknown.v1"})
+            with self.assertRaisesRegex(
+                bridge.BridgeError, "unsupported development plan schema"
+            ):
+                bridge._development_lineage_schemas(unknown)
+
+    def test_recovery_additional_exclusion_binding_is_exact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan = root / "recovery-plan.json"
+            finalist = root / "recovery-finalist.json"
+            reference = root / "recovery-reference.json"
+            mixed = root / "mixed.json"
+            spent = root / "spent.json"
+            replacement = root / "replacement.json"
+            spent.write_text("spent\n", encoding="ascii")
+            replacement.write_text("replacement\n", encoding="ascii")
+            q.write_sealed(plan, {"schema": bridge.recovery.PLAN_SCHEMA})
+            q.write_sealed(
+                finalist, {"schema": bridge.recovery.FINALIST_SCHEMA}
+            )
+            q.write_sealed(
+                mixed, {"schema": bridge.recovery.MIXED_EXCLUSION_SCHEMA}
+            )
+            q.write_sealed(reference, {
+                "schema": bridge.recovery.FINALIST_REFERENCE_SCHEMA,
+                "recovery_plan": bridge.development._sealed_record(
+                    plan, bridge.recovery.PLAN_SCHEMA
+                ),
+                "finalist": bridge.development._sealed_record(
+                    finalist, bridge.recovery.FINALIST_SCHEMA
+                ),
+            })
+            spent_record = bridge._record(spent)
+            replacement_record = bridge._record(replacement)
+            additional = {
+                "spent_original_tuple_confirmation": {
+                    "stage": "tuple_confirmation",
+                    "bank": spent_record,
+                    "opening_count": 250,
+                    "selection_weight": 0,
+                    "eligible_for_selection": False,
+                    "required_for_eventual_protected_final": True,
+                },
+                "eventual_protected_final_requires_union": True,
+            }
+            banks = {
+                stage: (
+                    replacement_record
+                    if stage == "tuple_confirmation"
+                    else {"stage": stage}
+                )
+                for stage in bridge.STAGE_ORDER
+            }
+            mixed_record = bridge.development._sealed_record(
+                mixed, bridge.recovery.MIXED_EXCLUSION_SCHEMA
+            )
+            inputs = {
+                "development_plan": q.artifact_reference(
+                    plan, bridge.recovery.PLAN_SCHEMA
+                ),
+                "finalist_reference": q.artifact_reference(
+                    reference, bridge.recovery.FINALIST_REFERENCE_SCHEMA
+                ),
+                "finalist": bridge.development._sealed_record(
+                    finalist, bridge.recovery.FINALIST_SCHEMA
+                ),
+                "development_banks": banks,
+                "additional_development_exclusions": additional,
+                "mixed_six_exclusion": mixed_record,
+            }
+            context = {
+                "materialized": True,
+                "development_bank_records": banks,
+                "additional_development_exclusions": additional,
+                "materialized_mixed_six_exclusion": mixed_record,
+                "mixed_exclusion": {"bound": True},
+                "original_plan": {
+                    "banks": {"tuple_confirmation": spent_record}
+                },
+            }
+            with mock.patch.object(
+                bridge.recovery, "validate_recovery_plan", return_value=context
+            ):
+                records = bridge._additional_development_bank_records(
+                    {"inputs": inputs}, campaign_root=root
+                )
+                self.assertEqual(records[0][1], spent_record)
+                changed = json.loads(json.dumps(inputs))
+                changed["additional_development_exclusions"][
+                    "spent_original_tuple_confirmation"
+                ]["selection_weight"] = 1
+                with self.assertRaises(bridge.BridgeError):
+                    bridge._additional_development_bank_records(
+                        {"inputs": changed}, campaign_root=root
+                    )
+
+    def test_default_finalist_validator_takes_the_recovery_branch_directly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan_path = root / "recovery-plan.json"
+            result_path = root / "recovery-result.json"
+            finalist_path = root / "recovery-finalist.json"
+            reference_path = root / "recovery-reference.json"
+            original_plan_record = {"synthetic": "original-plan"}
+            banks = {stage: {"stage": stage} for stage in bridge.STAGE_ORDER}
+            additional = {
+                "spent_original_tuple_confirmation": {"synthetic": True},
+                "eventual_protected_final_requires_union": True,
+            }
+            q.write_sealed(plan_path, {
+                "schema": bridge.recovery.PLAN_SCHEMA,
+                "candidate": {"synthetic": "candidate"},
+                "original": {"development_plan": original_plan_record},
+            })
+            q.write_sealed(
+                result_path, {"schema": bridge.recovery.RESULT_SCHEMA}
+            )
+            mixed_record = {"synthetic": "mixed-record"}
+            finalist_body = {
+                "schema": bridge.recovery.FINALIST_SCHEMA,
+                "status": "development-selected-awaiting-preflight-and-frozen-final",
+                "recovery_plan": bridge.development._sealed_record(
+                    plan_path, bridge.recovery.PLAN_SCHEMA
+                ),
+                "recovery_result": bridge.development._sealed_record(
+                    result_path, bridge.recovery.RESULT_SCHEMA
+                ),
+                "original_development_plan": original_plan_record,
+                "banks": banks,
+                "mixed_six_exclusion": mixed_record,
+                "additional_development_exclusions": additional,
+                "fresh_protected_tests_opened": True,
+                "fresh_diagnostic_classification": (
+                    "diagnostic-only-no-pass-fail-verdict"
+                ),
+                "old_protected_tests_accessed": False,
+                "model_weights_immutable": True,
+                "search_configuration_immutable": True,
+                "development_selected": True,
+                "preflight_required": True,
+                "final_bank_generation_authorized": False,
+                "rank4_gate_authorized": False,
+                "upload_authorized": False,
+            }
+            q.write_sealed(finalist_path, finalist_body)
+            q.write_sealed(reference_path, {
+                "schema": bridge.recovery.FINALIST_REFERENCE_SCHEMA,
+                "recovery_plan": bridge.development._sealed_record(
+                    plan_path, bridge.recovery.PLAN_SCHEMA
+                ),
+                "recovery_result": bridge.development._sealed_record(
+                    result_path, bridge.recovery.RESULT_SCHEMA
+                ),
+                "finalist": bridge.development._sealed_record(
+                    finalist_path, bridge.recovery.FINALIST_SCHEMA
+                ),
+            })
+            validated = {
+                "reference": q.load_sealed(
+                    reference_path, bridge.recovery.FINALIST_REFERENCE_SCHEMA
+                ),
+                "finalist": q.load_sealed(
+                    finalist_path, bridge.recovery.FINALIST_SCHEMA
+                ),
+                "result": q.load_sealed(
+                    result_path, bridge.recovery.RESULT_SCHEMA
+                ),
+                "path": finalist_path,
+            }
+            context = {
+                "plan": q.load_sealed(plan_path, bridge.recovery.PLAN_SCHEMA),
+                "materialized": True,
+                "development_bank_records": banks,
+                "mixed_exclusion": {"synthetic": True},
+                "materialized_mixed_six_exclusion": mixed_record,
+                "additional_development_exclusions": additional,
+            }
+            common = {
+                "handoff": {}, "handoff_path": root / "handoff",
+                "runtime_path": root / "runtime", "source_path": root / "source",
+                "exclusion_plan_path": root / "exclusion-plan",
+                "exclusion_receipt_path": root / "exclusion-receipt",
+                "exclusion_validation": {"development_ready": True},
+            }
+            with (
+                mock.patch.object(
+                    bridge.recovery, "validate_recovery_plan",
+                    return_value=context,
+                ),
+                mock.patch.object(
+                    bridge.recovery_runner, "validate_recovery_finalist",
+                    return_value=validated,
+                ) as recovery_validator,
+                mock.patch.object(
+                    bridge, "_common_finalist_context", return_value=common
+                ),
+                mock.patch.object(
+                    bridge, "_original_finalist_validator"
+                ) as original_validator,
+            ):
+                normalized = bridge._default_finalist_validator(
+                    reference_path, plan_path, root
+                )
+            recovery_validator.assert_called_once()
+            original_validator.assert_not_called()
+            self.assertEqual(
+                normalized["development_plan_schema"],
+                bridge.recovery.PLAN_SCHEMA,
+            )
+            self.assertEqual(
+                normalized["additional_development_exclusions"], additional
+            )
+            self.assertEqual(normalized["mixed_six_exclusion"], mixed_record)
+
+    def test_recovery_union_includes_mixed_six_and_spent_original_bank(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            selected = {}
+            documents = {}
+            selected_fingerprints = set()
+            for stage in bridge.STAGE_ORDER:
+                path = root / f"selected-{stage}.json"
+                path.write_text(stage + "\n", encoding="ascii")
+                selected[stage] = bridge._record(path)
+                fingerprint = hashlib.sha256(stage.encode("ascii")).hexdigest()
+                selected_fingerprints.add(fingerprint)
+                documents[path.resolve()] = {
+                    "stage": stage,
+                    "classification": "unprotected-development",
+                    "opening_count": bridge.STAGE_COUNTS[stage],
+                    "openings": [{
+                        "fingerprints": {
+                            "identity": fingerprint,
+                            "canonical": fingerprint,
+                        }
+                    }],
+                }
+            spent_path = root / "spent-tuple-confirmation.json"
+            spent_path.write_text("spent\n", encoding="ascii")
+            spent_record = bridge._record(spent_path)
+            spent_fingerprint = hashlib.sha256(b"spent").hexdigest()
+            documents[spent_path.resolve()] = {
+                "stage": "tuple_confirmation",
+                "classification": "unprotected-development",
+                "opening_count": 250,
+                "openings": [{
+                    "fingerprints": {
+                        "identity": spent_fingerprint,
+                        "canonical": spent_fingerprint,
+                    }
+                }],
+            }
+            spent_metadata = {
+                "stage": "tuple_confirmation",
+                "bank": spent_record,
+                "opening_count": 250,
+                "selection_weight": 0,
+                "eligible_for_selection": False,
+                "required_for_eventual_protected_final": True,
+            }
+            additional = {
+                "spent_original_tuple_confirmation": spent_metadata,
+                "eventual_protected_final_requires_union": True,
+            }
+            private_payload = root / "private-fingerprints.json"
+            q.write_sealed(private_payload, {
+                "schema": bridge.exclusions.FINGERPRINT_SCHEMA,
+                "synthetic": True,
+            })
+            exclusion_receipt = root / "exclusion-receipt.json"
+            q.write_sealed(exclusion_receipt, {
+                "schema": bridge.exclusions.RECEIPT_SCHEMA,
+                "references": {
+                    "protected_canonical_fingerprints": q.artifact_reference(
+                        private_payload, bridge.exclusions.FINGERPRINT_SCHEMA
+                    )
+                },
+            })
+            plan = {
+                "inputs": {
+                    "development_banks": selected,
+                    "additional_development_exclusions": additional,
+                    "mixed_six_exclusion": {"sha256": "a" * 64},
+                    "historical_exclusions": [
+                        {"path": str(root / f"historical-{index}")}
+                        for index in range(7)
+                    ],
+                    "exclusion_receipt": {"path": str(exclusion_receipt)},
+                }
+            }
+            historical_fingerprint = hashlib.sha256(b"historical").hexdigest()
+            fresh_fingerprint = hashlib.sha256(b"fresh").hexdigest()
+            with (
+                mock.patch.object(
+                    bridge.opening_tools, "validate_bank",
+                    side_effect=lambda path: documents[path.resolve()],
+                ),
+                mock.patch.object(
+                    bridge, "_additional_development_bank_records",
+                    return_value=[(
+                        "spent_original_tuple_confirmation",
+                        spent_record,
+                        spent_metadata,
+                    )],
+                ),
+                mock.patch.object(
+                    bridge, "_fresh_private_set",
+                    return_value=frozenset({fresh_fingerprint}),
+                ),
+            ):
+                union = bridge._union_exclusions(
+                    plan,
+                    campaign_root=root,
+                    fingerprint_loader=lambda **_kwargs: frozenset(),
+                    historical_validator=lambda _paths: {
+                        "paths": [],
+                        "loaded": {
+                            "fingerprints": [historical_fingerprint],
+                            "sources": [],
+                            "body_sha256": "b" * 64,
+                        },
+                    },
+                )
+            self.assertEqual(
+                union["development"],
+                selected_fingerprints | {spent_fingerprint},
+            )
+            self.assertEqual(union["summary"]["development_variant_count"], 7)
+            self.assertEqual(
+                union["summary"]["additional_development_exclusions"],
+                additional,
+            )
+            self.assertEqual(
+                [source.get("role") for source in union["sources"]],
+                [None] * 6 + ["spent_original_tuple_confirmation", None],
+            )
+
     def test_maintained_strict_boundary_is_exact_527_260_and_zero_failures(self):
         summary = {
             "games": 1_000,

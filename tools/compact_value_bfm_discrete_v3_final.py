@@ -2,9 +2,10 @@
 """Fail-closed discrete-v3 bridge from finalist to strict Rank-4 qualification.
 
 The bridge is deliberately separate from the maintained legacy final/upload
-pipeline.  It precommits one immutable finalist and its complete v2 adapter
-evaluation/handoff ancestry, the fresh-position exclusion audit, seven frozen
-historical exclusions, all six selected development banks, a clean committed
+pipeline.  It precommits one immutable original or sibling-recovery finalist
+and its complete v2 adapter evaluation/handoff ancestry, the fresh-position
+exclusion audit, seven frozen historical exclusions, all six selected
+development banks plus any recovery-spent bank, a clean committed
 source/runtime preflight, exact Rank-4, and the source-specific gate binary.
 
 Only after that plan exists may ``materialize`` draw one secret seed and create
@@ -72,6 +73,21 @@ exclusions = _load(
 development = _load(
     HERE / "compact_value_bfm_discrete_v3_development.py",
     "compact_v3_final_development",
+)
+recovery = _load(
+    HERE / "compact_value_bfm_discrete_v3_recovery.py",
+    "compact_v3_final_development_recovery",
+)
+RECOVERY_RUNNER_PATH = (
+    REPOSITORY / "submissions/codingame/bots/compact_value_bfm"
+    / "discrete_v3_recovery_runner.py"
+)
+RECOVERY_RUNNER_TEST_PATH = (
+    REPOSITORY
+    / "tests/codingame/test_compact_value_bfm_discrete_v3_recovery_runner.py"
+)
+recovery_runner = _load(
+    RECOVERY_RUNNER_PATH, "compact_v3_final_development_recovery_runner"
 )
 deployment = _load(
     HERE / "compact_value_bfm_discrete_v3_deployment.py",
@@ -304,43 +320,73 @@ def _default_fingerprint_loader(**kwargs: Any) -> frozenset[str]:
     return exclusions._load_private_canonical_fingerprints(**kwargs)
 
 
-def _default_finalist_validator(
-    reference_path: pathlib.Path, development_plan_path: pathlib.Path,
-    campaign_root: pathlib.Path,
-) -> Mapping[str, Any]:
-    validated = development.validate_finalist(
-        reference_path, plan_path=development_plan_path,
-        output_root=campaign_root,
+def _development_lineage_schemas(plan_path: pathlib.Path) -> dict[str, str]:
+    if plan_path.is_symlink() or not plan_path.is_file():
+        raise BridgeError("development plan is absent or redirected")
+    schema = qualification.load_sealed(plan_path).get("schema")
+    if schema == development.PLAN_SCHEMA:
+        return {
+            "kind": "original",
+            "plan": development.PLAN_SCHEMA,
+            "reference": development.FINALIST_REFERENCE_SCHEMA,
+            "finalist": development.FINALIST_SCHEMA,
+        }
+    if schema == recovery.PLAN_SCHEMA:
+        if (
+            recovery.RESULT_SCHEMA != recovery_runner.RESULT_SCHEMA
+            or recovery.FINALIST_SCHEMA != recovery_runner.FINALIST_SCHEMA
+            or recovery.FINALIST_REFERENCE_SCHEMA
+            != recovery_runner.FINALIST_REFERENCE_SCHEMA
+        ):
+            raise BridgeError("recovery planner/runner schemas disagree")
+        return {
+            "kind": "recovery",
+            "plan": recovery.PLAN_SCHEMA,
+            "reference": recovery.FINALIST_REFERENCE_SCHEMA,
+            "finalist": recovery.FINALIST_SCHEMA,
+        }
+    raise BridgeError("unsupported development plan schema")
+
+
+def _verify_development_lineage_records(
+    inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    value = inputs.get("development_plan")
+    if not isinstance(value, Mapping) or set(value) != {"path", "sha256"}:
+        raise BridgeError("development plan reference is malformed")
+    plan_path = pathlib.Path(str(value.get("path", "")))
+    schemas = _development_lineage_schemas(plan_path)
+    if dict(value) != _reference(plan_path, schemas["plan"]):
+        raise BridgeError("development plan reference changed")
+    reference_path = _verify_reference(
+        inputs.get("finalist_reference"), schemas["reference"],
+        "development finalist reference",
     )
-    finalist = validated.get("finalist")
-    finalist_path = pathlib.Path(str(validated.get("path", "")))
-    reference = validated.get("reference")
-    plan = qualification.load_sealed(
-        development_plan_path, development.PLAN_SCHEMA
+    finalist_path = development._verify_sealed_record(
+        inputs.get("finalist"), schemas["finalist"], "development finalist"
     )
+    reference = qualification.load_sealed(reference_path, schemas["reference"])
+    plan_key = "development_plan" if schemas["kind"] == "original" else "recovery_plan"
     if (
-        not isinstance(finalist, Mapping) or not isinstance(reference, Mapping)
-        or finalist_path.is_symlink() or not finalist_path.is_file()
-        or finalist.get("schema") != development.FINALIST_SCHEMA
-        or finalist.get("status")
-        != "development-selected-awaiting-preflight-and-frozen-final"
-        or finalist.get("development_plan")
-        != development._sealed_record(
-            development_plan_path, development.PLAN_SCHEMA
-        )
-        or reference.get("finalist")
-        != development._sealed_record(finalist_path, development.FINALIST_SCHEMA)
-        or finalist.get("fresh_protected_tests_opened") is not True
-        or finalist.get("model_weights_immutable") is not True
-        or finalist.get("search_configuration_immutable") is not True
-        or finalist.get("development_selected") is not True
-        or finalist.get("final_bank_generation_authorized") is not False
-        or finalist.get("rank4_gate_authorized") is not False
-        or finalist.get("upload_authorized") is not False
+        reference.get("finalist") != inputs.get("finalist")
+        or reference.get(plan_key)
+        != development._sealed_record(plan_path, schemas["plan"])
     ):
-        raise BridgeError("canonical development finalist policy changed")
+        raise BridgeError("development finalist lineage changed")
+    return {
+        "kind": schemas["kind"],
+        "schemas": schemas,
+        "development_plan": plan_path.resolve(),
+        "finalist_reference": reference_path,
+        "finalist": finalist_path,
+    }
+
+
+def _common_finalist_context(
+    *, finalist: Mapping[str, Any], plan_candidate: Any,
+    banks: Mapping[str, Mapping[str, Any]], campaign_root: pathlib.Path,
+) -> dict[str, Any]:
     candidate = finalist.get("candidate")
-    plan_candidate = plan.get("candidate")
     handoff_record = finalist.get("adapter", {}).get("handoff")
     if (
         not isinstance(candidate, Mapping) or not isinstance(plan_candidate, Mapping)
@@ -353,9 +399,6 @@ def _default_finalist_validator(
     )
     handoff = qualification.load_sealed(handoff_path, adapter.HANDOFF_SCHEMA)
     handoff_candidate = handoff.get("candidate")
-    # The finalist candidate and adapter candidate intentionally have different
-    # outer shapes.  Bind their deployment identity field-by-field instead of
-    # requiring an invalid flattened-object equality.
     if (
         not isinstance(handoff_candidate, Mapping)
         or candidate.get("candidate_id") != handoff_candidate.get("candidate_id")
@@ -396,9 +439,8 @@ def _default_finalist_validator(
     excluded = exclusions.validate_receipt(
         exclusion_receipt, plan_path=exclusion_plan, output_root=campaign_root
     )
-    banks = exclusions.require_development_roster(
-        exclusion_receipt, plan_path=exclusion_plan, output_root=campaign_root
-    )
+    if excluded.get("development_ready") is not True:
+        raise BridgeError("finalist fresh-position exclusion is not development-ready")
     if finalist.get("banks") != {
         stage: dict(banks[stage]) for stage in STAGE_ORDER
     }:
@@ -423,16 +465,178 @@ def _default_finalist_validator(
     ):
         raise BridgeError("finalist actual-clock development gate is not an exact pass")
     return {
-        "reference": dict(reference), "finalist": dict(finalist),
-        "finalist_path": finalist_path.resolve(), "development_plan": plan,
-        "development_plan_path": development_plan_path.resolve(),
-        "handoff": handoff, "handoff_path": handoff_path,
-        "runtime_path": runtime_path, "source_path": source_path,
-        "development_bank_records": banks,
+        "handoff": handoff,
+        "handoff_path": handoff_path,
+        "runtime_path": runtime_path,
+        "source_path": source_path,
         "exclusion_plan_path": exclusion_plan,
         "exclusion_receipt_path": exclusion_receipt,
         "exclusion_validation": excluded,
     }
+
+
+def _original_finalist_validator(
+    reference_path: pathlib.Path, development_plan_path: pathlib.Path,
+    campaign_root: pathlib.Path,
+) -> Mapping[str, Any]:
+    validated = development.validate_finalist(
+        reference_path, plan_path=development_plan_path,
+        output_root=campaign_root,
+    )
+    finalist = validated.get("finalist")
+    finalist_path = pathlib.Path(str(validated.get("path", "")))
+    reference = validated.get("reference")
+    plan = qualification.load_sealed(
+        development_plan_path, development.PLAN_SCHEMA
+    )
+    if (
+        not isinstance(finalist, Mapping) or not isinstance(reference, Mapping)
+        or finalist_path.is_symlink() or not finalist_path.is_file()
+        or finalist.get("schema") != development.FINALIST_SCHEMA
+        or finalist.get("status")
+        != "development-selected-awaiting-preflight-and-frozen-final"
+        or finalist.get("development_plan")
+        != development._sealed_record(
+            development_plan_path, development.PLAN_SCHEMA
+        )
+        or reference.get("finalist")
+        != development._sealed_record(finalist_path, development.FINALIST_SCHEMA)
+        or finalist.get("fresh_protected_tests_opened") is not True
+        or finalist.get("model_weights_immutable") is not True
+        or finalist.get("search_configuration_immutable") is not True
+        or finalist.get("development_selected") is not True
+        or finalist.get("final_bank_generation_authorized") is not False
+        or finalist.get("rank4_gate_authorized") is not False
+        or finalist.get("upload_authorized") is not False
+    ):
+        raise BridgeError("canonical development finalist policy changed")
+    banks = exclusions.require_development_roster(
+        pathlib.Path(finalist["exclusion"]["receipt"]["path"]),
+        plan_path=pathlib.Path(finalist["exclusion"]["plan"]["path"]),
+        output_root=campaign_root,
+    )
+    common = _common_finalist_context(
+        finalist=finalist, plan_candidate=plan.get("candidate"), banks=banks,
+        campaign_root=campaign_root,
+    )
+    return {
+        "reference": dict(reference), "finalist": dict(finalist),
+        "finalist_path": finalist_path.resolve(), "development_plan": plan,
+        "development_plan_path": development_plan_path.resolve(),
+        "development_bank_records": banks,
+        "development_plan_schema": development.PLAN_SCHEMA,
+        "finalist_reference_schema": development.FINALIST_REFERENCE_SCHEMA,
+        "finalist_schema": development.FINALIST_SCHEMA,
+        "additional_development_exclusions": {},
+        "mixed_six_exclusion": None,
+        **common,
+    }
+
+
+def _recovery_finalist_validator(
+    reference_path: pathlib.Path, development_plan_path: pathlib.Path,
+    campaign_root: pathlib.Path,
+) -> Mapping[str, Any]:
+    context = dict(recovery.validate_recovery_plan(
+        development_plan_path, output_root=campaign_root
+    ))
+    if (
+        context.get("materialized") is not True
+        or not isinstance(context.get("development_bank_records"), Mapping)
+        or context.get("mixed_exclusion") is None
+        or not isinstance(context.get("materialized_mixed_six_exclusion"), Mapping)
+        or not isinstance(context.get("additional_development_exclusions"), Mapping)
+    ):
+        raise BridgeError("recovery development banks are not fully materialized")
+    validated = recovery_runner.validate_recovery_finalist(
+        reference_path, plan_path=development_plan_path,
+        output_root=campaign_root,
+    )
+    if set(validated) != {"reference", "finalist", "result", "path"}:
+        raise BridgeError("recovery finalist validator returned incomplete context")
+    finalist = validated["finalist"]
+    reference = validated["reference"]
+    result = validated["result"]
+    finalist_path = pathlib.Path(validated["path"])
+    plan = context["plan"]
+    plan_record = development._sealed_record(
+        development_plan_path, recovery.PLAN_SCHEMA
+    )
+    result_path = development._verify_sealed_record(
+        finalist.get("recovery_result"), recovery.RESULT_SCHEMA,
+        "recovery development result",
+    ) if isinstance(finalist, Mapping) else pathlib.Path()
+    if (
+        not isinstance(finalist, Mapping) or not isinstance(reference, Mapping)
+        or not isinstance(result, Mapping)
+        or finalist_path.is_symlink() or not finalist_path.is_file()
+        or finalist.get("schema") != recovery.FINALIST_SCHEMA
+        or finalist.get("status")
+        != "development-selected-awaiting-preflight-and-frozen-final"
+        or finalist.get("recovery_plan") != plan_record
+        or reference.get("recovery_plan") != plan_record
+        or reference.get("recovery_result")
+        != development._sealed_record(result_path, recovery.RESULT_SCHEMA)
+        or reference.get("finalist")
+        != development._sealed_record(finalist_path, recovery.FINALIST_SCHEMA)
+        or result != qualification.load_sealed(result_path, recovery.RESULT_SCHEMA)
+        or finalist.get("original_development_plan")
+        != plan.get("original", {}).get("development_plan")
+        or finalist.get("banks") != context["development_bank_records"]
+        or finalist.get("mixed_six_exclusion")
+        != context["materialized_mixed_six_exclusion"]
+        or finalist.get("additional_development_exclusions")
+        != context["additional_development_exclusions"]
+        or finalist.get("fresh_protected_tests_opened") is not True
+        or finalist.get("fresh_diagnostic_classification")
+        != "diagnostic-only-no-pass-fail-verdict"
+        or finalist.get("old_protected_tests_accessed") is not False
+        or finalist.get("model_weights_immutable") is not True
+        or finalist.get("search_configuration_immutable") is not True
+        or finalist.get("development_selected") is not True
+        or finalist.get("preflight_required") is not True
+        or finalist.get("final_bank_generation_authorized") is not False
+        or finalist.get("rank4_gate_authorized") is not False
+        or finalist.get("upload_authorized") is not False
+    ):
+        raise BridgeError("recovery development finalist policy changed")
+    banks = context["development_bank_records"]
+    common = _common_finalist_context(
+        finalist=finalist, plan_candidate=plan.get("candidate"), banks=banks,
+        campaign_root=campaign_root,
+    )
+    return {
+        "reference": dict(reference), "finalist": dict(finalist),
+        "finalist_path": finalist_path.resolve(), "development_plan": plan,
+        "development_plan_path": development_plan_path.resolve(),
+        "development_bank_records": banks,
+        "development_plan_schema": recovery.PLAN_SCHEMA,
+        "finalist_reference_schema": recovery.FINALIST_REFERENCE_SCHEMA,
+        "finalist_schema": recovery.FINALIST_SCHEMA,
+        "additional_development_exclusions": dict(
+            context["additional_development_exclusions"]
+        ),
+        "mixed_six_exclusion": dict(
+            context["materialized_mixed_six_exclusion"]
+        ),
+        **common,
+    }
+
+
+def _default_finalist_validator(
+    reference_path: pathlib.Path, development_plan_path: pathlib.Path,
+    campaign_root: pathlib.Path,
+) -> Mapping[str, Any]:
+    schemas = _development_lineage_schemas(development_plan_path)
+    if schemas["kind"] == "original":
+        return _original_finalist_validator(
+            reference_path, development_plan_path, campaign_root
+        )
+    if schemas["kind"] == "recovery":
+        return _recovery_finalist_validator(
+            reference_path, development_plan_path, campaign_root
+        )
+    raise BridgeError("unsupported development finalist lineage")
 
 
 def _normalized_inputs(
@@ -456,9 +660,38 @@ def _normalized_inputs(
         "runtime_path", "source_path",
         "development_bank_records", "exclusion_plan_path",
         "exclusion_receipt_path", "exclusion_validation",
+        "development_plan_schema", "finalist_reference_schema",
+        "finalist_schema", "additional_development_exclusions",
+        "mixed_six_exclusion",
     }
     if set(finalist) != required:
         raise BridgeError("finalist validator returned an incomplete context")
+    schemas = _development_lineage_schemas(development_plan_path)
+    if (
+        finalist["development_plan_path"] != development_plan_path.resolve()
+        or finalist["development_plan"]
+        != qualification.load_sealed(development_plan_path, schemas["plan"])
+        or finalist["development_plan_schema"] != schemas["plan"]
+        or finalist["finalist_reference_schema"] != schemas["reference"]
+        or finalist["finalist_schema"] != schemas["finalist"]
+        or (
+            schemas["kind"] == "original"
+            and (
+                finalist["additional_development_exclusions"] != {}
+                or finalist["mixed_six_exclusion"] is not None
+            )
+        )
+        or (
+            schemas["kind"] == "recovery"
+            and (
+                not isinstance(
+                    finalist["additional_development_exclusions"], Mapping
+                )
+                or not isinstance(finalist["mixed_six_exclusion"], Mapping)
+            )
+        )
+    ):
+        raise BridgeError("finalist validator returned a mixed development lineage")
     generated = pathlib.Path(finalist["source_path"])
     runtime = pathlib.Path(finalist["runtime_path"])
     generated_record = _record(generated, ascii_required=True)
@@ -524,10 +757,10 @@ def _normalized_inputs(
     return {
         "campaign_root": str(campaign_root),
         "development_plan": _reference(
-            development_plan_path, development.PLAN_SCHEMA
+            development_plan_path, finalist["development_plan_schema"]
         ),
         "finalist_reference": _reference(
-            finalist_reference_path, development.FINALIST_REFERENCE_SCHEMA
+            finalist_reference_path, finalist["finalist_reference_schema"]
         ),
         "finalist": dict(finalist["reference"]["finalist"]),
         "handoff": dict(finalist["finalist"]["adapter"]["handoff"]),
@@ -551,6 +784,13 @@ def _normalized_inputs(
         "development_banks": {
             stage: dict(banks[stage]) for stage in STAGE_ORDER
         },
+        "additional_development_exclusions": dict(
+            finalist["additional_development_exclusions"]
+        ),
+        "mixed_six_exclusion": (
+            None if finalist["mixed_six_exclusion"] is None
+            else dict(finalist["mixed_six_exclusion"])
+        ),
         "historical_exclusions": [
             _record(path) for path in historical["paths"]
         ],
@@ -577,6 +817,14 @@ def _tool_closure() -> dict[str, Any]:
         "development_runner": _record(
             REPOSITORY / "submissions/codingame/bots/compact_value_bfm"
             / "discrete_v3_development_runner.py"
+        ),
+        "development_recovery": _record(
+            pathlib.Path(recovery.__file__).resolve()
+        ),
+        "development_recovery_tests": _record(recovery.TEST_PATH),
+        "development_recovery_runner": _record(RECOVERY_RUNNER_PATH),
+        "development_recovery_runner_tests": _record(
+            RECOVERY_RUNNER_TEST_PATH
         ),
         "deployment_source": _record(
             pathlib.Path(deployment.__file__).resolve()
@@ -622,6 +870,10 @@ def _authorization_body(inputs: Mapping[str, Any], authorized_at_utc: str) -> di
         "preflight": inputs["preflight"],
         "source_binding": inputs["source_binding"],
         "development_banks": inputs["development_banks"],
+        "additional_development_exclusions": inputs[
+            "additional_development_exclusions"
+        ],
+        "mixed_six_exclusion": inputs["mixed_six_exclusion"],
         "historical_exclusions": inputs["historical_exclusions"],
         "tuple": inputs["tuple"],
         "profile": inputs["profile"],
@@ -838,7 +1090,71 @@ def _fresh_private_set(
     return values
 
 
-def _development_variants(plan: Mapping[str, Any]) -> tuple[set[str], list[dict[str, Any]]]:
+def _additional_development_bank_records(
+    plan: Mapping[str, Any], *, campaign_root: pathlib.Path,
+) -> list[tuple[str, Mapping[str, Any], Mapping[str, Any]]]:
+    inputs = plan.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise BridgeError("strict-final plan has no development inputs")
+    lineage = _verify_development_lineage_records(inputs)
+    additional = inputs.get("additional_development_exclusions")
+    mixed_record = inputs.get("mixed_six_exclusion")
+    if lineage["kind"] == "original":
+        if additional != {} or mixed_record is not None:
+            raise BridgeError("original development lineage has recovery exclusions")
+        return []
+    try:
+        context = recovery.validate_recovery_plan(
+            pathlib.Path(lineage["development_plan"]),
+            output_root=campaign_root,
+        )
+    except Exception as error:
+        raise BridgeError("recovery development exclusion context is invalid") from error
+    if (
+        context.get("materialized") is not True
+        or inputs.get("development_banks")
+        != context.get("development_bank_records")
+        or additional != context.get("additional_development_exclusions")
+        or mixed_record != context.get("materialized_mixed_six_exclusion")
+        or context.get("mixed_exclusion") is None
+    ):
+        raise BridgeError("strict-final recovery exclusion binding changed")
+    development._verify_sealed_record(
+        mixed_record, recovery.MIXED_EXCLUSION_SCHEMA,
+        "recovery mixed-six exclusion",
+    )
+    if not isinstance(additional, Mapping) or set(additional) != {
+        "spent_original_tuple_confirmation",
+        "eventual_protected_final_requires_union",
+    } or additional.get("eventual_protected_final_requires_union") is not True:
+        raise BridgeError("recovery additional-development exclusion roster changed")
+    spent = additional.get("spent_original_tuple_confirmation")
+    if not isinstance(spent, Mapping) or set(spent) != {
+        "stage", "bank", "opening_count", "selection_weight",
+        "eligible_for_selection", "required_for_eventual_protected_final",
+    } or (
+        spent.get("stage") != "tuple_confirmation"
+        or spent.get("opening_count") != STAGE_COUNTS["tuple_confirmation"]
+        or spent.get("selection_weight") != 0
+        or spent.get("eligible_for_selection") is not False
+        or spent.get("required_for_eventual_protected_final") is not True
+    ):
+        raise BridgeError("spent original tuple-confirmation exclusion changed")
+    original_plan = context.get("original_plan")
+    bank_record = spent.get("bank")
+    if (
+        not isinstance(original_plan, Mapping)
+        or not isinstance(bank_record, Mapping)
+        or bank_record != original_plan.get("banks", {}).get("tuple_confirmation")
+        or bank_record == inputs["development_banks"]["tuple_confirmation"]
+    ):
+        raise BridgeError("spent original tuple-confirmation bank identity changed")
+    return [("spent_original_tuple_confirmation", bank_record, spent)]
+
+
+def _development_variants(
+    plan: Mapping[str, Any], *, campaign_root: pathlib.Path,
+) -> tuple[set[str], list[dict[str, Any]]]:
     variants: set[str] = set()
     sources = []
     for stage in STAGE_ORDER:
@@ -849,7 +1165,7 @@ def _development_variants(plan: Mapping[str, Any]) -> tuple[set[str], list[dict[
             bank.get("stage") != stage
             or bank.get("classification") != "unprotected-development"
             or bank.get("opening_count") != STAGE_COUNTS[stage]
-            or qualification.sha256_file(path) != record["sha256"]
+            or _record(path) != record
         ):
             raise BridgeError("development bank changed before strict final")
         for opening in bank["openings"]:
@@ -863,6 +1179,38 @@ def _development_variants(plan: Mapping[str, Any]) -> tuple[set[str], list[dict[
         sources.append({
             "stage": stage, "path": path.name,
             "sha256": record["sha256"], "opening_count": STAGE_COUNTS[stage],
+        })
+    for label, record, metadata in _additional_development_bank_records(
+        plan, campaign_root=campaign_root
+    ):
+        path = pathlib.Path(str(record.get("path", "")))
+        bank = opening_tools.validate_bank(path)
+        stage = str(metadata["stage"])
+        if (
+            bank.get("stage") != stage
+            or bank.get("classification") != "unprotected-development"
+            or bank.get("opening_count") != metadata["opening_count"]
+            or _record(path) != dict(record)
+        ):
+            raise BridgeError("additional development exclusion bank changed")
+        bank_variants: set[str] = set()
+        for opening in bank["openings"]:
+            bank_variants.update(
+                value for name, value in opening["fingerprints"].items()
+                if name != "canonical"
+            )
+        if bank_variants & variants:
+            raise BridgeError(
+                "selected and additional development banks overlap by symmetry"
+            )
+        variants.update(bank_variants)
+        sources.append({
+            "stage": stage,
+            "role": label,
+            "path": path.name,
+            "sha256": record["sha256"],
+            "opening_count": metadata["opening_count"],
+            "eligible_for_selection": False,
         })
     return variants, sources
 
@@ -878,12 +1226,16 @@ def _union_exclusions(
     ]
     historical = dict(historical_validator(historical_paths))
     old = set(historical["loaded"]["fingerprints"])
-    development, development_sources = _development_variants(plan)
+    development, development_sources = _development_variants(
+        plan, campaign_root=campaign_root
+    )
     fresh = _fresh_private_set(
         plan, campaign_root=campaign_root, fingerprint_loader=fingerprint_loader
     )
     if old & development:
         raise BridgeError("development bank overlaps a historical exclusion")
+    if set(fresh) & development:
+        raise BridgeError("development bank overlaps a fresh protected position")
     # Fresh values are canonical hashes.  Every candidate four-way variant set
     # contains its canonical minimum, so adding these hashes to the generator's
     # excluded set is sufficient and avoids serializing protected variants.
@@ -907,6 +1259,13 @@ def _union_exclusions(
         ),
         "fresh_unique_canonical_count": len(fresh),
     }
+    if plan["inputs"]["additional_development_exclusions"]:
+        material["additional_development_exclusions"] = dict(
+            plan["inputs"]["additional_development_exclusions"]
+        )
+        material["mixed_six_exclusion"] = dict(
+            plan["inputs"]["mixed_six_exclusion"]
+        )
     return {
         "fingerprints": union,
         "historical": old,
@@ -1717,18 +2076,7 @@ def validate_qualified(path: pathlib.Path, *, plan_path: pathlib.Path,
         != plan["inputs"]["deployment_derivation"]["configuration"]
     ):
         raise BridgeError("qualified deployment manifest changed")
-    development._verify_sealed_record(
-        plan["inputs"]["finalist"], development.FINALIST_SCHEMA,
-        "qualified finalist",
-    )
-    _verify_reference(
-        plan["inputs"]["finalist_reference"],
-        development.FINALIST_REFERENCE_SCHEMA, "qualified finalist reference",
-    )
-    _verify_reference(
-        plan["inputs"]["development_plan"], development.PLAN_SCHEMA,
-        "qualified development plan",
-    )
+    _verify_development_lineage_records(plan["inputs"])
     _verify_reference(
         plan["inputs"]["evaluation_completion"], adapter.EVALUATION_COMPLETION_SCHEMA,
         "qualified evaluation completion",

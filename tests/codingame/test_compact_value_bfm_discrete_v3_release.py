@@ -348,10 +348,18 @@ std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
         self.development_plan = sealed(
             "development-plan.json", release.development.PLAN_SCHEMA
         )
-        self.finalist_reference = sealed(
-            "finalist-reference.json", release.development.FINALIST_REFERENCE_SCHEMA
-        )
         self.finalist = sealed("finalist.json", release.development.FINALIST_SCHEMA)
+        self.finalist_reference = self.root / "finalist-reference.json"
+        q.write_sealed(self.finalist_reference, {
+            "schema": release.development.FINALIST_REFERENCE_SCHEMA,
+            "namespace": q.NAMESPACE,
+            "development_plan": release.development._sealed_record(
+                self.development_plan, release.development.PLAN_SCHEMA
+            ),
+            "finalist": release.development._sealed_record(
+                self.finalist, release.development.FINALIST_SCHEMA
+            ),
+        })
         self.evaluation = sealed(
             "evaluation.json", release.adapter.EVALUATION_COMPLETION_SCHEMA
         )
@@ -624,6 +632,168 @@ std::uint64_t shuffle_seed{0x6a09e667f3bcc909ULL};
                         path, release.adapter.HANDOFF_SCHEMA
                     ),
                 )
+
+    def test_qualified_record_validation_accepts_exact_recovery_schemas_only(self):
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = Fixture(pathlib.Path(raw))
+            recovery_plan = fixture.root / "recovery-plan.json"
+            recovery_finalist = fixture.root / "recovery-finalist.json"
+            recovery_reference = fixture.root / "recovery-reference.json"
+            q.write_sealed(recovery_plan, {
+                "schema": release.final_bridge.recovery.PLAN_SCHEMA,
+                "synthetic": True,
+            })
+            q.write_sealed(recovery_finalist, {
+                "schema": release.final_bridge.recovery.FINALIST_SCHEMA,
+                "synthetic": True,
+            })
+            q.write_sealed(recovery_reference, {
+                "schema": release.final_bridge.recovery.FINALIST_REFERENCE_SCHEMA,
+                "recovery_plan": release.development._sealed_record(
+                    recovery_plan, release.final_bridge.recovery.PLAN_SCHEMA
+                ),
+                "finalist": release.development._sealed_record(
+                    recovery_finalist,
+                    release.final_bridge.recovery.FINALIST_SCHEMA,
+                ),
+            })
+            qualified = dict(fixture.chain["qualified"])
+            qualified["development_plan"] = q.artifact_reference(
+                recovery_plan, release.final_bridge.recovery.PLAN_SCHEMA
+            )
+            qualified["finalist_reference"] = q.artifact_reference(
+                recovery_reference,
+                release.final_bridge.recovery.FINALIST_REFERENCE_SCHEMA,
+            )
+            qualified["finalist"] = release.development._sealed_record(
+                recovery_finalist,
+                release.final_bridge.recovery.FINALIST_SCHEMA,
+            )
+            records = release._validate_qualified_records(
+                qualified,
+                campaign_root=fixture.root,
+                handoff_validator=lambda path, **_kwargs: q.load_sealed(
+                    path, release.adapter.HANDOFF_SCHEMA
+                ),
+            )
+            self.assertEqual(records["development_plan"], recovery_plan.resolve())
+            self.assertEqual(
+                records["finalist_reference"], recovery_reference.resolve()
+            )
+            self.assertEqual(records["finalist"], recovery_finalist.resolve())
+            mixed = dict(qualified)
+            mixed["finalist_reference"] = fixture.chain["qualified"][
+                "finalist_reference"
+            ]
+            with self.assertRaisesRegex(
+                release.ReleaseError, "development lineage is invalid"
+            ):
+                release._validate_qualified_records(
+                    mixed,
+                    campaign_root=fixture.root,
+                    handoff_validator=lambda path, **_kwargs: q.load_sealed(
+                        path, release.adapter.HANDOFF_SCHEMA
+                    ),
+                )
+
+    def test_release_branch_verifier_is_not_forwarded_to_strict_final(self):
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = Fixture(pathlib.Path(raw))
+            qualified = q.load_sealed(
+                fixture.qualified, release.final_bridge.QUALIFIED_SCHEMA
+            )
+            plan = q.load_sealed(fixture.plan, release.final_bridge.PLAN_SCHEMA)
+            plan_body = {key: value for key, value in plan.items()
+                         if key != "body_sha256"}
+            plan_body["inputs"].update({
+                key: qualified[key]
+                for key in (
+                    "candidate_commit", "candidate", "runtime",
+                    "deployment_derivation", "deployment_manifest",
+                    "deployment_manifest_body_sha256", "development_plan",
+                    "finalist_reference", "finalist", "handoff",
+                    "evaluation_completion", "exclusion_receipt", "preflight",
+                )
+            })
+            plan_body["inputs"].update({
+                "historical_exclusions": [{} for _index in range(7)],
+                "rank4": {},
+                "gate": {},
+            })
+            fixture.plan.write_bytes(q.canonical_json_bytes(q.seal(plan_body)))
+            qualified_body = {
+                key: value for key, value in qualified.items()
+                if key != "body_sha256"
+            }
+            qualified_body["plan"] = q.artifact_reference(
+                fixture.plan, release.final_bridge.PLAN_SCHEMA
+            )
+            fixture.qualified.write_bytes(
+                q.canonical_json_bytes(q.seal(qualified_body))
+            )
+
+            branch_verifier = mock.Mock(return_value={
+                "commit": COMMIT,
+                "tracked_clean": True,
+                "branch": release.upload_primitives.BRANCH,
+            })
+            deep_validator = mock.Mock(return_value={
+                "receipt": fixture.chain["bank_receipt"],
+                "gate_binding_path": fixture.binding,
+            })
+            records = {
+                "plan": fixture.plan,
+                "bank_receipt": fixture.bank_receipt,
+                "aggregate": fixture.aggregate,
+                "development_plan": fixture.development_plan,
+                "finalist_reference": fixture.finalist_reference,
+                "finalist": fixture.finalist,
+                "handoff": fixture.handoff,
+                "evaluation": fixture.evaluation,
+                "exclusion": fixture.exclusion,
+            }
+            with (
+                mock.patch.object(
+                    release, "_validate_qualified_records", return_value=records
+                ),
+                mock.patch.object(
+                    release, "_validate_deployment_binding", return_value={}
+                ),
+                mock.patch.object(
+                    release, "_verify_record", return_value=fixture.source
+                ),
+                mock.patch.object(
+                    release, "_verify_reference", return_value=fixture.preflight
+                ),
+                mock.patch.object(
+                    release.final_bridge, "_verify_record",
+                    return_value=fixture.harness,
+                ),
+                mock.patch.object(
+                    release.final_bridge, "validate_bank_receipt", deep_validator
+                ),
+                mock.patch.object(
+                    release.final_bridge, "validate_qualified",
+                    side_effect=RuntimeError("stop after verifier boundary"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    release.ReleaseError, "deep v3 strict-final ancestry"
+                ):
+                    release.validate_qualified_chain(
+                        fixture.root,
+                        fixture.qualified,
+                        fixture.repository,
+                        git_verifier=branch_verifier,
+                    )
+            branch_verifier.assert_called_once_with(
+                fixture.repository, fixture.source, COMMIT
+            )
+            deep_validator.assert_called_once()
+            self.assertIs(
+                deep_validator.call_args.kwargs["git_verifier"],
+                release.final_bridge.legacy_final.verify_clean_git,
+            )
 
     def test_green_ci_and_exact_qualified_chain_authorize_once(self):
         with tempfile.TemporaryDirectory() as raw:

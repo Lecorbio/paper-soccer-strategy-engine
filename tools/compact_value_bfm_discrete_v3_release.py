@@ -267,6 +267,16 @@ def _tool_closure() -> dict[str, Any]:
         ),
         "development": _record(pathlib.Path(development.__file__).resolve()),
         "development_tests": _record(development.TEST_PATH),
+        "development_recovery": _record(
+            pathlib.Path(final_bridge.recovery.__file__).resolve()
+        ),
+        "development_recovery_tests": _record(final_bridge.recovery.TEST_PATH),
+        "development_recovery_runner": _record(
+            final_bridge.RECOVERY_RUNNER_PATH
+        ),
+        "development_recovery_runner_tests": _record(
+            final_bridge.RECOVERY_RUNNER_TEST_PATH
+        ),
         "adapter_v2": _record(pathlib.Path(adapter.__file__).resolve()),
         "fresh_exclusions": _record(pathlib.Path(exclusions.__file__).resolve()),
         "upload_primitives": _record(
@@ -319,18 +329,13 @@ def _validate_qualified_records(
         qualified.get("aggregate"), qualification.FINAL_AGGREGATE_SCHEMA,
         "strict-final aggregate",
     )
-    development_plan_path = _verify_reference(
-        qualified.get("development_plan"), development.PLAN_SCHEMA,
-        "development plan",
-    )
-    finalist_reference_path = _verify_reference(
-        qualified.get("finalist_reference"), development.FINALIST_REFERENCE_SCHEMA,
-        "development finalist reference",
-    )
-    finalist_path = development._verify_sealed_record(
-        qualified.get("finalist"), development.FINALIST_SCHEMA,
-        "development finalist",
-    )
+    try:
+        lineage = final_bridge._verify_development_lineage_records(qualified)
+    except Exception as error:
+        raise ReleaseError("qualified development lineage is invalid") from error
+    development_plan_path = pathlib.Path(lineage["development_plan"])
+    finalist_reference_path = pathlib.Path(lineage["finalist_reference"])
+    finalist_path = pathlib.Path(lineage["finalist"])
     handoff_path = development._verify_sealed_record(
         qualified.get("handoff"), adapter.HANDOFF_SCHEMA, "adapter v2 handoff"
     )
@@ -487,6 +492,16 @@ def validate_qualified_chain(
         != plan.get("inputs", {}).get("deployment_manifest")
         or qualified.get("deployment_manifest_body_sha256")
         != plan.get("inputs", {}).get("deployment_manifest_body_sha256")
+        or qualified.get("development_plan")
+        != plan.get("inputs", {}).get("development_plan")
+        or qualified.get("finalist_reference")
+        != plan.get("inputs", {}).get("finalist_reference")
+        or qualified.get("finalist") != plan.get("inputs", {}).get("finalist")
+        or qualified.get("handoff") != plan.get("inputs", {}).get("handoff")
+        or qualified.get("evaluation_completion")
+        != plan.get("inputs", {}).get("evaluation_completion")
+        or qualified.get("exclusion_receipt")
+        != plan.get("inputs", {}).get("exclusion_receipt")
         or qualified.get("preflight") != plan.get("inputs", {}).get("preflight")
     ):
         raise ReleaseError("qualified inputs differ from their strict-final plan")
@@ -538,7 +553,8 @@ def validate_qualified_chain(
             finalist_reference_path=finalist_reference_path,
             preflight_path=preflight_path, candidate_source=candidate_path,
             historical_paths=historical_paths, rank4_source=rank4_path,
-            gate_path=gate_path, repository=repository, git_verifier=git_verifier,
+            gate_path=gate_path, repository=repository,
+            git_verifier=final_bridge.legacy_final.verify_clean_git,
         )
         final_bridge.validate_qualified(
             qualified_path, plan_path=plan_path,
