@@ -336,6 +336,14 @@ def sha256_file(path: pathlib.Path) -> str:
     return qualification.sha256_file(path)
 
 
+def _production_allowlist_for_role(role: str) -> Mapping[str, Any] | None:
+    if role in ALLOWLIST:
+        return ALLOWLIST[role]
+    if role == "attempt_one_initial_checkpoint":
+        role = "initial_float_checkpoint"
+    return ATTEMPT_ONE_INPUT_ALLOWLIST.get(role)
+
+
 def utc(value: Any, label: str) -> str:
     qualification._utc(value, label)
     return str(value)
@@ -1496,11 +1504,7 @@ def freeze_campaign(
     }
     allowlist_matches = True
     for role, record in external_allowlisted.items():
-        expected = (
-            ALLOWLIST[role]
-            if role in ALLOWLIST
-            else ATTEMPT_ONE_INPUT_ALLOWLIST.get(role)
-        )
+        expected = _production_allowlist_for_role(role)
         if role == "build_manifest":
             continue
         if expected is None:

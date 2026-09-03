@@ -19,6 +19,14 @@ q = challenger.qualification
 
 
 class ChallengerCliForwardingTests(unittest.TestCase):
+    def test_attempt_one_checkpoint_role_uses_frozen_production_allowlist(self):
+        self.assertIs(
+            challenger._production_allowlist_for_role(
+                "attempt_one_initial_checkpoint"
+            ),
+            challenger.ATTEMPT_ONE_INPUT_ALLOWLIST["initial_float_checkpoint"],
+        )
+
     def test_sanitize_live_cli_forwards_only_verified_archive_inputs(self):
         with mock.patch.object(
             challenger, "materialize_live_dynamic_exclusion",
