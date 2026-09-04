@@ -835,6 +835,7 @@ def _release_payloads(
         work=deployment.PROFILE_ROSTER[profile],
     )
     manifest_bytes = deployment._canonical_manifest_bytes(manifest)
+    tracked_submission = variant if legacy is not None else base_source
     derivation = {
         "schema": SOURCE_DERIVATION_SCHEMA,
         "algorithm": (
@@ -882,7 +883,11 @@ def _release_payloads(
     }
     return {
         "model.hpp": model_header,
-        "submission.cpp": base_source,
+        # The legacy attempt-zero source is the output of the release
+        # checkout's shared generator.  Replacing it with the newer compacting
+        # exporter output makes the maintained submission-current CTest fail
+        # and breaks exact finalist promotion.
+        "submission.cpp": tracked_submission,
         "discrete_v3_deployment.cpp": candidate,
         "discrete_v3_deployment.json": manifest_bytes,
         "manifest": manifest,

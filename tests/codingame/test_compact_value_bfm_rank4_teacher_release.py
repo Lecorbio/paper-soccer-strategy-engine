@@ -302,8 +302,8 @@ class SourceAndPromotionTest(unittest.TestCase):
                 return_value=legacy_evidence,
             ):
                 payloads = release._release_payloads(root, selected)
-            self.assertEqual(payloads["submission.cpp"], current)
-            self.assertNotEqual(payloads["submission.cpp"], legacy)
+            self.assertEqual(payloads["submission.cpp"], legacy)
+            self.assertNotEqual(payloads["submission.cpp"], current)
             self.assertEqual(
                 release.deployment.recover_generated_source(
                     payloads["discrete_v3_deployment.cpp"],
