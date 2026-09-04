@@ -1,0 +1,4 @@
+submissions/codingame/bots/compact_value_bfm/model.hpp
+submissions/codingame/bots/compact_value_bfm/engine.hpp
+submissions/codingame/bots/compact_value_bfm/engine.cpp
+submissions/codingame/bots/compact_value_bfm/bot.cpp

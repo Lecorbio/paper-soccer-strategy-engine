@@ -2926,6 +2926,7 @@ def _declared_target_policies(manifest: Mapping[str, object]) -> list[dict]:
                 corpus.TEACHER_SCHEMA,
                 corpus.RANK4_TEACHER_SCHEMA,
                 corpus.SEARCH_TEACHER_SCHEMA,
+                corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA,
             }
             or policy.get("mixture")
             != {

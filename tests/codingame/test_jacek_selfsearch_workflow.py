@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -21,6 +22,44 @@ SHORT_WIN = "0/0/3/0/61/0/07"
 def write_json(path: pathlib.Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(workflow.canonical_json_bytes(value, pretty=True))
+
+
+def write_compact_runtime(
+    path: pathlib.Path, *, seed: int = 20260907,
+) -> dict:
+    counts = {"w1": 6301 * 8, "w2": 8 * 8, "w3": 8}
+    counts["total"] = sum(counts.values())
+    payload = bytes((counts["total"] * 3 + 7) // 8)
+    body = {
+        "schema": workflow.COMPACT_RUNTIME_SCHEMA,
+        "feature_schema": workflow.COMPACT_FEATURE_SCHEMA,
+        "architecture": {
+            "name": "compact-8x8", "dimensions": [6301, 8, 8, 1],
+            "biases": False, "activations": workflow.COMPACT_ACTIVATIONS,
+            "payload_layout": "w1-input-major,w2-input-major,w3",
+        },
+        "quantization": {
+            "bits": 3, "minimum": -3, "maximum": 3,
+            "scheme": "symmetric-signed-three-bit-per-layer-fixed-scale",
+            "packing": "signed-three-bit-twos-complement-lsb-first",
+            "scales": {"w1": .03125, "w2": .0625, "w3": .125},
+            "weight_counts": counts, "packed_byte_count": len(payload),
+            "payload_sha256": hashlib.sha256(payload).hexdigest(),
+            "payload_base64": base64.b64encode(payload).decode("ascii"),
+        },
+        "selection": {
+            "arm": "search-target", "seed": seed, "float_epoch": 1,
+            "qat_epoch": 4, "source_bundle_body_sha256": "a" * 64,
+        },
+    }
+    document = {
+        **body,
+        "body_sha256": hashlib.sha256(
+            workflow.canonical_json_bytes(body)
+        ).hexdigest(),
+    }
+    path.write_bytes(workflow.canonical_json_bytes(document))
+    return document
 
 
 def search_teacher_row(position_id: str, value: float) -> dict:
@@ -144,6 +183,32 @@ def rank4_teacher_row(position_id: str, score: int = 100) -> dict:
 
 
 class SelfSearchWorkflowTests(unittest.TestCase):
+    def test_compact_runtime_identities_are_strict_and_manifest_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            student_path = root / "student.runtime.json"
+            prior_path = root / "prior.runtime.json"
+            student_document = write_compact_runtime(student_path)
+            prior_document = write_compact_runtime(prior_path, seed=20260908)
+            student = workflow.compact_runtime_identity(student_path)
+            prior = workflow.compact_runtime_identity(prior_path)
+            bindings = workflow.compact_actor_bindings(student, prior)
+            self.assertEqual(
+                bindings["compact_student_runtime_body_sha256"],
+                student_document["body_sha256"],
+            )
+            self.assertEqual(
+                bindings["compact_prior_payload_sha256"],
+                prior_document["quantization"]["payload_sha256"],
+            )
+            self.assertEqual(len(bindings), 10)
+            damaged = dict(student_document)
+            damaged["body_sha256"] = "0" * 64
+            damaged_path = root / "damaged.runtime.json"
+            damaged_path.write_bytes(workflow.canonical_json_bytes(damaged))
+            with self.assertRaisesRegex(ValueError, "body SHA-256"):
+                workflow.compact_runtime_identity(damaged_path)
+
     def test_qualified_rebuild_starting_actor_is_strictly_bound(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -1242,6 +1307,7 @@ class SelfSearchWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             modes = ("incumbent-selfplay", "incumbent-p1-vs-rank4")
+            game_ordinals = (0, 10)
             plan = root / "plan.json"
             write_json(
                 plan,
@@ -1256,9 +1322,17 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                             "actor_mode": mode,
                             "base_seed": 100 + ordinal,
                         }
-                        for ordinal, mode in enumerate(modes)
+                        for ordinal, mode in zip(game_ordinals, modes, strict=True)
                     ],
                 },
+            )
+            self.assertEqual(
+                workflow.render_game_plan_tsv(json.loads(plan.read_bytes()))
+                .decode().splitlines()[1:],
+                [
+                    f"{ordinal}\t{mode}\t{100 + ordinal}"
+                    for ordinal, mode in zip(game_ordinals, modes, strict=True)
+                ],
             )
             tsvs, manifests = [], []
             source_fields = {
@@ -1266,13 +1340,15 @@ class SelfSearchWorkflowTests(unittest.TestCase):
                 "rank4_actor_source_sha256": "2" * 64,
                 "jacek_nn_actor_source_sha256": "3" * 64,
             }
-            for ordinal, mode in enumerate(modes):
-                tsv = root / f"chunk-{ordinal}.tsv"
+            for chunk, (ordinal, mode) in enumerate(
+                zip(game_ordinals, modes, strict=True)
+            ):
+                tsv = root / f"chunk-{chunk}.tsv"
                 tsv.write_text(
                     "group_id\tsource\twinner\ttranscript\n"
                     f"root:{ordinal}\t{workflow.PILOT_CAMPAIGN_ID}\t0\t{SHORT_WIN}\n"
                 )
-                manifest = root / f"chunk-{ordinal}.json"
+                manifest = root / f"chunk-{chunk}.json"
                 write_json(
                     manifest,
                     {
