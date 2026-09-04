@@ -93,6 +93,13 @@ CAMPAIGN_ID = "compact-value-bfm-rank4-teacher-challenger-v1"
 ARCHITECTURE = "6301-12-8-1"
 DIMENSIONS = [6301, 12, 8, 1]
 ATTEMPT_ZERO = 0
+ATTEMPT_ZERO_LEGACY_COMMIT = (
+    "c380ae74b999eb6fd16d7bbfd49e16cc24f95ded"
+)
+ATTEMPT_ZERO_LEGACY_RUNNER = {
+    "bytes": 122_367,
+    "sha256": "c71be09f8b5706b660cc4e72058a34085ac26051a26b9b53e3ac24e29af95825",
+}
 SOURCE_LIMIT = 95_000
 MINIMUM_COMPARABLE_VALIDATION_GROUPS = 100
 MINIMUM_COMPARABLE_VALIDATION_FRACTION = 0.80
@@ -248,6 +255,10 @@ RECOVERY_FINALIST_REFERENCE_SCHEMA = (
 RECOVERY_JOURNAL_SCHEMA = (
     "papersoccer.compact-value-bfm.discrete-v3-development-recovery-"
     "journal-event.v1"
+)
+LEGACY_RECOVERY_EXECUTION_SOURCES_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "legacy-recovery-execution-sources.v1"
 )
 
 PILOT_QUOTAS = {
@@ -4067,6 +4078,16 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 and deep_validation.get("status") == expected_deep_status
             )
             if strict_deep:
+                if (
+                    campaign_inputs.get("production_allowlist_enforced") is True
+                    and set(deep_validation) != {
+                        "status", "passed", "recovery_plan", "journal_head",
+                        "validator", "executed_recovery_runner",
+                        "legacy_execution_sources", "isolated_execution",
+                        "frozen_execution_sources",
+                    }
+                ):
+                    raise ChallengerError("deep recovery evidence roster changed")
                 deep_plan = _sealed_metadata(
                     deep_validation.get("recovery_plan"), RECOVERY_PLAN_SCHEMA,
                     "deep recovery plan",
@@ -4084,10 +4105,14 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                     deep_validation.get("validator"),
                     "deep recovery validator",
                 )
+                executed_runner_path = _verify_record(
+                    deep_validation.get("executed_recovery_runner"),
+                    "executed attempt-zero recovery runner",
+                )
                 if campaign_inputs.get("production_allowlist_enforced") is True:
                     expected_execution = _frozen_execution_source_evidence(
                         {"plan": plan, "inputs": campaign_inputs},
-                        tool_roles=("recovery_runner_verifier",),
+                        tool_roles=("campaign_tool",),
                         revalidate_current=False,
                     )
                     if (
@@ -4096,12 +4121,170 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                         or expected_execution is None
                         or sha256_file(validator_path)
                         != expected_execution["tools"][
-                            "recovery_runner_verifier"
+                            "campaign_tool"
                         ]["sha256"]
                     ):
                         raise ChallengerError(
                             "deep recovery validator differs from frozen execution code"
                         )
+                    input_directory = pathlib.Path(
+                        str(plan["outputs"]["input_directory"])
+                    )
+                    recovery_plan_path = _verify_bundle_record(
+                        campaign_inputs["attempt_zero"]["recovery_plan"],
+                        input_directory=input_directory,
+                        label="attempt-zero recovery plan",
+                    )
+                    recovery_plan = qualification.load_sealed(
+                        recovery_plan_path, RECOVERY_PLAN_SCHEMA
+                    )
+                    legacy_sources = _validate_legacy_execution_sources(
+                        deep_validation.get("legacy_execution_sources"),
+                        campaign_root=pathlib.Path(plan["outputs"]["root"]),
+                        recovery_plan=recovery_plan,
+                    )
+                    expected_runner = recovery_plan.get("tools", {}).get(
+                        "recovery_runner"
+                    )
+                    if (
+                        not isinstance(expected_runner, Mapping)
+                        or executed_runner_path.stat().st_size
+                        != expected_runner.get("bytes")
+                        or sha256_file(executed_runner_path)
+                        != expected_runner.get("sha256")
+                    ):
+                        raise ChallengerError(
+                            "executed recovery runner differs from sealed legacy plan"
+                        )
+                    isolated = deep_validation.get("isolated_execution")
+                    isolated_fields = {
+                        "interpreter", "isolated", "cwd", "argv",
+                        "stdout", "stderr", "stdout_sha256",
+                        "stderr_sha256",
+                    }
+                    if value.get("passed") is not True:
+                        isolated_fields.update({
+                            "derived_reason", "derived_exception"
+                        })
+                    if (
+                        not isinstance(isolated, Mapping)
+                        or set(isolated) != isolated_fields
+                        or isolated.get("isolated") is not True
+                        or not isinstance(isolated.get("argv"), list)
+                        or not isinstance(isolated.get("stdout"), str)
+                        or not isinstance(isolated.get("stderr"), str)
+                        or isolated.get("stderr") != ""
+                        or isolated.get("stdout_sha256") != sha256_bytes(
+                            isolated["stdout"].encode("utf-8")
+                        )
+                        or isolated.get("stderr_sha256") != sha256_bytes(b"")
+                    ):
+                        raise ChallengerError("isolated recovery execution changed")
+                    interpreter_path = _verify_record(
+                        isolated.get("interpreter"),
+                        "isolated recovery interpreter",
+                    )
+                    archived_python = legacy_sources["sources"]["adapter:python"]
+                    if (
+                        _regular(interpreter_path) != _regular(archived_python)
+                        or isolated.get("cwd")
+                        != str(pathlib.Path(str(expected_runner["path"])).parents[4])
+                    ):
+                        raise ChallengerError("isolated recovery runtime changed")
+                    outputs = recovery_plan.get("outputs")
+                    if not isinstance(outputs, Mapping):
+                        raise ChallengerError("isolated recovery routes changed")
+                    if value.get("passed") is True:
+                        expected_argv = [
+                            "-B", "-I", str(expected_runner["path"]), "verify",
+                            "--plan", str(outputs["plan"]),
+                            "--output-root", str(
+                                pathlib.Path(str(outputs["recovery_root"])).parent
+                            ),
+                            "--finalist-reference",
+                            str(outputs["finalist_reference"]),
+                        ]
+                        lines = isolated["stdout"].splitlines()
+                        copied_finalist = _verify_sealed_record(
+                            value.get("referenced_finalist"),
+                            RECOVERY_FINALIST_SCHEMA,
+                            "copied attempt-zero finalist",
+                        )
+                        finalist = qualification.load_sealed(
+                            copied_finalist, RECOVERY_FINALIST_SCHEMA
+                        )
+                        expected_child = {
+                            "status": finalist.get("status"),
+                            "result": result_value["recovery_result"]["path"],
+                            "finalist": result_value["finalist"]["path"],
+                            "finalist_sha256": result_value["finalist"]["sha256"],
+                            "actual_clock": finalist.get("actual_clock"),
+                        }
+                        try:
+                            child = json.loads(lines[0]) if len(lines) == 1 else None
+                        except json.JSONDecodeError:
+                            child = None
+                        if isolated["argv"] != expected_argv or child != expected_child:
+                            raise ChallengerError(
+                                "isolated recovery result binding changed"
+                            )
+                    else:
+                        argv = isolated["argv"]
+                        expected_tail = [
+                            str(expected_runner["path"]), str(outputs["plan"]),
+                            str(pathlib.Path(str(outputs["recovery_root"])).parent),
+                        ]
+                        if (
+                            len(argv) != 7
+                            or argv[:3] != ["-B", "-I", "-c"]
+                            or not isinstance(argv[3], str)
+                            or argv[-3:] != expected_tail
+                            or not isolated["stdout"].startswith(
+                                "RANK4_CHALLENGER_AUDIT="
+                            )
+                        ):
+                            raise ChallengerError(
+                                "isolated recovery rejection binding changed"
+                            )
+                        lines = isolated["stdout"].splitlines()
+                        prefix = "RANK4_CHALLENGER_AUDIT="
+                        try:
+                            audit = (
+                                json.loads(lines[0][len(prefix):])
+                                if len(lines) == 1
+                                and lines[0].startswith(prefix)
+                                else None
+                            )
+                        except json.JSONDecodeError:
+                            audit = None
+                        expected_audit = {
+                            "derived_reason": isolated.get("derived_reason"),
+                            "derived_exception": isolated.get(
+                                "derived_exception"
+                            ),
+                        }
+                        terminal_stage = result_value.get("stage")
+                        terminal_reason = result_value.get("reason")
+                        if (
+                            audit != expected_audit
+                            or any(
+                                not isinstance(item, str)
+                                for item in expected_audit.values()
+                            )
+                            or (
+                                terminal_stage is not None
+                                and terminal_stage
+                                not in expected_audit["derived_reason"]
+                            )
+                            or (
+                                terminal_stage is None
+                                and terminal_reason
+                                != expected_audit["derived_exception"]
+                            )
+                        ):
+                            raise ChallengerError(
+                                "isolated recovery rejection result changed"
+                            )
                 elif deep_validation.get("frozen_execution_sources") is not None:
                     raise ChallengerError(
                         "test deep recovery unexpectedly binds production sources"
@@ -5736,6 +5919,668 @@ def _attempt_zero_recovery_routes(
     return bundled_path, external_plan, recovery_root.parent
 
 
+def _attempt_zero_recovery_runner(
+    external_plan: pathlib.Path,
+) -> pathlib.Path | None:
+    """Resolve the exact runner recorded by a legacy recovery plan.
+
+    Attempt zero was deliberately allowed to finish in its original worktree.
+    Its sealed plans bind absolute producer paths, so importing the current
+    worktree's copy would make those historical path bindings fail even when
+    every byte is unchanged.  When the plan names a runner, validate and use
+    that exact artifact in an isolated interpreter.  Minimal test fixtures
+    predating the production tool roster continue to use the in-process path.
+    """
+
+    plan = qualification.load_sealed(external_plan, RECOVERY_PLAN_SCHEMA)
+    tools = plan.get("tools")
+    if not isinstance(tools, Mapping) or "recovery_runner" not in tools:
+        return None
+    try:
+        runner = _verify_record(
+            tools["recovery_runner"], "attempt-zero recovery runner"
+        )
+    except Exception as error:
+        raise ChallengerError("attempt-zero recovery runner bytes changed") from error
+    plan_record = _regular(external_plan)
+    production = bool(
+        plan_record["bytes"] == ALLOWLIST["attempt_zero_recovery_plan"]["bytes"]
+        and plan_record["sha256"]
+        == ALLOWLIST["attempt_zero_recovery_plan"]["sha256"]
+        and plan.get("body_sha256")
+        == ALLOWLIST["attempt_zero_recovery_plan"]["body_sha256"]
+    )
+    if not production:
+        return runner
+    if any(
+        tools["recovery_runner"].get(key) != value
+        for key, value in ATTEMPT_ZERO_LEGACY_RUNNER.items()
+    ):
+        raise ChallengerError("attempt-zero legacy runner identity changed")
+    repository = runner.parents[4].resolve()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository,
+        text=True, capture_output=True, check=False,
+    )
+    if head.returncode != 0 or head.stdout.strip() != ATTEMPT_ZERO_LEGACY_COMMIT:
+        raise ChallengerError("attempt-zero legacy checkout commit changed")
+    tool_groups: list[tuple[str, Mapping[str, Any]]] = [("recovery", tools)]
+    original = plan.get("original")
+    development_record = (
+        original.get("development_plan")
+        if isinstance(original, Mapping) else None
+    )
+    if not isinstance(development_record, Mapping):
+        raise ChallengerError("attempt-zero original development plan is absent")
+    try:
+        development_path = _verify_sealed_record(
+            development_record,
+            str(development_record.get("schema", "")),
+            "attempt-zero original development plan",
+        )
+        development = qualification.load_sealed(
+            development_path, str(development_record["schema"])
+        )
+    except Exception as error:
+        raise ChallengerError(
+            "attempt-zero original development plan changed"
+        ) from error
+    development_tools = development.get("tools")
+    if not isinstance(development_tools, Mapping) or not development_tools:
+        raise ChallengerError("attempt-zero development tool closure is absent")
+    tool_groups.append(("development", development_tools))
+    seen: dict[pathlib.Path, tuple[int, str]] = {}
+    for group, records in tool_groups:
+        for name, record in sorted(records.items()):
+            try:
+                path = _verify_record(record, f"attempt-zero {group} tool {name}")
+                relative = path.relative_to(repository).as_posix()
+            except Exception as error:
+                raise ChallengerError(
+                    f"attempt-zero {group} tool escaped or changed: {name}"
+                ) from error
+            identity = (int(record["bytes"]), str(record["sha256"]))
+            if path in seen and seen[path] != identity:
+                raise ChallengerError("attempt-zero legacy tool identity conflicts")
+            seen[path] = identity
+            blob = subprocess.run(
+                ["git", "show", f"{ATTEMPT_ZERO_LEGACY_COMMIT}:{relative}"],
+                cwd=repository, capture_output=True, check=False,
+            )
+            if (
+                blob.returncode != 0
+                or len(blob.stdout) != identity[0]
+                or sha256_bytes(blob.stdout) != identity[1]
+            ):
+                raise ChallengerError(
+                    f"attempt-zero {group} tool differs from legacy commit: {name}"
+                )
+    return runner
+
+
+def _legacy_record_path(
+    value: Any, label: str,
+) -> tuple[pathlib.Path, pathlib.Path, dict[str, Any]]:
+    """Validate a historical tool record, including an optional symlink target."""
+
+    if not isinstance(value, Mapping) or not {
+        "path", "bytes", "sha256"
+    }.issubset(value):
+        raise ChallengerError(f"{label} record is malformed")
+    declared = pathlib.Path(str(value["path"]))
+    resolved = pathlib.Path(str(value.get("resolved_path", declared))).resolve()
+    if declared.resolve() != resolved:
+        raise ChallengerError(f"{label} resolved path changed")
+    record = _regular(resolved)
+    if (
+        record["bytes"] != value["bytes"]
+        or record["sha256"] != value["sha256"]
+    ):
+        raise ChallengerError(f"{label} bytes changed")
+    return declared, resolved, record
+
+
+def _legacy_descriptor(
+    value: Mapping[str, Any], *, repository: pathlib.Path,
+) -> dict[str, Any]:
+    declared = pathlib.Path(str(value["path"]))
+    resolved = pathlib.Path(str(value.get("resolved_path", declared))).resolve()
+    try:
+        logical_path = (
+            "repository/" + resolved.relative_to(repository).as_posix()
+        )
+    except ValueError:
+        logical_path = "interpreter/python"
+    return {
+        "declared_path": str(declared),
+        "logical_path": logical_path,
+        "bytes": int(value["bytes"]),
+        "sha256": str(value["sha256"]),
+    }
+
+
+def _attempt_zero_legacy_execution_sources(
+    external_plan: pathlib.Path, runner_path: pathlib.Path,
+) -> dict[str, Any] | None:
+    """Freeze the complete sealed legacy verifier closure before execution."""
+
+    recovery_record = _regular(external_plan)
+    recovery = qualification.load_sealed(external_plan, RECOVERY_PLAN_SCHEMA)
+    if not (
+        recovery_record["bytes"]
+        == ALLOWLIST["attempt_zero_recovery_plan"]["bytes"]
+        and recovery_record["sha256"]
+        == ALLOWLIST["attempt_zero_recovery_plan"]["sha256"]
+        and recovery.get("body_sha256")
+        == ALLOWLIST["attempt_zero_recovery_plan"]["body_sha256"]
+    ):
+        return None
+    repository = runner_path.parents[4].resolve()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository,
+        text=True, capture_output=True, check=False,
+    )
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=repository,
+        text=True, capture_output=True, check=False,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=repository, text=True, capture_output=True, check=False,
+    )
+    expected_drift = [" M tools/compact_value_bfm_preflight.py"]
+    if (
+        head.returncode != 0
+        or head.stdout.strip() != ATTEMPT_ZERO_LEGACY_COMMIT
+        or tree.returncode != 0
+        or re.fullmatch(r"[0-9a-f]{40}", tree.stdout.strip()) is None
+        or status.returncode != 0
+        or status.stdout.splitlines() != expected_drift
+    ):
+        raise ChallengerError("attempt-zero legacy checkout state changed")
+    original = recovery.get("original")
+    development_record = (
+        original.get("development_plan")
+        if isinstance(original, Mapping) else None
+    )
+    if not isinstance(development_record, Mapping):
+        raise ChallengerError("attempt-zero original development plan is absent")
+    development_path = _verify_sealed_record(
+        development_record, str(development_record.get("schema", "")),
+        "attempt-zero original development plan",
+    )
+    development = qualification.load_sealed(
+        development_path, str(development_record["schema"])
+    )
+    adapter_section = development.get("adapter")
+    adapter_record = (
+        adapter_section.get("plan")
+        if isinstance(adapter_section, Mapping) else None
+    )
+    if not isinstance(adapter_record, Mapping):
+        raise ChallengerError("attempt-zero adapter plan is absent")
+    adapter_path = _verify_sealed_record(
+        adapter_record, str(adapter_record.get("schema", "")),
+        "attempt-zero adapter plan",
+    )
+    adapter = qualification.load_sealed(
+        adapter_path, str(adapter_record["schema"])
+    )
+    recovery_tools = recovery.get("tools")
+    development_tools = development.get("tools")
+    adapter_tools = adapter.get("tool_closure")
+    if any(
+        not isinstance(group, Mapping) or not group
+        for group in (recovery_tools, development_tools, adapter_tools)
+    ):
+        raise ChallengerError("attempt-zero legacy tool closure is incomplete")
+    sources: dict[str, dict[str, Any]] = {}
+    identities: dict[str, dict[str, Any]] = {}
+    by_path: dict[pathlib.Path, tuple[int, str]] = {}
+
+    def add(name: str, value: Any, label: str) -> None:
+        declared, resolved, record = _legacy_record_path(value, label)
+        try:
+            relative = resolved.relative_to(repository).as_posix()
+            logical_path = f"repository/{relative}"
+        except ValueError:
+            if resolved != pathlib.Path(sys.executable).resolve():
+                raise ChallengerError(f"{label} escaped the legacy repository")
+            logical_path = "interpreter/python"
+        identity = (int(record["bytes"]), str(record["sha256"]))
+        if resolved in by_path and by_path[resolved] != identity:
+            raise ChallengerError("attempt-zero legacy source identity conflicts")
+        by_path[resolved] = identity
+        sources[name] = record
+        identities[name] = {
+            "declared_path": str(declared),
+            "logical_path": logical_path,
+            "bytes": identity[0],
+            "sha256": identity[1],
+        }
+
+    add("plan:recovery", _regular(external_plan), "legacy recovery plan")
+    add(
+        "plan:development", _regular(development_path),
+        "legacy development plan",
+    )
+    add("plan:adapter", _regular(adapter_path), "legacy adapter plan")
+    for group_name, group in (
+        ("recovery", recovery_tools),
+        ("development", development_tools),
+        ("adapter", adapter_tools),
+    ):
+        for name, value in sorted(group.items()):
+            add(
+                f"{group_name}:{name}", value,
+                f"attempt-zero {group_name} tool {name}",
+            )
+    python_identity = identities.get("adapter:python")
+    current_python = _regular(pathlib.Path(sys.executable).resolve())
+    if (
+        not isinstance(python_identity, Mapping)
+        or python_identity.get("logical_path") != "interpreter/python"
+        or python_identity.get("bytes") != current_python["bytes"]
+        or python_identity.get("sha256") != current_python["sha256"]
+    ):
+        raise ChallengerError("attempt-zero legacy Python identity changed")
+    preflight = identities.get("adapter:preflight")
+    if (
+        not isinstance(preflight, Mapping)
+        or preflight.get("logical_path")
+        != "repository/tools/compact_value_bfm_preflight.py"
+        or preflight.get("bytes") != 55_986
+        or preflight.get("sha256")
+        != "2f80b70f292987c09cb278a134d2128de24f367e513051a40d177e2e81d77e5a"
+    ):
+        raise ChallengerError("attempt-zero pinned preflight identity changed")
+    for identity in identities.values():
+        logical = str(identity["logical_path"])
+        if not logical.startswith("repository/"):
+            continue
+        relative = logical.removeprefix("repository/")
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=repository, capture_output=True, check=False,
+        )
+        if tracked.returncode != 0:
+            if not relative.startswith("results/"):
+                raise ChallengerError("untracked legacy source escaped results")
+            continue
+        blob = subprocess.run(
+            ["git", "show", f"{ATTEMPT_ZERO_LEGACY_COMMIT}:{relative}"],
+            cwd=repository, capture_output=True, check=False,
+        )
+        if relative == "tools/compact_value_bfm_preflight.py":
+            continue
+        if (
+            blob.returncode != 0
+            or len(blob.stdout) != identity["bytes"]
+            or sha256_bytes(blob.stdout) != identity["sha256"]
+        ):
+            raise ChallengerError("legacy tracked source differs from c380")
+    body: dict[str, Any] = {
+        "schema": LEGACY_RECOVERY_EXECUTION_SOURCES_SCHEMA,
+        "legacy_commit": ATTEMPT_ZERO_LEGACY_COMMIT,
+        "legacy_tree": tree.stdout.strip(),
+        "intentional_worktree_drift": expected_drift,
+        "artifacts": {name: identities[name] for name in sorted(identities)},
+        "artifact_count": len(identities),
+    }
+    body["body_sha256"] = sha256_bytes(canonical_json_bytes(body))
+    return {
+        "manifest": body,
+        "sources": {name: sources[name] for name in sorted(sources)},
+    }
+
+
+def _validate_legacy_execution_sources(
+    value: Any, *, campaign_root: pathlib.Path | None = None,
+    recovery_plan: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"manifest", "sources"}:
+        raise ChallengerError("legacy execution source archive is malformed")
+    manifest = value.get("manifest")
+    sources = value.get("sources")
+    if not isinstance(manifest, Mapping) or not isinstance(sources, Mapping):
+        raise ChallengerError("legacy execution source archive is incomplete")
+    body = dict(manifest)
+    claimed = body.pop("body_sha256", None)
+    artifacts = manifest.get("artifacts")
+    if (
+        set(manifest) != {
+            "schema", "legacy_commit", "legacy_tree",
+            "intentional_worktree_drift", "artifacts", "artifact_count",
+            "body_sha256",
+        }
+        or manifest.get("schema") != LEGACY_RECOVERY_EXECUTION_SOURCES_SCHEMA
+        or manifest.get("legacy_commit") != ATTEMPT_ZERO_LEGACY_COMMIT
+        or re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("legacy_tree", "")))
+        is None
+        or manifest.get("intentional_worktree_drift")
+        != [" M tools/compact_value_bfm_preflight.py"]
+        or claimed != sha256_bytes(canonical_json_bytes(body))
+        or not isinstance(artifacts, Mapping)
+        or manifest.get("artifact_count") != len(artifacts)
+        or set(artifacts) != set(sources)
+    ):
+        raise ChallengerError("legacy execution source manifest changed")
+    resolved: dict[str, pathlib.Path] = {}
+    for name, descriptor in artifacts.items():
+        if (
+            not isinstance(name, str)
+            or not isinstance(descriptor, Mapping)
+            or set(descriptor) != {
+                "declared_path", "logical_path", "bytes", "sha256"
+            }
+            or not isinstance(descriptor.get("declared_path"), str)
+            or not isinstance(descriptor.get("logical_path"), str)
+            or isinstance(descriptor.get("bytes"), bool)
+            or not isinstance(descriptor.get("bytes"), int)
+            or descriptor["bytes"] < 0
+            or SHA256_RE.fullmatch(str(descriptor.get("sha256", ""))) is None
+        ):
+            raise ChallengerError("legacy execution source descriptor changed")
+        path = _verify_record(sources[name], f"archived legacy source {name}")
+        if (
+            path.stat().st_size != descriptor["bytes"]
+            or sha256_file(path) != descriptor["sha256"]
+        ):
+            raise ChallengerError("archived legacy source identity changed")
+        if campaign_root is not None:
+            try:
+                path.relative_to(campaign_root.resolve())
+            except ValueError as error:
+                raise ChallengerError(
+                    "archived legacy source escaped campaign"
+                ) from error
+        resolved[name] = path
+    runner = artifacts.get("recovery:recovery_runner")
+    python = artifacts.get("adapter:python")
+    preflight = artifacts.get("adapter:preflight")
+    if (
+        not isinstance(runner, Mapping)
+        or runner.get("bytes") != ATTEMPT_ZERO_LEGACY_RUNNER["bytes"]
+        or runner.get("sha256") != ATTEMPT_ZERO_LEGACY_RUNNER["sha256"]
+        or not isinstance(python, Mapping)
+        or python.get("logical_path") != "interpreter/python"
+        or not isinstance(preflight, Mapping)
+        or preflight.get("sha256")
+        != "2f80b70f292987c09cb278a134d2128de24f367e513051a40d177e2e81d77e5a"
+    ):
+        raise ChallengerError("legacy execution critical identities changed")
+    if recovery_plan is not None:
+        recovery_tools = recovery_plan.get("tools")
+        runner_record = (
+            recovery_tools.get("recovery_runner")
+            if isinstance(recovery_tools, Mapping) else None
+        )
+        original = recovery_plan.get("original")
+        development_record = (
+            original.get("development_plan")
+            if isinstance(original, Mapping) else None
+        )
+        if not isinstance(runner_record, Mapping) or not isinstance(
+            development_record, Mapping
+        ):
+            raise ChallengerError("sealed legacy recovery ancestry changed")
+        repository = pathlib.Path(str(runner_record["path"])).parents[4].resolve()
+        archived_recovery = qualification.load_sealed(
+            resolved["plan:recovery"], RECOVERY_PLAN_SCHEMA
+        )
+        development = qualification.load_sealed(
+            resolved["plan:development"],
+            str(development_record.get("schema", "")),
+        )
+        adapter_section = development.get("adapter")
+        adapter_record = (
+            adapter_section.get("plan")
+            if isinstance(adapter_section, Mapping) else None
+        )
+        if (
+            archived_recovery != recovery_plan
+            or not isinstance(adapter_record, Mapping)
+        ):
+            raise ChallengerError("archived legacy plan ancestry changed")
+        adapter = qualification.load_sealed(
+            resolved["plan:adapter"], str(adapter_record.get("schema", ""))
+        )
+        expected: dict[str, dict[str, Any]] = {
+            "plan:recovery": {
+                "declared_path": str(
+                    recovery_plan.get("outputs", {}).get("plan", "")
+                ),
+                "logical_path": "repository/" + pathlib.Path(
+                    str(recovery_plan.get("outputs", {}).get("plan", ""))
+                ).resolve().relative_to(repository).as_posix(),
+                "bytes": ALLOWLIST["attempt_zero_recovery_plan"]["bytes"],
+                "sha256": ALLOWLIST["attempt_zero_recovery_plan"]["sha256"],
+            },
+            "plan:development": _legacy_descriptor(
+                development_record, repository=repository
+            ),
+            "plan:adapter": _legacy_descriptor(
+                adapter_record, repository=repository
+            ),
+        }
+        groups = (
+            ("recovery", recovery_tools),
+            ("development", development.get("tools")),
+            ("adapter", adapter.get("tool_closure")),
+        )
+        if any(not isinstance(records, Mapping) for _name, records in groups):
+            raise ChallengerError("archived legacy tool ancestry changed")
+        for group_name, records in groups:
+            for name, record in records.items():
+                if not isinstance(record, Mapping) or not {
+                    "path", "bytes", "sha256"
+                }.issubset(record):
+                    raise ChallengerError("archived legacy tool record changed")
+                expected[f"{group_name}:{name}"] = _legacy_descriptor(
+                    record, repository=repository
+                )
+        if manifest["artifacts"] != {
+            name: expected[name] for name in sorted(expected)
+        }:
+            raise ChallengerError("archived legacy tool roster changed")
+    return {"manifest": dict(manifest), "sources": resolved}
+
+
+def _archive_legacy_execution_sources(
+    value: Any, *, root: pathlib.Path,
+) -> dict[str, Any]:
+    validated = _validate_legacy_execution_sources(value)
+    copied = {
+        name: _copy_attempt_artifact(
+            _regular(path), root=root / "legacy-execution-sources"
+        )
+        for name, path in validated["sources"].items()
+    }
+    archived = {"manifest": validated["manifest"], "sources": copied}
+    _validate_legacy_execution_sources(
+        archived, campaign_root=root.parents[2]
+    )
+    return archived
+
+
+def _attempt_zero_journal(
+    external_plan: pathlib.Path,
+) -> tuple[list[dict[str, Any]], list[pathlib.Path]]:
+    """Reopen the exact hash-chained recovery journal without tool imports."""
+
+    plan = qualification.load_sealed(external_plan, RECOVERY_PLAN_SCHEMA)
+    outputs = plan.get("outputs")
+    if not isinstance(outputs, Mapping):
+        raise ChallengerError("attempt-zero recovery plan omits its journal")
+    recovery_root = pathlib.Path(str(outputs.get("recovery_root", ""))).resolve()
+    journal = pathlib.Path(str(outputs.get("journal", ""))).resolve()
+    if journal != recovery_root / "events" or not journal.is_dir():
+        raise ChallengerError("attempt-zero recovery journal route changed")
+    paths = sorted(journal.glob("*.json"))
+    entries: list[dict[str, Any]] = []
+    previous = "0" * 64
+    for sequence, path in enumerate(paths, start=1):
+        entry = qualification.load_sealed(path, RECOVERY_JOURNAL_SCHEMA)
+        body = str(entry.get("body_sha256", ""))
+        if (
+            entry.get("sequence") != sequence
+            or entry.get("previous_sha256") != previous
+            or path.name != f"{sequence:06d}-{body}.json"
+        ):
+            raise ChallengerError("attempt-zero recovery journal chain changed")
+        entries.append(dict(entry))
+        previous = body
+    return entries, paths
+
+
+def _isolated_attempt_zero_validation(
+    *, runner_path: pathlib.Path, result_path: pathlib.Path,
+    external_plan: pathlib.Path, output_root: pathlib.Path, passed: bool,
+) -> dict[str, Any]:
+    """Run the exact legacy verifier with its own repository-local imports."""
+
+    environment = dict(os.environ)
+    environment.update({
+        "MKL_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "VECLIB_MAXIMUM_THREADS": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
+    })
+    environment.pop("PYTHONPATH", None)
+    environment.pop("PYTHONHOME", None)
+    repository = runner_path.parents[4]
+    if passed:
+        command = [
+            sys.executable, "-B", "-I", str(runner_path), "verify",
+            "--plan", str(external_plan),
+            "--output-root", str(output_root),
+            "--finalist-reference", str(result_path),
+        ]
+    else:
+        # A terminal rejection has no public verifier command.  Execute the
+        # original read-only derivation in a fresh interpreter so its absolute
+        # imports and recorded tool paths remain those of the sealed recovery.
+        audit = r'''
+import importlib.util
+import json
+import pathlib
+import sys
+
+runner_path = pathlib.Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location("isolated_attempt_zero_runner", runner_path)
+if spec is None or spec.loader is None:
+    raise RuntimeError("cannot load isolated recovery runner")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+if pathlib.Path(module.__file__).resolve() != runner_path:
+    raise RuntimeError("isolated recovery runner path changed")
+runner = module.DiscreteV3RecoveryRunner(
+    plan_path=pathlib.Path(sys.argv[2]),
+    output_root=pathlib.Path(sys.argv[3]),
+    read_only=True,
+)
+original_rows, _ = runner._prepare_contract()
+runner._validate_journal_binding()
+try:
+    runner._execute_algorithm(original_rows, launch_missing=False)
+except Exception as error:
+    print("RANK4_CHALLENGER_AUDIT=" + json.dumps({
+        "derived_reason": str(error),
+        "derived_exception": f"{type(error).__name__}: {error}",
+    }, sort_keys=True))
+else:
+    raise RuntimeError("attempt-zero rejection rederived as successful")
+'''
+        command = [
+            sys.executable, "-B", "-I", "-c", audit, str(runner_path),
+            str(external_plan), str(output_root),
+        ]
+    completed = subprocess.run(
+        command, cwd=repository, env=environment,
+        text=True, capture_output=True, check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if len(detail) > 2_000:
+            detail = detail[-2_000:]
+        raise ChallengerError(
+            f"exact attempt-zero recovery verifier failed: {detail}"
+        )
+    production = bool(
+        _regular(external_plan)["sha256"]
+        == ALLOWLIST["attempt_zero_recovery_plan"]["sha256"]
+    )
+    if production and completed.stderr:
+        raise ChallengerError("exact attempt-zero recovery verifier wrote stderr")
+    execution: dict[str, Any] = {
+        "interpreter": _regular(pathlib.Path(sys.executable).resolve()),
+        "isolated": True,
+        "cwd": str(repository.resolve()),
+        "argv": command[1:],
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "stdout_sha256": sha256_bytes(completed.stdout.encode("utf-8")),
+        "stderr_sha256": sha256_bytes(completed.stderr.encode("utf-8")),
+    }
+    if passed:
+        if production:
+            lines = completed.stdout.splitlines()
+            if len(lines) != 1:
+                raise ChallengerError("attempt-zero verifier output count changed")
+            try:
+                child = json.loads(lines[0])
+                reference = qualification.load_sealed(
+                    result_path, RECOVERY_FINALIST_REFERENCE_SCHEMA
+                )
+                finalist_path = _verify_sealed_record(
+                    reference.get("finalist"), RECOVERY_FINALIST_SCHEMA,
+                    "attempt-zero child finalist",
+                )
+                recovery_result_path = _verify_sealed_record(
+                    reference.get("recovery_result"), RECOVERY_RESULT_SCHEMA,
+                    "attempt-zero child recovery result",
+                )
+                finalist = qualification.load_sealed(
+                    finalist_path, RECOVERY_FINALIST_SCHEMA
+                )
+            except Exception as error:
+                raise ChallengerError(
+                    "attempt-zero verifier output cannot be bound"
+                ) from error
+            expected = {
+                "status": finalist.get("status"),
+                "result": str(recovery_result_path),
+                "finalist": str(finalist_path),
+                "finalist_sha256": sha256_file(finalist_path),
+                "actual_clock": finalist.get("actual_clock"),
+            }
+            if child != expected:
+                raise ChallengerError("attempt-zero verifier output changed")
+        return execution
+    prefix = "RANK4_CHALLENGER_AUDIT="
+    lines = [line for line in completed.stdout.splitlines() if line.startswith(prefix)]
+    if len(lines) != 1:
+        raise ChallengerError("attempt-zero rejection audit output changed")
+    try:
+        value = json.loads(lines[0][len(prefix):])
+    except json.JSONDecodeError as error:
+        raise ChallengerError("attempt-zero rejection audit is malformed") from error
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"derived_reason", "derived_exception"}
+        or any(not isinstance(item, str) for item in value.values())
+    ):
+        raise ChallengerError("attempt-zero rejection audit fields changed")
+    return {
+        **execution,
+        **{str(key): str(item) for key, item in value.items()},
+    }
+
+
 def _default_attempt_zero_validator(
     result_path: pathlib.Path,
     external_plan: pathlib.Path,
@@ -5770,29 +6615,45 @@ def _default_attempt_zero_validator(
         raise ChallengerError(
             "attempt-zero recovery is still active; terminal evidence is not final"
         )
-    recovery_runner = _load(
-        RECOVERY_RUNNER_PATH,
-        "rank4_teacher_challenger_recovery_runner",
+    exact_runner = _attempt_zero_recovery_runner(external_plan)
+    legacy_execution_sources = (
+        _attempt_zero_legacy_execution_sources(external_plan, exact_runner)
+        if exact_runner is not None else None
     )
+    recovery_runner = None
+    if exact_runner is None:
+        recovery_runner = _load(
+            RECOVERY_RUNNER_PATH,
+            "rank4_teacher_challenger_recovery_runner",
+        )
     result_path = result_path.resolve()
+    isolated_execution: dict[str, Any] | None = None
     if passed:
         try:
-            recovery_runner.validate_recovery_finalist(
-                result_path,
-                plan_path=external_plan,
-                output_root=output_root,
-            )
+            if exact_runner is not None:
+                isolated_execution = _isolated_attempt_zero_validation(
+                    runner_path=exact_runner, result_path=result_path,
+                    external_plan=external_plan, output_root=output_root,
+                    passed=True,
+                )
+                entries, journal_paths = _attempt_zero_journal(external_plan)
+            else:
+                recovery_runner.validate_recovery_finalist(
+                    result_path,
+                    plan_path=external_plan,
+                    output_root=output_root,
+                )
+                runner = recovery_runner.DiscreteV3RecoveryRunner(
+                    plan_path=external_plan,
+                    output_root=output_root,
+                    read_only=True,
+                )
+                entries = runner._validate_journal_binding()
+                journal_paths = sorted(runner.routes["journal"].glob("*.json"))
         except Exception as error:
             raise ChallengerError(
                 "attempt-zero finalist failed deep recovery validation"
             ) from error
-        runner = recovery_runner.DiscreteV3RecoveryRunner(
-            plan_path=external_plan,
-            output_root=output_root,
-            read_only=True,
-        )
-        entries = runner._validate_journal_binding()
-        journal_paths = sorted(runner.routes["journal"].glob("*.json"))
         if (
             not entries
             or len(entries) != len(journal_paths)
@@ -5802,15 +6663,25 @@ def _default_attempt_zero_validator(
         terminal_path = journal_paths[-1]
         status = "deep-recovery-finalist-validated"
     else:
+        isolated: dict[str, str] | None = None
         try:
-            runner = recovery_runner.DiscreteV3RecoveryRunner(
-                plan_path=external_plan,
-                output_root=output_root,
-                read_only=True,
-            )
-            original_rows, _ = runner._prepare_contract()
-            entries = runner._validate_journal_binding()
-            journal_paths = sorted(runner.routes["journal"].glob("*.json"))
+            if exact_runner is not None:
+                isolated = _isolated_attempt_zero_validation(
+                    runner_path=exact_runner, result_path=result_path,
+                    external_plan=external_plan, output_root=output_root,
+                    passed=False,
+                )
+                isolated_execution = isolated
+                entries, journal_paths = _attempt_zero_journal(external_plan)
+            else:
+                runner = recovery_runner.DiscreteV3RecoveryRunner(
+                    plan_path=external_plan,
+                    output_root=output_root,
+                    read_only=True,
+                )
+                original_rows, _ = runner._prepare_contract()
+                entries = runner._validate_journal_binding()
+                journal_paths = sorted(runner.routes["journal"].glob("*.json"))
         except Exception as error:
             raise ChallengerError(
                 "attempt-zero failure ancestry failed deep validation"
@@ -5830,13 +6701,17 @@ def _default_attempt_zero_validator(
             raise ChallengerError(
                 "attempt-zero rejection is not the genuine terminal journal head"
             )
-        try:
-            runner._execute_algorithm(original_rows, launch_missing=False)
-        except Exception as error:
-            derived_reason = str(error)
-            derived_exception = f"{type(error).__name__}: {error}"
+        if isolated is not None:
+            derived_reason = isolated["derived_reason"]
+            derived_exception = isolated["derived_exception"]
         else:
-            raise ChallengerError("attempt-zero rejection rederived as successful")
+            try:
+                runner._execute_algorithm(original_rows, launch_missing=False)
+            except Exception as error:
+                derived_reason = str(error)
+                derived_exception = f"{type(error).__name__}: {error}"
+            else:
+                raise ChallengerError("attempt-zero rejection rederived as successful")
         terminal_stage = entries[-1].get("stage")
         if terminal_stage is not None and terminal_stage not in derived_reason:
             raise ChallengerError("attempt-zero terminal stage does not rederive")
@@ -5849,6 +6724,10 @@ def _default_attempt_zero_validator(
             )
         terminal_path = result_path
         status = "deep-recovery-terminal-failure-validated"
+    if exact_runner is not None and _attempt_zero_legacy_execution_sources(
+        external_plan, exact_runner
+    ) != legacy_execution_sources:
+        raise ChallengerError("attempt-zero legacy execution closure changed during validation")
     return {
         "status": status,
         "passed": passed,
@@ -5856,7 +6735,12 @@ def _default_attempt_zero_validator(
         "journal_head": _sealed_record(
             terminal_path, RECOVERY_JOURNAL_SCHEMA
         ),
-        "validator": _regular(RECOVERY_RUNNER_PATH),
+        "validator": _regular(pathlib.Path(__file__).resolve()),
+        "executed_recovery_runner": _regular(
+            exact_runner if exact_runner is not None else RECOVERY_RUNNER_PATH
+        ),
+        "legacy_execution_sources": legacy_execution_sources,
+        "isolated_execution": isolated_execution,
     }
 
 
@@ -5912,7 +6796,7 @@ def record_attempt_zero_result(
             context
         )
         frozen_execution_sources = _frozen_execution_source_evidence(
-            context, tool_roles=("recovery_runner_verifier",)
+            context, tool_roles=("campaign_tool",)
         )
     else:
         input_directory = pathlib.Path(
@@ -6004,10 +6888,40 @@ def record_attempt_zero_result(
             _regular(journal_head_path),
             root=artifact_root / "deep-recovery-validation",
         )
+        validator_path = _verify_record(
+            deep_validation.get("validator"), "deep recovery validator"
+        )
         copied_validator = _copy_attempt_artifact(
-            _regular(RECOVERY_RUNNER_PATH),
+            _regular(validator_path),
             root=artifact_root / "deep-recovery-validation",
         )
+        executed_runner_path = _verify_record(
+            deep_validation.get("executed_recovery_runner"),
+            "executed attempt-zero recovery runner",
+        )
+        copied_executed_runner = _copy_attempt_artifact(
+            _regular(executed_runner_path),
+            root=artifact_root / "deep-recovery-validation",
+        )
+        legacy_sources = deep_validation.get("legacy_execution_sources")
+        archived_legacy_sources = (
+            _archive_legacy_execution_sources(
+                legacy_sources,
+                root=artifact_root / "deep-recovery-validation",
+            )
+            if legacy_sources is not None else None
+        )
+        isolated_execution = deep_validation.get("isolated_execution")
+        if (
+            archived_legacy_sources is not None
+            and isinstance(isolated_execution, Mapping)
+        ):
+            isolated_execution = {
+                **isolated_execution,
+                "interpreter": archived_legacy_sources["sources"][
+                    "adapter:python"
+                ],
+            }
         deep_validation = {
             **deep_validation,
             "frozen_execution_sources": frozen_execution_sources,
@@ -6017,6 +6931,9 @@ def record_attempt_zero_result(
                 "body_sha256": journal_head["body_sha256"],
             },
             "validator": copied_validator,
+            "executed_recovery_runner": copied_executed_runner,
+            "legacy_execution_sources": archived_legacy_sources,
+            "isolated_execution": isolated_execution,
         }
     copied_result = _copy_attempt_artifact(
         _regular(result_path),

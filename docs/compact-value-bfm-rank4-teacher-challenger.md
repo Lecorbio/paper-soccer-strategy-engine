@@ -19,6 +19,13 @@ stages, actual-clock result, finalist, and final reference; a rejection must be
 the genuine last chained journal event and must rederive as terminal without
 launching missing work. The verifier and journal head are copied into the
 attempt ledger before the transition is committed.
+Because the sealed recovery graph binds absolute paths in its original
+worktree, the attempt-zero bridge runs the plan-declared `c380ae7` recovery
+verifier in an isolated interpreter. Before and after that read-only replay it
+validates the sealed recovery, development, and adapter tool closures,
+including the pinned preflight and Python identity. Those exact sources, the
+current bridge, command, and child output are copied into the ledger so later
+validation does not depend on keeping the legacy checkout unchanged.
 
 Each later attempt has a 2,000-game pilot:
 

@@ -2034,6 +2034,57 @@ class ChallengerCampaignTests(unittest.TestCase):
                 deep,
             )
 
+    def test_attempt_zero_validator_runs_exact_cross_worktree_runner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            recovery = root / "external-recovery"
+            journal = recovery / "events"
+            journal.mkdir(parents=True)
+            runner = root / "legacy-checkout" / "submissions/codingame/bots/compact_value_bfm/discrete_v3_recovery_runner.py"
+            runner.parent.mkdir(parents=True)
+            runner.write_text(
+                "import sys\n"
+                "if len(sys.argv) < 2 or sys.argv[1] != 'verify':\n"
+                "    raise SystemExit(7)\n"
+            )
+            result = recovery / "finalist-reference.json"
+            result.write_text("legacy finalist fixture\n")
+            plan = recovery / "plan.json"
+            q.write_sealed(plan, {
+                "schema": challenger.RECOVERY_PLAN_SCHEMA,
+                "outputs": {
+                    "plan": str(plan.resolve()),
+                    "recovery_root": str(recovery.resolve()),
+                    "journal": str(journal.resolve()),
+                },
+                "tools": {"recovery_runner": challenger._regular(runner)},
+            })
+            head = q.seal({
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "sequence": 1,
+                "previous_sha256": "0" * 64,
+                "event": "campaign-complete",
+            })
+            head_path = journal / f"000001-{head['body_sha256']}.json"
+            head_path.write_bytes(q.canonical_json_bytes(head))
+
+            evidence = challenger._default_attempt_zero_validator(
+                result, plan, root, True
+            )
+
+            self.assertEqual(
+                evidence["executed_recovery_runner"]["sha256"],
+                challenger.sha256_file(runner),
+            )
+            self.assertEqual(
+                evidence["validator"]["sha256"],
+                challenger.sha256_file(pathlib.Path(challenger.__file__)),
+            )
+            self.assertNotEqual(
+                evidence["executed_recovery_runner"]["path"],
+                evidence["validator"]["path"],
+            )
+
     def test_attempt_zero_deep_rejection_accepts_exact_nonthreshold_exception(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
