@@ -719,10 +719,12 @@ def verify_generic_result(
     generic = generic_collector_module()
     manifest: dict[str, Any]
     manifest_path: pathlib.Path | None = None
+    manifest_sha256: str
     if isinstance(collector_result.get("manifest"), Mapping):
         manifest = dict(collector_result["manifest"])
+        manifest_sha256 = sha256_bytes(canonical_json_bytes(manifest))
         claimed = collector_result.get("manifest_sha256")
-        if claimed is not None and claimed != sha256_bytes(canonical_json_bytes(manifest)):
+        if claimed is not None and claimed != manifest_sha256:
             raise LiveWindowError("injected collector manifest hash changed")
     else:
         raw_path = collector_result.get("manifest_path")
@@ -735,7 +737,14 @@ def verify_generic_result(
             )
         except Exception as error:
             raise LiveWindowError("generic collector archive failed validation") from error
-        if collector_result.get("manifest_sha256") != sha256_file(manifest_path):
+        manifest_sha256 = sha256_file(manifest_path)
+        generic_manifest_sha256 = sha256_bytes(
+            generic.shared.canonical_json_bytes(manifest)
+        )
+        if (
+            collector_result.get("manifest_sha256") != manifest_sha256
+            or generic_manifest_sha256 != manifest_sha256
+        ):
             raise LiveWindowError("generic collector manifest SHA-256 changed")
     coverage = manifest.get("coverage")
     binding = manifest.get("binding")
@@ -789,7 +798,7 @@ def verify_generic_result(
     return {
         "manifest": manifest,
         "manifest_path": None if manifest_path is None else manifest_path,
-        "manifest_sha256": sha256_bytes(canonical_json_bytes(manifest)),
+        "manifest_sha256": manifest_sha256,
         "records": sorted(records, key=lambda item: item["game_id"]),
     }
 

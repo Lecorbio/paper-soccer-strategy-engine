@@ -578,6 +578,111 @@ class UploadEventTest(unittest.TestCase):
 
 
 class CompletionTest(unittest.TestCase):
+    def test_completion_accepts_direct_rank4_teacher_authorization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            ledger = root / "direct-upload"
+            ledger.mkdir()
+            candidate = root / "submission.cpp"
+            candidate.write_text("int main(){}\n", encoding="ascii")
+            authorization_path = ledger / "one-upload-authorization.json"
+            q.write_sealed(authorization_path, {
+                "schema": q.UPLOAD_AUTH_SCHEMA,
+                "namespace": q.NAMESPACE,
+                "uploads_authorized": 1,
+                "candidate_commit": COMMIT,
+                "candidate": {
+                    "path": str(candidate.resolve()),
+                    "sha256": q.sha256_file(candidate),
+                    "bytes": candidate.stat().st_size,
+                    "ascii": True,
+                },
+            })
+            authorization = q.load_sealed(
+                authorization_path, q.UPLOAD_AUTH_SCHEMA
+            )
+            ci_path = root / "ci.json"
+            ci_path.write_text("{}\n", encoding="ascii")
+            dual_path = root / "dual.json"
+            dual_path.write_text("{}\n", encoding="ascii")
+            dual_reference = {
+                "path": str(dual_path.resolve()),
+                "sha256": q.sha256_file(dual_path),
+            }
+            inputs = {
+                "schema": upload.RANK4_TEACHER_UPLOAD_INPUT_SCHEMA,
+                "ci": {
+                    "path": str(ci_path.resolve()),
+                    "sha256": q.sha256_file(ci_path),
+                },
+                "dual_qualification": dual_reference,
+            }
+            q.write_sealed(ledger / "authorization-inputs.json", inputs)
+            attestation_path = ledger / "upload/05-submission-attested.json"
+            q.write_sealed(attestation_path, {
+                "schema": q.UPLOAD_EVENT_SCHEMA,
+                "namespace": q.NAMESPACE,
+                "status": "submission-attested",
+                "submit_clicks": 1,
+                "authorization": q.artifact_reference(
+                    authorization_path, q.UPLOAD_AUTH_SCHEMA
+                ),
+                "candidate_commit": COMMIT,
+                "source_sha256": q.sha256_file(candidate),
+                "source_bytes": candidate.stat().st_size,
+                "agent_id": 701,
+                "submission_id": 801,
+                "submitted_at_utc": "2026-08-31T13:00:00Z",
+                "ambiguity_resolution": None,
+            })
+            receipt_path, _receipt = upload.live_tools.write_content_addressed(
+                root / "window-receipts", {
+                    "schema": upload.live_tools.WINDOW_RECEIPT_SCHEMA,
+                    "submission_attestation":
+                        upload.live_tools.artifact_reference(
+                            attestation_path, q.UPLOAD_EVENT_SCHEMA
+                        ),
+                },
+            )
+            live_ref = root / "live.reference.json"
+            live_ref.write_text("reference", encoding="ascii")
+            ci = {
+                "run_id": 12345,
+                "fetched_at_utc": "2026-08-31T12:30:00Z",
+            }
+
+            with mock.patch.object(
+                upload, "_authorization",
+                return_value=(authorization_path, authorization, inputs),
+            ), mock.patch.object(
+                upload, "validate_qualified_chain"
+            ) as legacy_chain, mock.patch.object(
+                upload, "validate_ci_evidence", return_value=ci
+            ) as validate_ci:
+                result = upload.verify_completion(
+                    ledger,
+                    live_reference_path=live_ref,
+                    live_data_root=root,
+                    live_verifier=lambda path, data_root: {
+                        "status": "complete-accepted-diagnostic",
+                        "exact_games": 90,
+                        "training_eligible": False,
+                        "rollback_authorized": False,
+                        "second_upload_authorized": False,
+                        "receipt": upload.live_tools.artifact_reference(
+                            receipt_path,
+                            upload.live_tools.WINDOW_RECEIPT_SCHEMA,
+                        ),
+                    },
+                    verified_at_utc="2026-08-31T14:00:00Z",
+                )
+
+            legacy_chain.assert_not_called()
+            validate_ci.assert_called_once_with(
+                ci_path.resolve(), expected_head=COMMIT
+            )
+            self.assertEqual(result["strict_final"], dual_reference)
+
     def test_completion_accepts_clean_or_own_failure_diagnostic_only(self):
         for status in (
             "complete-accepted-diagnostic",

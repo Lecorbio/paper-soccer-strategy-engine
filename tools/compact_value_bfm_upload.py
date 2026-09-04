@@ -775,16 +775,32 @@ def verify_completion(
     verified = parse_utc(verified_at_utc, "completion verification time")
     directory = authorization_directory(ledger_root)
     authorization_path, authorization, inputs = _authorization(ledger_root)
-    chain = validate_qualified_chain(
-        ledger_root,
-        qualified_inputs_path=pathlib.Path(inputs["qualified_inputs"]["path"]),
-        final_plan_path=pathlib.Path(inputs["final_plan"]["path"]),
-        consumption_path=pathlib.Path(inputs["bank_consumption"]["path"]),
-        preflight_path=pathlib.Path(inputs["preflight"]["path"]),
-    )
+    if inputs.get("schema") == AUTH_INPUT_SCHEMA:
+        chain = validate_qualified_chain(
+            ledger_root,
+            qualified_inputs_path=pathlib.Path(
+                inputs["qualified_inputs"]["path"]
+            ),
+            final_plan_path=pathlib.Path(inputs["final_plan"]["path"]),
+            consumption_path=pathlib.Path(
+                inputs["bank_consumption"]["path"]
+            ),
+            preflight_path=pathlib.Path(inputs["preflight"]["path"]),
+        )
+        expected_head = chain["plan"]["candidate_commit"]
+        qualification_evidence = inputs["qualified_inputs"]
+    elif inputs.get("schema") == RANK4_TEACHER_UPLOAD_INPUT_SCHEMA:
+        expected_head = authorization["candidate_commit"]
+        qualification_evidence = inputs.get("dual_qualification")
+        if not isinstance(qualification_evidence, Mapping):
+            raise UploadError(
+                "Rank-4 challenger authorization lacks dual qualification"
+            )
+    else:
+        raise UploadError("unsupported completion authorization input schema")
     ci = validate_ci_evidence(
         pathlib.Path(inputs["ci"]["path"]),
-        expected_head=chain["plan"]["candidate_commit"],
+        expected_head=expected_head,
     )
     attestation_path = directory / "upload/05-submission-attested.json"
     attestation = qualification.load_sealed(
@@ -839,7 +855,7 @@ def verify_completion(
         "status": "complete",
         "verified_at_utc": verified_at_utc,
         "candidate_commit": authorization["candidate_commit"],
-        "strict_final": inputs["qualified_inputs"],
+        "strict_final": qualification_evidence,
         "ci": {"run_id": ci["run_id"], "sha256": inputs["ci"]["sha256"]},
         "upload_attestation": _artifact(
             attestation_path, qualification.UPLOAD_EVENT_SCHEMA

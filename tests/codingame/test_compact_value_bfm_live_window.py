@@ -393,6 +393,65 @@ class WatchTest(unittest.TestCase):
 
 
 class GenericManifestTest(unittest.TestCase):
+    def test_file_backed_manifest_preserves_generic_unicode_digest(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            fixture = Fixture(root)
+            identity = fixture.identity()
+            records = [generic_record(index) for index in range(1, 91)]
+            for record in records:
+                record["source_sha256"] = fixture.source_sha
+            records[0]["opponent"]["display_name"] = "¤RED¤"
+            manifest = {
+                "schema": live.GENERIC_BATCH_SCHEMA,
+                "coverage": {
+                    "expected_games": 90,
+                    "battle_window_games": 90,
+                    "accepted_games": 90,
+                    "full_window_accounted": True,
+                },
+                "binding": {
+                    "schema": live.GENERIC_BINDING_SCHEMA,
+                    "agent_id": AGENT_ID,
+                    "asserted_submission_id": SUBMISSION_ID,
+                    "repository_commit": COMMIT,
+                    "source": {"sha256": fixture.source_sha},
+                },
+                "exclusion_registry": {
+                    "sha256": hashlib.sha256(
+                        fixture.registry.read_bytes()
+                    ).hexdigest()
+                },
+                "games": [{"record": record} for record in records],
+            }
+            generic = live.generic_collector_module()
+            manifest_bytes = generic.shared.canonical_json_bytes(manifest)
+            manifest_sha = live.sha256_bytes(manifest_bytes)
+            manifest_path = root / f"{manifest_sha}.json"
+            manifest_path.write_bytes(manifest_bytes)
+
+            with mock.patch.object(
+                generic, "validate_export_manifest", return_value=manifest
+            ):
+                verified = live.verify_generic_result(
+                    {
+                        "manifest_path": str(manifest_path),
+                        "manifest_sha256": manifest_sha,
+                    },
+                    identity=identity,
+                    registry_sha256=hashlib.sha256(
+                        fixture.registry.read_bytes()
+                    ).hexdigest(),
+                    expected_game_ids=list(range(1, 91)),
+                )
+
+            self.assertEqual(verified["manifest_sha256"], manifest_sha)
+            self.assertEqual(live.sha256_file(manifest_path), manifest_sha)
+            self.assertNotEqual(
+                live.sha256_bytes(live.canonical_json_bytes(manifest)),
+                manifest_sha,
+            )
+
     def test_collector_identity_mismatch_fails_closed(self):
         with tempfile.TemporaryDirectory() as raw:
             fixture = Fixture(pathlib.Path(raw))
