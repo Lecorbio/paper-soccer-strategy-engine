@@ -512,6 +512,11 @@ class TurnGenerator {
   }
 };
 
+constexpr bool traversal_closed(bool solved,
+                                bool all_children_closed) noexcept {
+  return solved || all_children_closed;
+}
+
 class BfmSearch {
  public:
   BfmSearch(const State &state, std::chrono::steady_clock::time_point deadline,
@@ -536,6 +541,9 @@ class BfmSearch {
       throw std::invalid_argument("BFM search config");
     }
     nodes_.reserve(config_.max_tree_nodes);
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1)
+    cache_.resize(kCacheEntries);
+#endif
   }
 
   SearchResult run() {
@@ -546,7 +554,12 @@ class BfmSearch {
     refresh(0);
     while (!nodes_[0].closed && budget_available()) {
       const auto path = select_path();
-      if (!path.has_value()) break;
+      if (!path.has_value()) {
+        if (!nodes_[0].closed) {
+          throw std::logic_error("BFM open tree has no selectable descendant");
+        }
+        break;
+      }
       for (const int index : *path) {
         ++nodes_[index].visits;
         ++nodes_[index].selection_visits;
@@ -581,6 +594,17 @@ class BfmSearch {
     Action action{};
     TacticalClass tactical{TacticalClass::SafeHandoff};
   };
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1)
+  struct CachedValue {
+    State state{};
+    float value{};
+    bool occupied{};
+  };
+  static constexpr std::size_t kCacheEntries = 16'384;
+#endif
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+  static constexpr std::size_t kReuseEntries = 16'384;
+#endif
 
   State root_{};
   std::chrono::steady_clock::time_point deadline_{};
@@ -590,6 +614,12 @@ class BfmSearch {
   std::vector<Node> nodes_{};
   std::vector<RootTranscript> roots_{};
   SearchStats stats_{};
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1)
+  std::vector<CachedValue> cache_{};
+#endif
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+  std::array<std::uint32_t, kReuseEntries> reuse_{};
+#endif
 
   bool expired() {
     if (deadline_ != std::chrono::steady_clock::time_point::max() &&
@@ -621,12 +651,98 @@ class BfmSearch {
     stats_.deadline_reached = stats_.deadline_reached || source.deadline_reached;
   }
 
+  float evaluate_child(const PreparedEvaluation &prepared, const State &state,
+                       std::uint8_t perspective) {
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1)
+    ++stats_.cache_probes;
+    CachedValue &entry = cache_[state_hash(state) & (cache_.size() - 1U)];
+    if (entry.occupied && entry.state.ply == state.ply &&
+        same_boundary(entry.state, state)) {
+      ++stats_.cache_hits;
+      return entry.value;
+    }
+    ++stats_.cache_misses;
+    const float value =
+        model_.evaluate_delta(prepared, active_features(state, perspective));
+    entry = CachedValue{state, value, true};
+    return value;
+#else
+    return model_.evaluate_delta(prepared, active_features(state, perspective));
+#endif
+  }
+
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+  std::size_t reuse_slot(const Node &node) const noexcept {
+    return (state_hash(node.state) ^ mix64(node.depth)) &
+           (kReuseEntries - 1U);
+  }
+
+  void remember_expansion(int index) noexcept {
+    reuse_[reuse_slot(nodes_[index])] = static_cast<std::uint32_t>(index + 1);
+  }
+
+  bool reuse_expansion(int index) {
+    ++stats_.reuse_probes;
+    if (nodes_.size() + config_.max_actions > config_.max_tree_nodes) {
+      ++stats_.reuse_rejections;
+      return false;
+    }
+    const Node &target = nodes_[index];
+    const std::uint32_t encoded = reuse_[reuse_slot(target)];
+    if (encoded == 0) {
+      ++stats_.reuse_misses;
+      return false;
+    }
+    const int source = static_cast<int>(encoded - 1U);
+    const Node &original = nodes_[source];
+    if (source == index || !original.expanded || original.children.empty() ||
+        original.depth != target.depth ||
+        original.perspective != target.perspective ||
+        original.state.ply != target.state.ply ||
+        !same_boundary(original.state, target.state)) {
+      ++stats_.reuse_rejections;
+      return false;
+    }
+    const bool exhaustive = original.exhaustive;
+    const std::vector<int> children = original.children;
+    const std::size_t first_child = nodes_.size();
+    stats_.max_depth = std::max(stats_.max_depth, target.depth + 1U);
+    for (const int child_index : children) {
+      const Node &child = nodes_[child_index];
+      const bool solved =
+          child.state.terminal() || std::abs(child.prior) > 1.0F;
+      nodes_.push_back(Node{child.state, index, {}, child.perspective,
+                            child.prior, child.prior, 1, 0, child.depth,
+                            false, solved, false, solved, child.order});
+      ++stats_.generated_children;
+      if (solved) ++stats_.tactical_children;
+      else ++stats_.evaluated_children;
+    }
+    nodes_[index].children.reserve(children.size());
+    for (std::size_t child = first_child; child < nodes_.size(); ++child) {
+      nodes_[index].children.push_back(static_cast<int>(child));
+    }
+    nodes_[index].expanded = true;
+    nodes_[index].exhaustive = exhaustive;
+    ++stats_.expansions;
+    stats_.tree_nodes = nodes_.size();
+    refresh(index);
+    ++stats_.reuse_hits;
+    stats_.reused_children += children.size();
+    remember_expansion(index);
+    return true;
+  }
+#endif
+
   bool expand(int index) {
     if (nodes_[index].expanded || nodes_[index].solved) return true;
     if (stats_.expansions >= config_.max_expansions ||
         nodes_.size() >= config_.max_tree_nodes) {
       return false;
     }
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+    if (reuse_expansion(index)) return true;
+#endif
     GeneratorConfig generator;
     generator.max_actions = std::min(
         config_.max_actions, config_.max_tree_nodes - nodes_.size());
@@ -665,8 +781,7 @@ class BfmSearch {
         value = mate_value(child_perspective, child_perspective, depth + 1U);
         solved = true;
       } else {
-        value = model_.evaluate_delta(
-            prepared, active_features(action.result, child_perspective));
+        value = evaluate_child(prepared, action.result, child_perspective);
         ++stats_.evaluated_children;
       }
       nodes_.push_back(Node{action.result, index, {}, child_perspective,
@@ -687,6 +802,12 @@ class BfmSearch {
     ++stats_.expansions;
     stats_.tree_nodes = nodes_.size();
     refresh(index);
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+    if (generator.max_actions == config_.max_actions &&
+        !generated.stats.deadline_reached) {
+      remember_expansion(index);
+    }
+#endif
     return true;
   }
 
@@ -708,13 +829,40 @@ class BfmSearch {
     if (!node.exhaustive) best = std::max(best, node.prior);
     node.value = best;
     node.solved = proven_win || all_solved;
-    node.closed = node.solved || (node.exhaustive && all_closed);
+    // ``closed`` means that selection has no remaining descendant to visit;
+    // proof is carried independently by ``solved``.  A truncated expansion
+    // cannot generate additional children on a later visit, so once all of
+    // its retained children are closed it is a permanent traversal dead end
+    // even though it is not a proof.  Keeping such a node open can strand
+    // progressive widening on its eligible prefix forever.
+    node.closed = traversal_closed(node.solved, all_closed);
   }
 
-  bool select_descendant(int current, std::vector<int> &path) const {
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+  std::size_t selectable_child_count(const Node &parent) {
+    std::size_t open = 0;
+    for (const int child_index : parent.children) {
+      open += !nodes_[child_index].closed;
+    }
+    ++stats_.widening_probes;
+    const std::size_t eligible =
+        std::min(open, 8U + 2U * static_cast<std::size_t>(std::sqrt(
+            static_cast<double>(
+                std::max<std::uint32_t>(1, parent.selection_visits)))));
+    stats_.widening_eligible += eligible;
+    stats_.widening_deferred += open - eligible;
+    stats_.widening_restrictions += eligible < open;
+    return eligible;
+  }
+#endif
+
+  bool select_descendant(int current, std::vector<int> &path) {
     const Node &parent = nodes_[current];
     if (parent.closed) return false;
     if (!parent.expanded) return true;
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+    const std::size_t selectable = selectable_child_count(parent);
+#endif
 
 #if defined(COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT)
     struct Choice {
@@ -724,9 +872,15 @@ class BfmSearch {
     };
     std::vector<Choice> choices;
     choices.reserve(parent.children.size());
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+    std::size_t retained = 0;
+#endif
     for (const int child_index : parent.children) {
       const Node &child = nodes_[child_index];
       if (child.closed) continue;
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+      if (retained++ == selectable) break;
+#endif
       choices.push_back(Choice{
           child_index,
           uct_score(-child.value, parent.selection_visits,
@@ -747,45 +901,41 @@ class BfmSearch {
 #else
     const double parent_log = std::log(static_cast<double>(
         std::max<std::uint32_t>(1, parent.selection_visits)));
-    bool have_previous = false;
-    double previous_score = 0.0;
-    std::uint32_t previous_order = 0;
-    while (true) {
-      int selected = -1;
-      double selected_score = -std::numeric_limits<double>::infinity();
-      std::uint32_t selected_order = 0;
-      for (const int child_index : parent.children) {
-        const Node &child = nodes_[child_index];
-        if (child.closed) continue;
-        const double value = static_cast<double>(-child.value);
-        const double score = child.selection_visits == 0
-            ? value + config_.fpu
-            : value + config_.exploration * std::sqrt(
-                parent_log / static_cast<double>(child.selection_visits));
-        if (have_previous &&
-            !(score < previous_score ||
-              (score == previous_score && child.order > previous_order))) {
-          continue;
-        }
-        if (selected < 0 || score > selected_score ||
-            (score == selected_score && child.order < selected_order)) {
-          selected = child_index;
-          selected_score = score;
-          selected_order = child.order;
-        }
+    int selected = -1;
+    double selected_score = -std::numeric_limits<double>::infinity();
+    std::uint32_t selected_order = 0;
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+    std::size_t retained = 0;
+#endif
+    for (const int child_index : parent.children) {
+      const Node &child = nodes_[child_index];
+      if (child.closed) continue;
+#if defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+      if (retained++ == selectable) break;
+#endif
+      const double value = static_cast<double>(-child.value);
+      const double score = child.selection_visits == 0
+          ? value + config_.fpu
+          : value + config_.exploration * std::sqrt(
+              parent_log / static_cast<double>(child.selection_visits));
+      if (selected < 0 || score > selected_score ||
+          (score == selected_score && child.order < selected_order)) {
+        selected = child_index;
+        selected_score = score;
+        selected_order = child.order;
       }
-      if (selected < 0) return false;
-      path.push_back(selected);
-      if (select_descendant(selected, path)) return true;
-      path.pop_back();
-      have_previous = true;
-      previous_score = selected_score;
-      previous_order = selected_order;
     }
+    if (selected < 0) return false;
+    path.push_back(selected);
+    if (!select_descendant(selected, path)) {
+      path.pop_back();
+      return false;
+    }
+    return true;
 #endif
   }
 
-  std::optional<std::vector<int>> select_path() const {
+  std::optional<std::vector<int>> select_path() {
     std::vector<int> path{0};
     if (!select_descendant(0, path) || path.size() == 1U) {
       return std::nullopt;

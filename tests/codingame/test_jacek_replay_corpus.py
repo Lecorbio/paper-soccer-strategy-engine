@@ -285,6 +285,25 @@ class JacekReplayCorpusTests(unittest.TestCase):
         )
         self.assertEqual(policy["teacher_value"]["transform"], "identity")
 
+    def test_registered_two_million_node_action_budget_is_exact(self):
+        row = self.complete_turn_action_group_row()
+        work = row["group"]["work_budget"]
+        work["teacher_ranking_profile"] = (
+            corpus.HARD_5PCT_2M_TEACHER_RANKING_PROFILE
+        )
+        work["max_tree_nodes"] = 2_000_000
+        source = row["group"]["source_binding"]
+        material = (
+            f"{source['campaign_id']}\0{source['position_id']}\0{2_000_000}"
+            .encode()
+        )
+        work["seed"] = int(hashlib.sha256(material).hexdigest()[:16], 16)
+        self.assertEqual(corpus.validate_complete_turn_action_group(row), row)
+        broken = copy.deepcopy(row)
+        broken["group"]["work_budget"]["max_tree_nodes"] = 1_999_999
+        with self.assertRaisesRegex(ValueError, "hardest-5pct-2m"):
+            corpus.validate_complete_turn_action_group(broken)
+
     def test_deep_action_groups_replace_shallow_by_canonical_group(self):
         first = self.complete_turn_action_group_row(
             position_id="position:" + "a" * 64, root_action="0"
@@ -336,6 +355,11 @@ class JacekReplayCorpusTests(unittest.TestCase):
             split="validation",
             root_action="2",
         )
+        with self.assertRaisesRegex(ValueError, "exhaustive legal successors"):
+            corpus.build_complete_turn_successor_labels(
+                [later, validation, earlier]
+            )
+        later["group"]["successors_exhaustive"] = True
         artifact = corpus.build_complete_turn_successor_labels(
             [later, validation, earlier]
         )
@@ -350,7 +374,7 @@ class JacekReplayCorpusTests(unittest.TestCase):
         by_id = {
             group["group_id"]: group for group in artifact["splits"]["train"]
         }
-        self.assertFalse(
+        self.assertTrue(
             by_id[later["group"]["group_id"]]["successors_exhaustive"]
         )
         body = dict(artifact)

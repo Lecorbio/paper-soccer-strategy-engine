@@ -498,6 +498,7 @@ def adapt_gate_result(
         path,
         expected_bank_sha256=plan["gate_bank"]["sha256"],
         expected_candidate_sha256=plan["candidate"]["sha256"],
+        allow_legacy_attempt_zero=True,
     )
     runtime_path = pathlib.Path(plan["runtime"]["path"])
     if _regular(runtime_path, ascii_required=True) != plan["runtime"]:

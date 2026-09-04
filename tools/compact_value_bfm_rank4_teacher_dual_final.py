@@ -30,9 +30,12 @@ import datetime as dt
 import fcntl
 import importlib.util
 import json
+import math
 import os
 import pathlib
+import re
 import secrets
+import stat as stat_module
 import subprocess
 import sys
 from collections import Counter
@@ -99,7 +102,7 @@ THREADS_PER_WORKER = 1
 
 PLAN_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-execution-plan.v1"
+    "dual-final-execution-plan.v2"
 )
 BANK_CLAIM_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
@@ -111,14 +114,14 @@ BANK_RECEIPT_SCHEMA = (
 )
 CONSUMPTION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-gate-consumption.v1"
+    "dual-final-gate-consumption.v2"
 )
 PRIMITIVE_CONSUMPTION_SCHEMA = (
     "papersoccer.compact-value-bfm.bank-consumption.v1"
 )
 RAW_EVIDENCE_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-raw-shard-evidence.v1"
+    "dual-final-raw-shard-evidence.v2"
 )
 NORMALIZED_AGGREGATE_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
@@ -126,15 +129,23 @@ NORMALIZED_AGGREGATE_SCHEMA = (
 )
 DEEP_GATE_EVIDENCE_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-deep-gate-evidence.v1"
+    "dual-final-deep-gate-evidence.v2"
 )
 RUN_RECEIPT_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-execution-receipt.v1"
+    "dual-final-execution-receipt.v2"
 )
 PREPARED_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
-    "dual-final-execution-prepared.v1"
+    "dual-final-execution-prepared.v2"
+)
+PRELAUNCH_AUDIT_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "dual-final-prelaunch-audit.v1"
+)
+PROTECTED_STAGE_ABORTION_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "dual-final-protected-stage-aborted.v1"
 )
 FINGERPRINT_EXCLUSION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
@@ -151,6 +162,28 @@ FingerprintLoader = Callable[[pathlib.Path], set[str]]
 BankGenerator = Callable[..., list[dict[str, Any]]]
 GateRunner = Callable[[Mapping[str, Any]], Any]
 ResultValidator = Callable[..., Mapping[str, Any]]
+ProcessAuditor = Callable[[pathlib.Path], Mapping[str, Any]]
+
+
+THREAD_ENVIRONMENT = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "PYTHONHASHSEED": "0",
+}
+
+_COMPETING_PROCESS_MARKERS = (
+    "compact_value_bfm_rank4_gate",
+    ".rank4-gate",
+    "rank4-gate",
+    "compact_value_bfm_discrete_v3_development_runner.py",
+    "compact_value_bfm_discrete_v3_recovery_runner.py",
+    "compact_value_bfm_teacher_training.py",
+    "compact_value_bfm_pilot_pipeline.py",
+    "compact_value_bfm_rank4_teacher_dual_final.py",
+)
 
 
 def utc_now() -> str:
@@ -204,6 +237,45 @@ def _verify_record(
     return path.resolve()
 
 
+def _freeze_gate_executable(
+    root: pathlib.Path, source: pathlib.Path,
+) -> Record:
+    source_record = _record(source, executable=True)
+    directory = root / "frozen-gate"
+    _directory(directory, create=True)
+    path = directory / f"{source_record['sha256']}.rank4-gate"
+    qualification.atomic_write_once(path, source.read_bytes())
+    path.chmod(0o500)
+    frozen = _record(path, executable=True)
+    if (
+        frozen["bytes"] != source_record["bytes"]
+        or frozen["sha256"] != source_record["sha256"]
+    ):
+        raise DualFinalError("frozen Rank-4 gate differs from preflight executable")
+    return frozen
+
+
+def _verify_frozen_gate(plan: Mapping[str, Any]) -> pathlib.Path:
+    source = plan.get("gate_source")
+    frozen = plan.get("gate")
+    source_path = _verify_record(source, "preflight Rank-4 gate", executable=True)
+    frozen_path = _verify_record(frozen, "frozen Rank-4 gate", executable=True)
+    expected = (
+        pathlib.Path(plan["root"]) / "frozen-gate"
+        / f"{source['sha256']}.rank4-gate"
+    ).resolve()
+    mode = frozen_path.stat().st_mode
+    if (
+        frozen_path != expected
+        or frozen_path.parent.is_symlink()
+        or frozen.get("sha256") != source.get("sha256")
+        or frozen.get("bytes") != source.get("bytes")
+        or mode & 0o222
+    ):
+        raise DualFinalError("content-addressed frozen Rank-4 gate changed")
+    return frozen_path
+
+
 def _reference(path: pathlib.Path, schema: str | None = None) -> Record:
     if path.is_symlink() or not path.is_file():
         raise DualFinalError(f"referenced artifact is absent: {path}")
@@ -253,6 +325,168 @@ def _directory(path: pathlib.Path, *, create: bool) -> pathlib.Path:
     if not path.is_dir():
         raise DualFinalError(f"dual-final directory is absent: {path}")
     return path
+
+
+def _campaign_production_mode(
+    campaign_plan_path: pathlib.Path, *, allow_injected_test_evidence: bool,
+) -> tuple[bool, Mapping[str, Any] | None]:
+    """Read production mode without trusting an injected campaign validator."""
+
+    try:
+        context = challenger.validate_campaign(campaign_plan_path)
+    except Exception as error:
+        if allow_injected_test_evidence is True:
+            # Unit fixtures may use an explicitly marked sealed stub. Merely
+            # failing production validation is never enough to downgrade a
+            # campaign into test mode.
+            with contextlib.suppress(Exception):
+                stub = qualification.load_sealed(
+                    campaign_plan_path, challenger.PLAN_SCHEMA
+                )
+                if (
+                    stub.get("test_only_nonproduction") is True
+                    and stub.get("production_allowlist_enforced") is False
+                ):
+                    return False, None
+        raise DualFinalError("campaign did not validate before callable dispatch") from error
+    return (
+        context.get("inputs", {}).get("production_allowlist_enforced") is True,
+        context,
+    )
+
+
+def _injected_names(
+    supplied: Mapping[str, Any], defaults: Mapping[str, Any],
+) -> list[str]:
+    return sorted(
+        name for name, value in supplied.items()
+        if value is not defaults[name]
+    )
+
+
+def _guard_injected_callables(
+    *, campaign_plan_path: pathlib.Path,
+    supplied: Mapping[str, Any], defaults: Mapping[str, Any],
+    allow_injected_test_evidence: bool,
+) -> tuple[bool, Mapping[str, Any] | None, list[str]]:
+    names = _injected_names(supplied, defaults)
+    production, context = _campaign_production_mode(
+        campaign_plan_path,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    if names and (production or allow_injected_test_evidence is not True):
+        mode = "production" if production else "nonproduction without explicit test opt-in"
+        raise DualFinalError(
+            f"injected dual-final callables are forbidden in {mode}: "
+            + ", ".join(names)
+        )
+    return production, context, names
+
+
+def _guard_execution_overrides(
+    plan_path: pathlib.Path, *, supplied: Mapping[str, Any],
+    defaults: Mapping[str, Any], allow_injected_test_evidence: bool,
+) -> tuple[Record, list[str]]:
+    """Reject dispatch overrides before an injected state loader can run."""
+
+    plan = qualification.load_sealed(plan_path, PLAN_SCHEMA)
+    names = _injected_names(supplied, defaults)
+    production = plan.get("production") is True
+    if names and (production or allow_injected_test_evidence is not True):
+        mode = "production" if production else "nonproduction without explicit test opt-in"
+        raise DualFinalError(
+            f"injected dual-final callables are forbidden in {mode}: "
+            + ", ".join(names)
+        )
+    return dict(plan), names
+
+
+def _guard_state_overrides(
+    state: Mapping[str, Any], *, supplied: Mapping[str, Any],
+    defaults: Mapping[str, Any], allow_injected_test_evidence: bool,
+) -> list[str]:
+    names = _injected_names(supplied, defaults)
+    production = state.get("plan", {}).get("production") is True
+    if names and (production or allow_injected_test_evidence is not True):
+        mode = "production" if production else "nonproduction without explicit test opt-in"
+        raise DualFinalError(
+            f"injected dual-final callables are forbidden in {mode}: "
+            + ", ".join(names)
+        )
+    return names
+
+
+def _require_exact_validated_state(
+    plan_path: pathlib.Path, state: Mapping[str, Any],
+    initial_plan: Mapping[str, Any],
+) -> None:
+    plan_header = qualification.load_sealed(plan_path, PLAN_SCHEMA)
+    if (
+        pathlib.Path(state.get("path", "")).resolve() != plan_path.resolve()
+        or plan_header != initial_plan
+        or state.get("plan") != plan_header
+    ):
+        raise DualFinalError("state validator returned another execution identity")
+
+
+def _confirm_validated_mode(
+    validated: Mapping[str, Any], *, production: bool,
+    canonical_context: Mapping[str, Any] | None,
+) -> None:
+    context = validated.get("context")
+    if canonical_context is not None and context is not canonical_context:
+        # Equality is accepted because the default validator independently
+        # reloads the same sealed campaign and naturally returns a new object.
+        if context != canonical_context:
+            raise DualFinalError("authorization validator changed campaign context")
+    observed = (
+        isinstance(context, Mapping)
+        and context.get("inputs", {}).get("production_allowlist_enforced") is True
+    )
+    if observed != production:
+        raise DualFinalError("authorization validator changed campaign production mode")
+
+
+def _deterministic_execution_root(
+    *, authorization_path: pathlib.Path, attempt: int,
+    canonical_context: Mapping[str, Any] | None,
+) -> pathlib.Path:
+    authorization_parent = authorization_path.resolve().parent
+    if canonical_context is not None:
+        expected_parent = (
+            pathlib.Path(canonical_context["plan"]["outputs"]["dual_final"])
+            / f"attempt-{attempt:03d}"
+        ).resolve()
+        if authorization_parent != expected_parent:
+            raise DualFinalError("authorization is outside its deterministic attempt root")
+    return (authorization_parent / "execution").resolve()
+
+
+def _execution_identity(
+    *, campaign_plan_path: pathlib.Path, authorization_path: pathlib.Path,
+    attempt: int, root: pathlib.Path,
+) -> Record:
+    campaign = qualification.load_sealed(
+        campaign_plan_path, challenger.PLAN_SCHEMA
+    )
+    authorization = qualification.load_sealed(
+        authorization_path, challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA
+    )
+    return {
+        "campaign_plan_body_sha256": campaign["body_sha256"],
+        "authorization_body_sha256": authorization["body_sha256"],
+        "attempt": attempt,
+        "root": str(root.resolve()),
+        "one_execution_root": True,
+    }
+
+
+def _campaign_heavy_stage_lock_path(
+    campaign_plan_path: pathlib.Path,
+) -> pathlib.Path:
+    return (
+        campaign_plan_path.resolve().parent / ".rank4-teacher-heavy-stage.lock"
+    ).resolve()
 
 
 def _default_authorization_validator(
@@ -398,6 +632,23 @@ def _preflight_authority(
         deployment_preflight.REFERENCE_SCHEMA,
         deployment_preflight_path,
     )
+
+
+def _preflight_candidate_search_profile(
+    preflight: Mapping[str, Any],
+) -> str:
+    source = preflight.get("derivation", {}).get("source")
+    if isinstance(source, Mapping):
+        profile = source.get("candidate_search_profile")
+        if profile is None and "search_throughput_profile" in source:
+            raise DualFinalError(
+                "release derivation omits the effective candidate search profile"
+            )
+    else:
+        profile = "standard-v1"
+    if profile not in gate_support.SEARCH_PROFILES:
+        raise DualFinalError("deployment search-throughput profile changed")
+    return str(profile)
 
 
 def _default_ci_validator(path: pathlib.Path, candidate_commit: str) -> Mapping[str, Any]:
@@ -616,7 +867,9 @@ def _discover_authorized_exclusions(
             *context["inputs"]["live_exclusions"].values(),
             *(
                 entry["development_exclusion"] for entry in entries
-                if entry.get("event") == "attempt-outcome-recorded"
+                if entry.get("event") in {
+                    "attempt-outcome-recorded", "development-gate-aborted",
+                }
             ),
             *challenger._cumulative_dynamic_exclusions(entries),
         ]
@@ -721,10 +974,30 @@ def prepare_execution(
     preflight_validator: PreflightValidator | None = None,
     ci_validator: CiValidator = _default_ci_validator,
     fingerprint_loader: FingerprintLoader = _extract_fingerprints,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     """Freeze all execution inputs before either protected bank is claimed."""
 
+    production, canonical_context, injected = _guard_injected_callables(
+        campaign_plan_path=campaign_plan_path,
+        supplied={
+            "authorization_validator": authorization_validator,
+            "preflight_validator": preflight_validator,
+            "ci_validator": ci_validator,
+            "fingerprint_loader": fingerprint_loader,
+        },
+        defaults={
+            "authorization_validator": _default_authorization_validator,
+            "preflight_validator": None,
+            "ci_validator": _default_ci_validator,
+            "fingerprint_loader": _extract_fingerprints,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     validated = dict(authorization_validator(authorization_path, campaign_plan_path))
+    _confirm_validated_mode(
+        validated, production=production, canonical_context=canonical_context
+    )
     authorization = validated.get("authorization")
     if not isinstance(authorization, Mapping):
         raise DualFinalError("authorization validator returned no authorization")
@@ -748,6 +1021,7 @@ def prepare_execution(
             or release_record.get("sha256") != qualification.sha256_file(preflight_path)
         ):
             raise DualFinalError("execution release evidence differs from authorization")
+    supplied_preflight_validator = preflight_validator
     if preflight_validator is None:
         if preflight_kind == "discrete-v3-deployment-preflight":
             preflight_validator = _default_preflight_validator
@@ -756,13 +1030,26 @@ def prepare_execution(
                 candidate, campaign_plan_path=campaign_plan_path,
                 authorization=authorization,
             )
-    root = _safe_root(output_root, create=True)
+    attempt = authorization.get("attempt")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
+        raise DualFinalError("authorization attempt is invalid")
+    expected_root = _deterministic_execution_root(
+        authorization_path=authorization_path, attempt=attempt,
+        canonical_context=canonical_context,
+    )
+    if output_root.absolute().resolve() != expected_root:
+        raise DualFinalError(
+            "dual-final output must use the deterministic campaign-attempt execution root"
+        )
+    root = _safe_root(expected_root, create=True)
     plan_path = root / "execution-plan.json"
     if plan_path.exists():
         existing = validate_execution_plan(
             plan_path, authorization_validator=authorization_validator,
-            preflight_validator=preflight_validator, ci_validator=ci_validator,
+            preflight_validator=supplied_preflight_validator,
+            ci_validator=ci_validator,
             fingerprint_loader=fingerprint_loader,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         supplied_exclusions = sorted(
             (_record(item) for item in exclusion_paths),
@@ -856,12 +1143,14 @@ def prepare_execution(
     gate_path = _verify_record(
         compile_binding["gate"], "source-specific Rank-4 gate", executable=True
     )
+    frozen_gate = _freeze_gate_executable(root, gate_path)
     configuration = preflight.get("derivation", {}).get("configuration")
     if not isinstance(configuration, Mapping) or deployment.deployment_configuration(
         configuration.get("tuple", []), configuration.get("profile"),
         deployment.PROFILE_ROSTER.get(configuration.get("profile")),
     ) != configuration:
         raise DualFinalError("deployment search configuration changed")
+    candidate_search_profile = _preflight_candidate_search_profile(preflight)
     timing = _uncontended_timing(preflight.get("timing", {}))
     if preflight.get("uncontended_timing", timing) != timing:
         raise DualFinalError("preflight uncontended timing summary changed")
@@ -877,6 +1166,20 @@ def prepare_execution(
             authorization_path, challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA
         ),
         "attempt": authorization["attempt"],
+        "production": production,
+        "evidence_mode": (
+            "production-default-callables" if production
+            else "nonproduction-injected-test-evidence" if injected
+            else "nonproduction-default-callables"
+        ),
+        "execution_identity": _execution_identity(
+            campaign_plan_path=campaign_plan_path,
+            authorization_path=authorization_path,
+            attempt=attempt, root=root,
+        ),
+        "campaign_heavy_stage_lock": str(
+            _campaign_heavy_stage_lock_path(campaign_plan_path)
+        ),
         "candidate": dict(candidate),
         "candidate_commit": candidate_commit,
         "runtime_identity": runtime_identity,
@@ -891,11 +1194,13 @@ def prepare_execution(
         "preflight_schema": preflight_schema,
         "ci": _reference(ci_path, upload.CI_SCHEMA),
         "compile_binding": compile_binding,
-        "gate": _record(gate_path, executable=True),
+        "gate_source": _record(gate_path, executable=True),
+        "gate": frozen_gate,
         "repository": str(pathlib.Path(
             preflight["plan"]["inputs"]["repository"]
         ).resolve()),
         "configuration": dict(configuration),
+        "candidate_search_profile": candidate_search_profile,
         "uncontended_timing": timing,
         "exclusion_sources": exclusions,
         "exclusion_fingerprint_count": len(fingerprints),
@@ -916,13 +1221,18 @@ def prepare_execution(
             "started_shard_retry_authorized": False,
             "candidate_change_authorized": False,
             "upload_authorized": False,
+            "single_campaign_attempt_execution_root": True,
+            "exclusive_actual_clock_execution": True,
+            "clean_prelaunch_audit_required": True,
         },
     }
     _write_sealed_once(plan_path, body)
     validate_execution_plan(
         plan_path, authorization_validator=authorization_validator,
-        preflight_validator=preflight_validator, ci_validator=ci_validator,
+        preflight_validator=supplied_preflight_validator,
+        ci_validator=ci_validator,
         fingerprint_loader=fingerprint_loader,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
     return plan_path
 
@@ -933,6 +1243,7 @@ def validate_execution_plan(
     preflight_validator: PreflightValidator | None = None,
     ci_validator: CiValidator = _default_ci_validator,
     fingerprint_loader: FingerprintLoader = _extract_fingerprints,
+    allow_injected_test_evidence: bool = False,
 ) -> Record:
     plan = qualification.load_sealed(path, PLAN_SCHEMA)
     root = pathlib.Path(str(plan.get("root", "")))
@@ -940,10 +1251,13 @@ def validate_execution_plan(
     expected_fields = {
         "schema", "namespace", "campaign_id", "status", "created_at_utc",
         "root", "campaign_plan", "authorization", "attempt", "candidate",
+        "production", "evidence_mode", "execution_identity",
+        "campaign_heavy_stage_lock",
         "candidate_commit", "runtime_identity", "rank4", "source_binding",
         "deployment_preflight", "preflight_kind", "preflight_schema", "ci",
-        "compile_binding", "gate",
-        "repository", "configuration", "uncontended_timing",
+        "compile_binding", "gate_source", "gate",
+        "repository", "configuration", "candidate_search_profile",
+        "uncontended_timing",
         "exclusion_sources", "exclusion_fingerprint_count",
         "exclusion_fingerprints_sha256", "gate_contract", "thresholds",
         "policy", "body_sha256",
@@ -961,11 +1275,30 @@ def validate_execution_plan(
     campaign_plan = _verify_reference(
         plan.get("campaign_plan"), challenger.PLAN_SCHEMA, "campaign plan"
     )
+    production, canonical_context, _injected = _guard_injected_callables(
+        campaign_plan_path=campaign_plan,
+        supplied={
+            "authorization_validator": authorization_validator,
+            "preflight_validator": preflight_validator,
+            "ci_validator": ci_validator,
+            "fingerprint_loader": fingerprint_loader,
+        },
+        defaults={
+            "authorization_validator": _default_authorization_validator,
+            "preflight_validator": None,
+            "ci_validator": _default_ci_validator,
+            "fingerprint_loader": _extract_fingerprints,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     authorization_path = _verify_reference(
         plan.get("authorization"), challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA,
         "dual-final authorization",
     )
     validated = dict(authorization_validator(authorization_path, campaign_plan))
+    _confirm_validated_mode(
+        validated, production=production, canonical_context=canonical_context
+    )
     authorization = validated.get("authorization")
     if (
         not isinstance(authorization, Mapping)
@@ -973,6 +1306,36 @@ def validate_execution_plan(
         or plan.get("candidate") != authorization.get("candidate")
     ):
         raise DualFinalError("execution plan changed the authorized candidate")
+    expected_root = _deterministic_execution_root(
+        authorization_path=authorization_path, attempt=int(plan["attempt"]),
+        canonical_context=canonical_context,
+    )
+    expected_identity = _execution_identity(
+        campaign_plan_path=campaign_plan, authorization_path=authorization_path,
+        attempt=int(plan["attempt"]), root=expected_root,
+    )
+    expected_mode = (
+        "production-default-callables" if production else None
+    )
+    if (
+        root != expected_root
+        or plan.get("production") is not production
+        or (
+            expected_mode is not None
+            and plan.get("evidence_mode") != expected_mode
+        )
+        or (
+            not production
+            and plan.get("evidence_mode") not in {
+                "nonproduction-default-callables",
+                "nonproduction-injected-test-evidence",
+            }
+        )
+        or plan.get("execution_identity") != expected_identity
+        or plan.get("campaign_heavy_stage_lock")
+        != str(_campaign_heavy_stage_lock_path(campaign_plan))
+    ):
+        raise DualFinalError("deterministic campaign-attempt execution identity changed")
     if qualification._utc(
         plan["created_at_utc"], "execution plan time"
     ) < qualification._utc(
@@ -1028,6 +1391,7 @@ def validate_execution_plan(
                 authorization=authorization,
             )
     preflight = dict(preflight_validator(preflight_path))
+    expected_search_profile = _preflight_candidate_search_profile(preflight)
     if (
         preflight.get("candidate_commit") != plan.get("candidate_commit")
         or preflight.get("candidate", {}).get("sha256")
@@ -1037,6 +1401,8 @@ def validate_execution_plan(
         or plan.get("compile_binding") != _preflight_compile_binding(preflight)
         or plan.get("configuration")
         != preflight.get("derivation", {}).get("configuration")
+        or expected_search_profile not in gate_support.SEARCH_PROFILES
+        or plan.get("candidate_search_profile") != expected_search_profile
         or plan.get("repository") != str(pathlib.Path(
             preflight["plan"]["inputs"]["repository"]
         ).resolve())
@@ -1046,8 +1412,14 @@ def validate_execution_plan(
         ) != plan.get("uncontended_timing")
     ):
         raise DualFinalError("execution preflight binding changed")
-    gate = _verify_record(plan.get("gate"), "planned gate", executable=True)
-    if plan["compile_binding"]["gate"] != _record(gate, executable=True):
+    gate_source = _verify_record(
+        plan.get("gate_source"), "planned preflight gate", executable=True
+    )
+    gate = _verify_frozen_gate(plan)
+    if (
+        plan["compile_binding"]["gate"] != _record(gate_source, executable=True)
+        or plan["gate"] != _record(gate, executable=True)
+    ):
         raise DualFinalError("planned gate differs from compiled gate")
     ci_path = _verify_reference(plan.get("ci"), upload.CI_SCHEMA, "green CI")
     ci = dict(ci_validator(ci_path, str(plan.get("candidate_commit"))))
@@ -1083,6 +1455,9 @@ def validate_execution_plan(
             "started_shard_retry_authorized": False,
             "candidate_change_authorized": False,
             "upload_authorized": False,
+            "single_campaign_attempt_execution_root": True,
+            "exclusive_actual_clock_execution": True,
+            "clean_prelaunch_audit_required": True,
         }
     ):
         raise DualFinalError("execution plan exclusion/resource policy changed")
@@ -1246,7 +1621,17 @@ def validate_fingerprint_exclusion(
 def _materialize_one(
     state: Mapping[str, Any], *, gate_id: str, claimed_at_utc: str,
     entropy: Callable[[int], bytes], bank_generator: BankGenerator,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
+    _guard_state_overrides(
+        state,
+        supplied={"entropy": entropy, "bank_generator": bank_generator},
+        defaults={
+            "entropy": secrets.token_bytes,
+            "bank_generator": openings.generate_openings,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     plan = state["plan"]
     plan_path = pathlib.Path(state["path"])
     root = _gate_root(plan, gate_id)
@@ -1434,6 +1819,22 @@ def validate_bank_receipt(state: Mapping[str, Any], *, gate_id: str) -> Record:
         receipt.get("fingerprint_exclusion"), FINGERPRINT_EXCLUSION_SCHEMA,
         f"{gate_id} sanitized fingerprint exclusion",
     )
+    expected_opening_name = (
+        f"{qualification.sha256_file(bank_path)}.opening-bank.json"
+    )
+    expected_gate_bank_name = f"{qualification.sha256_file(gate_bank_path)}.tsv"
+    if (
+        receipt_path.resolve() != (root / "bank-receipt.json").resolve()
+        or claim_path.resolve() != (root / "bank-claim.json").resolve()
+        or seed_path.resolve() != (root / "seed-receipt.json").resolve()
+        or bank_path.parent.resolve() != (root / "opening-bank").resolve()
+        or bank_path.name != expected_opening_name
+        or gate_bank_path.parent.resolve() != (root / "gate-bank").resolve()
+        or gate_bank_path.name != expected_gate_bank_name
+        or adapter_path.resolve() != (root / "bank-adapter.json").resolve()
+        or binding_path.resolve() != (root / "gate-binding.json").resolve()
+    ):
+        raise DualFinalError(f"{gate_id} protected bank route changed")
     validate_fingerprint_exclusion(
         fingerprint_exclusion_path, state=state, gate_id=gate_id,
         bank_path=bank_path, bank=bank,
@@ -1560,17 +1961,175 @@ def validate_bank_receipt(state: Mapping[str, Any], *, gate_id: str) -> Record:
     }
 
 
+def _validate_spent_bank_claim(
+    state: Mapping[str, Any], *, gate_id: str,
+) -> tuple[pathlib.Path, Record]:
+    plan = state["plan"]
+    claim_path = _gate_root(plan, gate_id) / "bank-claim.json"
+    if claim_path.is_symlink():
+        raise DualFinalError(f"{gate_id} spent bank claim is redirected")
+    claim = qualification.load_sealed(claim_path, BANK_CLAIM_SCHEMA)
+    exclusions = set(state["fingerprints"])
+    sources = [dict(item) for item in plan["exclusion_sources"]]
+    if gate_id == "gate-b":
+        first = validate_bank_receipt(state, gate_id="gate-a")
+        exclusions.update(_opening_fingerprints(first["bank"]))
+        sources.append(dict(first["receipt"]["protected_bank"]))
+    expected = qualification.seal(_bank_claim_body(
+        pathlib.Path(state["path"]), plan, gate_id=gate_id,
+        claimed_at_utc=str(claim.get("claimed_at_utc")),
+        exclusion_sources=sources, exclusion_fingerprints=exclusions,
+    ))
+    if claim != expected:
+        raise DualFinalError(f"{gate_id} spent bank claim changed")
+    return claim_path.resolve(), claim
+
+
+def _partial_protected_bank(
+    state: Mapping[str, Any], *, gate_id: str,
+) -> tuple[pathlib.Path, Record] | None:
+    """Return an atomically complete opening bank even if its receipt was interrupted."""
+
+    root = _gate_root(state["plan"], gate_id)
+    directory = root / "opening-bank"
+    if not directory.exists():
+        return None
+    _directory(directory, create=False)
+    paths = sorted(directory.iterdir())
+    if (
+        len(paths) != 1
+        or paths[0].is_symlink()
+        or not paths[0].is_file()
+        or paths[0].name
+        != f"{qualification.sha256_file(paths[0])}.opening-bank.json"
+    ):
+        raise DualFinalError(f"{gate_id} partial protected bank roster changed")
+    claim_path, claim = _validate_spent_bank_claim(state, gate_id=gate_id)
+    bank_path = paths[0].resolve()
+    bank = openings.validate_bank(bank_path)
+    seed_path = root / "seed-receipt.json"
+    seed = qualification.load_sealed(seed_path, openings.SEED_SCHEMA)
+    excluded_fingerprints = set(state["fingerprints"])
+    if gate_id == "gate-b":
+        excluded_fingerprints.update(_opening_fingerprints(
+            validate_bank_receipt(state, gate_id="gate-a")["bank"]
+        ))
+    expected_seed = qualification.seal({
+        "schema": openings.SEED_SCHEMA, "namespace": NAMESPACE,
+        "status": "protected-seed-frozen-before-bank-generation",
+        "created_at_utc": claim["claimed_at_utc"],
+        "seed_256_hex": bank["seed_hex"],
+        "source_binding": state["plan"]["source_binding"],
+        "clean_binding": state["plan"]["deployment_preflight"],
+        "candidate_commit": state["plan"]["candidate_commit"],
+        "candidate_sha256": state["plan"]["candidate"]["source"]["sha256"],
+        "exclusions_body_sha256": claim["exclusion_fingerprints_sha256"],
+        "exclusion_sources": claim["exclusion_sources"],
+        "exclusion_fingerprint_count": claim["exclusion_fingerprint_count"],
+        "entropy_bits": 256, "bank_generated": False,
+        "claim": _reference(claim_path, BANK_CLAIM_SCHEMA),
+    })
+    if (
+        seed != expected_seed
+        or bank.get("source_binding") != state["plan"]["source_binding"]
+        or bank.get("seed_receipt")
+        != _reference(seed_path, openings.SEED_SCHEMA)
+        or bank.get("exclusion_sources") != claim["exclusion_sources"]
+        or bank.get("exclusions_body_sha256")
+        != claim["exclusion_fingerprints_sha256"]
+        or _opening_fingerprints(bank) & excluded_fingerprints
+    ):
+        raise DualFinalError(f"{gate_id} partial protected bank ancestry changed")
+    return bank_path, bank
+
+
+def _materialized_fingerprint_exclusions(
+    state: Mapping[str, Any], *, ensure: bool,
+) -> list[Record]:
+    records: list[Record] = []
+    for gate_id in GATE_IDS:
+        try:
+            completed = validate_bank_receipt(state, gate_id=gate_id)
+        except (DualFinalError, qualification.QualificationError, OSError, ValueError):
+            completed = None
+        if completed is not None:
+            records.append(_reference(
+                completed["fingerprint_exclusion_path"],
+                FINGERPRINT_EXCLUSION_SCHEMA,
+            ))
+            continue
+        partial = _partial_protected_bank(state, gate_id=gate_id)
+        if partial is None:
+            continue
+        bank_path, bank = partial
+        exclusion_path = _gate_root(
+            state["plan"], gate_id
+        ) / "fingerprint-exclusion.json"
+        if ensure and not exclusion_path.exists():
+            exclusion_path = _write_fingerprint_exclusion(
+                state, gate_id=gate_id, bank_path=bank_path, bank=bank
+            )
+        validate_fingerprint_exclusion(
+            exclusion_path, state=state, gate_id=gate_id,
+            bank_path=bank_path, bank=bank,
+        )
+        records.append(_reference(
+            exclusion_path, FINGERPRINT_EXCLUSION_SCHEMA
+        ))
+    return records
+
+
 def materialize_banks(
     plan_path: pathlib.Path, *, claimed_at_utc: str,
     entropy: Callable[[int], bytes] = secrets.token_bytes,
     bank_generator: BankGenerator = openings.generate_openings,
     state_validator: Callable[[pathlib.Path], Mapping[str, Any]] = validate_execution_plan,
     governance_preparer: Callable[..., pathlib.Path] = challenger.prepare_dual_final,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     """Materialize A then B and register both with challenger governance."""
 
+    initial_plan, _injected = _guard_execution_overrides(
+        plan_path,
+        supplied={
+            "entropy": entropy,
+            "bank_generator": bank_generator,
+            "state_validator": state_validator,
+            "governance_preparer": governance_preparer,
+        },
+        defaults={
+            "entropy": secrets.token_bytes,
+            "bank_generator": openings.generate_openings,
+            "state_validator": validate_execution_plan,
+            "governance_preparer": challenger.prepare_dual_final,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     state = dict(state_validator(plan_path))
+    _require_exact_validated_state(plan_path, state, initial_plan)
+    _guard_state_overrides(
+        state,
+        supplied={
+            "entropy": entropy,
+            "bank_generator": bank_generator,
+            "state_validator": state_validator,
+            "governance_preparer": governance_preparer,
+        },
+        defaults={
+            "entropy": secrets.token_bytes,
+            "bank_generator": openings.generate_openings,
+            "state_validator": validate_execution_plan,
+            "governance_preparer": challenger.prepare_dual_final,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     root = pathlib.Path(state["plan"]["root"])
+    abortion_path = root / "protected-stage-aborted.json"
+    if abortion_path.exists() or abortion_path.is_symlink():
+        _validate_protected_abortion_with_state(abortion_path, state=state)
+        raise DualFinalError(
+            "protected dual-final attempt is aborted and cannot retry"
+        )
     lock_path = root / "bank-materialization.lock"
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
@@ -1578,14 +2137,24 @@ def materialize_banks(
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
             raise DualFinalError("another dual-final materialization is active") from error
+        if abortion_path.exists() or abortion_path.is_symlink():
+            _validate_protected_abortion_with_state(abortion_path, state=state)
+            raise DualFinalError(
+                "protected dual-final attempt is aborted and cannot retry"
+            )
+        if (root / "prepared.json").exists():
+            dual_reference, _prepared = _load_prepared(state)
+            return dual_reference
         first_receipt = _materialize_one(
             state, gate_id="gate-a", claimed_at_utc=claimed_at_utc,
             entropy=entropy, bank_generator=bank_generator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         first = validate_bank_receipt(state, gate_id="gate-a")
         second_receipt = _materialize_one(
             state, gate_id="gate-b", claimed_at_utc=claimed_at_utc,
             entropy=entropy, bank_generator=bank_generator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         second = validate_bank_receipt(state, gate_id="gate-b")
         if first["seed"]["seed_256_hex"] == second["seed"]["seed_256_hex"]:
@@ -1607,6 +2176,7 @@ def materialize_banks(
             "namespace": NAMESPACE, "campaign_id": CAMPAIGN_ID,
             "attempt": state["plan"]["attempt"],
             "execution_plan": _reference(pathlib.Path(state["path"]), PLAN_SCHEMA),
+            "execution_identity": dict(state["plan"]["execution_identity"]),
             "dual_final_reference": _reference(
                 dual_reference, challenger.DUAL_FINAL_REFERENCE_SCHEMA
             ),
@@ -1619,6 +2189,16 @@ def materialize_banks(
                     second["fingerprint_exclusion_path"],
                     FINGERPRINT_EXCLUSION_SCHEMA,
                 ),
+            },
+            "banks": {
+                gate_id: {
+                    "bank_receipt": _reference(
+                        item["path"], BANK_RECEIPT_SCHEMA
+                    ),
+                    "protected_bank": dict(item["receipt"]["protected_bank"]),
+                    "gate_bank": dict(item["receipt"]["gate_bank"]),
+                }
+                for gate_id, item in (("gate-a", first), ("gate-b", second))
             },
             "candidate_unchanged": True, "independent_banks": True,
             "gate_b_excludes_gate_a": True, "games_launched": 0,
@@ -1640,33 +2220,66 @@ def _load_prepared(state: Mapping[str, Any]) -> tuple[pathlib.Path, Record]:
         value.get("dual_final_reference"), challenger.DUAL_FINAL_REFERENCE_SCHEMA,
         "challenger dual-final reference",
     )
+    bank_states = {
+        gate_id: validate_bank_receipt(state, gate_id=gate_id)
+        for gate_id in GATE_IDS
+    }
     expected_exclusions = {
         gate_id: _reference(
-            validate_bank_receipt(state, gate_id=gate_id)[
-                "fingerprint_exclusion_path"
-            ],
+            bank_states[gate_id]["fingerprint_exclusion_path"],
             FINGERPRINT_EXCLUSION_SCHEMA,
         ) for gate_id in GATE_IDS
     }
+    expected_banks = {
+        gate_id: {
+            "bank_receipt": _reference(
+                bank_states[gate_id]["path"], BANK_RECEIPT_SCHEMA
+            ),
+            "protected_bank": dict(
+                bank_states[gate_id]["receipt"]["protected_bank"]
+            ),
+            "gate_bank": dict(bank_states[gate_id]["receipt"]["gate_bank"]),
+        }
+        for gate_id in GATE_IDS
+    }
     if (
-        set(value) != {
+        path.is_symlink()
+        or set(value) != {
             "schema", "namespace", "campaign_id", "attempt",
-            "execution_plan", "dual_final_reference",
-            "fingerprint_exclusions", "candidate_unchanged",
+            "execution_plan", "execution_identity", "dual_final_reference",
+            "fingerprint_exclusions", "banks", "candidate_unchanged",
             "independent_banks", "gate_b_excludes_gate_a",
             "games_launched", "body_sha256",
         }
+        or value.get("namespace") != NAMESPACE
         or value.get("campaign_id") != CAMPAIGN_ID
         or value.get("execution_plan")
         != _reference(pathlib.Path(state["path"]), PLAN_SCHEMA)
+        or value.get("execution_identity")
+        != state["plan"]["execution_identity"]
         or value.get("attempt") != state["plan"]["attempt"]
         or value.get("fingerprint_exclusions") != expected_exclusions
+        or value.get("banks") != expected_banks
         or value.get("candidate_unchanged") is not True
         or value.get("independent_banks") is not True
         or value.get("gate_b_excludes_gate_a") is not True
         or value.get("games_launched") != 0
     ):
         raise DualFinalError("dual-final prepared receipt changed")
+    dual_state = challenger.validate_dual_final(
+        dual_reference,
+        plan_path=pathlib.Path(state["plan"]["campaign_plan"]["path"]),
+    )
+    governance_banks = {
+        item["gate_id"]: item["bank"]
+        for item in dual_state.get("plan", {}).get("gates", [])
+        if isinstance(item, Mapping) and item.get("gate_id") in GATE_IDS
+    }
+    if governance_banks != {
+        gate_id: expected_banks[gate_id]["protected_bank"]
+        for gate_id in GATE_IDS
+    }:
+        raise DualFinalError("prepared governance reference records other protected banks")
     return dual_reference, value
 
 
@@ -1686,6 +2299,7 @@ def _expected_gate_configuration(
         "candidate_nodes": configured["candidate_nodes"],
         "candidate_expansions": configured["candidate_expansions"],
         "candidate_shuffle_seed": configured["candidate_shuffle_seed"],
+        "candidate_search_profile": plan["candidate_search_profile"],
         "candidate_clocks_ms": [800, 155], "rank4_nodes": 3_000_000,
         "rank4_clocks_ms": [800, 165], "max_turns": 320,
         "minimum_candidate_wins": -1, "minimum_wins_per_color": -1,
@@ -1725,12 +2339,11 @@ def gate_command(
 def run_gate_process(spec: Mapping[str, Any]) -> pathlib.Path:
     output = pathlib.Path(spec["raw_output"])
     output.parent.mkdir(parents=True, exist_ok=True)
+    gate = pathlib.Path(spec["command"][0])
+    if _record(gate, executable=True) != spec.get("gate_executable"):
+        raise DualFinalError("Rank-4 gate executable changed before shard launch")
     environment = dict(os.environ)
-    environment.update({
-        "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
-        "MKL_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
-        "NUMEXPR_NUM_THREADS": "1",
-    })
+    environment.update(THREAD_ENVIRONMENT)
     completed = subprocess.run(
         spec["command"], cwd=spec["repository"], env=environment,
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -1741,6 +2354,294 @@ def run_gate_process(spec: Mapping[str, Any]) -> pathlib.Path:
     return output
 
 
+def _default_prelaunch_process_audit(gate_binary: pathlib.Path) -> Mapping[str, Any]:
+    completed = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,nice=,command="],
+        capture_output=True, check=False, text=True,
+    )
+    if completed.returncode != 0:
+        raise DualFinalError("cannot audit competing actual-clock gate processes")
+    rows: list[Record] = []
+    parents: dict[int, int] = {}
+    for line in completed.stdout.splitlines():
+        pieces = line.strip().split(None, 3)
+        if len(pieces) != 4:
+            continue
+        try:
+            pid, ppid, nice = map(int, pieces[:3])
+        except ValueError:
+            continue
+        command = pieces[3]
+        parents[pid] = ppid
+        rows.append({"pid": pid, "ppid": ppid, "nice": nice, "command": command})
+    lineage = {os.getpid()}
+    cursor = os.getpid()
+    while cursor in parents and parents[cursor] not in lineage and parents[cursor] > 0:
+        cursor = parents[cursor]
+        lineage.add(cursor)
+    competing = []
+    for row in rows:
+        if row["pid"] in lineage:
+            continue
+        command = str(row["command"]).casefold()
+        executable = str(row["command"]).split(None, 1)[0]
+        exact_gate = False
+        with contextlib.suppress(OSError):
+            exact_gate = pathlib.Path(executable).resolve() == gate_binary.resolve()
+        if exact_gate or any(marker in command for marker in _COMPETING_PROCESS_MARKERS):
+            competing.append({
+                "pid": row["pid"], "ppid": row["ppid"],
+                "nice": row["nice"],
+                "command_sha256": qualification.sha256_bytes(
+                    str(row["command"]).encode("utf-8")
+                ),
+            })
+    try:
+        process_nice = os.getpriority(os.PRIO_PROCESS, 0)
+        loads = os.getloadavg()
+    except (AttributeError, OSError) as error:
+        raise DualFinalError("cannot audit process nice/load before final gate") from error
+    logical_cpus = os.cpu_count()
+    if isinstance(logical_cpus, bool) or not isinstance(logical_cpus, int):
+        logical_cpus = 0
+    return {
+        "auditor_pid": os.getpid(),
+        "process_nice": process_nice,
+        "logical_cpu_count": logical_cpus,
+        "load_average": {
+            "one_minute": float(loads[0]),
+            "five_minutes": float(loads[1]),
+            "fifteen_minutes": float(loads[2]),
+        },
+        "one_minute_load_limit_exclusive": float(logical_cpus),
+        "competing_actual_clock_processes": sorted(
+            competing, key=lambda item: int(item["pid"])
+        ),
+        "ps_stdout_sha256": qualification.sha256_bytes(
+            completed.stdout.encode("utf-8")
+        ),
+        "ps_stderr_sha256": qualification.sha256_bytes(
+            completed.stderr.encode("utf-8")
+        ),
+    }
+
+
+def _validate_process_audit(value: Any) -> Record:
+    if not isinstance(value, Mapping) or set(value) != {
+        "auditor_pid", "process_nice", "logical_cpu_count", "load_average",
+        "one_minute_load_limit_exclusive", "competing_actual_clock_processes",
+        "ps_stdout_sha256", "ps_stderr_sha256",
+    }:
+        raise DualFinalError("final-gate prelaunch process/load audit is malformed")
+    loads = value.get("load_average")
+    logical_cpus = value.get("logical_cpu_count")
+    numbers = list(loads.values()) if isinstance(loads, Mapping) else []
+    if (
+        isinstance(value.get("auditor_pid"), bool)
+        or not isinstance(value.get("auditor_pid"), int)
+        or int(value["auditor_pid"]) <= 0
+        or value.get("process_nice") != 0
+        or isinstance(logical_cpus, bool)
+        or not isinstance(logical_cpus, int)
+        or logical_cpus < WORKERS
+        or not isinstance(loads, Mapping)
+        or set(loads) != {"one_minute", "five_minutes", "fifteen_minutes"}
+        or len(numbers) != 3
+        or any(
+            isinstance(number, bool) or not isinstance(number, (int, float))
+            or not math.isfinite(float(number)) or float(number) < 0.0
+            for number in numbers
+        )
+        or value.get("one_minute_load_limit_exclusive") != float(logical_cpus)
+        or float(loads["one_minute"]) >= float(logical_cpus)
+        or value.get("competing_actual_clock_processes") != []
+        or qualification.SHA256_RE.fullmatch(
+            str(value.get("ps_stdout_sha256"))
+        ) is None
+        or qualification.SHA256_RE.fullmatch(
+            str(value.get("ps_stderr_sha256"))
+        ) is None
+    ):
+        raise DualFinalError("final-gate prelaunch process/load/nice audit is not clean")
+    return dict(value)
+
+
+@contextlib.contextmanager
+def _exclusive_heavy_stage_lock(state: Mapping[str, Any]):
+    plan = state["plan"]
+    path = pathlib.Path(plan["campaign_heavy_stage_lock"])
+    expected = _campaign_heavy_stage_lock_path(
+        pathlib.Path(plan["campaign_plan"]["path"])
+    )
+    if path.resolve() != expected.resolve() or path.is_symlink():
+        raise DualFinalError("campaign heavy-stage lock route changed")
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise DualFinalError("another campaign heavy stage is active") from error
+        stat = os.fstat(descriptor)
+        evidence = {
+            "path": str(path.resolve()),
+            "device": int(stat.st_dev),
+            "inode": int(stat.st_ino),
+            "held_exclusively": True,
+        }
+        _verify_lock_identity(evidence)
+        yield evidence
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _verify_lock_identity(value: Mapping[str, Any]) -> None:
+    if set(value) != {"path", "device", "inode", "held_exclusively"}:
+        raise DualFinalError("campaign heavy-stage lock evidence is malformed")
+    path = pathlib.Path(str(value.get("path", "")))
+    try:
+        observed = os.lstat(path)
+    except OSError as error:
+        raise DualFinalError("campaign heavy-stage lock artifact disappeared") from error
+    if (
+        path.is_symlink()
+        or not stat_module.S_ISREG(observed.st_mode)
+        or isinstance(value.get("device"), bool)
+        or not isinstance(value.get("device"), int)
+        or isinstance(value.get("inode"), bool)
+        or not isinstance(value.get("inode"), int)
+        or int(observed.st_dev) != value["device"]
+        or int(observed.st_ino) != value["inode"]
+        or value.get("held_exclusively") is not True
+    ):
+        raise DualFinalError("campaign heavy-stage lock identity changed")
+
+
+def _prelaunch_audit_directory(
+    state: Mapping[str, Any], gate_id: str,
+) -> pathlib.Path:
+    return _gate_root(state["plan"], gate_id) / "ledger" / "prelaunch-audits"
+
+
+def _prelaunch_audit_paths(
+    state: Mapping[str, Any], gate_id: str,
+) -> list[pathlib.Path]:
+    directory = _prelaunch_audit_directory(state, gate_id)
+    if not directory.exists():
+        return []
+    _directory(directory, create=False)
+    paths = sorted(directory.iterdir())
+    expected = [directory / f"audit-{index:03d}.json" for index in range(len(paths))]
+    if paths != expected or any(path.is_symlink() or not path.is_file() for path in paths):
+        raise DualFinalError(f"{gate_id} prelaunch audit roster is not contiguous")
+    return paths
+
+
+def _validate_prelaunch_audit(
+    path: pathlib.Path, *, state: Mapping[str, Any],
+    bank_state: Mapping[str, Any], gate_id: str,
+) -> Record:
+    value = qualification.load_sealed(path, PRELAUNCH_AUDIT_SCHEMA)
+    match = re.fullmatch(r"audit-(\d{3})\.json", path.name)
+    if match is None:
+        raise DualFinalError(f"{gate_id} prelaunch audit route changed")
+    index = int(match.group(1))
+    expected_path = _prelaunch_audit_directory(state, gate_id) / f"audit-{index:03d}.json"
+    prior = (
+        None if index == 0 else _reference(
+            expected_path.parent / f"audit-{index - 1:03d}.json",
+            PRELAUNCH_AUDIT_SCHEMA,
+        )
+    )
+    lock = value.get("campaign_heavy_stage_lock")
+    lock_path = pathlib.Path(str(lock.get("path", ""))) if isinstance(lock, Mapping) else None
+    if (
+        path.is_symlink()
+        or path.resolve() != expected_path.resolve()
+        or set(value) != {
+            "schema", "namespace", "campaign_id", "attempt", "gate_id",
+            "status", "audit_sequence", "audited_at_utc", "execution_plan",
+            "bank_receipt", "prior_audit", "campaign_heavy_stage_lock",
+            "workers", "threads_per_worker", "thread_environment",
+            "actual_clock", "process_load_nice_audit", "body_sha256",
+        }
+        or value.get("namespace") != NAMESPACE
+        or value.get("campaign_id") != CAMPAIGN_ID
+        or value.get("attempt") != state["plan"]["attempt"]
+        or value.get("gate_id") != gate_id
+        or value.get("status") != "clean-exclusive-prelaunch-audit"
+        or value.get("audit_sequence") != index
+        or value.get("execution_plan")
+        != _reference(pathlib.Path(state["path"]), PLAN_SCHEMA)
+        or value.get("bank_receipt")
+        != _reference(bank_state["path"], BANK_RECEIPT_SCHEMA)
+        or value.get("prior_audit") != prior
+        or not isinstance(lock, Mapping)
+        or set(lock) != {"path", "device", "inode", "held_exclusively"}
+        or lock_path is None
+        or lock_path.is_symlink()
+        or lock_path.resolve()
+        != pathlib.Path(state["plan"]["campaign_heavy_stage_lock"]).resolve()
+        or isinstance(lock.get("device"), bool)
+        or not isinstance(lock.get("device"), int)
+        or isinstance(lock.get("inode"), bool)
+        or not isinstance(lock.get("inode"), int)
+        or lock.get("held_exclusively") is not True
+        or value.get("workers") != WORKERS
+        or value.get("threads_per_worker") != THREADS_PER_WORKER
+        or value.get("thread_environment") != THREAD_ENVIRONMENT
+        or value.get("actual_clock") is not True
+    ):
+        raise DualFinalError(f"{gate_id} prelaunch audit binding changed")
+    _utc(value.get("audited_at_utc"), f"{gate_id} prelaunch audit time")
+    _validate_process_audit(value.get("process_load_nice_audit"))
+    _verify_lock_identity(lock)
+    return value
+
+
+def _seal_prelaunch_audit(
+    state: Mapping[str, Any], *, bank_state: Mapping[str, Any], gate_id: str,
+    lock_evidence: Mapping[str, Any], process_auditor: ProcessAuditor,
+    clock: Callable[[], str],
+) -> pathlib.Path:
+    directory = _prelaunch_audit_directory(state, gate_id)
+    _directory(directory, create=True)
+    prior_paths = _prelaunch_audit_paths(state, gate_id)
+    index = len(prior_paths)
+    audit = _validate_process_audit(
+        process_auditor(pathlib.Path(state["plan"]["gate"]["path"]))
+    )
+    path = directory / f"audit-{index:03d}.json"
+    _write_sealed_once(path, {
+        "schema": PRELAUNCH_AUDIT_SCHEMA,
+        "namespace": NAMESPACE, "campaign_id": CAMPAIGN_ID,
+        "attempt": state["plan"]["attempt"], "gate_id": gate_id,
+        "status": "clean-exclusive-prelaunch-audit",
+        "audit_sequence": index,
+        "audited_at_utc": _utc(clock(), f"{gate_id} prelaunch audit time"),
+        "execution_plan": _reference(pathlib.Path(state["path"]), PLAN_SCHEMA),
+        "bank_receipt": _reference(bank_state["path"], BANK_RECEIPT_SCHEMA),
+        "prior_audit": (
+            None if not prior_paths else _reference(
+                prior_paths[-1], PRELAUNCH_AUDIT_SCHEMA
+            )
+        ),
+        "campaign_heavy_stage_lock": dict(lock_evidence),
+        "workers": WORKERS, "threads_per_worker": THREADS_PER_WORKER,
+        "thread_environment": THREAD_ENVIRONMENT,
+        "actual_clock": True,
+        "process_load_nice_audit": audit,
+    })
+    _validate_prelaunch_audit(
+        path, state=state, bank_state=bank_state, gate_id=gate_id
+    )
+    return path
+
+
 def _adapt_result(
     raw_path: pathlib.Path, *, plan: Mapping[str, Any],
     bank: Mapping[str, Any], index: int,
@@ -1749,6 +2650,7 @@ def _adapt_result(
     document = dict(result_validator(
         raw_path, expected_bank_sha256=bank["gate_bank"]["sha256"],
         expected_candidate_sha256=plan["candidate"]["source"]["sha256"],
+        expected_candidate_search_profile=plan["candidate_search_profile"],
     ))
     bindings = document.get("bindings", {})
     if (
@@ -1779,17 +2681,45 @@ def _adapt_result(
 
 def _consume_gate(
     state: Mapping[str, Any], bank_state: Mapping[str, Any], *,
-    gate_id: str, launched_at_utc: str,
+    gate_id: str, launched_at_utc: str, prelaunch_audit_path: pathlib.Path,
+    not_before_utc: str | None = None,
 ) -> pathlib.Path:
     root = _gate_root(state["plan"], gate_id)
     ledger = root / "ledger"
     _directory(ledger, create=True)
     path = ledger / "consumption.json"
+    captured_launch = _utc(launched_at_utc, f"{gate_id} launch time")
+    current_audit = _validate_prelaunch_audit(
+        prelaunch_audit_path, state=state, bank_state=bank_state,
+        gate_id=gate_id,
+    )
+    if qualification._utc(
+        captured_launch, f"{gate_id} launch time"
+    ) < qualification._utc(
+        current_audit["audited_at_utc"], f"{gate_id} prelaunch audit time"
+    ):
+        raise DualFinalError(f"{gate_id} launch predates its prelaunch audit")
+    if (
+        not_before_utc is not None
+        and qualification._utc(
+            captured_launch, f"{gate_id} captured launch time"
+        ) < qualification._utc(
+            not_before_utc, f"{gate_id} launch lower bound"
+        )
+    ):
+        raise DualFinalError(
+            f"{gate_id} consumption predates its authorized predecessor"
+        )
+    initial_audit = _reference(prelaunch_audit_path, PRELAUNCH_AUDIT_SCHEMA)
+    if path.exists():
+        existing_header = qualification.load_sealed(path, CONSUMPTION_SCHEMA)
+        if isinstance(existing_header.get("initial_prelaunch_audit"), Mapping):
+            initial_audit = dict(existing_header["initial_prelaunch_audit"])
     body = {
         "schema": CONSUMPTION_SCHEMA, "namespace": NAMESPACE,
         "campaign_id": CAMPAIGN_ID, "attempt": state["plan"]["attempt"],
         "gate_id": gate_id, "status": "gate-bank-consumed-at-launch",
-        "launched_at_utc": _utc(launched_at_utc, f"{gate_id} launch time"),
+        "launched_at_utc": captured_launch,
         "execution_plan": _reference(pathlib.Path(state["path"]), PLAN_SCHEMA),
         "bank_receipt": _reference(bank_state["path"], BANK_RECEIPT_SCHEMA),
         "fingerprint_exclusion": _reference(
@@ -1799,6 +2729,7 @@ def _consume_gate(
         "gate_binding": _reference(
             bank_state["binding_path"], qualification.GATE_BINDING_SCHEMA
         ),
+        "initial_prelaunch_audit": initial_audit,
         "workers": WORKERS, "threads_per_worker": THREADS_PER_WORKER,
         "one_launch_only": True, "retry_authorized": False,
         "upload_authorized": False,
@@ -1819,6 +2750,17 @@ def _consume_gate(
     else:
         _write_sealed_once(path, body)
         consumed_at_utc = body["launched_at_utc"]
+    if (
+        not_before_utc is not None
+        and qualification._utc(
+            consumed_at_utc, f"{gate_id} consumption time"
+        ) < qualification._utc(
+            not_before_utc, f"{gate_id} launch lower bound"
+        )
+    ):
+        raise DualFinalError(
+            f"{gate_id} consumption predates its authorized predecessor"
+        )
     # Prime the maintained primitive marker before the worker pool starts.
     # Otherwise four simultaneous first shard claims could race with different
     # second-resolution timestamps at a wall-clock boundary.
@@ -1865,7 +2807,8 @@ def _validate_consumption(
         set(value) != {
             "schema", "namespace", "campaign_id", "attempt", "gate_id",
             "status", "launched_at_utc", "execution_plan", "bank_receipt",
-            "fingerprint_exclusion", "gate_binding", "workers",
+            "fingerprint_exclusion", "gate_binding", "initial_prelaunch_audit",
+            "workers",
             "threads_per_worker", "one_launch_only", "retry_authorized",
             "upload_authorized", "body_sha256",
         }
@@ -1893,6 +2836,20 @@ def _validate_consumption(
     ):
         raise DualFinalError(f"{gate_id} consumption receipt changed")
     _utc(value.get("launched_at_utc"), f"{gate_id} launch time")
+    initial_audit_path = _verify_reference(
+        value.get("initial_prelaunch_audit"), PRELAUNCH_AUDIT_SCHEMA,
+        f"{gate_id} initial prelaunch audit",
+    )
+    initial_audit = _validate_prelaunch_audit(
+        initial_audit_path, state=state, bank_state=bank_state,
+        gate_id=gate_id,
+    )
+    if qualification._utc(
+        value["launched_at_utc"], f"{gate_id} launch time"
+    ) < qualification._utc(
+        initial_audit["audited_at_utc"], f"{gate_id} prelaunch audit time"
+    ):
+        raise DualFinalError(f"{gate_id} consumption predates its prelaunch audit")
     if (
         set(primitive) != {
             "schema", "namespace", "binding_sha256", "bank",
@@ -1906,6 +2863,25 @@ def _validate_consumption(
     ):
         raise DualFinalError(f"{gate_id} primitive consumption receipt changed")
     _utc(primitive.get("consumed_at_utc"), f"{gate_id} primitive launch time")
+    if gate_id == "gate-b":
+        first_bank = validate_bank_receipt(state, gate_id="gate-a")
+        first_aggregate = _validate_maintained_aggregate(
+            _gate_root(state["plan"], "gate-a") / "ledger" / "aggregate.json",
+            bank_state=first_bank,
+            uncontended_timing=state["plan"]["uncontended_timing"],
+        )
+        if (
+            first_aggregate.get("verdict", {}).get("passed") is not True
+            or qualification._utc(
+                value["launched_at_utc"], "gate-b launch time"
+            ) < qualification._utc(
+                first_aggregate.get("completed_at_utc"),
+                "gate-a completion time",
+            )
+        ):
+            raise DualFinalError(
+                "gate-b consumption does not follow passing gate-a completion"
+            )
     return path, value, primitive_path, primitive
 
 
@@ -1920,6 +2896,8 @@ def _audit_shards(
         claim_path = ledger / "claims" / f"shard-{index:03d}.json"
         receipt_path = ledger / "receipts" / f"shard-{index:03d}.json"
         if claim_path.exists():
+            if claim_path.is_symlink() or receipt_path.is_symlink():
+                raise DualFinalError(f"{gate_id} shard {index} route is redirected")
             if not receipt_path.exists():
                 raise qualification.SpentShardError(
                     f"{gate_id} shard {index} is spent without receipt; retry forbidden"
@@ -1934,21 +2912,130 @@ def _audit_shards(
             evidence = qualification.load_sealed(
                 evidence_path, RAW_EVIDENCE_SCHEMA
             )
+            expected_evidence_path = (
+                ledger / "raw-evidence" / f"shard-{index:03d}.json"
+            ).resolve()
+            if evidence_path.resolve() != expected_evidence_path:
+                raise DualFinalError(
+                    f"{gate_id} shard {index} evidence route changed"
+                )
+            prelaunch_path = _verify_reference(
+                evidence.get("prelaunch_audit"), PRELAUNCH_AUDIT_SCHEMA,
+                f"{gate_id} shard {index} prelaunch audit",
+            )
+            prelaunch = _validate_prelaunch_audit(
+                prelaunch_path, state=state, bank_state=bank_state,
+                gate_id=gate_id,
+            )
+            claim = qualification.load_sealed(
+                claim_path, qualification.SHARD_CLAIM_SCHEMA
+            )
             raw_path = _verify_record(
                 evidence.get("raw_gate_result"),
                 f"{gate_id} shard {index} raw result",
             )
+            expected_raw_path = (
+                ledger / "raw" / f"shard-{index:03d}.json"
+            ).resolve()
+            if raw_path.resolve() != expected_raw_path:
+                raise DualFinalError(
+                    f"{gate_id} shard {index} raw-result route changed"
+                )
+            _verify_frozen_gate(state["plan"])
+            gate_executable = dict(state["plan"]["gate"])
             games = _adapt_result(
                 raw_path, plan=state["plan"], bank=bank_state["receipt"],
                 index=index, result_validator=result_validator,
             )
+            expected_claim = qualification.seal({
+                "schema": qualification.SHARD_CLAIM_SCHEMA,
+                "namespace": qualification.NAMESPACE,
+                "one_shot": True,
+                "binding_sha256": qualification.sha256_file(
+                    bank_state["binding_path"]
+                ),
+                "bank_sha256": bank_state["binding"]["bank"]["sha256"],
+                "candidate_sha256": bank_state["binding"]["candidate"]["sha256"],
+                "opponent_sha256": bank_state["binding"]["opponent"]["sha256"],
+                "harness_sha256": bank_state["binding"]["harness"]["sha256"],
+                "shard_index": index,
+                "pair_begin": index * PAIRS_PER_SHARD,
+                "pair_count": PAIRS_PER_SHARD,
+                "started_at_utc": _utc(
+                    claim.get("started_at_utc"),
+                    f"{gate_id} shard {index} claim time",
+                ),
+            })
+            expected_evidence = qualification.seal({
+                "schema": RAW_EVIDENCE_SCHEMA, "namespace": NAMESPACE,
+                "campaign_id": CAMPAIGN_ID,
+                "attempt": state["plan"]["attempt"], "gate_id": gate_id,
+                "execution_plan": _reference(
+                    pathlib.Path(state["path"]), PLAN_SCHEMA
+                ),
+                "bank_receipt": _reference(
+                    bank_state["path"], BANK_RECEIPT_SCHEMA
+                ),
+                "prelaunch_audit": _reference(
+                    prelaunch_path, PRELAUNCH_AUDIT_SCHEMA
+                ),
+                "gate_executable": gate_executable,
+                "shard_index": index,
+                "actual_clock_configuration": _expected_gate_configuration(
+                    state["plan"], pair_offset=index * PAIRS_PER_SHARD
+                ),
+                "raw_gate_result": _record(raw_path),
+                "normalized_games_sha256": qualification.sha256_bytes(
+                    qualification.canonical_json_bytes(games)
+                ),
+            })
+            expected_receipt = qualification.seal({
+                "schema": qualification.SHARD_RECEIPT_SCHEMA,
+                "namespace": qualification.NAMESPACE,
+                "binding_sha256": qualification.sha256_file(
+                    bank_state["binding_path"]
+                ),
+                "claim": _reference(
+                    claim_path, qualification.SHARD_CLAIM_SCHEMA
+                ),
+                "shard_index": index,
+                "pair_begin": index * PAIRS_PER_SHARD,
+                "pair_count": PAIRS_PER_SHARD,
+                "games": sorted(
+                    games,
+                    key=lambda row: (row["pair_index"], row["candidate_color"]),
+                ),
+                "evidence": _reference(evidence_path, RAW_EVIDENCE_SCHEMA),
+                "completed_at_utc": _utc(
+                    receipt.get("completed_at_utc"),
+                    f"{gate_id} shard {index} completion time",
+                ),
+            })
             if (
-                evidence.get("execution_plan")
+                claim != expected_claim
+                or evidence != expected_evidence
+                or receipt != expected_receipt
+                or qualification._utc(
+                    receipt.get("completed_at_utc"),
+                    f"{gate_id} shard {index} completion time",
+                ) < qualification._utc(
+                    claim.get("started_at_utc"),
+                    f"{gate_id} shard {index} claim time",
+                )
+                or evidence.get("execution_plan")
                 != _reference(pathlib.Path(state["path"]), PLAN_SCHEMA)
                 or evidence.get("bank_receipt")
                 != _reference(bank_state["path"], BANK_RECEIPT_SCHEMA)
+                or evidence.get("gate_executable") != gate_executable
                 or evidence.get("gate_id") != gate_id
                 or evidence.get("shard_index") != index
+                or qualification._utc(
+                    claim.get("started_at_utc"),
+                    f"{gate_id} shard {index} claim time",
+                ) < qualification._utc(
+                    prelaunch.get("audited_at_utc"),
+                    f"{gate_id} shard {index} prelaunch audit time",
+                )
                 or evidence.get("actual_clock_configuration")
                 != _expected_gate_configuration(
                     state["plan"], pair_offset=index * PAIRS_PER_SHARD
@@ -1969,21 +3056,445 @@ def _audit_shards(
     return missing
 
 
+def _optional_partial_record(path: pathlib.Path, *, label: str) -> Record | None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise DualFinalError(f"{label} is redirected or irregular")
+    return _record(path) if path.is_file() else None
+
+
+def _validate_spent_shard_claim(
+    state: Mapping[str, Any], bank_state: Mapping[str, Any], *,
+    gate_id: str, index: int,
+) -> tuple[pathlib.Path, Record]:
+    ledger = _gate_root(state["plan"], gate_id) / "ledger"
+    claim_path = ledger / "claims" / f"shard-{index:03d}.json"
+    claim = qualification.load_sealed(
+        claim_path, qualification.SHARD_CLAIM_SCHEMA
+    )
+    expected = qualification.seal({
+        "schema": qualification.SHARD_CLAIM_SCHEMA,
+        "namespace": qualification.NAMESPACE,
+        "one_shot": True,
+        "binding_sha256": qualification.sha256_file(
+            bank_state["binding_path"]
+        ),
+        "bank_sha256": bank_state["binding"]["bank"]["sha256"],
+        "candidate_sha256": bank_state["binding"]["candidate"]["sha256"],
+        "opponent_sha256": bank_state["binding"]["opponent"]["sha256"],
+        "harness_sha256": bank_state["binding"]["harness"]["sha256"],
+        "shard_index": index,
+        "pair_begin": index * PAIRS_PER_SHARD,
+        "pair_count": PAIRS_PER_SHARD,
+        "started_at_utc": _utc(
+            claim.get("started_at_utc"),
+            f"{gate_id} shard {index} spent claim time",
+        ),
+    })
+    if claim != expected:
+        raise DualFinalError(f"{gate_id} shard {index} spent claim changed")
+    return claim_path.resolve(), claim
+
+
+def _derive_protected_abortion(
+    state: Mapping[str, Any], *, ensure_exclusions: bool,
+) -> Record:
+    """Derive the first terminal one-shot interruption without reading metrics."""
+
+    plan = state["plan"]
+    fingerprint_exclusions = _materialized_fingerprint_exclusions(
+        state, ensure=ensure_exclusions
+    )
+    for gate_id in GATE_IDS:
+        root = _gate_root(plan, gate_id)
+        claim_path = root / "bank-claim.json"
+        receipt_path = root / "bank-receipt.json"
+        if claim_path.exists() or claim_path.is_symlink():
+            spent_claim_path, _claim = _validate_spent_bank_claim(
+                state, gate_id=gate_id
+            )
+            try:
+                validate_bank_receipt(state, gate_id=gate_id)
+            except (
+                DualFinalError, qualification.QualificationError,
+                OSError, KeyError, TypeError, ValueError,
+            ):
+                return {
+                    "protected_stage": "bank-materialization",
+                    "gate_id": gate_id,
+                    "shard_index": None,
+                    "spent_claim": _reference(
+                        spent_claim_path, BANK_CLAIM_SCHEMA
+                    ),
+                    "partial_raw": None,
+                    "invalid_receipt": _optional_partial_record(
+                        receipt_path, label=f"{gate_id} invalid bank receipt"
+                    ),
+                    "fingerprint_exclusions": fingerprint_exclusions,
+                }
+        elif receipt_path.exists() or receipt_path.is_symlink():
+            raise DualFinalError(f"{gate_id} bank receipt exists without claim")
+    if not (pathlib.Path(plan["root"]) / "prepared.json").is_file():
+        raise DualFinalError("no spent protected bank or shard claim exists")
+    for gate_id in GATE_IDS:
+        if gate_id == "gate-b":
+            first_aggregate_path = (
+                _gate_root(plan, "gate-a") / "ledger" / "aggregate.json"
+            )
+            gate_b_started = any(
+                path.exists()
+                for directory in ("claims", "raw", "receipts")
+                for path in (
+                    _gate_root(plan, gate_id) / "ledger" / directory
+                ).glob("shard-*.json")
+            )
+            if gate_b_started:
+                first = _validate_maintained_aggregate(
+                    first_aggregate_path,
+                    bank_state=validate_bank_receipt(state, gate_id="gate-a"),
+                    uncontended_timing=plan["uncontended_timing"],
+                )
+                if first.get("verdict", {}).get("passed") is not True:
+                    raise DualFinalError("spent Gate B predates passing Gate A")
+        bank_state = validate_bank_receipt(state, gate_id=gate_id)
+        ledger = _gate_root(plan, gate_id) / "ledger"
+        for name in ("claims", "raw", "receipts"):
+            directory = ledger / name
+            if directory.exists():
+                _directory(directory, create=False)
+        for index in range(SHARDS):
+            claim_path = ledger / "claims" / f"shard-{index:03d}.json"
+            raw_path = ledger / "raw" / f"shard-{index:03d}.json"
+            receipt_path = ledger / "receipts" / f"shard-{index:03d}.json"
+            claim_exists = claim_path.exists() or claim_path.is_symlink()
+            raw_record = _optional_partial_record(
+                raw_path, label=f"{gate_id} shard {index} partial raw"
+            )
+            if receipt_path.is_file() and claim_exists:
+                try:
+                    qualification.validate_shard_receipt(
+                        receipt_path,
+                        binding_path=bank_state["binding_path"], index=index,
+                    )
+                except (
+                    qualification.QualificationError, OSError, KeyError,
+                    TypeError, ValueError,
+                ):
+                    valid_receipt = False
+                else:
+                    valid_receipt = True
+            elif receipt_path.exists() or receipt_path.is_symlink():
+                if not claim_exists:
+                    raise DualFinalError(
+                        f"{gate_id} shard {index} receipt exists without claim"
+                    )
+                valid_receipt = False
+            else:
+                valid_receipt = False
+            if valid_receipt:
+                _validate_spent_shard_claim(
+                    state, bank_state, gate_id=gate_id, index=index
+                )
+                continue
+            if claim_exists or raw_record is not None:
+                spent_claim = None
+                if claim_exists:
+                    spent_claim_path, _claim = _validate_spent_shard_claim(
+                        state, bank_state, gate_id=gate_id, index=index
+                    )
+                    spent_claim = _reference(
+                        spent_claim_path, qualification.SHARD_CLAIM_SCHEMA
+                    )
+                return {
+                    "protected_stage": "shard-execution",
+                    "gate_id": gate_id,
+                    "shard_index": index,
+                    "spent_claim": spent_claim,
+                    "partial_raw": raw_record,
+                    "invalid_receipt": _optional_partial_record(
+                        receipt_path,
+                        label=f"{gate_id} shard {index} invalid receipt",
+                    ),
+                    "fingerprint_exclusions": fingerprint_exclusions,
+                }
+    raise DualFinalError("no spent protected bank or shard claim exists")
+
+
+def _archived_abortion_state(
+    plan_path: pathlib.Path, *, campaign_plan_path: pathlib.Path,
+) -> Record:
+    plan = qualification.load_sealed(plan_path, PLAN_SCHEMA)
+    if plan.get("campaign_plan") != _record(campaign_plan_path):
+        raise DualFinalError("protected abortion belongs to another campaign")
+    exclusions, fingerprints = _normalize_exclusions(
+        [pathlib.Path(item["path"]) for item in plan["exclusion_sources"]],
+        [item["sha256"] for item in plan["exclusion_sources"]],
+        fingerprint_loader=_extract_fingerprints,
+    )
+    if exclusions != plan["exclusion_sources"]:
+        raise DualFinalError("archived protected exclusions changed")
+    source_binding_path = _verify_reference(
+        plan.get("source_binding"), qualification.SOURCE_BINDING_SCHEMA,
+        "archived protected source binding",
+    )
+    return {
+        "path": plan_path.resolve(), "plan": plan,
+        "fingerprints": fingerprints,
+        "source_binding_path": source_binding_path,
+    }
+
+
+def _validate_protected_abortion_with_state(
+    path: pathlib.Path, *, state: Mapping[str, Any],
+) -> Record:
+    value = qualification.load_sealed(path, PROTECTED_STAGE_ABORTION_SCHEMA)
+    plan = state["plan"]
+    expected_path = pathlib.Path(plan["root"]) / "protected-stage-aborted.json"
+    derived = _derive_protected_abortion(state, ensure_exclusions=False)
+    expected_fields = {
+        "schema", "namespace", "campaign_id", "attempt", "status",
+        "execution_plan", "execution_identity", "source_binding",
+        "candidate", "candidate_commit", "protected_stage", "gate_id",
+        "shard_index", "spent_claim", "partial_raw", "invalid_receipt",
+        "fingerprint_exclusions", "materialized_bank_count",
+        "abandonment_quiescence_audit",
+        "failure_class", "candidate_rejected", "protected_bank_metrics_read",
+        "partial_metrics_read", "improvement_counted", "training_eligible",
+        "retry_authorized", "upload_authorized", "aborted_at_utc",
+        "body_sha256",
+    }
+    if (
+        path.is_symlink()
+        or path.resolve() != expected_path.resolve()
+        or set(value) != expected_fields
+        or value.get("namespace") != NAMESPACE
+        or value.get("campaign_id") != CAMPAIGN_ID
+        or value.get("attempt") != plan["attempt"]
+        or value.get("status") != "protected-stage-aborted-candidate-rejected"
+        or value.get("execution_plan")
+        != _reference(pathlib.Path(state["path"]), PLAN_SCHEMA)
+        or value.get("execution_identity") != plan["execution_identity"]
+        or value.get("source_binding") != plan["source_binding"]
+        or value.get("candidate") != {
+            "runtime_sha256": plan["candidate"]["runtime"]["sha256"],
+            "source_sha256": plan["candidate"]["source"]["sha256"],
+        }
+        or value.get("candidate_commit") != plan["candidate_commit"]
+        or any(value.get(key) != derived[key] for key in (
+            "protected_stage", "gate_id", "shard_index", "spent_claim",
+            "partial_raw", "invalid_receipt", "fingerprint_exclusions",
+        ))
+        or value.get("materialized_bank_count")
+        != len(derived["fingerprint_exclusions"])
+        or _validate_process_audit(
+            value.get("abandonment_quiescence_audit")
+        ) != value.get("abandonment_quiescence_audit")
+        or value.get("failure_class") != "infrastructure-interruption"
+        or value.get("candidate_rejected") is not True
+        or value.get("protected_bank_metrics_read") is not False
+        or value.get("partial_metrics_read") is not False
+        or value.get("improvement_counted") is not False
+        or value.get("training_eligible") is not False
+        or value.get("retry_authorized") is not False
+        or value.get("upload_authorized") is not False
+    ):
+        raise DualFinalError("protected-stage abortion binding changed")
+    aborted = qualification._utc(
+        value.get("aborted_at_utc"), "protected abortion time"
+    )
+    claim_record = value.get("spent_claim")
+    if isinstance(claim_record, Mapping):
+        claim_path = _verify_reference(
+            claim_record, str(claim_record.get("schema", "")),
+            "protected spent claim",
+        )
+        claim = qualification.load_sealed(claim_path)
+        claim_time = claim.get("claimed_at_utc", claim.get("started_at_utc"))
+        if qualification._utc(
+            claim_time, "protected spent claim time"
+        ) > aborted:
+            raise DualFinalError("protected abortion predates its spent claim")
+    return value
+
+
+def validate_protected_stage_abortion(
+    path: pathlib.Path, *, campaign_plan_path: pathlib.Path,
+    state_validator: Callable[[pathlib.Path], Mapping[str, Any]] = validate_execution_plan,
+    allow_injected_test_evidence: bool = False,
+) -> Record:
+    header = qualification.load_sealed(path, PROTECTED_STAGE_ABORTION_SCHEMA)
+    plan_path = _verify_reference(
+        header.get("execution_plan"), PLAN_SCHEMA,
+        "protected abortion execution plan",
+    )
+    initial_plan, _injected = _guard_execution_overrides(
+        plan_path,
+        supplied={"state_validator": state_validator},
+        defaults={"state_validator": validate_execution_plan},
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    state = dict(state_validator(plan_path))
+    _require_exact_validated_state(plan_path, state, initial_plan)
+    if pathlib.Path(state["plan"]["campaign_plan"]["path"]).resolve() != (
+        campaign_plan_path.resolve()
+    ):
+        raise DualFinalError("protected abortion belongs to another campaign")
+    return _validate_protected_abortion_with_state(path, state=state)
+
+
+def validate_protected_stage_abortion_archived(
+    path: pathlib.Path, *, campaign_plan_path: pathlib.Path,
+) -> Record:
+    header = qualification.load_sealed(path, PROTECTED_STAGE_ABORTION_SCHEMA)
+    plan_path = _verify_reference(
+        header.get("execution_plan"), PLAN_SCHEMA,
+        "archived protected abortion execution plan",
+    )
+    state = _archived_abortion_state(
+        plan_path, campaign_plan_path=campaign_plan_path.resolve()
+    )
+    return _validate_protected_abortion_with_state(path, state=state)
+
+
+def abandon_protected_stage(
+    plan_path: pathlib.Path, *, aborted_at_utc: str,
+    state_validator: Callable[[pathlib.Path], Mapping[str, Any]] = validate_execution_plan,
+    governance_recorder: Callable[..., Mapping[str, Any]] = challenger.record_protected_stage_abort,
+    process_auditor: ProcessAuditor = _default_prelaunch_process_audit,
+    allow_injected_test_evidence: bool = False,
+) -> pathlib.Path:
+    """Seal and ledger-record a spent protected bank/shard without retrying it."""
+
+    initial_plan, _injected = _guard_execution_overrides(
+        plan_path,
+        supplied={
+            "state_validator": state_validator,
+            "governance_recorder": governance_recorder,
+            "process_auditor": process_auditor,
+        },
+        defaults={
+            "state_validator": validate_execution_plan,
+            "governance_recorder": challenger.record_protected_stage_abort,
+            "process_auditor": _default_prelaunch_process_audit,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    state = dict(state_validator(plan_path))
+    _require_exact_validated_state(plan_path, state, initial_plan)
+    _guard_state_overrides(
+        state,
+        supplied={
+            "state_validator": state_validator,
+            "governance_recorder": governance_recorder,
+            "process_auditor": process_auditor,
+        },
+        defaults={
+            "state_validator": validate_execution_plan,
+            "governance_recorder": challenger.record_protected_stage_abort,
+            "process_auditor": _default_prelaunch_process_audit,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    output = pathlib.Path(state["plan"]["root"]) / "protected-stage-aborted.json"
+    if output.exists():
+        value = _validate_protected_abortion_with_state(output, state=state)
+        governance_recorder(
+            pathlib.Path(state["plan"]["campaign_plan"]["path"]),
+            abortion_path=output,
+            created_at_utc=value["aborted_at_utc"],
+        )
+        return output.resolve()
+    with _exclusive_heavy_stage_lock(state):
+        bank_lock = pathlib.Path(state["plan"]["root"]) / "bank-materialization.lock"
+        descriptor = os.open(
+            bank_lock,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600,
+        )
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as error:
+                raise DualFinalError(
+                    "another dual-final materialization is active"
+                ) from error
+            quiescence_audit = _validate_process_audit(
+                process_auditor(pathlib.Path(state["plan"]["gate"]["path"]))
+            )
+            derived = _derive_protected_abortion(
+                state, ensure_exclusions=True
+            )
+            _write_sealed_once(output, {
+                "schema": PROTECTED_STAGE_ABORTION_SCHEMA,
+                "namespace": NAMESPACE, "campaign_id": CAMPAIGN_ID,
+                "attempt": state["plan"]["attempt"],
+                "status": "protected-stage-aborted-candidate-rejected",
+                "execution_plan": _reference(plan_path, PLAN_SCHEMA),
+                "execution_identity": dict(state["plan"]["execution_identity"]),
+                "source_binding": state["plan"]["source_binding"],
+                "candidate": {
+                    "runtime_sha256": state["plan"]["candidate"]["runtime"]["sha256"],
+                    "source_sha256": state["plan"]["candidate"]["source"]["sha256"],
+                },
+                "candidate_commit": state["plan"]["candidate_commit"],
+                **derived,
+                "materialized_bank_count": len(
+                    derived["fingerprint_exclusions"]
+                ),
+                "abandonment_quiescence_audit": quiescence_audit,
+                "failure_class": "infrastructure-interruption",
+                "candidate_rejected": True,
+                "protected_bank_metrics_read": False,
+                "partial_metrics_read": False,
+                "improvement_counted": False,
+                "training_eligible": False,
+                "retry_authorized": False,
+                "upload_authorized": False,
+                "aborted_at_utc": _utc(
+                    aborted_at_utc, "protected abortion time"
+                ),
+            })
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+    _validate_protected_abortion_with_state(output, state=state)
+    governance_recorder(
+        pathlib.Path(state["plan"]["campaign_plan"]["path"]),
+        abortion_path=output,
+        created_at_utc=aborted_at_utc,
+    )
+    return output.resolve()
+
+
 def _execute_gate(
     state: Mapping[str, Any], *, gate_id: str, launched_at_utc: str,
     runner: GateRunner, result_validator: ResultValidator,
     clock: Callable[[], str],
+    prelaunch_audit_path: pathlib.Path | None = None,
+    not_before_utc: str | None = None,
     executor_factory: Callable[..., Any] = concurrent.futures.ThreadPoolExecutor,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
+    _guard_state_overrides(
+        state,
+        supplied={
+            "runner": runner, "result_validator": result_validator,
+            "clock": clock, "executor_factory": executor_factory,
+        },
+        defaults={
+            "runner": run_gate_process,
+            "result_validator": gate_support.validate_result,
+            "clock": utc_now,
+            "executor_factory": concurrent.futures.ThreadPoolExecutor,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     bank_state = validate_bank_receipt(state, gate_id=gate_id)
+    _verify_frozen_gate(state["plan"])
     root = _gate_root(state["plan"], gate_id)
     ledger = root / "ledger"
     _directory(ledger, create=True)
     for name in ("claims", "receipts", "raw", "raw-evidence"):
         _directory(ledger / name, create=True)
-    _consume_gate(
-        state, bank_state, gate_id=gate_id, launched_at_utc=launched_at_utc
-    )
     missing = _audit_shards(
         state, bank_state, gate_id=gate_id,
         result_validator=result_validator,
@@ -1996,12 +3507,38 @@ def _execute_gate(
             aggregate_path, bank_state=bank_state,
             uncontended_timing=state["plan"]["uncontended_timing"],
         )
+        _validate_consumption(state, bank_state, gate_id=gate_id)
         return aggregate_path
+    if prelaunch_audit_path is None:
+        raise DualFinalError(f"{gate_id} lacks a sealed prelaunch audit")
+    prelaunch = _validate_prelaunch_audit(
+        prelaunch_audit_path, state=state, bank_state=bank_state,
+        gate_id=gate_id,
+    )
+    _verify_lock_identity(prelaunch["campaign_heavy_stage_lock"])
+    _consume_gate(
+        state, bank_state, gate_id=gate_id, launched_at_utc=launched_at_utc,
+        prelaunch_audit_path=prelaunch_audit_path,
+        not_before_utc=not_before_utc,
+    )
 
     def one(index: int) -> int:
+        _verify_lock_identity(prelaunch["campaign_heavy_stage_lock"])
+        gate_executable = _record(
+            _verify_frozen_gate(state["plan"]), executable=True
+        )
+        started_at_utc = _utc(
+            clock(), f"{gate_id} shard {index} claim time"
+        )
+        if qualification._utc(
+            started_at_utc, f"{gate_id} shard {index} claim time"
+        ) < qualification._utc(
+            prelaunch["audited_at_utc"], f"{gate_id} prelaunch audit time"
+        ):
+            raise DualFinalError(f"{gate_id} shard claim predates prelaunch audit")
         qualification.start_final_shard(
             ledger, binding_path=bank_state["binding_path"], index=index,
-            started_at_utc=clock(),
+            started_at_utc=started_at_utc,
         )
         raw_path = ledger / "raw" / f"shard-{index:03d}.json"
         raw = runner({
@@ -2011,6 +3548,7 @@ def _execute_gate(
             "command": gate_command(
                 state["plan"], bank_state["receipt"], index, raw_path
             ),
+            "gate_executable": gate_executable,
             "workers": WORKERS, "threads_per_worker": THREADS_PER_WORKER,
         })
         if isinstance(raw, (str, os.PathLike, pathlib.Path)) and pathlib.Path(raw).is_file():
@@ -2025,6 +3563,10 @@ def _execute_gate(
             raw_file, plan=state["plan"], bank=bank_state["receipt"],
             index=index, result_validator=result_validator,
         )
+        if _record(
+            _verify_frozen_gate(state["plan"]), executable=True
+        ) != gate_executable:
+            raise DualFinalError("Rank-4 gate executable changed during shard")
         evidence_path = ledger / "raw-evidence" / f"shard-{index:03d}.json"
         _write_sealed_once(evidence_path, {
             "schema": RAW_EVIDENCE_SCHEMA, "namespace": NAMESPACE,
@@ -2032,6 +3574,10 @@ def _execute_gate(
             "gate_id": gate_id,
             "execution_plan": _reference(pathlib.Path(state["path"]), PLAN_SCHEMA),
             "bank_receipt": _reference(bank_state["path"], BANK_RECEIPT_SCHEMA),
+            "prelaunch_audit": _reference(
+                prelaunch_audit_path, PRELAUNCH_AUDIT_SCHEMA
+            ),
+            "gate_executable": gate_executable,
             "shard_index": index,
             "actual_clock_configuration": _expected_gate_configuration(
                 state["plan"], pair_offset=index * PAIRS_PER_SHARD
@@ -2152,10 +3698,40 @@ def _normalized_aggregate(
     return output
 
 
+def _aggregate_raw_search_profile(
+    state: Mapping[str, Any], *, bank_state: Mapping[str, Any],
+    gate_id: str, result_validator: ResultValidator,
+) -> Record:
+    ledger = _gate_root(state["plan"], gate_id) / "ledger"
+    documents = []
+    for index in range(SHARDS):
+        raw_path = ledger / "raw" / f"shard-{index:03d}.json"
+        documents.append(dict(result_validator(
+            raw_path,
+            expected_bank_sha256=bank_state["receipt"]["gate_bank"]["sha256"],
+            expected_candidate_sha256=state["plan"]["candidate"]["source"][
+                "sha256"
+            ],
+            expected_candidate_search_profile=state["plan"][
+                "candidate_search_profile"
+            ],
+        )))
+    try:
+        return gate_support.aggregate_search_profile_activation(
+            documents, state["plan"]["candidate_search_profile"],
+            require_exercised=False,
+        )
+    except Exception as error:
+        raise DualFinalError(
+            f"{gate_id} candidate search profile evidence is invalid"
+        ) from error
+
+
 def _deep_evidence(
     state: Mapping[str, Any], *, dual_reference: pathlib.Path,
     gate_id: str, aggregate_path: pathlib.Path,
     result_validator: ResultValidator,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     prepared_reference, prepared = _load_prepared(state)
     if prepared_reference.resolve() != dual_reference.resolve():
@@ -2188,6 +3764,10 @@ def _deep_evidence(
     normalized_path = _normalized_aggregate(
         state, gate_id=gate_id, aggregate_path=aggregate_path
     )
+    search_profile_activation = _aggregate_raw_search_profile(
+        state, bank_state=bank_state, gate_id=gate_id,
+        result_validator=result_validator,
+    )
     ledger = _gate_root(state["plan"], gate_id) / "ledger"
     (
         consumption_path, consumption, primitive_consumption_path,
@@ -2201,6 +3781,11 @@ def _deep_evidence(
         or consumption.get("threads_per_worker") != THREADS_PER_WORKER
         or consumption.get("one_launch_only") is not True
         or consumption.get("retry_authorized") is not False
+        or qualification._utc(
+            maintained.get("completed_at_utc"), f"{gate_id} completion time"
+        ) < qualification._utc(
+            consumption.get("launched_at_utc"), f"{gate_id} consumption time"
+        )
         or primitive_consumption.get("binding_sha256")
         != qualification.sha256_file(bank_state["binding_path"])
         or primitive_consumption.get("bank") != bank_state["binding"]["bank"]
@@ -2228,6 +3813,15 @@ def _deep_evidence(
         receipts.append(_reference(receipt_path, qualification.SHARD_RECEIPT_SCHEMA))
         raw_evidence.append(_reference(evidence_path, RAW_EVIDENCE_SCHEMA))
         raw_results.append(_record(raw_path))
+    prelaunch_audits = [
+        _reference(path, PRELAUNCH_AUDIT_SCHEMA)
+        for path in _prelaunch_audit_paths(state, gate_id)
+        if _validate_prelaunch_audit(
+            path, state=state, bank_state=bank_state, gate_id=gate_id
+        )
+    ]
+    if not prelaunch_audits:
+        raise DualFinalError(f"{gate_id} has no sealed prelaunch audit")
     output = ledger / "governance-gate-evidence.json"
     _write_sealed_once(output, {
         # The outer schema is intentionally the governor's accepted input.  The
@@ -2270,9 +3864,12 @@ def _deep_evidence(
         "shards": SHARDS, "pairs_per_shard": PAIRS_PER_SHARD,
         "actual_clock": True,
         "configuration": dict(state["plan"]["configuration"]),
+        "candidate_search_profile": state["plan"]["candidate_search_profile"],
+        "search_profile_activation": search_profile_activation,
         "all_shards_complete": True,
         "consumption": _reference(consumption_path, CONSUMPTION_SCHEMA),
         "primitive_consumption": _record(primitive_consumption_path),
+        "prelaunch_audits": prelaunch_audits,
         "claims": claims, "receipts": receipts,
         "raw_evidence": raw_evidence, "raw_gate_results": raw_results,
         "maintained_aggregate": _reference(
@@ -2297,12 +3894,16 @@ def _deep_evidence(
             "gate_binary_and_compiler_bound": True,
             "actual_clock_configuration_bound": True,
             "preflight_timing_and_ci_bound": True,
+            "gate_order_chronology_bound": True,
+            "search_profile_activation_bound": True,
+            "exclusive_prelaunch_audits_bound": True,
             "no_retry_or_reuse": True,
         },
     })
     validate_gate_evidence(
         output, state=state, dual_reference=dual_reference,
         result_validator=result_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
     return output
 
@@ -2310,9 +3911,16 @@ def _deep_evidence(
 def validate_gate_evidence(
     path: pathlib.Path, *, state: Mapping[str, Any],
     dual_reference: pathlib.Path, result_validator: ResultValidator = gate_support.validate_result,
+    allow_injected_test_evidence: bool = False,
 ) -> Record:
     """Recursively validate an evidence adapter accepted by governance."""
 
+    _guard_state_overrides(
+        state,
+        supplied={"result_validator": result_validator},
+        defaults={"result_validator": gate_support.validate_result},
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     value = qualification.load_sealed(
         path, challenger.FINAL_GATE_EVIDENCE_SCHEMA
     )
@@ -2354,6 +3962,10 @@ def validate_gate_evidence(
         state, bank_state, gate_id=str(gate_id),
         result_validator=result_validator,
     )
+    expected_search_activation = _aggregate_raw_search_profile(
+        state, bank_state=bank_state, gate_id=str(gate_id),
+        result_validator=result_validator,
+    )
     ledger = _gate_root(state["plan"], str(gate_id)) / "ledger"
     expected_rosters = {
         "claims": [
@@ -2378,6 +3990,14 @@ def validate_gate_evidence(
             _record(ledger / "raw" / f"shard-{index:03d}.json")
             for index in range(SHARDS)
         ],
+        "prelaunch_audits": [
+            _reference(path, PRELAUNCH_AUDIT_SCHEMA)
+            for path in _prelaunch_audit_paths(state, str(gate_id))
+            if _validate_prelaunch_audit(
+                path, state=state, bank_state=bank_state,
+                gate_id=str(gate_id),
+            )
+        ],
     }
     consumption_path, consumption, primitive_path, primitive = (
         _validate_consumption(state, bank_state, gate_id=str(gate_id))
@@ -2397,6 +4017,9 @@ def validate_gate_evidence(
         "gate_binary_and_compiler_bound": True,
         "actual_clock_configuration_bound": True,
         "preflight_timing_and_ci_bound": True,
+        "gate_order_chronology_bound": True,
+        "search_profile_activation_bound": True,
+        "exclusive_prelaunch_audits_bound": True,
         "no_retry_or_reuse": True,
     }
     expected_fields = {
@@ -2406,15 +4029,17 @@ def validate_gate_evidence(
         "candidate_commit", "runtime_identity", "bank", "bank_receipt",
         "fingerprint_exclusion", "gate_binding", "pairs", "games", "workers",
         "threads_per_worker", "shards", "pairs_per_shard", "actual_clock",
-        "configuration", "all_shards_complete", "consumption",
-        "primitive_consumption", "claims", "receipts", "raw_evidence",
-        "raw_gate_results", "maintained_aggregate", "aggregate", "summary",
+        "configuration", "candidate_search_profile",
+        "search_profile_activation", "all_shards_complete", "consumption",
+        "primitive_consumption", "prelaunch_audits", "claims", "receipts",
+        "raw_evidence", "raw_gate_results", "maintained_aggregate", "aggregate", "summary",
         "verdict", "deployment_preflight", "compile_binding",
         "preflight_kind", "preflight_schema", "uncontended_timing", "ci",
         "deep_validation", "body_sha256",
     }
     if (
         missing
+        or not expected_rosters["prelaunch_audits"]
         or set(value) != expected_fields
         or value.get("bridge_schema") != DEEP_GATE_EVIDENCE_SCHEMA
         or value.get("namespace") != NAMESPACE
@@ -2457,6 +4082,10 @@ def validate_gate_evidence(
         or value.get("pairs_per_shard") != PAIRS_PER_SHARD
         or value.get("actual_clock") is not True
         or value.get("configuration") != state["plan"]["configuration"]
+        or value.get("candidate_search_profile")
+        != state["plan"]["candidate_search_profile"]
+        or value.get("search_profile_activation")
+        != expected_search_activation
         or value.get("all_shards_complete") is not True
         or any(value.get(name) != roster for name, roster in expected_rosters.items())
         or value.get("summary") != maintained["summary"]
@@ -2496,6 +4125,11 @@ def validate_gate_evidence(
         != state["plan"]["uncontended_timing"]
         or value.get("ci") != state["plan"]["ci"]
         or deep != expected_deep
+        or qualification._utc(
+            maintained.get("completed_at_utc"), f"{gate_id} completion time"
+        ) < qualification._utc(
+            consumption.get("launched_at_utc"), f"{gate_id} consumption time"
+        )
         or consumption.get("retry_authorized") is not False
         or consumption_path.resolve() != ledger.resolve() / "consumption.json"
         or primitive_path.resolve() != ledger.resolve() / "bank-consumed.json"
@@ -2505,7 +4139,10 @@ def validate_gate_evidence(
         raise DualFinalError("deep final-gate evidence closure changed")
     # Re-run the expensive source/preflight/CI/exclusion validators last; this
     # guarantees callers cannot use a copied evidence closure after inputs move.
-    validate_execution_plan(pathlib.Path(state["path"]))
+    validate_execution_plan(
+        pathlib.Path(state["path"]),
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     return value
 
 
@@ -2513,6 +4150,7 @@ def validate_governance_evidence(
     path: pathlib.Path, *, campaign_plan_path: pathlib.Path,
     dual_reference: pathlib.Path,
     result_validator: ResultValidator = gate_support.validate_result,
+    allow_injected_test_evidence: bool = False,
 ) -> Record:
     """Convenience entrypoint for the challenger governor's lazy import.
 
@@ -2526,12 +4164,22 @@ def validate_governance_evidence(
     execution_path = _verify_reference(
         header.get("execution_plan"), PLAN_SCHEMA, "deep execution plan"
     )
-    state = validate_execution_plan(execution_path)
+    state = validate_execution_plan(
+        execution_path,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    _guard_state_overrides(
+        state,
+        supplied={"result_validator": result_validator},
+        defaults={"result_validator": gate_support.validate_result},
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     if state["campaign_plan"].resolve() != campaign_plan_path.resolve():
         raise DualFinalError("deep evidence belongs to another campaign plan")
     return validate_gate_evidence(
         path, state=state, dual_reference=dual_reference,
         result_validator=result_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
 
 
@@ -2544,19 +4192,102 @@ def run_dual_final(
     result_recorder: Callable[..., pathlib.Path] = challenger.record_final_result,
     dual_completer: Callable[..., pathlib.Path] = challenger.complete_dual_final,
     executor_factory: Callable[..., Any] = concurrent.futures.ThreadPoolExecutor,
+    process_auditor: ProcessAuditor = _default_prelaunch_process_audit,
+    allow_injected_test_evidence: bool = False,
 ) -> Record:
     """Run A, and only after an exact pass run B; safely resume receipts."""
 
-    state = dict(state_validator(plan_path))
-    plan = state["plan"]
-    dual_reference, _prepared = _load_prepared(state)
-    challenger.validate_dual_final(
-        dual_reference,
-        plan_path=pathlib.Path(plan["campaign_plan"]["path"]),
+    initial_plan, _injected = _guard_execution_overrides(
+        plan_path,
+        supplied={
+            "runner": runner,
+            "result_validator": result_validator,
+            "clock": clock,
+            "state_validator": state_validator,
+            "result_recorder": result_recorder,
+            "dual_completer": dual_completer,
+            "executor_factory": executor_factory,
+            "process_auditor": process_auditor,
+        },
+        defaults={
+            "runner": run_gate_process,
+            "result_validator": gate_support.validate_result,
+            "clock": utc_now,
+            "state_validator": validate_execution_plan,
+            "result_recorder": challenger.record_final_result,
+            "dual_completer": challenger.complete_dual_final,
+            "executor_factory": concurrent.futures.ThreadPoolExecutor,
+            "process_auditor": _default_prelaunch_process_audit,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
+    state = dict(state_validator(plan_path))
+    _require_exact_validated_state(plan_path, state, initial_plan)
+    _guard_state_overrides(
+        state,
+        supplied={
+            "runner": runner,
+            "result_validator": result_validator,
+            "clock": clock,
+            "state_validator": state_validator,
+            "result_recorder": result_recorder,
+            "dual_completer": dual_completer,
+            "executor_factory": executor_factory,
+            "process_auditor": process_auditor,
+        },
+        defaults={
+            "runner": run_gate_process,
+            "result_validator": gate_support.validate_result,
+            "clock": utc_now,
+            "state_validator": validate_execution_plan,
+            "result_recorder": challenger.record_final_result,
+            "dual_completer": challenger.complete_dual_final,
+            "executor_factory": concurrent.futures.ThreadPoolExecutor,
+            "process_auditor": _default_prelaunch_process_audit,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    abortion_path = (
+        pathlib.Path(state["plan"]["root"]) / "protected-stage-aborted.json"
+    )
+    if abortion_path.exists() or abortion_path.is_symlink():
+        _validate_protected_abortion_with_state(abortion_path, state=state)
+        raise DualFinalError(
+            "protected dual-final attempt is aborted and cannot retry"
+        )
+    with _exclusive_heavy_stage_lock(state) as lock_evidence:
+        if abortion_path.exists() or abortion_path.is_symlink():
+            _validate_protected_abortion_with_state(abortion_path, state=state)
+            raise DualFinalError(
+                "protected dual-final attempt is aborted and cannot retry"
+            )
+        return _run_dual_final_locked(
+            state, plan_path=plan_path, launched_at_utc=launched_at_utc,
+            runner=runner, result_validator=result_validator, clock=clock,
+            result_recorder=result_recorder, dual_completer=dual_completer,
+            executor_factory=executor_factory,
+            process_auditor=process_auditor, lock_evidence=lock_evidence,
+            allow_injected_test_evidence=allow_injected_test_evidence,
+        )
+
+
+def _run_dual_final_locked(
+    state: Mapping[str, Any], *, plan_path: pathlib.Path,
+    launched_at_utc: str, runner: GateRunner,
+    result_validator: ResultValidator, clock: Callable[[], str],
+    result_recorder: Callable[..., pathlib.Path],
+    dual_completer: Callable[..., pathlib.Path],
+    executor_factory: Callable[..., Any], process_auditor: ProcessAuditor,
+    lock_evidence: Mapping[str, Any],
+    allow_injected_test_evidence: bool,
+) -> Record:
+    plan = state["plan"]
+    run_started_at_utc = _utc(launched_at_utc, "dual-final run start time")
+    dual_reference, _prepared = _load_prepared(state)
     results: dict[str, pathlib.Path] = {}
     evidence: dict[str, pathlib.Path] = {}
     for gate_id in GATE_IDS:
+        predecessor_completed_at_utc: str | None = None
         if gate_id == "gate-b":
             first_aggregate = qualification.load_sealed(
                 _gate_root(plan, "gate-a") / "ledger" / "aggregate.json",
@@ -2564,14 +4295,56 @@ def run_dual_final(
             )
             if first_aggregate.get("verdict", {}).get("passed") is not True:
                 break
+            predecessor_completed_at_utc = _utc(
+                first_aggregate.get("completed_at_utc"),
+                "gate-a completion time",
+            )
+        aggregate_candidate = (
+            _gate_root(plan, gate_id) / "ledger" / "aggregate.json"
+        )
+        prelaunch_audit_path: pathlib.Path | None = None
+        if not aggregate_candidate.exists():
+            bank_state = validate_bank_receipt(state, gate_id=gate_id)
+            prelaunch_audit_path = _seal_prelaunch_audit(
+                state, bank_state=bank_state, gate_id=gate_id,
+                lock_evidence=lock_evidence,
+                process_auditor=process_auditor, clock=clock,
+            )
+        gate_launch_at_utc = _utc(
+            clock(), f"{gate_id} internally captured launch time"
+        )
+        consumption_exists = (
+            _gate_root(plan, gate_id) / "ledger" / "consumption.json"
+        ).exists()
+        lower_bound = predecessor_completed_at_utc
+        if not consumption_exists and (
+            lower_bound is None
+            or qualification._utc(
+                run_started_at_utc, "dual-final run start time"
+            ) > qualification._utc(lower_bound, f"{gate_id} predecessor time")
+        ):
+            lower_bound = run_started_at_utc
+        if (
+            lower_bound is not None
+            and qualification._utc(
+                gate_launch_at_utc, f"{gate_id} internally captured launch time"
+            ) < qualification._utc(lower_bound, f"{gate_id} launch lower bound")
+        ):
+            raise DualFinalError(
+                f"{gate_id} internally captured launch predates its predecessor"
+            )
         aggregate_path = _execute_gate(
-            state, gate_id=gate_id, launched_at_utc=launched_at_utc,
+            state, gate_id=gate_id, launched_at_utc=gate_launch_at_utc,
             runner=runner, result_validator=result_validator, clock=clock,
+            prelaunch_audit_path=prelaunch_audit_path,
+            not_before_utc=lower_bound,
             executor_factory=executor_factory,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         evidence_path = _deep_evidence(
             state, dual_reference=dual_reference, gate_id=gate_id,
             aggregate_path=aggregate_path, result_validator=result_validator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         result = result_recorder(
             dual_reference,
@@ -2612,6 +4385,8 @@ def run_dual_final(
     body = {
         "schema": RUN_RECEIPT_SCHEMA, "namespace": NAMESPACE,
         "campaign_id": CAMPAIGN_ID, "attempt": plan["attempt"],
+        "production": plan["production"],
+        "execution_identity": dict(plan["execution_identity"]),
         "status": (
             "two-gates-passed" if qualification_path is not None
             else "gate-a-failed" if "gate-b" not in results
@@ -2639,6 +4414,14 @@ def run_dual_final(
             )
         ),
         "gate_b_launched_only_after_gate_a_pass": True,
+        "campaign_heavy_stage_lock": dict(lock_evidence),
+        "gate_prelaunch_audits": {
+            gate_id: [
+                _reference(path, PRELAUNCH_AUDIT_SCHEMA)
+                for path in _prelaunch_audit_paths(state, gate_id)
+            ]
+            for gate_id in results
+        },
         "workers_per_gate": WORKERS, "shards_per_gate": SHARDS,
         "upload_authorized": False,
     }
@@ -2653,6 +4436,243 @@ def run_dual_final(
         "results": results, "evidence": evidence,
         "qualification": qualification_path,
     }
+
+
+def validate_execution_receipt(
+    path: pathlib.Path, *,
+    result_validator: ResultValidator = gate_support.validate_result,
+    state_validator: Callable[[pathlib.Path], Mapping[str, Any]] = validate_execution_plan,
+    allow_injected_test_evidence: bool = False,
+) -> Record:
+    """Reopen the complete run, including its lock and prelaunch audit closure."""
+
+    value = qualification.load_sealed(path, RUN_RECEIPT_SCHEMA)
+    plan_path = _verify_reference(
+        value.get("execution_plan"), PLAN_SCHEMA, "execution receipt plan"
+    )
+    initial_plan, _injected = _guard_execution_overrides(
+        plan_path,
+        supplied={
+            "result_validator": result_validator,
+            "state_validator": state_validator,
+        },
+        defaults={
+            "result_validator": gate_support.validate_result,
+            "state_validator": validate_execution_plan,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    state = dict(state_validator(plan_path))
+    _require_exact_validated_state(plan_path, state, initial_plan)
+    _guard_state_overrides(
+        state,
+        supplied={
+            "result_validator": result_validator,
+            "state_validator": state_validator,
+        },
+        defaults={
+            "result_validator": gate_support.validate_result,
+            "state_validator": validate_execution_plan,
+        },
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    plan = state["plan"]
+    expected_path = pathlib.Path(plan["root"]) / "execution-receipt.json"
+    dual_reference, _prepared = _load_prepared(state)
+    dual_state = challenger.validate_dual_final(
+        dual_reference,
+        plan_path=pathlib.Path(plan["campaign_plan"]["path"]),
+    )
+    lock = value.get("campaign_heavy_stage_lock")
+    if not isinstance(lock, Mapping):
+        raise DualFinalError("execution receipt omitted its campaign heavy-stage lock")
+    lock_path = pathlib.Path(str(lock.get("path", "")))
+    _verify_lock_identity(lock)
+    status = value.get("status")
+    expected_gates = (
+        {"gate-a"} if status == "gate-a-failed" else set(GATE_IDS)
+    )
+    results = value.get("gate_results")
+    evidence = value.get("gate_evidence")
+    audits = value.get("gate_prelaunch_audits")
+    if not all(isinstance(item, Mapping) for item in (results, evidence, audits)):
+        raise DualFinalError("execution receipt gate rosters are malformed")
+    expected_audits: dict[str, list[Record]] = {}
+    observed_verdicts: dict[str, bool] = {}
+    validated_results: dict[str, tuple[pathlib.Path, Record]] = {}
+    for gate_id in sorted(expected_gates):
+        result_path = _verify_reference(
+            results.get(gate_id), challenger.FINAL_RESULT_SCHEMA,
+            f"{gate_id} governance result",
+        )
+        evidence_path = _verify_reference(
+            evidence.get(gate_id), challenger.FINAL_GATE_EVIDENCE_SCHEMA,
+            f"{gate_id} governance evidence",
+        )
+        checked = validate_gate_evidence(
+            evidence_path, state=state, dual_reference=dual_reference,
+            result_validator=result_validator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
+        )
+        try:
+            final_result = challenger.validate_final_result(
+                result_path, dual=dual_state["plan"], gate_id=gate_id,
+                require_pass=False,
+            )
+        except Exception as error:
+            raise DualFinalError(
+                f"{gate_id} governance result failed deep validation"
+            ) from error
+        if (
+            final_result.get("source_evidence") != _record(evidence_path)
+            or final_result.get("passed")
+            is not (checked.get("verdict", {}).get("passed") is True)
+        ):
+            raise DualFinalError(
+                f"{gate_id} execution result differs from its deep evidence"
+            )
+        validated_results[gate_id] = (result_path, final_result)
+        observed_verdicts[gate_id] = checked.get("verdict", {}).get("passed") is True
+        bank_state = validate_bank_receipt(state, gate_id=gate_id)
+        expected_audits[gate_id] = [
+            _reference(audit_path, PRELAUNCH_AUDIT_SCHEMA)
+            for audit_path in _prelaunch_audit_paths(state, gate_id)
+            if _validate_prelaunch_audit(
+                audit_path, state=state, bank_state=bank_state, gate_id=gate_id
+            )
+        ]
+    qualification_record = value.get("dual_qualification")
+    qualified: Record | None = None
+    if status == "two-gates-passed":
+        qualified_path = _verify_reference(
+            qualification_record, challenger.DUAL_QUALIFICATION_SCHEMA,
+            "dual qualification",
+        )
+        if qualified_path.resolve() != dual_reference.resolve().parent / "dual-qualified.json":
+            raise DualFinalError("dual qualification route changed")
+        qualified = qualification.load_sealed(
+            qualified_path, challenger.DUAL_QUALIFICATION_SCHEMA
+        )
+        completed = _utc(
+            qualified.get("completed_at_utc"), "dual qualification completion time"
+        )
+        expected_qualified = qualification.seal({
+            "schema": challenger.DUAL_QUALIFICATION_SCHEMA,
+            "namespace": NAMESPACE, "campaign_id": CAMPAIGN_ID,
+            "attempt": plan["attempt"],
+            "status": "two-independent-strict-final-gates-passed",
+            "dual_final_plan": challenger._sealed_record(
+                dual_state["path"], challenger.DUAL_FINAL_SCHEMA
+            ),
+            "candidate": dict(validated_results["gate-a"][1]["candidate"]),
+            "gate_results": [
+                challenger._sealed_record(
+                    validated_results[gate_id][0], challenger.FINAL_RESULT_SCHEMA
+                ) for gate_id in GATE_IDS
+            ],
+            "thresholds": challenger.FINAL_THRESHOLDS,
+            "completed_at_utc": completed,
+            "candidate_unchanged": True, "independent_banks": True,
+            "rank4_replacement_authorized": False,
+            "upload_authorized": False,
+        })
+        if (
+            qualified != expected_qualified
+            or any(
+                qualification._utc(
+                    completed, "dual qualification completion time"
+                ) < qualification._utc(
+                    validated_results[gate_id][1]["completed_at_utc"],
+                    f"{gate_id} result completion time",
+                )
+                for gate_id in GATE_IDS
+            )
+        ):
+            raise DualFinalError("dual qualification changed its exact gate results")
+    entries = challenger.load_ledger(dual_state["context"]["plan"])
+    result_events = [
+        entry for entry in entries
+        if entry.get("event") == "final-gate-recorded"
+        and entry.get("attempt") == plan["attempt"]
+        and entry.get("gate_id") in GATE_IDS
+    ]
+    expected_result_records = {
+        gate_id: challenger._sealed_record(
+            validated_results[gate_id][0], challenger.FINAL_RESULT_SCHEMA
+        ) for gate_id in expected_gates
+    }
+    recorded_result_records = {
+        str(entry["gate_id"]): entry.get("result") for entry in result_events
+    }
+    qualification_events = [
+        entry for entry in entries
+        if entry.get("event") == "dual-final-qualified"
+        and entry.get("attempt") == plan["attempt"]
+    ]
+    if (
+        len(result_events) != len(expected_gates)
+        or recorded_result_records != expected_result_records
+        or (
+            status == "two-gates-passed"
+            and (
+                len(qualification_events) != 1
+                or qualification_events[0].get("qualification")
+                != challenger._sealed_record(
+                    qualified_path, challenger.DUAL_QUALIFICATION_SCHEMA
+                )
+            )
+        )
+        or (status != "two-gates-passed" and qualification_events)
+    ):
+        raise DualFinalError("campaign ledger changed execution result ancestry")
+    expected_fields = {
+        "schema", "namespace", "campaign_id", "attempt", "production",
+        "execution_identity", "status", "execution_plan",
+        "dual_final_reference", "candidate", "gate_results", "gate_evidence",
+        "dual_qualification", "gate_b_launched_only_after_gate_a_pass",
+        "campaign_heavy_stage_lock", "gate_prelaunch_audits",
+        "workers_per_gate", "shards_per_gate", "upload_authorized",
+        "body_sha256",
+    }
+    if (
+        path.is_symlink()
+        or path.resolve() != expected_path.resolve()
+        or set(value) != expected_fields
+        or value.get("namespace") != NAMESPACE
+        or value.get("campaign_id") != CAMPAIGN_ID
+        or value.get("attempt") != plan["attempt"]
+        or value.get("production") is not plan["production"]
+        or value.get("execution_identity") != plan["execution_identity"]
+        or status not in {"gate-a-failed", "gate-b-failed", "two-gates-passed"}
+        or value.get("dual_final_reference")
+        != _reference(dual_reference, challenger.DUAL_FINAL_REFERENCE_SCHEMA)
+        or value.get("candidate") != {
+            "runtime_sha256": plan["candidate"]["runtime"]["sha256"],
+            "source_sha256": plan["candidate"]["source"]["sha256"],
+        }
+        or set(results) != expected_gates
+        or set(evidence) != expected_gates
+        or audits != expected_audits
+        or any(not roster for roster in expected_audits.values())
+        or lock_path.resolve()
+        != pathlib.Path(plan["campaign_heavy_stage_lock"]).resolve()
+        or value.get("gate_b_launched_only_after_gate_a_pass") is not True
+        or value.get("workers_per_gate") != WORKERS
+        or value.get("shards_per_gate") != SHARDS
+        or value.get("upload_authorized") is not False
+        or (status == "gate-a-failed" and observed_verdicts != {"gate-a": False})
+        or (
+            status == "gate-b-failed"
+            and observed_verdicts != {"gate-a": True, "gate-b": False}
+        )
+        or (
+            status == "two-gates-passed"
+            and observed_verdicts != {"gate-a": True, "gate-b": True}
+        )
+        or (status != "two-gates-passed" and qualification_record is not None)
+    ):
+        raise DualFinalError("dual-final execution receipt closure changed")
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2675,6 +4695,9 @@ def _parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run")
     run.add_argument("--plan", type=pathlib.Path, required=True)
     run.add_argument("--launched-at-utc", default=utc_now())
+    abandon = commands.add_parser("abandon")
+    abandon.add_argument("--plan", type=pathlib.Path, required=True)
+    abandon.add_argument("--aborted-at-utc", default=utc_now())
     validate = commands.add_parser("validate")
     validate.add_argument("--plan", type=pathlib.Path, required=True)
     return parser
@@ -2708,6 +4731,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "receipt": str(completed["receipt"]),
                 "status": completed["status"],
             }
+        elif arguments.command == "abandon":
+            path = abandon_protected_stage(
+                arguments.plan, aborted_at_utc=arguments.aborted_at_utc
+            )
+            value = validate_protected_stage_abortion(
+                path,
+                campaign_plan_path=pathlib.Path(
+                    qualification.load_sealed(
+                        arguments.plan, PLAN_SCHEMA
+                    )["campaign_plan"]["path"]
+                ),
+            )
+            result = {
+                "abortion": str(path),
+                "status": value["status"],
+                "gate_id": value["gate_id"],
+                "protected_stage": value["protected_stage"],
+            }
         else:
             state = validate_execution_plan(arguments.plan)
             result = {
@@ -2715,6 +4756,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "attempt": state["plan"]["attempt"],
                 "candidate": state["plan"]["candidate"],
             }
+            abortion_path = (
+                pathlib.Path(state["plan"]["root"])
+                / "protected-stage-aborted.json"
+            )
+            if abortion_path.exists() or abortion_path.is_symlink():
+                abortion = _validate_protected_abortion_with_state(
+                    abortion_path, state=state
+                )
+                result["protected_stage_abortion"] = {
+                    "path": str(abortion_path.resolve()),
+                    "sha256": qualification.sha256_file(abortion_path),
+                    "status": abortion["status"],
+                    "gate_id": abortion["gate_id"],
+                    "protected_stage": abortion["protected_stage"],
+                }
+            receipt_path = pathlib.Path(state["plan"]["root"]) / "execution-receipt.json"
+            if receipt_path.exists():
+                receipt = validate_execution_receipt(receipt_path)
+                result["execution_receipt"] = {
+                    "path": str(receipt_path.resolve()),
+                    "sha256": qualification.sha256_file(receipt_path),
+                    "status": receipt["status"],
+                }
         print(json.dumps(result, sort_keys=True))
         return 0
     except (

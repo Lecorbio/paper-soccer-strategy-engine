@@ -23,9 +23,16 @@ VALID_GAME_A = (
     "4527236436/0530727"
 )
 VALID_GAME_B = (
-    "2/4/70/2/0/3/657/6/4/7/1/0/3/0/7/46/52/53/22/4/16001/661/31/3/"
-    "50/5/256723033/2/0/35/2717/6/674702/27/47574/43646"
+    "6/0/34/6/4/7/213/2/0/3/5/4/7/4/3/02/16/17/66/0/52445/225/75/7/"
+    "14/1/612367477/6/4/71/6353/2/230346/63/03130/07202"
 )
+ROOT_PREFIX = "6"
+
+
+def root_prefix_state():
+    state = features.ReplayState()
+    features.apply_complete_turn(state, state.to_move, ROOT_PREFIX)
+    return state
 
 
 def write(path, payload):
@@ -112,6 +119,54 @@ def write_game_manifest(command, input_path, output_path, plan, rows):
                 "sha256"
             ],
         })
+    roots = {}
+    for root_ordinal, line in enumerate(
+        pathlib.Path(plan["inputs"]["filtered_roots_tsv"]["path"])
+        .read_text()
+        .splitlines()[1:]
+    ):
+        group_id, _source, _winner, transcript = line.split("\t")
+        roots[group_id] = (root_ordinal, transcript)
+    game_lines = output_path.read_text().splitlines()[1:]
+    normalized_rows = []
+    for row_ordinal, (raw, game_line) in enumerate(zip(rows, game_lines, strict=True)):
+        row = dict(raw)
+        root_group, _source, _winner, transcript = game_line.split("\t")
+        root_ordinal, root_transcript = roots[root_group]
+        prefix_turns = len(root_transcript.split("/"))
+        assert transcript.split("/")[:prefix_turns] == root_transcript.split("/")
+        attempt_ordinal = int(row.get("attempt_ordinal", 0))
+        game_seed = (
+            int(row["base_seed"])
+            + attempt_ordinal * 0x9E3779B97F4A7C15
+        ) & ((1 << 64) - 1)
+        transcript_sha256 = hashlib.sha256(transcript.encode("ascii")).hexdigest()
+        root_sha256 = hashlib.sha256(root_transcript.encode("ascii")).hexdigest()
+        row.update({
+            "row_ordinal": row_ordinal,
+            "attempt_ordinal": attempt_ordinal,
+            "game_seed": game_seed,
+            "prefix_turns": prefix_turns,
+            "root_lineage": {
+                "root_row_ordinal": root_ordinal,
+                "root_transcript_sha256": root_sha256,
+                "prefix_turns": prefix_turns,
+            },
+            "transcript_sha256": transcript_sha256,
+            "game_id": pipeline._expected_selfsearch_game_id(
+                campaign_id=plan["campaign_id"],
+                game_ordinal=int(row["game_ordinal"]),
+                attempt_ordinal=attempt_ordinal,
+                base_seed=int(row["base_seed"]),
+                game_seed=game_seed,
+                actor_mode=row["actor_mode"],
+                root_group_id=root_group,
+                root_transcript_sha256=root_sha256,
+                prefix_turns=prefix_turns,
+                transcript_sha256=transcript_sha256,
+            ),
+        })
+        normalized_rows.append(row)
     manifest_path = pathlib.Path(command[command.index("--manifest") + 1])
     manifest_path.write_text(json.dumps({
         "schema": "papersoccer.jacek-selfsearch-games.v1",
@@ -120,7 +175,7 @@ def write_game_manifest(command, input_path, output_path, plan, rows):
         "successful_games": len(rows),
         "configuration": configuration,
         "bindings": bindings,
-        "rows": rows,
+        "rows": normalized_rows,
     }))
 
 
@@ -208,6 +263,7 @@ class Fixture:
     def __init__(
         self, root, *, collision=False, real_prior=False, include_live=False,
         phase="pilot", dynamic=False,
+        teacher_ranking_profile=pipeline.STANDARD_TEACHER_RANKING_PROFILE,
     ):
         self.root = root.resolve()
         self.runtime = make_runtime(self.root)
@@ -287,7 +343,7 @@ class Fixture:
                 (
                     [
                         challenger.openings.state_fingerprints(
-                            features.ReplayState()
+                            root_prefix_state()
                         )["canonical"]
                     ]
                     if collision
@@ -301,7 +357,7 @@ class Fixture:
             (
                 [
                     corpus.canonical_feature_fingerprint(
-                        features.encode_active(features.ReplayState())
+                        features.encode_active(root_prefix_state())
                     ).hex()
                 ]
                 if collision
@@ -317,7 +373,7 @@ class Fixture:
             pipeline.GAME_HEADER
             + "\n"
             + "".join(
-                f"{group}\tfixture\t0\t{VALID_GAME_A}\n" for group, _ in roots
+                f"{group}\tfixture\t0\t{ROOT_PREFIX}\n" for group, _ in roots
             ),
         )
         roots_body = {
@@ -333,7 +389,7 @@ class Fixture:
                     "winner": 0,
                     "turns": [
                         {"player_id": index % 2, "action": action}
-                        for index, action in enumerate(VALID_GAME_A.split("/"))
+                        for index, action in enumerate(ROOT_PREFIX.split("/"))
                     ],
                     **(
                         {"classification": "protected-evaluation"}
@@ -451,6 +507,10 @@ class Fixture:
                 "games": len(phase_rows),
                 "quotas": challenger.PHASE_QUOTAS[phase],
                 "rows": phase_rows,
+                "adaptation_contract": {
+                    **challenger.STANDARD_ADAPTATION_CONTRACT,
+                    "teacher_ranking_profile": teacher_ranking_profile,
+                },
                 "attempt_inputs": {
                     "student_runtime": record(self.runtime),
                     "prior_runtime": record(self.runtime),
@@ -487,9 +547,10 @@ class Fixture:
             created_at_utc="2026-09-04T00:00:00Z",
             campaign_context=self.campaign_context,
             phase_context=self.phase_context,
+            allow_injected_test_evidence=True,
         )
 
-    def write_two_games(self):
+    def write_two_games(self, *, validation_matches_training=False):
         plan = pipeline.load_pipeline(self.plan)
         rows = []
         games = []
@@ -498,7 +559,10 @@ class Fixture:
             root_group, transcript = (
                 ("root-0", VALID_GAME_A)
                 if ordinal % 2 == 0
-                else ("root-8", VALID_GAME_B)
+                else (
+                    "root-8",
+                    VALID_GAME_A if validation_matches_training else VALID_GAME_B,
+                )
             )
             rows.append({
                 "game_ordinal": ordinal,
@@ -509,7 +573,10 @@ class Fixture:
                 "source": "fixture",
                 "winner": 0,
                 "transcript": transcript,
-                "prefix_turns": 0 if ordinal < 2 else len(transcript.split("/")) - 1,
+                "prefix_turns": (
+                    len(ROOT_PREFIX.split("/"))
+                    if ordinal < 2 else len(transcript.split("/")) - 1
+                ),
             })
             games.append(f"{root_group}\tfixture\t0\t{transcript}")
         games_payload = (pipeline.GAME_HEADER + "\n" + "\n".join(games) + "\n").encode()
@@ -677,6 +744,67 @@ def rank4_row(fields, plan):
 
 
 class PilotPipelineTests(unittest.TestCase):
+    def test_injected_hooks_require_explicit_nonproduction_authority(self):
+        nonproduction = {
+            "execution_authority": {
+                "production_allowlist_enforced": False,
+                "heavy_stage_lock": None,
+            }
+        }
+        with self.assertRaisesRegex(
+            pipeline.PilotPipelineError, "explicit nonproduction"
+        ):
+            pipeline._guard_test_hooks(
+                nonproduction, hooks_used=True,
+                allow_injected_test_evidence=False,
+            )
+        pipeline._guard_test_hooks(
+            nonproduction, hooks_used=True,
+            allow_injected_test_evidence=True,
+        )
+        production = copy.deepcopy(nonproduction)
+        production["execution_authority"][
+            "production_allowlist_enforced"
+        ] = True
+        with self.assertRaisesRegex(
+            pipeline.PilotPipelineError, "explicit nonproduction"
+        ):
+            pipeline._guard_test_hooks(
+                production, hooks_used=True,
+                allow_injected_test_evidence=True,
+            )
+
+    def test_teacher_ranking_fallback_is_derived_from_phase_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(
+                pathlib.Path(temporary),
+                teacher_ranking_profile=(
+                    pipeline.HARD_5PCT_2M_TEACHER_RANKING_PROFILE
+                ),
+            )
+            plan = pipeline.load_pipeline(fixture.plan)
+            self.assertEqual(plan["policy"]["hard_fraction"], [1, 20])
+            self.assertEqual(plan["policy"]["deep_tree_nodes"], 2_000_000)
+            self.assertEqual(
+                plan["policy"]["hard_state_density_multiplier"], 8
+            )
+            self.assertTrue(plan["policy"]["require_full_position_roster"])
+            with self.assertRaisesRegex(
+                pipeline.PilotPipelineError, "phase adaptation contract"
+            ):
+                pipeline.prepare_pipeline(
+                    campaign_plan=fixture.campaign_plan,
+                    phase_reference=fixture.phase_reference,
+                    output_root=fixture.root / "wrong-profile",
+                    teacher_ranking_profile=(
+                        pipeline.STANDARD_TEACHER_RANKING_PROFILE
+                    ),
+                    created_at_utc="2026-09-04T00:00:01Z",
+                    campaign_context=fixture.campaign_context,
+                    phase_context=fixture.phase_context,
+                    allow_injected_test_evidence=True,
+                )
+
     def test_pipeline_binds_and_rechecks_exact_build_source_closure(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
@@ -762,6 +890,7 @@ class PilotPipelineTests(unittest.TestCase):
                 created_at_utc="2026-09-04T00:00:01Z",
                 campaign_context=campaign,
                 phase_context=phase,
+                allow_injected_test_evidence=True,
             )
             plan = pipeline.load_pipeline(plan_path)
             self.assertEqual(
@@ -883,6 +1012,7 @@ class PilotPipelineTests(unittest.TestCase):
                     created_at_utc="2026-09-04T00:00:01Z",
                     campaign_context=fixture.campaign_context,
                     phase_context=fixture.phase_context,
+                    allow_injected_test_evidence=True,
                 )
 
     def test_fingerprint_union_is_content_addressed_and_self_contained(self):
@@ -1080,7 +1210,8 @@ class PilotPipelineTests(unittest.TestCase):
                         active -= 1
 
             receipt = pipeline.run_game_chunks(
-                fixture.plan, workers=8, producer=producer
+                fixture.plan, workers=8, producer=producer,
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(receipt["details"]["games"], 2_000)
             self.assertEqual(receipt["details"]["execution_chunks"], 20)
@@ -1089,9 +1220,68 @@ class PilotPipelineTests(unittest.TestCase):
             self.assertLessEqual(maximum, 8)
             self.assertGreater(maximum, 1)
             pipeline.run_game_chunks(
-                fixture.plan, workers=8, resume=True, producer=producer
+                fixture.plan, workers=8, resume=True, producer=producer,
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(calls, 20)
+
+    def test_game_chunk_rederives_native_root_lineage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture = Fixture(root)
+            plan = pipeline.load_pipeline(fixture.plan)
+            planned = [plan["game_plan"]["rows"][0]]
+            input_path = write(
+                root / "chunk-plan.tsv", pipeline._render_game_chunk(planned)
+            )
+            games_path = write(
+                root / "chunk-games.tsv",
+                pipeline.GAME_HEADER
+                + "\n"
+                + f"root-0\t{plan['campaign_id']}\t0\t{VALID_GAME_A}\n",
+            )
+            manifest_path = root / "chunk-manifest.json"
+            command = [
+                "fixture", "--manifest", str(manifest_path),
+                "--compact-student-runtime", "fixture-runtime",
+            ]
+            write_game_manifest(
+                command,
+                input_path,
+                games_path,
+                plan,
+                [{
+                    "game_ordinal": planned[0]["game_ordinal"],
+                    "base_seed": planned[0]["base_seed"],
+                    "actor_mode": planned[0]["actor_mode"],
+                    "root_group_id": "root-0",
+                    "winner": 0,
+                }],
+            )
+            pipeline._parse_game_chunk(
+                planned,
+                games_path,
+                manifest_path,
+                input_path=input_path,
+                plan=plan,
+                profile="compact",
+            )
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["rows"][0]["root_lineage"][
+                "root_transcript_sha256"
+            ] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(
+                pipeline.PilotPipelineError, "manifest disagrees"
+            ):
+                pipeline._parse_game_chunk(
+                    planned,
+                    games_path,
+                    manifest_path,
+                    input_path=input_path,
+                    plan=plan,
+                    profile="compact",
+                )
 
     def test_full_phase_uses_same_native_compatible_execution_profiles(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1147,11 +1337,50 @@ class PilotPipelineTests(unittest.TestCase):
                 write_game_manifest(command, input_path, output_path, plan, evidence)
 
             receipt = pipeline.run_game_chunks(
-                fixture.plan, workers=4, producer=producer
+                fixture.plan, workers=4, producer=producer,
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(receipt["details"]["games"], 10_000)
             self.assertEqual(receipt["details"]["execution_chunks"], 20)
             self.assertEqual(calls, {"compact": 10, "incumbent": 10})
+
+    def test_validation_owns_cross_split_symmetry_collisions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.write_two_games(validation_matches_training=True)
+            pipeline.materialize_positions(fixture.plan)
+            plan = pipeline.load_pipeline(fixture.plan)
+            manifest = pipeline._load_sealed(
+                pathlib.Path(plan["outputs"]["positions_manifest"]),
+                pipeline.POSITION_MANIFEST_SCHEMA,
+                "positions",
+            )
+            self.assertEqual(
+                manifest["duplicate_precedence"],
+                "validation-before-train-four-way-symmetry-v1",
+            )
+            self.assertGreater(
+                manifest["exclusion_audit"][
+                    "cross_split_duplicate_intersections_by_losing_split"
+                ].get("train", 0),
+                0,
+            )
+            self.assertEqual(
+                manifest["exclusion_audit"][
+                    "cross_split_duplicate_intersections_by_losing_split"
+                ].get("validation", 0),
+                0,
+            )
+            by_split = {
+                split: {
+                    row["canonical_fingerprint"]
+                    for row in manifest["rows"]
+                    if row["split"] == split
+                }
+                for split in ("train", "validation")
+            }
+            self.assertTrue(by_split["validation"])
+            self.assertFalse(by_split["train"] & by_split["validation"])
 
     def test_positions_hard_selection_merge_and_standard_scalar_pack(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1179,8 +1408,14 @@ class PilotPipelineTests(unittest.TestCase):
             )
             self.assertEqual(
                 manifest["position_stratum_counts"],
-                {"opening": 10, "middle": 10, "late": 10, "decisive": 10},
+                {"opening": 10, "tactical": 10, "late": 10, "decisive": 10},
             )
+            self.assertEqual(
+                manifest["position_strata"]["disjoint"], True
+            )
+            self.assertTrue(all(
+                "stratum_evidence" in row for row in manifest["rows"]
+            ))
             self.assertEqual(
                 manifest["exclusion_audit"]["train_validation_intersection_count"], 0
             )
@@ -1198,8 +1433,8 @@ class PilotPipelineTests(unittest.TestCase):
             )
             self.assertEqual(manifest["split_counts"], {"train": 20, "validation": 20})
             predictions = {}
-            expected = set()
-            per_game = Counter()
+            incomplete_hard = {}
+            gap_by_position = {}
 
             def action_producer(_command, input_path, output_path, environment):
                 self.assertEqual(environment["OPENBLAS_NUM_THREADS"], "1")
@@ -1207,18 +1442,19 @@ class PilotPipelineTests(unittest.TestCase):
                 for ordinal, line in enumerate(input_path.read_text().splitlines()[1:]):
                     fields = line.split("\t")
                     gap = (
-                        0.9
+                        0.95
                         if ordinal % 20 == 0
-                        else (0.1, 0.4, 0.2, 0.3)[ordinal % 4]
+                        else 0.8 + ordinal / 1_000.0
+                        if ordinal < 20
+                        else 0.1 + (ordinal % 4) / 100.0
                     )
                     action, student = action_group(plan, fields, gap)
                     if ordinal % 20 == 0:
                         action["group"]["successors_exhaustive"] = False
+                        incomplete_hard.setdefault(fields[2], []).append(fields[0])
                     rows.append(action)
                     predictions[action["group"]["group_id"]] = student
-                    if gap == 0.4:
-                        expected.add(fields[0])
-                        per_game[fields[2]] += 1
+                    gap_by_position[fields[0]] = gap
                 output_path.write_bytes(
                     b"".join(corpus.canonical_json_bytes(row) for row in rows)
                 )
@@ -1233,19 +1469,21 @@ class PilotPipelineTests(unittest.TestCase):
                 )
 
             pipeline.run_shallow_action_labels(
-                fixture.plan, workers=2, producer=action_producer
+                fixture.plan, workers=2, producer=action_producer,
+                allow_injected_test_evidence=True,
             )
             pipeline.run_rank4_labels(
-                fixture.plan, workers=2, producer=rank4_producer
+                fixture.plan, workers=2, producer=rank4_producer,
+                allow_injected_test_evidence=True,
             )
             action_rows = corpus.load_complete_turn_action_groups(
                 (pathlib.Path(plan["outputs"]["shallow_actions"]),)
             )
             self.assertEqual(len(action_rows), 40)
-            self.assertEqual(set(per_game.values()), {5})
             hard = pipeline.select_hard_positions(
                 fixture.plan,
                 predictor=lambda group: predictions[group["group_id"]],
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(hard["details"]["selected"], 10)
             hard_ids = {
@@ -1254,14 +1492,27 @@ class PilotPipelineTests(unittest.TestCase):
                 .read_text()
                 .splitlines()[1:]
             }
-            self.assertEqual(hard_ids, expected)
+            incomplete_ids = {
+                position_id for values in incomplete_hard.values()
+                for position_id in values
+            }
+            self.assertTrue(incomplete_ids <= hard_ids)
+            self.assertTrue(all(
+                gap_by_position[position_id] >= 0.8
+                for position_id in hard_ids - incomplete_ids
+            ))
             hard_report = pipeline._load_sealed(
                 pathlib.Path(plan["outputs"]["hard_report"]),
                 pipeline.HARD_SELECTION_SCHEMA,
                 "hard report",
             )
-            self.assertEqual(hard_report["nonexhaustive_fill"], 0)
+            self.assertEqual(hard_report["nonexhaustive_fill"], 2)
             self.assertEqual(hard_report["games"], 2)
+            selected_by_game = Counter(
+                row["game_id"] for row in hard_report["rows"]
+                if row["selected_for_deep_label"]
+            )
+            self.assertEqual(sorted(selected_by_game.values()), [1, 9])
             self.assertEqual(
                 sum(row["selected_for_deep_label"] for row in hard_report["rows"]),
                 10,
@@ -1283,6 +1534,7 @@ class PilotPipelineTests(unittest.TestCase):
                     position_id = line.split("\t")[0]
                     value = copy.deepcopy(shallow_by_position[position_id])
                     source = value["group"]["source_binding"]
+                    value["group"]["successors_exhaustive"] = True
                     value["group"]["work_budget"]["max_tree_nodes"] = 500_000
                     material = (
                         f"{source['campaign_id']}\0{source['position_id']}\0{500_000}".encode()
@@ -1296,7 +1548,8 @@ class PilotPipelineTests(unittest.TestCase):
                 )
 
             pipeline.run_deep_action_labels(
-                fixture.plan, workers=2, producer=deep_producer
+                fixture.plan, workers=2, producer=deep_producer,
+                allow_injected_test_evidence=True,
             )
 
             def packer(_plan, _merged, output_directory):
@@ -1325,7 +1578,10 @@ class PilotPipelineTests(unittest.TestCase):
                     result[f"{split}_npz"] = npz
                 return result
 
-            final = pipeline.finalize_labels(fixture.plan, standard_packer=packer)
+            final = pipeline.finalize_labels(
+                fixture.plan, standard_packer=packer,
+                allow_injected_test_evidence=True,
+            )
             self.assertEqual(final["details"]["groups"], 40)
             self.assertEqual(final["details"]["deep_replacements"], 10)
             self.assertEqual(final["details"]["scalar_samples"], 80)

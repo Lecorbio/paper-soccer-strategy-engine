@@ -866,6 +866,16 @@ class BestFirstMinimaxSearch {
     if (!expand(0U)) {
       throw std::logic_error("Jacek replay BFM could not expand its root");
     }
+    // Rich offline action labels require every canonical complete-turn root
+    // successor, not merely the deployed search's first max_actions page. Keep
+    // the ordinary page width (and therefore generator memory bound) but drain
+    // the root cursor before selecting descendants. If the fixed node budget is
+    // too small even for enumeration, the returned non-exhaustive flag makes
+    // the label pipeline fail closed.
+    while (config_.offline_exhaustive_root_actions &&
+           !nodes_[0].exhaustive && budget_available()) {
+      if (!expand(0U)) break;
+    }
     refresh(0U);
     for (;;) {
       if (nodes_[0].closed) {
@@ -1027,6 +1037,7 @@ class BestFirstMinimaxSearch {
     // tree nodes without replaying or dropping partial turns.
     const bool widening = nodes_[index].expanded;
     if (widening &&
+        !(config_.offline_exhaustive_root_actions && index == 0U) &&
         std::any_of(nodes_[index].children.begin(),
                     nodes_[index].children.end(),
                     [&](std::size_t child) {
@@ -1172,7 +1183,9 @@ class BestFirstMinimaxSearch {
       all_closed = all_closed && child.closed;
       open_children += child.closed ? 0U : 1U;
     }
-    if (open_children > config_.max_actions) {
+    const bool offline_wide_root =
+        config_.offline_exhaustive_root_actions && index == 0U;
+    if (!offline_wide_root && open_children > config_.max_actions) {
       throw std::logic_error(
           "Jacek replay BFM exceeded its sampled frontier width");
     }
@@ -1182,7 +1195,10 @@ class BestFirstMinimaxSearch {
       best = std::max(best, node.prior_value);
     }
     node.value = best;
-    node.solved = proven_win || all_solved;
+    const bool defer_incomplete_offline_root =
+        offline_wide_root && !node.exhaustive;
+    node.solved =
+        !defer_incomplete_offline_root && (proven_win || all_solved);
     node.closed = node.solved || (node.exhaustive && all_closed);
     if (node.solved || node.exhaustive) {
       node.action_frontier.reset();

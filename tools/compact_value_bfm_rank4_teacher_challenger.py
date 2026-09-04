@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -50,6 +51,10 @@ TRAINER_PATH = HERE / "compact_value_bfm_train.py"
 LIVE_WINDOW_PATH = (
     REPOSITORY
     / "submissions/codingame/bots/compact_value_bfm/live_window.py"
+)
+RECOVERY_RUNNER_PATH = (
+    REPOSITORY
+    / "submissions/codingame/bots/compact_value_bfm/discrete_v3_recovery_runner.py"
 )
 
 
@@ -188,6 +193,13 @@ DEVELOPMENT_EXCLUSION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
     "development-fingerprints.v1"
 )
+DEVELOPMENT_GATE_ABORTION_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-gate-abandonment.v1"
+)
+PROTECTED_STAGE_ABORTION_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "dual-final-protected-stage-aborted.v1"
+)
 ATTRIBUTION_EVIDENCE_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
     "attribution-evidence.v1"
@@ -202,6 +214,10 @@ ADDITIONAL_UPLOAD_AUTHORIZATION_SCHEMA = (
 )
 CAMPAIGN_COMPLETION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-completion.v1"
+)
+UPLOAD_AUTHORIZATION_INPUTS_SCHEMA = (
+    "papersoccer.compact-value-bfm.rank4-teacher-challenger-"
+    "one-upload-authorization-inputs.v1"
 )
 BUILD_MANIFEST_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-build-manifest.v1"
@@ -297,10 +313,14 @@ LEDGER_EVENTS = {
     "phase-plan-materialized",
     "progress-recorded",
     "attempt-outcome-recorded",
+    "development-gate-aborted",
     "dual-final-authorized",
     "dual-final-prepared",
+    "protected-stage-aborted",
     "final-gate-recorded",
     "dual-final-qualified",
+    "upload-authorization-claimed",
+    "upload-authorized",
     "upload-attested",
     "live-window-recorded",
     "additional-upload-authorized",
@@ -309,12 +329,82 @@ LEDGER_EVENTS = {
 TERMINAL_EVENTS = {"campaign-complete"}
 LABEL_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
+LEDGER_TEMP_RE = re.compile(
+    r"\.\d{6}-[0-9a-f]{64}\.json\.[A-Za-z0-9_-]+"
+)
 
-ATTRIBUTION_INTERVENTIONS = {
-    "quantization-gap": "quantization-gap-qat-scales",
-    "teacher-ranking-gap": "teacher-ranking-gap-hard-state-density",
-    "search-throughput-gap": "search-throughput-gap-caching",
+ATTRIBUTION_INTERVENTION_SEQUENCES = {
+    "quantization-gap": ("quantization-gap-qat-scales",),
+    "teacher-ranking-gap": ("teacher-ranking-gap-hard-state-density",),
+    "search-throughput-gap": (
+        "search-throughput-gap-caching",
+        "search-throughput-gap-progressive-widening",
+        "search-throughput-gap-subtree-reuse",
+    ),
 }
+ATTRIBUTION_INTERVENTIONS = {
+    classification: interventions[0]
+    for classification, interventions in ATTRIBUTION_INTERVENTION_SEQUENCES.items()
+}
+STANDARD_ADAPTATION_CONTRACT = {
+    "qat_profile": "standard-v1",
+    "teacher_ranking_profile": "standard-v1",
+    "search_throughput_profile": "standard-v1",
+}
+INTERVENTION_CONTRACTS = {
+    "quantization-gap-qat-scales": {
+        **STANDARD_ADAPTATION_CONTRACT,
+        "qat_profile": "refined-adaptive-scales-v1",
+    },
+    "teacher-ranking-gap-hard-state-density": {
+        **STANDARD_ADAPTATION_CONTRACT,
+        "teacher_ranking_profile": "hardest-5pct-2m-v1",
+    },
+    "search-throughput-gap-caching": {
+        **STANDARD_ADAPTATION_CONTRACT,
+        "search_throughput_profile": "state-evaluation-cache-v1",
+    },
+    "search-throughput-gap-progressive-widening": {
+        **STANDARD_ADAPTATION_CONTRACT,
+        "search_throughput_profile": "progressive-widening-v1",
+    },
+    "search-throughput-gap-subtree-reuse": {
+        **STANDARD_ADAPTATION_CONTRACT,
+        "search_throughput_profile": "subtree-reuse-v1",
+    },
+}
+
+POST_PROMOTION_RELEASE_TOOL_ROLES = (
+    "campaign_tool",
+    "qualification",
+    "openings",
+    "replay_features",
+    "model_exporter",
+    "teacher_training",
+    "release_bridge",
+    "maintained_preflight",
+    "deployment",
+    "deployment_preflight",
+    "upload_governance",
+    "dual_final_runner",
+    "final_gate_tools",
+    "rank4_gate_support",
+    "submission_exporter",
+)
+POST_PROMOTION_LIVE_TOOL_ROLES = (
+    "live_window_verifier",
+    "qualification",
+    "live_generic_collector",
+    "live_replay_collector",
+    "replay_features",
+    "openings",
+)
+POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES = (
+    "submissions/codingame/bots/compact_value_bfm/model.hpp",
+    "submissions/codingame/bots/compact_value_bfm/submission.cpp",
+    "submissions/codingame/bots/compact_value_bfm/discrete_v3_deployment.cpp",
+    "submissions/codingame/bots/compact_value_bfm/discrete_v3_deployment.json",
+)
 
 BUILD_BINARY_ROLES = {
     "continuation_producer",
@@ -655,6 +745,14 @@ def _audit_tool_paths() -> dict[str, pathlib.Path]:
         "teacher_training": HERE / "compact_value_bfm_teacher_training.py",
         "dual_final_runner": HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
         "release_bridge": HERE / "compact_value_bfm_rank4_teacher_release.py",
+        "maintained_preflight": HERE / "compact_value_bfm_preflight.py",
+        "deployment": HERE / "compact_value_bfm_discrete_v3_deployment.py",
+        "deployment_preflight": (
+            HERE / "compact_value_bfm_discrete_v3_deployment_preflight.py"
+        ),
+        "upload_governance": HERE / "compact_value_bfm_upload.py",
+        "final_gate_tools": HERE / "compact_value_bfm_final.py",
+        "loss_reuse": HERE / "compact_value_bfm_loss_reuse.py",
         "release_bridge_test": (
             REPOSITORY
             / "tests/codingame/test_compact_value_bfm_rank4_teacher_release.py"
@@ -676,6 +774,37 @@ def _audit_tool_paths() -> dict[str, pathlib.Path]:
             REPOSITORY
             / "submissions/codingame/bots/compact_value_bfm/export_submission.py"
         ),
+        "search_variant_parity": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/search_variant_parity.py"
+        ),
+        "search_profile_exclusion": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/search_profile_exclusion.py"
+        ),
+        "source_compaction_parity": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/source_compaction_parity.py"
+        ),
+        "search_trace_probe": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/search_trace_probe.cpp"
+        ),
+        "state_evaluation_cache_parity": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/"
+            "state_evaluation_cache_parity.py"
+        ),
+        "progressive_widening_invariance": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/"
+            "progressive_widening_invariance.py"
+        ),
+        "subtree_reuse_invariance": (
+            REPOSITORY
+            / "submissions/codingame/bots/compact_value_bfm/"
+            "subtree_reuse_invariance.py"
+        ),
         "rank4_gate": (
             REPOSITORY / "submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp"
         ),
@@ -689,6 +818,14 @@ def _audit_tool_paths() -> dict[str, pathlib.Path]:
         ),
         "cmake": REPOSITORY / "CMakeLists.txt",
         "live_window_verifier": LIVE_WINDOW_PATH,
+        "live_generic_collector": (
+            REPOSITORY / "submissions/codingame/tools/collect_arena_batch.py"
+        ),
+        "live_replay_collector": (
+            REPOSITORY
+            / "submissions/codingame/bots/neural_puct/collect_live_replays.py"
+        ),
+        "recovery_runner_verifier": RECOVERY_RUNNER_PATH,
         "campaign_documentation": DOC_PATH,
     }
 
@@ -705,6 +842,7 @@ def _campaign_source_paths() -> dict[str, pathlib.Path]:
         REPOSITORY / "CMakeLists.txt",
         REPOSITORY / "requirements-research.txt",
     }
+    candidates.update(_audit_tool_paths().values())
     # These actor sources are textually included by the frozen continuation and
     # Rank-4 position-teacher producers.  They live outside the ordinary
     # include/src/tools and compact-submission trees, so an explicit roster is
@@ -730,7 +868,7 @@ def _campaign_source_paths() -> dict[str, pathlib.Path]:
             REPOSITORY / "submissions/codingame/bots/compact_value_bfm",
             ("*.py", "*.cpp", "*.hpp", "*.h", "*.json", "*.txt"),
         ),
-        (REPOSITORY / "tests/codingame", ("*.py", "*.cpp", "*.hpp", "*.h")),
+        (REPOSITORY / "tests", ("*.py", "*.cpp", "*.hpp", "*.h")),
         (REPOSITORY / "docs", ("*.md",)),
         (REPOSITORY / ".github", ("*.yml", "*.yaml")),
     ):
@@ -1392,6 +1530,34 @@ def _validate_copied_training_bundle(
     return dict(value)
 
 
+def _attempt_zero_opened_fields(inputs: Mapping[str, Any]) -> dict[str, Any]:
+    attempt_one = inputs["attempt_one_inputs"]
+    return {
+        "parent_attempt": None,
+        "route": "await-attempt-zero-result",
+        "architecture": ARCHITECTURE,
+        "policy_head": False,
+        "hypothesis": (
+            "external discrete-v3 recovery may already satisfy Rank-4 qualification"
+        ),
+        "intervention": "external-recovery",
+        "attribution_receipt": None,
+        "loss_reuse_provenance": None,
+        "attempt_inputs": {
+            "student_runtime": inputs["candidate"]["runtime"],
+            "prior_runtime": attempt_one["prior_runtime"],
+            "initial_float_checkpoint": attempt_one[
+                "initial_float_checkpoint"
+            ],
+            "roots_tsv": attempt_one["roots_tsv"],
+            "roots_manifest": attempt_one["roots_manifest"],
+            "build_manifest": attempt_one["build_manifest"],
+            "producer_binaries": attempt_one["producer_binaries"],
+        },
+        "dynamic_exclusions": [],
+    }
+
+
 def freeze_campaign(
     *,
     output_root: pathlib.Path,
@@ -1473,9 +1639,22 @@ def freeze_campaign(
             or existing["plan"].get("created_at_utc") != created
         ):
             raise ChallengerError("existing freeze was invoked with different inputs")
+        entries = load_ledger(existing["plan"])
+        if not entries:
+            _append_event(
+                existing,
+                attempt=ATTEMPT_ZERO,
+                event="attempt-opened",
+                created_at_utc=created,
+                expected_previous_sha256="0" * 64,
+                fields=_attempt_zero_opened_fields(existing["inputs"]),
+            )
         return plan_path
-    if any(root.iterdir()):
-        raise ChallengerError("campaign root predates its immutable plan")
+    # Every bundle copy below is content-addressed and write-once, and the
+    # final validator requires the exact file roster.  Reusing matching
+    # partial copies makes a crash before campaign-plan publication resumable;
+    # an unexpected or mismatched file still fails closed during copy/final
+    # validation.
     architecture = _architecture(candidate_runtime)
     source = _regular(candidate_source, ascii_required=True)
     if not 0 < source["bytes"] < SOURCE_LIMIT:
@@ -1759,29 +1938,8 @@ def freeze_campaign(
         attempt=ATTEMPT_ZERO,
         event="attempt-opened",
         created_at_utc=created,
-        fields={
-            "parent_attempt": None,
-            "route": "await-attempt-zero-result",
-            "architecture": ARCHITECTURE,
-            "policy_head": False,
-            "hypothesis": "external discrete-v3 recovery may already satisfy Rank-4 qualification",
-            "intervention": "external-recovery",
-            "attribution_receipt": None,
-            "attempt_inputs": {
-                "student_runtime": _inputs["candidate"]["runtime"],
-                "prior_runtime": _inputs["attempt_one_inputs"]["prior_runtime"],
-                "initial_float_checkpoint": _inputs["attempt_one_inputs"][
-                    "initial_float_checkpoint"
-                ],
-                "roots_tsv": _inputs["attempt_one_inputs"]["roots_tsv"],
-                "roots_manifest": _inputs["attempt_one_inputs"]["roots_manifest"],
-                "build_manifest": _inputs["attempt_one_inputs"]["build_manifest"],
-                "producer_binaries": _inputs["attempt_one_inputs"][
-                    "producer_binaries"
-                ],
-            },
-            "dynamic_exclusions": [],
-        },
+        expected_previous_sha256="0" * 64,
+        fields=_attempt_zero_opened_fields(_inputs),
     )
     return plan_path
 
@@ -2128,8 +2286,26 @@ def validate_campaign(path: pathlib.Path) -> dict[str, Any]:
             != inputs["allowlisted_inputs"]["teacher_runtime"]["sha256"]
         ):
             raise ChallengerError("teacher manifest/runtime bundle binding changed")
-    expected_tools = set(_audit_tool_paths())
-    if set(plan.get("tools", {})) != expected_tools:
+    frozen_tool_bundle = inputs.get("audit_tool_bundle")
+    expected_tools = (
+        set(frozen_tool_bundle) if isinstance(frozen_tool_bundle, Mapping)
+        else set()
+    )
+    required_tools = {
+        "campaign_tool", "qualification", "openings", "model_exporter",
+        "pilot_pipeline", "teacher_training", "dual_final_runner",
+        "release_bridge", "loss_reuse", "compact_trainer", "replay_corpus",
+        "replay_features", "replay_pack", "action_teacher",
+        "compact_engine", "submission_exporter", "rank4_gate",
+        "rank4_gate_support", "live_window_verifier",
+        "recovery_runner_verifier",
+        *POST_PROMOTION_RELEASE_TOOL_ROLES,
+        *POST_PROMOTION_LIVE_TOOL_ROLES,
+    }
+    if (
+        set(plan.get("tools", {})) != expected_tools
+        or not required_tools <= expected_tools
+    ):
         raise ChallengerError("campaign tool closure changed")
     for name in sorted(expected_tools):
         value = plan["tools"][name]
@@ -2157,6 +2333,197 @@ def validate_campaign(path: pathlib.Path) -> dict[str, Any]:
     return {"plan": plan, "path": path.resolve(), "root": root, "inputs": inputs}
 
 
+def _frozen_execution_source_evidence(
+    context: Mapping[str, Any], *, tool_roles: Sequence[str],
+    build_manifest_record: Any | None = None,
+    revalidate_current: bool = True,
+    allowed_current_drift_routes: Sequence[str] | None = None,
+) -> dict[str, Any] | None:
+    """Bind verifier code to one attempt's clean build source closure."""
+
+    if not isinstance(revalidate_current, bool):
+        raise ChallengerError("frozen execution revalidation policy is invalid")
+    if revalidate_current and allowed_current_drift_routes is not None:
+        raise ChallengerError(
+            "full source revalidation cannot authorize current source drift"
+        )
+    inputs = context.get("inputs")
+    plan = context.get("plan")
+    if not isinstance(inputs, Mapping) or not isinstance(plan, Mapping):
+        raise ChallengerError("frozen execution source context is malformed")
+    if inputs.get("production_allowlist_enforced") is not True:
+        return None
+    manifest_record = (
+        inputs["attempt_one_inputs"]["build_manifest"]
+        if build_manifest_record is None else build_manifest_record
+    )
+    manifest_path = _resolve_campaign_artifact(
+        manifest_record, plan=plan, label="execution build manifest"
+    )
+    manifest = qualification.load_sealed(
+        manifest_path, BUILD_MANIFEST_SCHEMA
+    )
+    sources = manifest.get("source_closure")
+    repository = manifest.get("repository")
+    if (
+        not isinstance(sources, Mapping)
+        or not isinstance(repository, Mapping)
+        or manifest.get("campaign_id") != CAMPAIGN_ID
+        or manifest.get("status") != "clean-source-compiler-binaries-frozen"
+    ):
+        raise ChallengerError("frozen build source closure is absent")
+    allowed_drift: list[str] | None = None
+    if allowed_current_drift_routes is not None:
+        if isinstance(allowed_current_drift_routes, (str, bytes, bytearray)):
+            raise ChallengerError("allowed current source drift roster is malformed")
+        allowed_drift = []
+        for raw in allowed_current_drift_routes:
+            route = _safe_relative(raw, "allowed current source drift")
+            if (
+                route.as_posix() != raw
+                or raw not in POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+            ):
+                raise ChallengerError(
+                    "allowed current source drift escaped the frozen closure"
+                )
+            allowed_drift.append(raw)
+        if len(set(allowed_drift)) != len(allowed_drift):
+            raise ChallengerError("allowed current source drift roster is repeated")
+        allowed_drift.sort()
+    current_repository = _repository_identity() if revalidate_current else None
+    if revalidate_current and (
+        current_repository.get("commit") != repository.get("commit")
+        or current_repository.get("root") != str(REPOSITORY.resolve())
+    ):
+        raise ChallengerError("current verifier commit differs from frozen build")
+    input_directory = pathlib.Path(str(plan["outputs"]["input_directory"]))
+    normalized_sources: dict[str, dict[str, Any]] = {}
+    for relative, record in sorted(sources.items()):
+        route = _safe_relative(relative, "frozen execution source")
+        metadata = _record_metadata(record, f"build source {relative}")
+        if revalidate_current or (
+            allowed_drift is not None and relative not in allowed_drift
+        ):
+            current_path = (REPOSITORY / pathlib.Path(route)).resolve()
+            try:
+                current_path.relative_to(REPOSITORY.resolve())
+            except ValueError as error:
+                raise ChallengerError(
+                    "frozen execution source escaped repository"
+                ) from error
+            current = _regular(current_path)
+            if (
+                current["bytes"] != metadata["bytes"]
+                or current["sha256"] != metadata["sha256"]
+            ):
+                raise ChallengerError(
+                    f"current execution source differs from freeze: {relative}"
+                )
+        build_bundle = inputs.get("build_bundle")
+        bundled_sources = (
+            build_bundle.get("sources")
+            if isinstance(build_bundle, Mapping) else None
+        )
+        bundled_record = (
+            bundled_sources.get(relative)
+            if isinstance(bundled_sources, Mapping) else None
+        )
+        if not isinstance(bundled_record, Mapping):
+            raise ChallengerError(
+                f"frozen build bundle omits execution source: {relative}"
+            )
+        bundled = _verify_bundle_record(
+            bundled_record, input_directory=input_directory,
+            label=f"frozen execution source {relative}",
+        )
+        frozen = _regular(bundled)
+        if (
+            frozen["bytes"] != metadata["bytes"]
+            or frozen["sha256"] != metadata["sha256"]
+        ):
+            raise ChallengerError(
+                f"frozen execution source differs: {relative}"
+            )
+        normalized_sources[str(relative)] = {
+            "bytes": metadata["bytes"], "sha256": metadata["sha256"]
+        }
+    tools = {}
+    for role in tool_roles:
+        frozen_tool = plan.get("tools", {}).get(role)
+        source_record = (
+            frozen_tool.get("source")
+            if isinstance(frozen_tool, Mapping) else None
+        )
+        if not isinstance(source_record, Mapping):
+            raise ChallengerError(f"frozen execution tool is absent: {role}")
+        if revalidate_current:
+            expected_path = _audit_tool_paths().get(role)
+            if expected_path is None:
+                raise ChallengerError(
+                    f"current execution tool is absent: {role}"
+                )
+            try:
+                relative = expected_path.resolve().relative_to(
+                    REPOSITORY.resolve()
+                ).as_posix()
+            except ValueError as error:
+                raise ChallengerError("execution tool escaped repository") from error
+        else:
+            try:
+                relative = pathlib.Path(
+                    str(source_record["path"])
+                ).relative_to(
+                    pathlib.Path(str(plan["repository"]["root"]))
+                ).as_posix()
+            except (KeyError, ValueError) as error:
+                raise ChallengerError(
+                    "frozen execution tool provenance escaped repository"
+                ) from error
+            expected_path = REPOSITORY / relative
+        declaration = _record_metadata(
+            sources.get(relative), f"execution tool source {role}"
+        )
+        if allowed_drift is not None and not revalidate_current:
+            current_path = _audit_tool_paths().get(role)
+            if current_path is None:
+                raise ChallengerError(f"current execution tool is absent: {role}")
+            current_relative = current_path.resolve().relative_to(
+                REPOSITORY.resolve()
+            ).as_posix()
+            if current_relative != relative or relative in allowed_drift:
+                raise ChallengerError(
+                    f"current execution tool route differs from freeze: {role}"
+                )
+            expected_path = current_path
+        if revalidate_current or allowed_drift is not None:
+            current = _regular(expected_path)
+            if (
+                current["bytes"] != declaration["bytes"]
+                or current["sha256"] != declaration["sha256"]
+            ):
+                raise ChallengerError(
+                    f"current execution tool differs from freeze: {role}"
+                )
+        tools[role] = {
+            "relative_path": relative,
+            "bytes": declaration["bytes"],
+            "sha256": declaration["sha256"],
+        }
+    return {
+        "status": "execution-code-bound-to-clean-source-closure",
+        "build_manifest": _sealed_record(
+            manifest_path, BUILD_MANIFEST_SCHEMA
+        ),
+        "repository_commit": repository["commit"],
+        "source_count": len(normalized_sources),
+        "source_closure_sha256": sha256_bytes(
+            canonical_json_bytes(normalized_sources)
+        ),
+        "allowed_current_drift_routes": allowed_drift,
+        "tools": tools,
+    }
+
+
 def _ledger_path(plan: Mapping[str, Any]) -> pathlib.Path:
     return pathlib.Path(plan["outputs"]["ledger"])
 
@@ -2177,9 +2544,66 @@ def _completed_no_improvement_streak(
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 return value
             raise ChallengerError("completed-attempt improvement streak changed")
+        if entry.get("event") == "protected-stage-aborted":
+            return 0
         if entry.get("event") == "final-gate-recorded" and entry.get("passed") is False:
             return 0
     return 0
+
+
+def _validated_adaptation_contract(value: Any) -> dict[str, str]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != set(STANDARD_ADAPTATION_CONTRACT)
+        or value.get("qat_profile")
+        not in {"standard-v1", "refined-adaptive-scales-v1"}
+        or value.get("teacher_ranking_profile")
+        not in {"standard-v1", "hardest-5pct-2m-v1"}
+        or value.get("search_throughput_profile")
+        not in {
+            "standard-v1", "state-evaluation-cache-v1",
+            "progressive-widening-v1", "subtree-reuse-v1",
+        }
+    ):
+        raise ChallengerError("attempt adaptation contract is invalid")
+    return {key: str(value[key]) for key in STANDARD_ADAPTATION_CONTRACT}
+
+
+def _adaptation_contract_for_intervention(
+    intervention: str, entries: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    prior = next((
+        entry for entry in reversed(entries)
+        if entry.get("event") == "attempt-opened"
+        and entry.get("attempt", 0) > 0
+        and entry.get("adaptation_contract") is not None
+    ), None)
+    prior_contract = (
+        _validated_adaptation_contract(prior["adaptation_contract"])
+        if prior is not None else dict(STANDARD_ADAPTATION_CONTRACT)
+    )
+    direct = INTERVENTION_CONTRACTS.get(intervention)
+    if direct is not None:
+        changed_axes = [
+            key for key in STANDARD_ADAPTATION_CONTRACT
+            if direct[key] != STANDARD_ADAPTATION_CONTRACT[key]
+        ]
+        if len(changed_axes) != 1:
+            raise ChallengerError(
+                "registered intervention must change exactly one adaptation axis"
+            )
+        resolved = dict(prior_contract)
+        axis = changed_axes[0]
+        resolved[axis] = direct[axis]
+        return _validated_adaptation_contract(resolved)
+    if intervention == "teacher-refresh":
+        return dict(STANDARD_ADAPTATION_CONTRACT)
+    if intervention in {
+        "same-contract", "targeted-retry", "protected-rejection-clean-restart",
+        "explicit-post-live-restart",
+    }:
+        return prior_contract
+    raise ChallengerError("attempt intervention has no executable contract")
 
 
 def _resolve_campaign_artifact(
@@ -2205,11 +2629,15 @@ def verify_phase_build_source_closure(
     Preparation supplies ``campaign_context`` and ``phase_context`` so a
     bundle ``route`` (attempt one) or ledger-local ``path`` (later attempts)
     can be resolved.  Resume/load paths supply ``stored_closure``; its absolute
-    manifest and producer records are then checked again.  In both modes the
-    current files that will actually execute must match the source metadata in
-    the sealed build manifest and the current HEAD must remain the manifest's
-    commit.  Original paths embedded in the manifest are provenance only and
-    are never dereferenced, which keeps copied campaign bundles self-contained.
+    manifest and producer records are then checked again.  Before promotion,
+    current HEAD and every executing source must exactly match the sealed build.
+    A later phase following a prior dual-final authorization persists the
+    narrower ``post-promotion-allowed-drift`` mode: HEAD may differ and only the
+    four deployment outputs in ``POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES``
+    may differ, while every other source and every frozen producer must still
+    match the original manifest/bundle.  Original paths embedded in the
+    manifest are provenance only and are never dereferenced, which keeps copied
+    campaign bundles self-contained.
     """
 
     normalized_routes: list[str] = []
@@ -2224,6 +2652,8 @@ def verify_phase_build_source_closure(
 
     bundled_sources: Mapping[str, Any] | None = None
     phase_build_record: Mapping[str, Any] | None = None
+    source_validation_mode = "exact-build"
+    allowed_current_drift_routes: list[str] = []
     if stored_closure is None:
         if not isinstance(campaign_context, Mapping) or not isinstance(
             phase_context, Mapping
@@ -2241,6 +2671,30 @@ def verify_phase_build_source_closure(
             or set(producer_records) != BUILD_BINARY_ROLES
         ):
             raise ChallengerError("phase build closure inputs are incomplete")
+        production = campaign_context.get("inputs", {}).get(
+            "production_allowlist_enforced"
+        ) is True
+        phase_attempt = phase.get("attempt")
+        if production and (
+            isinstance(phase_attempt, bool)
+            or not isinstance(phase_attempt, int)
+        ):
+            raise ChallengerError("phase build closure attempt is invalid")
+        prior_promotions = (
+            [
+                entry for entry in load_ledger(plan)
+                if entry.get("event") == "dual-final-authorized"
+                and isinstance(entry.get("attempt"), int)
+                and not isinstance(entry.get("attempt"), bool)
+                and int(entry["attempt"]) < int(phase_attempt)
+            ]
+            if production else []
+        )
+        if prior_promotions:
+            source_validation_mode = "post-promotion-allowed-drift"
+            allowed_current_drift_routes = sorted(
+                POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+            )
         phase_build_record = attempt_inputs.get("build_manifest")
         manifest_path = _resolve_campaign_artifact(
             phase_build_record, plan=plan, label="phase build manifest"
@@ -2269,9 +2723,32 @@ def verify_phase_build_source_closure(
     else:
         if not isinstance(stored_closure, Mapping) or set(stored_closure) != {
             "manifest", "repository_commit", "sources", "sources_sha256",
-            "compiler", "producer_binaries", "closure_sha256",
+            "compiler", "producer_binaries", "source_validation_mode",
+            "allowed_current_drift_routes", "closure_sha256",
         }:
             raise ChallengerError("stored build source closure field roster changed")
+        source_validation_mode = str(
+            stored_closure.get("source_validation_mode", "")
+        )
+        stored_allowed = stored_closure.get("allowed_current_drift_routes")
+        if (
+            source_validation_mode not in {
+                "exact-build", "post-promotion-allowed-drift",
+            }
+            or not isinstance(stored_allowed, list)
+            or any(not isinstance(item, str) for item in stored_allowed)
+            or stored_allowed != sorted(set(stored_allowed))
+            or (
+                source_validation_mode == "exact-build" and stored_allowed
+            )
+            or (
+                source_validation_mode == "post-promotion-allowed-drift"
+                and stored_allowed
+                != sorted(POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES)
+            )
+        ):
+            raise ChallengerError("stored build source validation mode changed")
+        allowed_current_drift_routes = list(stored_allowed)
         manifest_path = _verify_sealed_record(
             stored_closure.get("manifest"), BUILD_MANIFEST_SCHEMA,
             "stored phase build manifest",
@@ -2301,7 +2778,10 @@ def verify_phase_build_source_closure(
     ):
         raise ChallengerError("phase build manifest contract changed")
     current_repository = _repository_identity()
-    if repository.get("commit") != current_repository["commit"]:
+    if (
+        source_validation_mode == "exact-build"
+        and repository.get("commit") != current_repository["commit"]
+    ):
         raise ChallengerError("current HEAD differs from phase build manifest")
     current_compiler = _compiler_identity()
     if manifest.get("compiler") != current_compiler:
@@ -2318,8 +2798,11 @@ def verify_phase_build_source_closure(
             raise ChallengerError("required phase source escaped repository") from error
         current = _regular(current_path)
         if (
-            current["bytes"] != metadata["bytes"]
-            or current["sha256"] != metadata["sha256"]
+            relative not in allowed_current_drift_routes
+            and (
+                current["bytes"] != metadata["bytes"]
+                or current["sha256"] != metadata["sha256"]
+            )
         ):
             raise ChallengerError(f"current phase source differs from build: {relative}")
         if bundled_sources is not None:
@@ -2360,11 +2843,13 @@ def verify_phase_build_source_closure(
     sources_sha256 = sha256_bytes(canonical_json_bytes(normalized_sources))
     normalized = {
         "manifest": _sealed_record(manifest_path, BUILD_MANIFEST_SCHEMA),
-        "repository_commit": current_repository["commit"],
+        "repository_commit": repository["commit"],
         "sources": normalized_sources,
         "sources_sha256": sources_sha256,
         "compiler": current_compiler,
         "producer_binaries": normalized_producers,
+        "source_validation_mode": source_validation_mode,
+        "allowed_current_drift_routes": allowed_current_drift_routes,
     }
     normalized["closure_sha256"] = sha256_bytes(canonical_json_bytes(normalized))
     if stored_closure is not None and dict(stored_closure) != normalized:
@@ -2391,7 +2876,8 @@ def validate_build_source_closure_evidence(
 
     if not isinstance(value, Mapping) or set(value) != {
         "manifest", "repository_commit", "sources", "sources_sha256",
-        "compiler", "producer_binaries", "closure_sha256",
+        "compiler", "producer_binaries", "source_validation_mode",
+        "allowed_current_drift_routes", "closure_sha256",
     }:
         raise ChallengerError("build source closure evidence field roster changed")
     routes = []
@@ -2410,11 +2896,26 @@ def validate_build_source_closure_evidence(
     manifest = qualification.load_sealed(manifest_path, BUILD_MANIFEST_SCHEMA)
     manifest_sources = manifest.get("source_closure")
     sources = value.get("sources")
+    validation_mode = value.get("source_validation_mode")
+    allowed_drift = value.get("allowed_current_drift_routes")
     if (
         manifest.get("campaign_id") != CAMPAIGN_ID
         or not isinstance(manifest_sources, Mapping)
         or not isinstance(sources, Mapping)
         or set(sources) != set(routes)
+        or validation_mode not in {
+            "exact-build", "post-promotion-allowed-drift",
+        }
+        or not isinstance(allowed_drift, list)
+        or allowed_drift != sorted(set(allowed_drift))
+        or (
+            validation_mode == "exact-build" and allowed_drift
+        )
+        or (
+            validation_mode == "post-promotion-allowed-drift"
+            and allowed_drift
+            != sorted(POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES)
+        )
         or value.get("repository_commit")
         != manifest.get("repository", {}).get("commit")
         or value.get("compiler") != manifest.get("compiler")
@@ -2639,9 +3140,14 @@ def validate_dynamic_exclusion(path: pathlib.Path) -> dict[str, Any]:
     classification = value.get("classification")
     protected = classification == "protected-final-canonical-fingerprints"
     live = classification == "live-diagnostic-canonical-fingerprints"
+    development = (
+        classification == "unprotected-development-canonical-fingerprints"
+    )
     expected_domain = (
         "protected-final-opening-canonical-state"
-        if protected else "live-game-canonical-state"
+        if protected else
+        "live-game-canonical-state" if live else
+        "unprotected-development-canonical-state"
     )
     expected_fields = {
             "schema", "namespace", "campaign_id", "attempt", "gate_id",
@@ -2653,11 +3159,13 @@ def validate_dynamic_exclusion(path: pathlib.Path) -> dict[str, Any]:
     }
     if live:
         expected_fields.add("live_fingerprint_evidence")
+    if development:
+        expected_fields.update({"phase", "development_exclusion"})
     if (
         set(value) != expected_fields
         or value.get("namespace") != NAMESPACE
         or value.get("campaign_id") != CAMPAIGN_ID
-        or not (protected or live)
+        or not (protected or live or development)
         or value.get("domain") != expected_domain
         or value.get("canonicalization")
         != "minimum(exact,rotate180,reflect,rotate180-reflect)"
@@ -2714,6 +3222,36 @@ def validate_dynamic_exclusion(path: pathlib.Path) -> dict[str, Any]:
             raise ChallengerError(
                 "live sanitized exclusion differs from trusted fingerprint evidence"
             )
+    if development:
+        phase = value.get("phase")
+        source_path = _verify_sealed_record(
+            value.get("development_exclusion"), DEVELOPMENT_EXCLUSION_SCHEMA,
+            "source development exclusion",
+        )
+        source = _validate_development_exclusion(
+            source_path, attempt=int(value["attempt"]), phase=str(phase)
+        )
+        if (
+            phase not in PHASE_QUOTAS
+            or value.get("gate_id") != f"development-{phase}"
+            or set(origin) != {
+                "candidate_source_sha256", "candidate_runtime_sha256",
+                "development_exclusion_sha256",
+                "development_exclusion_body_sha256",
+            }
+            or any(
+                SHA256_RE.fullmatch(str(item)) is None
+                for item in origin.values()
+            )
+            or origin.get("development_exclusion_sha256")
+            != sha256_file(source_path)
+            or origin.get("development_exclusion_body_sha256")
+            != source["body_sha256"]
+            or value.get("fingerprints") != source["fingerprints"]
+        ):
+            raise ChallengerError(
+                "development sanitized exclusion differs from its source"
+            )
     return value
 
 
@@ -2752,6 +3290,21 @@ def _default_live_fingerprint_extractor(
     return module.extract_verified_live_fingerprints(
         reference_path, data_root=data_root
     )
+
+
+def _guard_live_fingerprint_extractor(
+    context: Mapping[str, Any], *, extractor: LiveFingerprintExtractor,
+    allow_injected_test_evidence: bool,
+) -> None:
+    if extractor is _default_live_fingerprint_extractor:
+        return
+    if (
+        context.get("inputs", {}).get("production_allowlist_enforced") is True
+        or allow_injected_test_evidence is not True
+    ):
+        raise ChallengerError(
+            "injected live fingerprint extraction is explicit nonproduction test evidence only"
+        )
 
 
 def _extract_live_fingerprint_evidence(
@@ -2899,7 +3452,16 @@ def _cumulative_dynamic_exclusions(
     records: dict[str, dict[str, Any]] = {}
     for entry in entries:
         candidates: Sequence[Any] = ()
-        if entry.get("event") == "final-gate-recorded" and entry.get("passed") is False:
+        if entry.get("event") in {
+            "attempt-outcome-recorded", "development-gate-aborted",
+            "protected-stage-aborted",
+        }:
+            candidates = entry.get("dynamic_exclusions", ())
+        elif entry.get("event") == "dual-final-prepared":
+            # Opening either protected bank permanently excludes both banks,
+            # irrespective of their later verdict or a failed live window.
+            candidates = entry.get("dynamic_exclusions", ())
+        elif entry.get("event") == "final-gate-recorded" and entry.get("passed") is False:
             candidates = entry.get("dynamic_exclusions", ())
         elif entry.get("event") == "live-window-recorded" and entry.get("passed") is False:
             item = entry.get("dynamic_exclusion")
@@ -2911,6 +3473,110 @@ def _cumulative_dynamic_exclusions(
             normalized = _dynamic_exclusion_record(path)
             records[str(normalized["sha256"])] = normalized
     return [records[digest] for digest in sorted(records)]
+
+
+def _phase_dynamic_exclusions(
+    entries: Sequence[Mapping[str, Any]], *, attempt: int, phase: str,
+    opened: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    if phase == "pilot":
+        return list(opened["dynamic_exclusions"])
+    for index, entry in enumerate(entries):
+        if (
+            entry.get("event") == "attempt-outcome-recorded"
+            and entry.get("attempt") == attempt
+            and entry.get("phase") == "pilot"
+            and entry.get("admitted") is True
+        ):
+            return _cumulative_dynamic_exclusions(entries[:index + 1])
+    raise ChallengerError("full phase has no admitted-pilot exclusion boundary")
+
+
+def _validate_development_gate_abandonment(
+    path: pathlib.Path, *, campaign_plan: Mapping[str, Any],
+    revalidate_current_sources: bool = False,
+) -> dict[str, Any]:
+    """Replay the teacher runner's source-bound, metric-free abort receipt."""
+
+    try:
+        from tools import compact_value_bfm_teacher_training as teacher_training
+
+        header = qualification.load_sealed(
+            path, DEVELOPMENT_GATE_ABORTION_SCHEMA
+        )
+        training_plan_path = _verify_record(
+            header.get("training_plan"), "aborted teacher-training plan"
+        )
+        gate_plan_path = _verify_record(
+            header.get("gate_plan"), "aborted development-gate plan"
+        )
+        if revalidate_current_sources:
+            training_plan = teacher_training.load_training_plan(
+                training_plan_path
+            )
+        else:
+            training_plan = qualification.load_sealed(
+                training_plan_path, teacher_training.PLAN_SCHEMA
+            )
+            validate_build_source_closure_evidence(
+                training_plan.get("build_source_closure"),
+                required_sources=teacher_training.required_build_sources(),
+            )
+        value = teacher_training.validate_gate_abandonment(
+            training_plan, gate_plan_path, path
+        )
+    except Exception as error:
+        raise ChallengerError(
+            "development-gate abandonment failed deep validation"
+        ) from error
+    campaign_plan_path = pathlib.Path(campaign_plan["outputs"]["plan"])
+    if (
+        training_plan.get("campaign_plan") != _regular(campaign_plan_path)
+        or value.get("campaign_id") != CAMPAIGN_ID
+        or value.get("attempt") != training_plan.get("attempt")
+        or value.get("phase") != training_plan.get("phase")
+        or value.get("partial_metrics_read") is not False
+        or value.get("improvement_counted") is not False
+        or value.get("retry_authorized") is not False
+    ):
+        raise ChallengerError(
+            "development-gate abandonment lost campaign/source binding"
+        )
+    return value
+
+
+def _validate_protected_stage_abortion(
+    path: pathlib.Path, *, campaign_plan: Mapping[str, Any],
+    revalidate_current_sources: bool = False,
+) -> dict[str, Any]:
+    """Replay the dual-final runner's source-bound protected abort receipt."""
+
+    try:
+        from tools import compact_value_bfm_rank4_teacher_dual_final as dual_final
+
+        validator = (
+            dual_final.validate_protected_stage_abortion
+            if revalidate_current_sources
+            else dual_final.validate_protected_stage_abortion_archived
+        )
+        value = validator(
+            path, campaign_plan_path=pathlib.Path(
+                campaign_plan["outputs"]["plan"]
+            )
+        )
+    except Exception as error:
+        raise ChallengerError(
+            "protected-stage abortion failed deep validation"
+        ) from error
+    if (
+        value.get("campaign_id") != CAMPAIGN_ID
+        or value.get("partial_metrics_read") is not False
+        or value.get("candidate_rejected") is not True
+        or value.get("retry_authorized") is not False
+        or value.get("upload_authorized") is not False
+    ):
+        raise ChallengerError("protected-stage abortion policy changed")
+    return value
 
 
 def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2929,6 +3595,15 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     dual_prepared: set[int] = set()
     upload_count = 0
     for path in sorted(directory.iterdir()):
+        if LEDGER_TEMP_RE.fullmatch(path.name):
+            if path.is_symlink() or not path.is_file():
+                raise ChallengerError(
+                    "attempt ledger temporary artifact is irregular"
+                )
+            # An fsynced/link-published event never has this name.  A hard kill
+            # from the older same-directory writer may leave the unpublished
+            # inode behind; it is not part of the append-only chain.
+            continue
         if path.is_symlink() or not path.is_file():
             raise ChallengerError("attempt ledger contains an irregular entry")
         value = qualification.load_sealed(path, LEDGER_SCHEMA)
@@ -2999,6 +3674,131 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 value.get("attempt_inputs"), plan=plan,
                 require_student_12x8=True,
             )
+            campaign_inputs = qualification.load_sealed(
+                pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
+            )
+            if attempt == 0:
+                if value.get("loss_reuse_provenance") is not None:
+                    raise ChallengerError("attempt zero cannot reuse loss roots")
+            elif campaign_inputs.get("production_allowlist_enforced") is True:
+                frozen = campaign_inputs["attempt_one_inputs"]
+                previous_opened = next(
+                    entry for entry in reversed(entries)
+                    if entry.get("event") == "attempt-opened"
+                    and entry.get("attempt") == attempt - 1
+                )
+                prior_candidates = [
+                    entry.get("candidate", {}).get("runtime")
+                    for entry in reversed(entries)
+                    if isinstance(entry.get("candidate"), Mapping)
+                    and isinstance(
+                        entry.get("candidate", {}).get("runtime"), Mapping
+                    )
+                ]
+                expected_student = (
+                    frozen["student_runtime"]
+                    if attempt == 1 or not prior_candidates
+                    else prior_candidates[0]
+                )
+                attempt_inputs = value["attempt_inputs"]
+                if (
+                    attempt_inputs.get("student_runtime") != expected_student
+                    or attempt_inputs.get("prior_runtime")
+                    != frozen["prior_runtime"]
+                    or attempt_inputs.get("initial_float_checkpoint")
+                    != frozen["initial_float_checkpoint"]
+                    or attempt_inputs.get("build_manifest")
+                    != frozen["build_manifest"]
+                    or attempt_inputs.get("producer_binaries")
+                    != frozen["producer_binaries"]
+                ):
+                    raise ChallengerError(
+                        "production attempt overrode frozen executable/model inputs"
+                    )
+                inherited_roots = (
+                    previous_opened["attempt_inputs"]["roots_tsv"],
+                    previous_opened["attempt_inputs"]["roots_manifest"],
+                )
+                current_roots = (
+                    attempt_inputs["roots_tsv"],
+                    attempt_inputs["roots_manifest"],
+                )
+                provenance = value.get("loss_reuse_provenance")
+                if current_roots == inherited_roots:
+                    if provenance != previous_opened.get(
+                        "loss_reuse_provenance"
+                    ):
+                        raise ChallengerError(
+                            "inherited loss-root provenance changed"
+                        )
+                else:
+                    if (
+                        not isinstance(provenance, Mapping)
+                        or set(provenance) != {
+                            "path", "bytes", "sha256", "schema",
+                            "body_sha256", "reuse_schema", "source_attempt",
+                            "source_phase", "deeply_rederived_before_open",
+                            "verifier_sources",
+                        }
+                        or provenance.get("source_attempt") != attempt - 1
+                        or provenance.get("source_phase") not in PHASE_QUOTAS
+                        or provenance.get("deeply_rederived_before_open") is not True
+                    ):
+                        raise ChallengerError("loss-root provenance changed")
+                    manifest_path = _verify_sealed_record(
+                        {
+                            key: provenance[key]
+                            for key in (
+                                "path", "bytes", "sha256", "schema",
+                                "body_sha256",
+                            )
+                        },
+                        str(provenance["schema"]), "copied loss-root manifest",
+                    )
+                    expected_verifier_sources = (
+                        _frozen_execution_source_evidence(
+                            {"plan": plan, "inputs": campaign_inputs},
+                            tool_roles=("loss_reuse",),
+                            build_manifest_record=attempt_inputs[
+                                "build_manifest"
+                            ],
+                            revalidate_current=False,
+                        )
+                    )
+                    try:
+                        from tools import compact_value_bfm_loss_reuse as loss_reuse
+
+                        archived_roots_tsv = _verify_record(
+                            attempt_inputs["roots_tsv"],
+                            "copied loss-root TSV",
+                        )
+                        manifest = (
+                            loss_reuse.validate_archived_loss_reuse_manifest(
+                                manifest_path, roots_tsv=archived_roots_tsv,
+                            )
+                        )
+                    except Exception as error:
+                        raise ChallengerError(
+                            "copied loss-root manifest failed validation"
+                        ) from error
+                    prior = entries[-1]
+                    if (
+                        prior.get("event") != "attempt-outcome-recorded"
+                        or prior.get("attempt") != attempt - 1
+                        or prior.get("phase") != provenance["source_phase"]
+                        or prior.get("admitted") is not False
+                        or provenance.get("reuse_schema")
+                        != manifest.get("reuse_schema")
+                        or provenance.get("verifier_sources")
+                        != expected_verifier_sources
+                        or attempt_inputs["roots_manifest"]["sha256"]
+                        != provenance["sha256"]
+                        or attempt_inputs["roots_tsv"]["sha256"]
+                        != manifest.get("source_roots", {}).get("sha256")
+                    ):
+                        raise ChallengerError(
+                            "loss roots are not bound to the immediate rejection"
+                        )
             expected_dynamic = _cumulative_dynamic_exclusions(entries)
             if value.get("dynamic_exclusions") != expected_dynamic:
                 raise ChallengerError(
@@ -3027,14 +3827,20 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                         receipt_path, ATTRIBUTION_EVIDENCE_SCHEMA
                     )
                     classification = receipt.get("classification")
+                    expected_receipt = qualification.seal(_attribution_body(
+                        {"plan": plan}, entries=entries,
+                        next_attempt=attempt,
+                        created_at_utc=str(receipt.get("created_at_utc", "")),
+                    ))
                     if (
-                        classification not in ATTRIBUTION_INTERVENTIONS
+                        receipt != expected_receipt
+                        or classification not in ATTRIBUTION_INTERVENTIONS
                         or receipt.get("completed_no_improvement_attempts") != 2
                         or receipt.get("next_attempt") != attempt
                         or receipt.get("selected_intervention")
                         != value.get("intervention")
                         or value.get("intervention")
-                        != ATTRIBUTION_INTERVENTIONS[classification]
+                        not in ATTRIBUTION_INTERVENTION_SEQUENCES[classification]
                     ):
                         raise ChallengerError("attempt attribution selection changed")
                 elif (
@@ -3042,6 +3848,13 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                     or value.get("intervention") != expected.get(route)
                 ):
                     raise ChallengerError("attempt intervention route changed")
+                expected_contract = _adaptation_contract_for_intervention(
+                    str(value["intervention"]), entries
+                )
+                if _validated_adaptation_contract(
+                    value.get("adaptation_contract")
+                ) != expected_contract:
+                    raise ChallengerError("attempt adaptation contract changed")
         elif attempt != active_attempt:
             raise ChallengerError("ledger event does not belong to the active attempt")
         if event == "phase-plan-materialized":
@@ -3058,7 +3871,13 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or value.get("quotas") != PHASE_QUOTAS[phase]
                 or value.get("games_launched") != 0
                 or value.get("dynamic_exclusions")
-                != opened_event.get("dynamic_exclusions")
+                != _phase_dynamic_exclusions(
+                    entries, attempt=attempt, phase=str(phase),
+                    opened=opened_event,
+                )
+                or value.get("intervention") != opened_event.get("intervention")
+                or value.get("adaptation_contract")
+                != opened_event.get("adaptation_contract")
             ):
                 raise ChallengerError("phase materialization ledger event changed")
             _verify_sealed_record(
@@ -3085,7 +3904,9 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             if phase not in materialized[attempt]:
                 raise ChallengerError("progress predates phase materialization")
             if any(
-                item["event"] == "attempt-outcome-recorded"
+                item["event"] in {
+                    "attempt-outcome-recorded", "development-gate-aborted",
+                }
                 and item["attempt"] == attempt and item.get("phase") == phase
                 for item in entries
             ):
@@ -3218,9 +4039,12 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             except ValueError as error:
                 raise ChallengerError("attempt-zero result escaped campaign bundle") from error
             result_value = qualification.load_sealed(result_path)
-            expected_plan = qualification.load_sealed(
+            campaign_inputs = qualification.load_sealed(
                 pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
-            )["attempt_zero"]["recovery_plan_binding"]
+            )
+            expected_plan = campaign_inputs["attempt_zero"][
+                "recovery_plan_binding"
+            ]
             recovery_plan_record = result_value.get("recovery_plan")
             if (
                 not isinstance(recovery_plan_record, Mapping)
@@ -3231,6 +4055,65 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 != expected_plan["body_sha256"]
             ):
                 raise ChallengerError("attempt-zero result lost its recovery-plan binding")
+            deep_validation = value.get("deep_recovery_validation")
+            expected_deep_status = (
+                "deep-recovery-finalist-validated"
+                if value.get("passed") is True
+                else "deep-recovery-terminal-failure-validated"
+            )
+            strict_deep = bool(
+                isinstance(deep_validation, Mapping)
+                and deep_validation.get("passed") is value.get("passed")
+                and deep_validation.get("status") == expected_deep_status
+            )
+            if strict_deep:
+                deep_plan = _sealed_metadata(
+                    deep_validation.get("recovery_plan"), RECOVERY_PLAN_SCHEMA,
+                    "deep recovery plan",
+                )
+                if {
+                    key: deep_plan[key]
+                    for key in ("bytes", "sha256", "schema", "body_sha256")
+                } != expected_plan:
+                    raise ChallengerError("deep recovery plan binding changed")
+                _verify_sealed_record(
+                    deep_validation.get("journal_head"),
+                    RECOVERY_JOURNAL_SCHEMA, "deep recovery journal head",
+                )
+                validator_path = _verify_record(
+                    deep_validation.get("validator"),
+                    "deep recovery validator",
+                )
+                if campaign_inputs.get("production_allowlist_enforced") is True:
+                    expected_execution = _frozen_execution_source_evidence(
+                        {"plan": plan, "inputs": campaign_inputs},
+                        tool_roles=("recovery_runner_verifier",),
+                        revalidate_current=False,
+                    )
+                    if (
+                        deep_validation.get("frozen_execution_sources")
+                        != expected_execution
+                        or expected_execution is None
+                        or sha256_file(validator_path)
+                        != expected_execution["tools"][
+                            "recovery_runner_verifier"
+                        ]["sha256"]
+                    ):
+                        raise ChallengerError(
+                            "deep recovery validator differs from frozen execution code"
+                        )
+                elif deep_validation.get("frozen_execution_sources") is not None:
+                    raise ChallengerError(
+                        "test deep recovery unexpectedly binds production sources"
+                    )
+            elif (
+                campaign_inputs.get("production_allowlist_enforced") is True
+                or deep_validation != {
+                    "status": "deep-recovery-test-validated",
+                    "passed": value.get("passed"),
+                }
+            ):
+                raise ChallengerError("test attempt-zero validation changed")
             if value.get("passed") is True:
                 finalist_path = _verify_sealed_record(
                     value.get("referenced_finalist"), RECOVERY_FINALIST_SCHEMA,
@@ -3284,18 +4167,25 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or not math.isfinite(float(item)) for item in (strength, regret)
             ):
                 raise ChallengerError("attempt improvement metrics changed")
+            strength_evidence = _strength_improvement_evidence(
+                entries, value["metrics"], current_attempt=attempt
+            )
             if (
-                value["metrics"].get("strength_delta_pp") != float(strength)
+                value.get("strength_delta_evidence") != strength_evidence
+                or not math.isclose(
+                    float(strength),
+                    float(strength_evidence["improvement_percentage_points"]),
+                    abs_tol=1e-12,
+                )
                 or value["metrics"].get("teacher_regret_reduction_fraction")
                 != float(regret)
             ):
                 raise ChallengerError("attempt improvement metrics lost evidence binding")
             phase_improved = float(strength) >= 1.5 or float(regret) >= 0.10
-            attempt_improved = phase_improved or any(
-                item["event"] == "attempt-outcome-recorded"
-                and item["attempt"] == attempt and item.get("improved") is True
-                for item in entries
-            )
+            # Only the terminal candidate for this phase determines whether a
+            # rejected attempt improved.  A pilot that advanced to a distinct
+            # full-round model must not mask stagnation of that later model.
+            attempt_improved = phase_improved
             prior_no_improvement = _completed_no_improvement_streak(entries)
             consecutive = (
                 prior_no_improvement if admitted else
@@ -3398,13 +4288,158 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 admission_receipt=admission_path,
                 ledger_entries=entries,
             )
+            dynamic_records = value.get("dynamic_exclusions")
+            if not isinstance(dynamic_records, list) or len(dynamic_records) != 1:
+                raise ChallengerError(
+                    "attempt outcome development exclusion was not accumulated"
+                )
+            dynamic_path = _verify_dynamic_exclusion_record(
+                dynamic_records[0], "attempt development dynamic exclusion"
+            )
+            dynamic_value = qualification.load_sealed(
+                dynamic_path, DYNAMIC_EXCLUSION_SCHEMA
+            )
+            expected_dynamic = qualification.seal(
+                _development_dynamic_exclusion_body(
+                    source_record=value["development_exclusion"],
+                    attempt=attempt,
+                    phase=str(phase),
+                    candidate=candidate,
+                )
+            )
+            if dynamic_value != expected_dynamic:
+                raise ChallengerError(
+                    "attempt development dynamic exclusion lineage changed"
+                )
             for bound_path in (
                 runtime_path, source_path, receipt_path, exclusion_path,
+                dynamic_path,
             ):
                 try:
                     bound_path.relative_to(pathlib.Path(plan["outputs"]["root"]))
                 except ValueError as error:
                     raise ChallengerError("attempt outcome artifact escaped campaign") from error
+        elif event == "development-gate-aborted":
+            phase = value.get("phase")
+            prior = entries[-1] if entries else {}
+            expected_fields = {
+                "schema", "namespace", "campaign_id", "campaign_plan",
+                "sequence", "previous_sha256", "attempt", "event",
+                "created_at_utc", "phase", "abandonment",
+                "abandonment_schema", "source_abandonment_sha256",
+                "aborted_candidate", "development_exclusion",
+                "dynamic_exclusions", "failure_class",
+                "partial_metrics_read", "improvement_counted",
+                "candidate_admitted", "retry_authorized",
+                "adaptation_route", "automatic_action", "body_sha256",
+            }
+            if (
+                set(value) != expected_fields
+                or attempt <= 0
+                or phase not in PHASE_QUOTAS
+                or prior.get("event") != "progress-recorded"
+                or prior.get("attempt") != attempt
+                or prior.get("phase") != phase
+                or prior.get("completed_games") != PHASE_TOTALS[str(phase)]
+                or prior.get("adaptation_route") != "record-attempt-outcome"
+            ):
+                raise ChallengerError(
+                    "development-gate abortion chronology changed"
+                )
+            abortion_path = _verify_sealed_record(
+                value.get("abandonment"), DEVELOPMENT_GATE_ABORTION_SCHEMA,
+                "copied development-gate abandonment",
+            )
+            abandonment = _validate_development_gate_abandonment(
+                abortion_path, campaign_plan=plan
+            )
+            candidate = value.get("aborted_candidate")
+            if not isinstance(candidate, Mapping):
+                raise ChallengerError("aborted development candidate is absent")
+            runtime_path = _verify_record(
+                candidate.get("runtime"), "aborted development runtime"
+            )
+            source_path = _verify_record(
+                candidate.get("source"), "aborted development source"
+            )
+            if (
+                candidate.get("architecture") != _architecture(runtime_path)
+                or source_path.is_symlink()
+                or not 0 < source_path.stat().st_size < SOURCE_LIMIT
+                or abandonment.get("candidate", {}).get("runtime", {}).get(
+                    "sha256"
+                ) != candidate["runtime"]["sha256"]
+                or abandonment.get("candidate", {}).get("source", {}).get(
+                    "sha256"
+                ) != candidate["source"]["sha256"]
+            ):
+                raise ChallengerError("aborted development candidate changed")
+            exclusion_path = _verify_sealed_record(
+                value.get("development_exclusion"),
+                DEVELOPMENT_EXCLUSION_SCHEMA,
+                "aborted development exclusion",
+            )
+            _validate_development_exclusion(
+                exclusion_path, attempt=attempt, phase=str(phase)
+            )
+            dynamic_records = value.get("dynamic_exclusions")
+            if not isinstance(dynamic_records, list) or len(dynamic_records) != 1:
+                raise ChallengerError(
+                    "aborted development exclusion was not accumulated"
+                )
+            dynamic_path = _verify_dynamic_exclusion_record(
+                dynamic_records[0], "aborted development dynamic exclusion"
+            )
+            expected_dynamic = qualification.seal(
+                _development_dynamic_exclusion_body(
+                    source_record=value["development_exclusion"],
+                    attempt=attempt, phase=str(phase), candidate=candidate,
+                )
+            )
+            if qualification.load_sealed(
+                dynamic_path, DYNAMIC_EXCLUSION_SCHEMA
+            ) != expected_dynamic:
+                raise ChallengerError(
+                    "aborted development exclusion lineage changed"
+                )
+            if (
+                value.get("abandonment_schema")
+                != DEVELOPMENT_GATE_ABORTION_SCHEMA
+                or value.get("source_abandonment_sha256")
+                != value.get("abandonment", {}).get("sha256")
+                or abandonment.get("attempt") != attempt
+                or abandonment.get("phase") != phase
+                or abandonment.get("development_exclusion", {}).get("sha256")
+                != value.get("development_exclusion", {}).get("sha256")
+                or value.get("failure_class") != "infrastructure-interruption"
+                or value.get("partial_metrics_read") is not False
+                or value.get("improvement_counted") is not False
+                or value.get("candidate_admitted") is not False
+                or value.get("retry_authorized") is not False
+                or value.get("adaptation_route")
+                != "open-next-attempt-same-contract"
+                or value.get("automatic_action") is not False
+                or qualification._utc(
+                    value.get("created_at_utc"),
+                    "development abort ledger time",
+                ) < qualification._utc(
+                    abandonment.get("abandoned_at_utc"),
+                    "development abandonment time",
+                )
+            ):
+                raise ChallengerError(
+                    "development-gate abortion transition changed"
+                )
+            for bound_path in (
+                abortion_path, runtime_path, source_path, exclusion_path,
+                dynamic_path,
+            ):
+                try:
+                    bound_path.relative_to(pathlib.Path(plan["outputs"]["root"]))
+                except ValueError as error:
+                    raise ChallengerError(
+                        "development abortion artifact escaped campaign"
+                    ) from error
         elif event == "dual-final-authorized":
             if (
                 not entries
@@ -3441,6 +4476,124 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 ):
                     raise ChallengerError("prepared dynamic exclusion identity changed")
             dual_prepared.add(attempt)
+        elif event == "protected-stage-aborted":
+            prior = entries[-1] if entries else {}
+            expected_fields = {
+                "schema", "namespace", "campaign_id", "campaign_plan",
+                "sequence", "previous_sha256", "attempt", "event",
+                "created_at_utc", "abortion", "abortion_schema",
+                "source_abortion_sha256", "protected_stage", "gate_id",
+                "shard_index", "aborted_candidate_identity",
+                "dynamic_exclusions", "frozen_execution_sources",
+                "failure_class", "candidate_rejected",
+                "partial_metrics_read", "improvement_counted",
+                "training_eligible", "retry_authorized",
+                "adaptation_route", "automatic_action", "body_sha256",
+            }
+            allowed_prior = (
+                prior.get("attempt") == attempt
+                and (
+                    prior.get("event") in {
+                        "dual-final-authorized", "dual-final-prepared",
+                    }
+                    or (
+                        prior.get("event") == "final-gate-recorded"
+                        and prior.get("gate_id") == "gate-a"
+                        and prior.get("passed") is True
+                    )
+                )
+            )
+            if (
+                set(value) != expected_fields
+                or not allowed_prior
+                or attempt not in dual_authorized
+            ):
+                raise ChallengerError("protected-stage abortion chronology changed")
+            abortion_path = _verify_sealed_record(
+                value.get("abortion"), PROTECTED_STAGE_ABORTION_SCHEMA,
+                "copied protected-stage abortion",
+            )
+            abortion = _validate_protected_stage_abortion(
+                abortion_path, campaign_plan=plan
+            )
+            dynamic_records = value.get("dynamic_exclusions")
+            if not isinstance(dynamic_records, list) or len(dynamic_records) > 2:
+                raise ChallengerError("protected abortion exclusion roster changed")
+            observed_exclusions = []
+            for ordinal, record in enumerate(dynamic_records):
+                exclusion_path = _verify_dynamic_exclusion_record(
+                    record, f"protected abortion exclusion {ordinal}"
+                )
+                exclusion = validate_dynamic_exclusion(exclusion_path)
+                if (
+                    exclusion.get("attempt") != attempt
+                    or exclusion.get("gate_id") not in {"gate-a", "gate-b"}
+                    or exclusion.get("classification")
+                    != "protected-final-canonical-fingerprints"
+                ):
+                    raise ChallengerError(
+                        "protected abortion exclusion identity changed"
+                    )
+                observed_exclusions.append(record["sha256"])
+            source_exclusions = abortion.get("fingerprint_exclusions")
+            if not isinstance(source_exclusions, list):
+                raise ChallengerError("protected abortion lost its exclusions")
+            campaign_inputs = qualification.load_sealed(
+                pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
+            )
+            expected_execution_sources = _frozen_execution_source_evidence(
+                {"plan": plan, "inputs": campaign_inputs},
+                tool_roles=POST_PROMOTION_RELEASE_TOOL_ROLES,
+                build_manifest_record=_attempt_build_manifest_record(
+                    entries, attempt
+                ),
+                revalidate_current=False,
+                allowed_current_drift_routes=(
+                    POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+                ),
+            )
+            if sorted(observed_exclusions) != sorted(
+                record.get("sha256") for record in source_exclusions
+                if isinstance(record, Mapping)
+            ):
+                raise ChallengerError(
+                    "protected abortion exclusion copies changed"
+                )
+            if (
+                value.get("abortion_schema") != PROTECTED_STAGE_ABORTION_SCHEMA
+                or value.get("source_abortion_sha256")
+                != value.get("abortion", {}).get("sha256")
+                or abortion.get("attempt") != attempt
+                or value.get("protected_stage") != abortion.get("protected_stage")
+                or value.get("gate_id") != abortion.get("gate_id")
+                or value.get("shard_index") != abortion.get("shard_index")
+                or value.get("aborted_candidate_identity")
+                != abortion.get("candidate")
+                or value.get("frozen_execution_sources")
+                != expected_execution_sources
+                or value.get("failure_class") != "infrastructure-interruption"
+                or value.get("candidate_rejected") is not True
+                or value.get("partial_metrics_read") is not False
+                or value.get("improvement_counted") is not False
+                or value.get("training_eligible") is not False
+                or value.get("retry_authorized") is not False
+                or value.get("adaptation_route")
+                != "open-next-attempt-protected-rejection"
+                or value.get("automatic_action") is not False
+                or qualification._utc(
+                    value.get("created_at_utc"), "protected abort ledger time"
+                ) < qualification._utc(
+                    abortion.get("aborted_at_utc"),
+                    "protected abortion time",
+                )
+            ):
+                raise ChallengerError("protected-stage abortion transition changed")
+            try:
+                abortion_path.relative_to(pathlib.Path(plan["outputs"]["root"]))
+            except ValueError as error:
+                raise ChallengerError(
+                    "protected abortion artifact escaped campaign"
+                ) from error
         elif event == "final-gate-recorded":
             gate_id = value.get("gate_id")
             if (
@@ -3519,6 +4672,173 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or qualified.get("independent_banks") is not True
             ):
                 raise ChallengerError("dual qualification ledger evidence changed")
+        elif event == "upload-authorization-claimed":
+            prior = entries[-1] if entries else {}
+            if prior.get("event") != "dual-final-qualified":
+                raise ChallengerError(
+                    "upload capability claim predates dual qualification"
+                )
+            qualified_path = _verify_sealed_record(
+                prior.get("qualification"), DUAL_QUALIFICATION_SCHEMA,
+                "claimed upload qualification",
+            )
+            qualified = qualification.load_sealed(
+                qualified_path, DUAL_QUALIFICATION_SCHEMA
+            )
+            ordinal = upload_count + 1
+            binding = value.get("campaign_upload_binding")
+            output_root = pathlib.Path(str(value.get("output_root", "")))
+            production = qualification.load_sealed(
+                pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
+            ).get("production_allowlist_enforced") is True
+            expected_root = (
+                pathlib.Path(plan["outputs"]["root"])
+                / "release" / f"attempt-{attempt:03d}" / "upload"
+            )
+            _verify_sealed_record(
+                value.get("release_evidence"), RELEASE_EVIDENCE_SCHEMA,
+                "claimed upload release evidence",
+            )
+            if (
+                value.get("qualification") != prior.get("qualification")
+                or value.get("candidate") != qualified.get("candidate")
+                or value.get("upload_ordinal") != ordinal
+                or not isinstance(binding, Mapping)
+                or binding.get("upload_ordinal") != ordinal
+                or re.fullmatch(
+                    r"[0-9a-f]{40}", str(value.get("candidate_commit", ""))
+                ) is None
+                or not output_root.is_absolute()
+                or (production and output_root != expected_root)
+                or value.get("files_published") is not False
+                or value.get("adaptation_route") != "publish-upload-capability"
+                or value.get("automatic_action") is not False
+            ):
+                raise ChallengerError("upload capability claim binding changed")
+            utc(value.get("authorized_at_utc"), "upload capability claim time")
+            if ordinal == 1:
+                if binding.get("additional_upload_authorization") is not None:
+                    raise ChallengerError(
+                        "first upload claim used an additional capability"
+                    )
+            else:
+                capabilities = [
+                    item for item in entries
+                    if item.get("event") == "additional-upload-authorized"
+                    and item.get("next_attempt") == attempt
+                    and item.get("next_upload_ordinal") == ordinal
+                    and item.get("consumed") is False
+                ]
+                if (
+                    len(capabilities) != 1
+                    or binding.get("authorization_event_body_sha256")
+                    != capabilities[0]["body_sha256"]
+                ):
+                    raise ChallengerError(
+                        "additional upload claim capability changed"
+                    )
+        elif event == "upload-authorized":
+            prior = entries[-1] if entries else {}
+            if prior.get("event") != "upload-authorization-claimed":
+                raise ChallengerError(
+                    "upload authorization predates its ledger claim"
+                )
+            authorization_path = _verify_sealed_record(
+                value.get("authorization"), qualification.UPLOAD_AUTH_SCHEMA,
+                "upload authorization capability",
+            )
+            inputs_path = _verify_sealed_record(
+                value.get("authorization_inputs"),
+                UPLOAD_AUTHORIZATION_INPUTS_SCHEMA,
+                "upload authorization inputs",
+            )
+            authorization = qualification.load_sealed(
+                authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+            )
+            authorization_inputs = qualification.load_sealed(
+                inputs_path, UPLOAD_AUTHORIZATION_INPUTS_SCHEMA
+            )
+            qualified = qualification.load_sealed(
+                pathlib.Path(prior["qualification"]["path"]),
+                DUAL_QUALIFICATION_SCHEMA,
+            )
+            ordinal = upload_count + 1
+            campaign_binding = authorization.get("campaign_upload_binding")
+            production = qualification.load_sealed(
+                pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
+            ).get("production_allowlist_enforced") is True
+            expected_root = (
+                pathlib.Path(plan["outputs"]["root"])
+                / "release" / f"attempt-{attempt:03d}" / "upload"
+            )
+            if (
+                value.get("qualification") != prior.get("qualification")
+                or value.get("candidate") != qualified.get("candidate")
+                or value.get("upload_ordinal") != ordinal
+                or value.get("consumed") is not False
+                or value.get("automatic_action") is not False
+                or not isinstance(campaign_binding, Mapping)
+                or campaign_binding.get("upload_ordinal") != ordinal
+                or authorization_inputs.get("campaign_id") != CAMPAIGN_ID
+                or authorization_inputs.get("attempt") != attempt
+                or authorization_inputs.get("authorization", {}).get("sha256")
+                != value["authorization"]["sha256"]
+                or authorization_inputs.get("dual_qualification", {}).get("sha256")
+                != prior["qualification"]["sha256"]
+                or authorization_inputs.get("campaign_upload_binding")
+                != campaign_binding
+                or authorization.get("uploads_authorized") != 1
+                or authorization.get("rank4_replacement_authorized") is not False
+                or authorization.get("authorized_at_utc")
+                != prior.get("authorized_at_utc")
+                or authorization_inputs.get("authorized_at_utc")
+                != prior.get("authorized_at_utc")
+                or authorization.get("candidate", {}).get("sha256")
+                != qualified.get("candidate", {}).get("source", {}).get("sha256")
+                or authorization.get("candidate", {}).get("bytes")
+                != qualified.get("candidate", {}).get("source", {}).get("bytes")
+                or authorization_path.parent
+                != pathlib.Path(str(prior.get("output_root", ""))).resolve()
+                or inputs_path.parent
+                != pathlib.Path(str(prior.get("output_root", ""))).resolve()
+                or authorization.get("campaign_upload_claim") != {
+                    "sequence": prior.get("sequence"),
+                    "body_sha256": prior.get("body_sha256"),
+                    "attempt": prior.get("attempt"),
+                    "upload_ordinal": prior.get("upload_ordinal"),
+                }
+                or authorization_inputs.get("campaign_upload_claim")
+                != authorization.get("campaign_upload_claim")
+                or (
+                    production
+                    and (
+                        authorization_path.parent != expected_root
+                        or inputs_path.parent != expected_root
+                    )
+                )
+            ):
+                raise ChallengerError("upload authorization ledger binding changed")
+            if ordinal == 1:
+                if campaign_binding.get("additional_upload_authorization") is not None:
+                    raise ChallengerError(
+                        "first upload unexpectedly used an additional capability"
+                    )
+            else:
+                capabilities = [
+                    entry for entry in entries
+                    if entry.get("event") == "additional-upload-authorized"
+                    and entry.get("next_attempt") == attempt
+                    and entry.get("next_upload_ordinal") == ordinal
+                    and entry.get("consumed") is False
+                ]
+                if (
+                    len(capabilities) != 1
+                    or campaign_binding.get("authorization_event_body_sha256")
+                    != capabilities[0]["body_sha256"]
+                ):
+                    raise ChallengerError(
+                        "additional upload capability binding changed"
+                    )
         elif event == "upload-attested":
             prior = entries[-1] if entries else {}
             attestation_path = _verify_sealed_record(
@@ -3539,14 +4859,13 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             )
             upload_count += 1
             if (
-                prior.get("event") != "dual-final-qualified"
+                prior.get("event") != "upload-authorized"
+                or prior.get("consumed") is not False
                 or value.get("qualification") != prior.get("qualification")
                 or value.get("candidate")
-                != qualification.load_sealed(
-                    pathlib.Path(prior["qualification"]["path"]),
-                    DUAL_QUALIFICATION_SCHEMA,
-                ).get("candidate")
+                != prior.get("candidate")
                 or value.get("upload_ordinal") != upload_count
+                or value.get("upload_ordinal") != prior.get("upload_ordinal")
                 or value.get("submit_clicks") != 1
                 or value.get("adaptation_route") != "record-live-window"
                 or value.get("automatic_action") is not False
@@ -3561,6 +4880,8 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or authorization.get("candidate", {}).get("sha256")
                 != attestation.get("source_sha256")
                 or authorization.get("uploads_authorized") != 1
+                or value.get("upload_authorization", {}).get("sha256")
+                != prior.get("authorization", {}).get("sha256")
                 or value.get("source_submission_attestation", {}).get("sha256")
                 != value["submission_attestation"]["sha256"]
             ):
@@ -3569,6 +4890,47 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             prior = entries[-1] if entries else {}
             _verify_record(value.get("live_reference"), "copied live reference")
             _verify_record(value.get("live_receipt"), "copied live receipt")
+            _sealed_metadata(
+                value.get("source_live_reference"),
+                "papersoccer.compact-value-bfm.live-window-reference.v1",
+                "source live reference",
+            )
+            source_live_root = value.get("source_live_data_root")
+            campaign_inputs = qualification.load_sealed(
+                pathlib.Path(plan["inputs"]["path"]), INPUT_SCHEMA
+            )
+            if campaign_inputs.get("production_allowlist_enforced") is True:
+                expected_live_sources = _frozen_execution_source_evidence(
+                    {"plan": plan, "inputs": campaign_inputs},
+                    tool_roles=POST_PROMOTION_LIVE_TOOL_ROLES,
+                    build_manifest_record=_attempt_build_manifest_record(
+                        entries, attempt
+                    ),
+                    revalidate_current=False,
+                    allowed_current_drift_routes=(
+                        POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+                    ),
+                )
+                live_validator_path = _verify_record(
+                    value.get("live_validator"), "copied live validator"
+                )
+                if (
+                    expected_live_sources is None
+                    or value.get("live_verifier_sources")
+                    != expected_live_sources
+                    or sha256_file(live_validator_path)
+                    != expected_live_sources["tools"][
+                        "live_window_verifier"
+                    ]["sha256"]
+                ):
+                    raise ChallengerError("live verifier source binding changed")
+            elif (
+                value.get("live_verifier_sources") is not None
+                or value.get("live_validator") is not None
+            ):
+                raise ChallengerError(
+                    "test live window unexpectedly binds production sources"
+                )
             passed = value.get("passed") is True
             if (
                 prior.get("event") != "upload-attested"
@@ -3578,6 +4940,9 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or value.get("exact_games") != 90
                 or value.get("training_eligible") is not False
                 or value.get("automatic_action") is not False
+                or not isinstance(source_live_root, str)
+                or not source_live_root
+                or pathlib.Path(source_live_root) != pathlib.Path(source_live_root).resolve()
                 or (passed and value.get("dynamic_exclusion") is not None)
                 or (not passed and value.get("dynamic_exclusion") is None)
                 or value.get("adaptation_route")
@@ -3641,6 +5006,8 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or value.get("uploads_completed") != upload_count
                 or value.get("goal_achieved") is not True
                 or completion.get("candidate") != prior.get("candidate")
+                or completion.get("live_verifier_sources")
+                != prior.get("live_verifier_sources")
                 or completion.get("proof", {}).get("strict_final_gates") != 2
                 or completion.get("proof", {}).get("exact_live_games") != 90
                 or completion.get("proof", {}).get(
@@ -3653,44 +5020,108 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     return entries
 
 
+def _publish_ledger_event(path: pathlib.Path, raw: bytes) -> None:
+    """Publish by hard link from sibling staging, then fsync the event dir."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.parent.parent / "staging"
+    if staging.exists() and (staging.is_symlink() or not staging.is_dir()):
+        raise ChallengerError("attempt ledger staging is irregular or redirected")
+    staging.mkdir(parents=True, exist_ok=True)
+    temporary: pathlib.Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=staging, prefix=f".{path.name}.", delete=False
+        ) as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = pathlib.Path(stream.name)
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != raw:
+                raise ChallengerError("immutable attempt-ledger event collision")
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _append_event(
     context: Mapping[str, Any], *, attempt: int, event: str,
     created_at_utc: str, fields: Mapping[str, Any],
+    expected_previous_sha256: str,
 ) -> dict[str, Any]:
     if event not in LEDGER_EVENTS:
         raise ChallengerError("unknown attempt ledger event")
     created = utc(created_at_utc, "attempt event timestamp")
     plan = context["plan"] if "plan" in context else context
-    entries = load_ledger(plan)
-    if entries and entries[-1]["event"] in TERMINAL_EVENTS:
-        raise ChallengerError("attempt ledger is terminal")
-    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
-        raise ChallengerError("attempt number is outside the frozen range")
-    active = max((entry["attempt"] for entry in entries), default=-1)
-    if (
-        (event == "attempt-opened" and attempt != active + 1)
-        or (event != "attempt-opened" and attempt != active)
-    ):
-        raise ChallengerError("event does not belong to the monotonic active attempt")
-    body = {
-        "schema": LEDGER_SCHEMA,
-        "namespace": NAMESPACE,
-        "campaign_id": CAMPAIGN_ID,
-        "campaign_plan": _sealed_record(
-            pathlib.Path(plan["outputs"]["plan"]), PLAN_SCHEMA
-        ),
-        "sequence": len(entries),
-        "previous_sha256": entries[-1]["body_sha256"] if entries else "0" * 64,
-        "attempt": attempt,
-        "event": event,
-        "created_at_utc": created,
-        **dict(fields),
-    }
-    artifact = qualification.seal(body)
-    raw = canonical_json_bytes(artifact)
-    path = _ledger_path(plan) / f"{len(entries):06d}-{artifact['body_sha256']}.json"
-    qualification.atomic_write_once(path, raw)
-    return artifact
+    lock_path = pathlib.Path(plan["outputs"]["root"]) / ".attempt-ledger.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.exists() and (lock_path.is_symlink() or not lock_path.is_file()):
+        raise ChallengerError("attempt ledger lock is irregular or redirected")
+    descriptor = os.open(
+        lock_path,
+        os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        entries = load_ledger(plan)
+        actual_previous = (
+            entries[-1]["body_sha256"] if entries else "0" * 64
+        )
+        if (
+            SHA256_RE.fullmatch(expected_previous_sha256) is None
+            or expected_previous_sha256 != actual_previous
+        ):
+            raise ChallengerError(
+                "attempt ledger predecessor changed during the operation"
+            )
+        if entries and entries[-1]["event"] in TERMINAL_EVENTS:
+            raise ChallengerError("attempt ledger is terminal")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
+            raise ChallengerError("attempt number is outside the frozen range")
+        active = max((entry["attempt"] for entry in entries), default=-1)
+        if (
+            (event == "attempt-opened" and attempt != active + 1)
+            or (event != "attempt-opened" and attempt != active)
+        ):
+            raise ChallengerError(
+                "event does not belong to the monotonic active attempt"
+            )
+        body = {
+            "schema": LEDGER_SCHEMA,
+            "namespace": NAMESPACE,
+            "campaign_id": CAMPAIGN_ID,
+            "campaign_plan": _sealed_record(
+                pathlib.Path(plan["outputs"]["plan"]), PLAN_SCHEMA
+            ),
+            "sequence": len(entries),
+            "previous_sha256": actual_previous,
+            "attempt": attempt,
+            "event": event,
+            "created_at_utc": created,
+            **dict(fields),
+        }
+        artifact = qualification.seal(body)
+        raw = canonical_json_bytes(artifact)
+        path = _ledger_path(plan) / (
+            f"{len(entries):06d}-{artifact['body_sha256']}.json"
+        )
+        _publish_ledger_event(path, raw)
+        return artifact
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def _attempt_open(entries: Sequence[Mapping[str, Any]], attempt: int) -> bool:
@@ -3698,6 +5129,22 @@ def _attempt_open(entries: Sequence[Mapping[str, Any]], attempt: int) -> bool:
         entry["event"] == "attempt-opened" and entry["attempt"] == attempt
         for entry in entries
     )
+
+
+def _attempt_build_manifest_record(
+    entries: Sequence[Mapping[str, Any]], attempt: int,
+) -> Mapping[str, Any]:
+    opened = [
+        entry for entry in entries
+        if entry.get("event") == "attempt-opened"
+        and entry.get("attempt") == attempt
+    ]
+    if len(opened) != 1:
+        raise ChallengerError("attempt build ancestry is not unique")
+    record = opened[0].get("attempt_inputs", {}).get("build_manifest")
+    if not isinstance(record, Mapping):
+        raise ChallengerError("attempt build manifest is absent")
+    return record
 
 
 def _phase_rows(plan_sha: str, attempt: int, phase: str) -> list[dict[str, Any]]:
@@ -3764,19 +5211,56 @@ def materialize_phase(
         entry for entry in entries
         if entry.get("event") == "attempt-opened" and entry.get("attempt") == attempt
     )
+    adaptation_contract = _validated_adaptation_contract(
+        opened.get("adaptation_contract")
+    )
     attempt_inputs = dict(opened["attempt_inputs"])
     if phase == "full":
         attempt_inputs["student_runtime"] = entries[-1]["candidate"]["runtime"]
     _validate_attempt_inputs(
         attempt_inputs, plan=context["plan"], require_student_12x8=True
     )
-    dynamic_exclusions = list(opened["dynamic_exclusions"])
+    dynamic_exclusions = _phase_dynamic_exclusions(
+        entries, attempt=attempt, phase=phase, opened=opened
+    )
     directory = pathlib.Path(context["plan"]["outputs"]["phase_plans"]) / f"attempt-{attempt:03d}" / phase
     reference_path = directory / "phase-reference.json"
     if reference_path.exists():
-        reference = qualification.load_sealed(reference_path, PHASE_REFERENCE_SCHEMA)
-        _verify_sealed_record(reference["phase_plan"], PHASE_SCHEMA, "phase plan")
-        _verify_record(reference["schedule"], "phase schedule")
+        state = validate_phase_reference(
+            reference_path, context["plan"], ledger_entries=entries
+        )
+        recorded = [
+            entry for entry in entries
+            if entry.get("event") == "phase-plan-materialized"
+            and entry.get("attempt") == attempt
+            and entry.get("phase") == phase
+        ]
+        if not recorded:
+            materialized = state["phase"]
+            _append_event(
+                context,
+                attempt=attempt,
+                event="phase-plan-materialized",
+                created_at_utc=str(materialized["created_at_utc"]),
+                expected_previous_sha256=entries[-1]["body_sha256"],
+                fields={
+                    "phase": phase,
+                    "games": materialized["games"],
+                    "quotas": materialized["quotas"],
+                    "phase_reference": _sealed_record(
+                        reference_path, PHASE_REFERENCE_SCHEMA
+                    ),
+                    "attempt_inputs": materialized["attempt_inputs"],
+                    "intervention": materialized["intervention"],
+                    "adaptation_contract": materialized[
+                        "adaptation_contract"
+                    ],
+                    "dynamic_exclusions": materialized[
+                        "dynamic_exclusions"
+                    ],
+                    "games_launched": 0,
+                },
+            )
         return reference_path
     rows = _phase_rows(sha256_file(plan_path), attempt, phase)
     quotas = Counter(row["actor_mode"] for row in rows)
@@ -3804,6 +5288,8 @@ def materialize_phase(
         "rows": rows,
         "rows_sha256": sha256_bytes(canonical_json_bytes(rows)),
         "architecture": context["plan"]["architecture"],
+        "intervention": opened["intervention"],
+        "adaptation_contract": adaptation_contract,
         "actor_bindings": {
             "incumbent": context["inputs"]["teacher"],
             "incumbent_role": "accepted-f7bdb201-rank4-teacher",
@@ -3838,12 +5324,15 @@ def materialize_phase(
         attempt=attempt,
         event="phase-plan-materialized",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "phase": phase,
             "games": len(rows),
             "quotas": PHASE_QUOTAS[phase],
             "phase_reference": _sealed_record(reference_path, PHASE_REFERENCE_SCHEMA),
             "attempt_inputs": attempt_inputs,
+            "intervention": opened["intervention"],
+            "adaptation_contract": adaptation_contract,
             "dynamic_exclusions": dynamic_exclusions,
             "games_launched": 0,
         },
@@ -3879,6 +5368,7 @@ def validate_phase_reference(
             "schema", "namespace", "campaign_id", "campaign_plan", "attempt",
             "phase", "status", "created_at_utc", "games", "quota_multiplier",
             "quotas", "rows", "rows_sha256", "architecture", "actor_bindings",
+            "intervention", "adaptation_contract",
             "attempt_inputs", "producer_binaries", "dynamic_exclusions",
             "protected_exclusions", "locked_training_bundle_tests",
             "live_exclusions", "resources", "launch_authorized",
@@ -3914,8 +5404,16 @@ def validate_phase_reference(
         or phase.get("status") != "materialized-not-launched"
         or phase.get("quota_multiplier") != (1 if name == "pilot" else 5)
         or phase.get("architecture") != plan["architecture"]
+        or phase.get("intervention") != opened.get("intervention")
+        or _validated_adaptation_contract(
+            phase.get("adaptation_contract")
+        ) != _validated_adaptation_contract(
+            opened.get("adaptation_contract")
+        )
         or phase.get("attempt_inputs") != expected_attempt_inputs
-        or phase.get("dynamic_exclusions") != opened.get("dynamic_exclusions")
+        or phase.get("dynamic_exclusions") != _phase_dynamic_exclusions(
+            ledger, attempt=attempt, phase=str(name), opened=opened
+        )
         or phase.get("producer_binaries")
         != expected_attempt_inputs["producer_binaries"]
         or phase.get("protected_exclusions")
@@ -3996,6 +5494,9 @@ def _derive_pipeline_progress(
         pathlib.Path(context["plan"]["outputs"]["phase_plans"])
         / f"attempt-{attempt:03d}/{phase}/phase-reference.json"
     )
+    phase_state = validate_phase_reference(
+        phase_reference, context["plan"]
+    )
     if (
         pipeline_plan.get("campaign_id") != CAMPAIGN_ID
         or pipeline_plan.get("attempt") != attempt
@@ -4004,6 +5505,8 @@ def _derive_pipeline_progress(
             pathlib.Path(context["plan"]["outputs"]["plan"])
         )
         or pipeline_plan.get("phase_reference") != _regular(phase_reference)
+        or pipeline_plan.get("adaptation_contract")
+        != phase_state["phase"]["adaptation_contract"]
     ):
         raise ChallengerError("phase progress pipeline belongs to another phase")
     completed_games = 0
@@ -4123,7 +5626,9 @@ def record_progress(
     if (
         previous.get("adaptation_route") == "record-attempt-outcome"
         or any(
-            entry["event"] == "attempt-outcome-recorded"
+            entry["event"] in {
+                "attempt-outcome-recorded", "development-gate-aborted",
+            }
             and entry["attempt"] == attempt and entry.get("phase") == phase
             for entry in entries
         )
@@ -4169,6 +5674,7 @@ def record_progress(
         attempt=attempt,
         event="progress-recorded",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "phase": phase,
             "completed_games": completed_games,
@@ -4187,9 +5693,180 @@ def record_progress(
     )
 
 
+def _attempt_zero_recovery_routes(
+    context: Mapping[str, Any],
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    """Resolve the immutable copy and the exact external recovery namespace."""
+
+    input_directory = pathlib.Path(
+        str(context["plan"]["outputs"]["input_directory"])
+    )
+    bundled_path = _verify_bundle_record(
+        context["inputs"]["attempt_zero"]["recovery_plan"],
+        input_directory=input_directory,
+        label="attempt-zero recovery plan",
+    )
+    bundled = qualification.load_sealed(bundled_path, RECOVERY_PLAN_SCHEMA)
+    outputs = bundled.get("outputs")
+    if not isinstance(outputs, Mapping):
+        raise ChallengerError("attempt-zero recovery plan omits its output namespace")
+    try:
+        external_plan = pathlib.Path(str(outputs["plan"])).resolve()
+        recovery_root = pathlib.Path(str(outputs["recovery_root"])).resolve()
+    except (KeyError, TypeError, ValueError) as error:
+        raise ChallengerError("attempt-zero recovery routes are malformed") from error
+    if (
+        external_plan != recovery_root / "plan.json"
+        or recovery_root.parent == recovery_root
+    ):
+        raise ChallengerError("attempt-zero recovery namespace changed")
+    try:
+        external_record = _regular(external_plan)
+        external = qualification.load_sealed(external_plan, RECOVERY_PLAN_SCHEMA)
+    except Exception as error:
+        raise ChallengerError("external attempt-zero recovery plan is unavailable") from error
+    if (
+        external != bundled
+        or external_record["bytes"] != context["inputs"]["attempt_zero"]
+        ["recovery_plan_binding"]["bytes"]
+        or external_record["sha256"] != context["inputs"]["attempt_zero"]
+        ["recovery_plan_binding"]["sha256"]
+    ):
+        raise ChallengerError("external attempt-zero recovery plan changed")
+    return bundled_path, external_plan, recovery_root.parent
+
+
+def _default_attempt_zero_validator(
+    result_path: pathlib.Path,
+    external_plan: pathlib.Path,
+    output_root: pathlib.Path,
+    passed: bool,
+) -> Mapping[str, Any]:
+    """Deeply replay the recovery verifier without launching missing work."""
+
+    processes = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,command="],
+        text=True, capture_output=True, check=False,
+    )
+    if processes.returncode != 0:
+        raise ChallengerError("cannot verify attempt-zero process quiescence")
+    recovery_namespace = str(external_plan.parent.resolve())
+    active = []
+    for line in processes.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2:
+            continue
+        pid, command = fields
+        if (
+            int(pid) != os.getpid()
+            and recovery_namespace in command
+            and (
+                ".rank4-gate" in command
+                or "discrete_v3_recovery_runner.py" in command
+            )
+        ):
+            active.append(int(pid))
+    if active:
+        raise ChallengerError(
+            "attempt-zero recovery is still active; terminal evidence is not final"
+        )
+    recovery_runner = _load(
+        RECOVERY_RUNNER_PATH,
+        "rank4_teacher_challenger_recovery_runner",
+    )
+    result_path = result_path.resolve()
+    if passed:
+        try:
+            recovery_runner.validate_recovery_finalist(
+                result_path,
+                plan_path=external_plan,
+                output_root=output_root,
+            )
+        except Exception as error:
+            raise ChallengerError(
+                "attempt-zero finalist failed deep recovery validation"
+            ) from error
+        runner = recovery_runner.DiscreteV3RecoveryRunner(
+            plan_path=external_plan,
+            output_root=output_root,
+            read_only=True,
+        )
+        entries = runner._validate_journal_binding()
+        journal_paths = sorted(runner.routes["journal"].glob("*.json"))
+        if (
+            not entries
+            or len(entries) != len(journal_paths)
+            or entries[-1].get("event") != "campaign-complete"
+        ):
+            raise ChallengerError("attempt-zero completion journal changed")
+        terminal_path = journal_paths[-1]
+        status = "deep-recovery-finalist-validated"
+    else:
+        try:
+            runner = recovery_runner.DiscreteV3RecoveryRunner(
+                plan_path=external_plan,
+                output_root=output_root,
+                read_only=True,
+            )
+            original_rows, _ = runner._prepare_contract()
+            entries = runner._validate_journal_binding()
+            journal_paths = sorted(runner.routes["journal"].glob("*.json"))
+        except Exception as error:
+            raise ChallengerError(
+                "attempt-zero failure ancestry failed deep validation"
+            ) from error
+        if (
+            not entries
+            or len(entries) != len(journal_paths)
+            or result_path != journal_paths[-1].resolve()
+            or entries[-1] != qualification.load_sealed(
+                result_path, RECOVERY_JOURNAL_SCHEMA
+            )
+            or entries[-1].get("event") != "terminal-failure"
+            or entries[-1].get("no_retry") is not True
+            or not isinstance(entries[-1].get("reason"), str)
+            or not entries[-1]["reason"].strip()
+        ):
+            raise ChallengerError(
+                "attempt-zero rejection is not the genuine terminal journal head"
+            )
+        try:
+            runner._execute_algorithm(original_rows, launch_missing=False)
+        except Exception as error:
+            derived_reason = str(error)
+            derived_exception = f"{type(error).__name__}: {error}"
+        else:
+            raise ChallengerError("attempt-zero rejection rederived as successful")
+        terminal_stage = entries[-1].get("stage")
+        if terminal_stage is not None and terminal_stage not in derived_reason:
+            raise ChallengerError("attempt-zero terminal stage does not rederive")
+        if terminal_stage is None and (
+            derived_reason.startswith("claimed ")
+            or entries[-1]["reason"] != derived_exception
+        ):
+            raise ChallengerError(
+                "attempt-zero terminal exception does not rederive"
+            )
+        terminal_path = result_path
+        status = "deep-recovery-terminal-failure-validated"
+    return {
+        "status": status,
+        "passed": passed,
+        "recovery_plan": _sealed_record(external_plan, RECOVERY_PLAN_SCHEMA),
+        "journal_head": _sealed_record(
+            terminal_path, RECOVERY_JOURNAL_SCHEMA
+        ),
+        "validator": _regular(RECOVERY_RUNNER_PATH),
+    }
+
+
 def record_attempt_zero_result(
     plan_path: pathlib.Path, *, result_path: pathlib.Path,
     created_at_utc: str,
+    recovery_validator: Callable[
+        [pathlib.Path, pathlib.Path, pathlib.Path, bool], Mapping[str, Any]
+    ] = _default_attempt_zero_validator,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, Any]:
     """Record the immutable external attempt-zero outcome without launching it."""
 
@@ -4225,6 +5902,44 @@ def record_attempt_zero_result(
     )
     if passed == rejected:
         raise ChallengerError("attempt-zero result has no unambiguous pass/reject outcome")
+    if recovery_validator is not _default_attempt_zero_validator and (
+        context["inputs"].get("production_allowlist_enforced") is True
+        or not allow_injected_test_evidence
+    ):
+        raise ChallengerError("injected attempt-zero validation is test-only")
+    if recovery_validator is _default_attempt_zero_validator:
+        _, external_plan, recovery_output_root = _attempt_zero_recovery_routes(
+            context
+        )
+        frozen_execution_sources = _frozen_execution_source_evidence(
+            context, tool_roles=("recovery_runner_verifier",)
+        )
+    else:
+        input_directory = pathlib.Path(
+            str(context["plan"]["outputs"]["input_directory"])
+        )
+        external_plan = _verify_bundle_record(
+            context["inputs"]["attempt_zero"]["recovery_plan"],
+            input_directory=input_directory,
+            label="test attempt-zero recovery plan",
+        )
+        recovery_output_root = external_plan.parent
+        frozen_execution_sources = None
+    try:
+        _regular(result_path)
+        deep_validation = dict(recovery_validator(
+            result_path.resolve(), external_plan, recovery_output_root, passed
+        ))
+    except ChallengerError:
+        raise
+    except Exception as error:
+        raise ChallengerError("attempt-zero result failed deep validation") from error
+    if (
+        deep_validation.get("passed") is not passed
+        or not isinstance(deep_validation.get("status"), str)
+        or not deep_validation["status"].startswith("deep-recovery-")
+    ):
+        raise ChallengerError("attempt-zero deep validation evidence changed")
     candidate_identity = None
     finalist_path: pathlib.Path | None = None
     recovery_result_path: pathlib.Path | None = None
@@ -4278,6 +5993,31 @@ def record_attempt_zero_result(
         pathlib.Path(context["root"])
         / "attempt-ledger/artifacts/attempt-000"
     )
+    if recovery_validator is _default_attempt_zero_validator:
+        journal_head_path = pathlib.Path(
+            str(deep_validation["journal_head"]["path"])
+        )
+        journal_head = qualification.load_sealed(
+            journal_head_path, RECOVERY_JOURNAL_SCHEMA
+        )
+        copied_head = _copy_attempt_artifact(
+            _regular(journal_head_path),
+            root=artifact_root / "deep-recovery-validation",
+        )
+        copied_validator = _copy_attempt_artifact(
+            _regular(RECOVERY_RUNNER_PATH),
+            root=artifact_root / "deep-recovery-validation",
+        )
+        deep_validation = {
+            **deep_validation,
+            "frozen_execution_sources": frozen_execution_sources,
+            "journal_head": {
+                **copied_head,
+                "schema": RECOVERY_JOURNAL_SCHEMA,
+                "body_sha256": journal_head["body_sha256"],
+            },
+            "validator": copied_validator,
+        }
     copied_result = _copy_attempt_artifact(
         _regular(result_path),
         root=artifact_root,
@@ -4306,6 +6046,7 @@ def record_attempt_zero_result(
         attempt=ATTEMPT_ZERO,
         event="attempt-zero-result-recorded",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "external_recovery_plan": context["inputs"]["attempt_zero"]["recovery_plan"],
             "result": {
@@ -4315,6 +6056,7 @@ def record_attempt_zero_result(
             },
             "referenced_finalist": copied_finalist,
             "referenced_recovery_result": copied_recovery_result,
+            "deep_recovery_validation": deep_validation,
             "passed": passed,
             "candidate_identity": candidate_identity,
             "adaptation_route": (
@@ -4335,6 +6077,88 @@ def _zero_failures(value: Any) -> bool:
             for item in value.values()
         )
     )
+
+
+def _unprotected_rank4_win_rate(metrics: Mapping[str, Any]) -> float:
+    result = metrics.get("actual_clock")
+    if not isinstance(result, Mapping):
+        result = metrics.get("rank4_screen")
+    if not isinstance(result, Mapping):
+        raise ChallengerError("attempt has no unprotected Rank-4 result")
+    games = result.get("games")
+    wins = result.get("candidate_wins")
+    if (
+        isinstance(games, bool) or not isinstance(games, int) or games <= 0
+        or isinstance(wins, bool) or not isinstance(wins, int)
+        or not 0 <= wins <= games
+        or result.get("classification") != "fresh-unprotected"
+    ):
+        raise ChallengerError("attempt Rank-4 result is not comparable")
+    rate = wins / games
+    reported_rate = metrics.get("rank4_win_rate")
+    absolute_margin = metrics.get("rank4_absolute_margin_pp")
+    if reported_rate is not None and (
+        isinstance(reported_rate, bool)
+        or not isinstance(reported_rate, (int, float))
+        or not math.isclose(float(reported_rate), rate, abs_tol=1e-15)
+    ):
+        raise ChallengerError("reported Rank-4 win rate changed")
+    if absolute_margin is not None and (
+        isinstance(absolute_margin, bool)
+        or not isinstance(absolute_margin, (int, float))
+        or not math.isclose(
+            float(absolute_margin), 100.0 * (rate - 0.5), abs_tol=1e-12
+        )
+    ):
+        raise ChallengerError("reported absolute Rank-4 margin changed")
+    return rate
+
+
+def _strength_improvement_evidence(
+    entries: Sequence[Mapping[str, Any]], metrics: Mapping[str, Any], *,
+    current_attempt: int,
+) -> dict[str, Any]:
+    current = _unprotected_rank4_win_rate(metrics)
+    prior = []
+    for entry in entries:
+        if (
+            entry.get("event") != "attempt-outcome-recorded"
+            or entry.get("attempt", current_attempt) >= current_attempt
+            or (
+                entry.get("phase") == "pilot"
+                and entry.get("admitted") is not False
+            )
+        ):
+            continue
+        prior_metrics = entry.get("metrics")
+        if not isinstance(prior_metrics, Mapping):
+            raise ChallengerError("prior attempt Rank-4 metrics changed")
+        prior.append({
+            "attempt": entry["attempt"],
+            "phase": entry["phase"],
+            "event_body_sha256": entry["body_sha256"],
+            "win_rate": _unprotected_rank4_win_rate(prior_metrics),
+        })
+    prior_best = max(
+        (item["win_rate"] for item in prior), default=None
+    )
+    # Without a comparable earlier trained outcome there is no defensible
+    # attempt-to-attempt gain.  Parity remains descriptive only; it is not
+    # silently substituted for missing campaign evidence.
+    baseline = current if prior_best is None else prior_best
+    return {
+        "policy": "current-minus-best-prior-unprotected-win-rate-v1",
+        "parity_baseline_win_rate": 0.5,
+        "prior_outcomes": prior,
+        "prior_best_win_rate": prior_best,
+        "comparison_baseline_win_rate": baseline,
+        "comparison_baseline_source": (
+            "no-prior-comparable-outcome"
+            if prior_best is None else "best-prior-unprotected-outcome"
+        ),
+        "current_win_rate": current,
+        "improvement_percentage_points": 100.0 * (current - baseline),
+    }
 
 
 def _phase_admission(phase: str, metrics: Mapping[str, Any]) -> bool:
@@ -4360,14 +6184,37 @@ def _phase_admission(phase: str, metrics: Mapping[str, Any]) -> bool:
         return False
     if phase == "pilot":
         screen = metrics.get("rank4_screen")
+        search_selection = metrics.get("search_ab")
+        search_profile = metrics.get("search_throughput_profile")
+        variant_count = 1 if search_profile == "standard-v1" else 2
+        expected_game_volume = {
+            "variant_count": variant_count,
+            "pairs_per_variant": 100,
+            "games_per_variant": 200,
+            "total_pairs": 100 * variant_count,
+            "total_games": 200 * variant_count,
+            "each_pair_balanced_by_candidate_color": True,
+        }
         regret = metrics.get("mean_teacher_regret_reduction_fraction")
         flip = metrics.get("quantized_action_flip_rate")
         control_flip = metrics.get("scalar_control_action_flip_rate")
         return bool(
-            metrics.get("canonical_retention_passed") is True
+            metrics.get("offline_model_eligible") is True
+            and metrics.get("diagnostic_only") is False
+            and metrics.get("canonical_retention_passed") is True
             and metrics.get("candidate_quantized") is True
             and metrics.get("evaluation_classification")
             == "unseen-root-unprotected"
+            and search_profile in {
+                "standard-v1", "state-evaluation-cache-v1",
+                "progressive-widening-v1", "subtree-reuse-v1",
+            }
+            and isinstance(search_selection, Mapping)
+            and search_selection.get("selected_variant_passed_screen") is True
+            and search_selection.get("expected_game_volume")
+            == expected_game_volume
+            and metrics.get("development_gate_game_volume")
+            == expected_game_volume
             and isinstance(regret, (int, float)) and not isinstance(regret, bool)
             and math.isfinite(float(regret)) and 0.10 <= float(regret) <= 1.0
             and isinstance(flip, (int, float)) and not isinstance(flip, bool)
@@ -4396,7 +6243,10 @@ def _phase_admission(phase: str, metrics: Mapping[str, Any]) -> bool:
             and math.isfinite(float(lower)) and 0.5 < float(lower) <= 1.0
         )
         return bool(
-            clock.get("classification") == "fresh-unprotected"
+            metrics.get("offline_model_eligible") is True
+            and metrics.get("diagnostic_only") is False
+            and metrics.get("canonical_retention_passed") is True
+            and clock.get("classification") == "fresh-unprotected"
             and clock.get("pairs") == 500
             and clock.get("games") == 1_000
             and isinstance(clock.get("candidate_wins"), int)
@@ -4418,9 +6268,18 @@ def _copy_attempt_artifact(
     record: Mapping[str, Any], *, root: pathlib.Path,
 ) -> dict[str, Any]:
     source = _verify_record(record, "attempt artifact source")
+    payload = source.read_bytes()
+    if (
+        len(payload) != record["bytes"]
+        or sha256_bytes(payload) != record["sha256"]
+    ):
+        raise ChallengerError("attempt artifact source changed during copy")
     target = root / f"{record['sha256']}{_bundle_suffix(source)}"
-    qualification.atomic_write_once(target, source.read_bytes())
-    return _regular(target)
+    qualification.atomic_write_once(target, payload)
+    copied = _regular(target)
+    if any(copied[key] != record[key] for key in ("bytes", "sha256")):
+        raise ChallengerError("copied attempt artifact differs from its snapshot")
+    return copied
 
 
 def _validate_development_exclusion(
@@ -4441,6 +6300,63 @@ def _validate_development_exclusion(
     ):
         raise ChallengerError("development exclusion evidence changed")
     return value
+
+
+def _development_dynamic_exclusion_body(
+    *, source_record: Mapping[str, Any], attempt: int, phase: str,
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_path = _verify_sealed_record(
+        source_record, DEVELOPMENT_EXCLUSION_SCHEMA,
+        "copied development exclusion",
+    )
+    source = _validate_development_exclusion(
+        source_path, attempt=attempt, phase=phase
+    )
+    return {
+        "schema": DYNAMIC_EXCLUSION_SCHEMA,
+        "namespace": NAMESPACE,
+        "campaign_id": CAMPAIGN_ID,
+        "attempt": attempt,
+        "phase": phase,
+        "gate_id": f"development-{phase}",
+        "classification": "unprotected-development-canonical-fingerprints",
+        "domain": "unprotected-development-canonical-state",
+        "origin": {
+            "candidate_source_sha256": candidate["source"]["sha256"],
+            "candidate_runtime_sha256": candidate["runtime"]["sha256"],
+            "development_exclusion_sha256": sha256_file(source_path),
+            "development_exclusion_body_sha256": source["body_sha256"],
+        },
+        "development_exclusion": _sealed_record(
+            source_path, DEVELOPMENT_EXCLUSION_SCHEMA
+        ),
+        "canonicalization": (
+            "minimum(exact,rotate180,reflect,rotate180-reflect)"
+        ),
+        "fingerprints": list(source["fingerprints"]),
+        "fingerprint_count": len(source["fingerprints"]),
+        "contains_transcripts": False,
+        "contains_metrics": False,
+        "contains_labels": False,
+        "training_eligible": False,
+        "required_for_all_later_development_and_protected_banks": True,
+    }
+
+
+def _write_development_dynamic_exclusion(
+    *, root: pathlib.Path, source_record: Mapping[str, Any], attempt: int,
+    phase: str, candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    path, _value = _write_content_addressed(
+        root,
+        _development_dynamic_exclusion_body(
+            source_record=source_record, attempt=attempt, phase=phase,
+            candidate=candidate,
+        ),
+        ".development-dynamic-exclusion.json",
+    )
+    return _dynamic_exclusion_record(path)
 
 
 def _validate_phase_outcome_evidence(
@@ -4492,6 +6408,9 @@ def _validate_phase_outcome_evidence(
     if not isinstance(closure, Mapping) or set(closure) != {
         "training_plan", "pipeline_plan", "finalized_pipeline_receipt",
         "training_selection", "gate_plan", "gate_results",
+        "gate_execution", "full_search_selection",
+        "full_qualification_plan", "full_qualification_execution",
+        "qualification_result",
         "selected_candidate", "input_audit_sha256",
         "build_source_closure_sha256", "protected_tests_opened",
     }:
@@ -4546,8 +6465,89 @@ def _validate_phase_outcome_evidence(
     gate_plan = loaded["gate_plan"]
     selected = closure.get("selected_candidate")
     gate_results = closure.get("gate_results")
+    gate_execution_record = closure.get("gate_execution")
+    full_search_record = closure.get("full_search_selection")
+    full_qualification_plan_record = closure.get("full_qualification_plan")
+    full_qualification_execution_record = closure.get(
+        "full_qualification_execution"
+    )
+    qualification_result_record = closure.get("qualification_result")
+    phase_specific_records = (
+        full_search_record,
+        full_qualification_plan_record,
+        full_qualification_execution_record,
+        qualification_result_record,
+    )
+    gate_execution_path = _verify_sealed_record(
+        gate_execution_record,
+        "papersoccer.compact-value-bfm.rank4-teacher-gate-execution.v1",
+        "phase gate execution",
+    )
+    gate_execution = qualification.load_sealed(
+        gate_execution_path,
+        "papersoccer.compact-value-bfm.rank4-teacher-gate-execution.v1",
+    )
+    if phase == "pilot":
+        if any(record is not None for record in phase_specific_records):
+            raise ChallengerError(
+                "pilot outcome unexpectedly consumed full qualification"
+            )
+        full_search = None
+        full_qualification_plan = None
+        full_qualification_execution = None
+    else:
+        if any(record is None for record in phase_specific_records):
+            raise ChallengerError(
+                "full outcome omits post-selection qualification evidence"
+            )
+        full_search_path = _verify_sealed_record(
+            full_search_record,
+            "papersoccer.compact-value-bfm.rank4-teacher-full-search-selection.v1",
+            "full search selection",
+        )
+        full_qualification_plan_path = _verify_sealed_record(
+            full_qualification_plan_record,
+            "papersoccer.compact-value-bfm.rank4-teacher-full-qualification-plan.v1",
+            "full qualification plan",
+        )
+        full_qualification_execution_path = _verify_sealed_record(
+            full_qualification_execution_record,
+            "papersoccer.compact-value-bfm.rank4-teacher-gate-execution.v1",
+            "full qualification execution",
+        )
+        _verify_record(
+            qualification_result_record, "full qualification result"
+        )
+        full_search = qualification.load_sealed(
+            full_search_path,
+            "papersoccer.compact-value-bfm.rank4-teacher-full-search-selection.v1",
+        )
+        full_qualification_plan = qualification.load_sealed(
+            full_qualification_plan_path,
+            "papersoccer.compact-value-bfm.rank4-teacher-full-qualification-plan.v1",
+        )
+        full_qualification_execution = qualification.load_sealed(
+            full_qualification_execution_path,
+            "papersoccer.compact-value-bfm.rank4-teacher-gate-execution.v1",
+        )
+    adaptation_contract = phase_state["phase"]["adaptation_contract"]
     if (
         closure.get("protected_tests_opened") is not False
+        or value.get("gate_execution") != gate_execution_record
+        or value.get("full_search_selection") != full_search_record
+        or value.get("full_qualification_plan")
+        != full_qualification_plan_record
+        or value.get("full_qualification_execution")
+        != full_qualification_execution_record
+        or value.get("qualification_result") != qualification_result_record
+        or not isinstance(value.get("injected_test_results"), bool)
+        or (
+            production
+            and value.get("injected_test_results") is not False
+        )
+        or gate_execution.get("phase") != phase
+        or gate_execution.get("plan_body_sha256")
+        != training_plan.get("body_sha256")
         or not isinstance(selected, Mapping)
         or not isinstance(gate_results, Mapping)
         or selected.get("runtime", {}).get("sha256")
@@ -4558,6 +6558,7 @@ def _validate_phase_outcome_evidence(
         or training_plan.get("attempt") != attempt
         or training_plan.get("phase") != phase
         or training_plan.get("phase_reference") != _regular(phase_reference)
+        or training_plan.get("adaptation_contract") != adaptation_contract
         or training_plan.get("pipeline_plan") != pipeline_record
         or training_plan.get("final_pipeline_receipt", {}).get("sha256")
         != closure["finalized_pipeline_receipt"]["sha256"]
@@ -4565,15 +6566,30 @@ def _validate_phase_outcome_evidence(
         or pipeline_value.get("attempt") != attempt
         or pipeline_value.get("phase") != phase
         or pipeline_value.get("phase_reference") != _regular(phase_reference)
+        or pipeline_value.get("adaptation_contract") != adaptation_contract
         or final_receipt.get("pipeline_body_sha256")
         != pipeline_value.get("body_sha256")
         or final_receipt.get("stage") != "07-finalize-labels"
         or final_receipt.get("details", {}).get("protected_tests_opened") is not False
         or selection.get("plan_body_sha256") != training_plan.get("body_sha256")
+        or selection.get("adaptation_contract") != adaptation_contract
         or selection.get("selected_model") is None
+        or selection.get("selected_model", {}).get("adaptation_contract")
+        != adaptation_contract
+        or selected.get("adaptation_contract") != adaptation_contract
+        or value.get("adaptation_contract") != adaptation_contract
+        or value.get("search_throughput_profile")
+        != adaptation_contract["search_throughput_profile"]
+        or value.get("candidate_search_profile")
+        != selected.get("candidate_search_profile")
+        or value.get("qat_profile") != adaptation_contract["qat_profile"]
+        or value.get("qat_profile_contract")
+        != training_plan.get("training", {}).get("qat_profile_contract")
         or gate_plan.get("selection", {}).get("sha256")
         != closure["training_selection"]["sha256"]
         or gate_plan.get("plan_body_sha256") != training_plan.get("body_sha256")
+        or gate_execution.get("gate_plan", {}).get("sha256")
+        != closure["gate_plan"]["sha256"]
         or set(gate_results) != {
             str(item.get("variant")) for item in gate_plan.get("requests", [])
             if isinstance(item, Mapping)
@@ -4584,6 +6600,16 @@ def _validate_phase_outcome_evidence(
         != training_plan.get("build_source_closure", {}).get("closure_sha256")
     ):
         raise ChallengerError("phase outcome deep evidence binding changed")
+    if phase == "full" and (
+        full_search.get("search_ab_execution") != gate_execution_record
+        or full_search.get("selected_candidate") != selected
+        or full_qualification_plan.get("full_search_selection")
+        != full_search_record
+        or full_qualification_plan.get("selected_candidate") != selected
+        or full_qualification_execution.get("gate_plan", {}).get("sha256")
+        != full_qualification_plan_record["sha256"]
+    ):
+        raise ChallengerError("full qualification evidence ancestry changed")
     for variant, record in gate_results.items():
         _verify_record(record, f"phase gate result {variant}")
     if admission_receipt is None:
@@ -4598,20 +6624,243 @@ def _validate_phase_outcome_evidence(
             )
         except Exception as error:
             raise ChallengerError("teacher-training admission failed validation") from error
+        expected_admitted = _phase_admission(phase, metrics)
+        expected_next_route = (
+            "materialize-full"
+            if expected_admitted and phase == "pilot"
+            else "prepare-dual-final"
+            if expected_admitted
+            else "open-next-leakage-isolated-attempt"
+        )
         if (
             admission.get("campaign_id") != CAMPAIGN_ID
             or admission.get("attempt") != attempt
             or admission.get("phase") != phase
             or admission.get("metrics") != dict(metrics)
             or admission.get("selected_candidate") != selected
+            or admission.get("adaptation_contract") != adaptation_contract
             or admission.get("results") != gate_results
+            or admission.get("gate_execution") != gate_execution_record
+            or admission.get("full_search_selection") != full_search_record
+            or admission.get("full_qualification_plan")
+            != full_qualification_plan_record
+            or admission.get("full_qualification_execution")
+            != full_qualification_execution_record
+            or admission.get("qualification_result")
+            != qualification_result_record
+            or admission.get("candidate_search_profile")
+            != value.get("candidate_search_profile")
+            or admission.get("injected_test_results")
+            is not value.get("injected_test_results")
             or admission.get("phase_outcome_evidence", {}).get("sha256")
             != sha256_file(path)
             or admission.get("development_exclusion", {}).get("sha256")
             != sha256_file(development_exclusion)
+            or admission.get("admitted") is not expected_admitted
+            or admission.get("next_route") != expected_next_route
         ):
             raise ChallengerError("teacher-training admission/evidence disagree")
     return value
+
+
+def record_development_gate_abort(
+    plan_path: pathlib.Path, *, abandonment_path: pathlib.Path,
+    created_at_utc: str,
+) -> dict[str, Any]:
+    """End an attempt whose unprotected one-shot bank was spent by infrastructure."""
+
+    context = validate_campaign(plan_path)
+    entries = load_ledger(context["plan"])
+    source_record = _regular(abandonment_path.resolve())
+    latest = entries[-1] if entries else {}
+    if latest.get("event") == "development-gate-aborted":
+        if latest.get("source_abandonment_sha256") != source_record["sha256"]:
+            raise ChallengerError("another development abortion is already recorded")
+        return latest
+    abandonment = _validate_development_gate_abandonment(
+        abandonment_path.resolve(), campaign_plan=context["plan"],
+        revalidate_current_sources=True,
+    )
+    attempt = abandonment.get("attempt")
+    phase = abandonment.get("phase")
+    if (
+        isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or attempt <= 0
+        or phase not in PHASE_QUOTAS
+        or latest.get("attempt") != attempt
+        or latest.get("event") != "progress-recorded"
+        or latest.get("phase") != phase
+        or latest.get("completed_games") != PHASE_TOTALS[str(phase)]
+        or latest.get("adaptation_route") != "record-attempt-outcome"
+    ):
+        raise ChallengerError("development abortion predates terminal phase progress")
+    root = (
+        pathlib.Path(context["root"]) / "attempt-ledger/artifacts"
+        / f"attempt-{attempt:03d}" / "development-abort"
+    )
+    copied_abandonment = _copy_attempt_artifact(source_record, root=root)
+    copied_abandonment_record = {
+        **copied_abandonment,
+        "schema": DEVELOPMENT_GATE_ABORTION_SCHEMA,
+        "body_sha256": abandonment["body_sha256"],
+    }
+    candidate_value = abandonment.get("candidate")
+    if not isinstance(candidate_value, Mapping):
+        raise ChallengerError("development abandonment candidate is absent")
+    runtime = _verify_record(
+        candidate_value.get("runtime"), "abandoned candidate runtime"
+    )
+    source = _verify_record(
+        candidate_value.get("source"), "abandoned candidate source"
+    )
+    candidate = {
+        "runtime": _copy_attempt_artifact(_regular(runtime), root=root / "candidate"),
+        "source": _copy_attempt_artifact(_regular(source), root=root / "candidate"),
+        "architecture": _architecture(runtime),
+    }
+    development_source = _verify_sealed_record(
+        abandonment.get("development_exclusion"),
+        DEVELOPMENT_EXCLUSION_SCHEMA,
+        "abandoned development exclusion",
+    )
+    _validate_development_exclusion(
+        development_source, attempt=attempt, phase=str(phase)
+    )
+    copied_exclusion = _copy_attempt_artifact(
+        _regular(development_source), root=root / "exclusions"
+    )
+    copied_exclusion_record = {
+        **copied_exclusion,
+        "schema": DEVELOPMENT_EXCLUSION_SCHEMA,
+        "body_sha256": qualification.load_sealed(
+            pathlib.Path(copied_exclusion["path"]), DEVELOPMENT_EXCLUSION_SCHEMA
+        )["body_sha256"],
+    }
+    dynamic = _write_development_dynamic_exclusion(
+        root=root / "sanitized-exclusions",
+        source_record=copied_exclusion_record,
+        attempt=attempt, phase=str(phase), candidate=candidate,
+    )
+    return _append_event(
+        context, attempt=attempt, event="development-gate-aborted",
+        created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
+        fields={
+            "phase": phase,
+            "abandonment": copied_abandonment_record,
+            "abandonment_schema": DEVELOPMENT_GATE_ABORTION_SCHEMA,
+            "source_abandonment_sha256": source_record["sha256"],
+            "aborted_candidate": candidate,
+            "development_exclusion": copied_exclusion_record,
+            "dynamic_exclusions": [dynamic],
+            "failure_class": "infrastructure-interruption",
+            "partial_metrics_read": False,
+            "improvement_counted": False,
+            "candidate_admitted": False,
+            "retry_authorized": False,
+            "adaptation_route": "open-next-attempt-same-contract",
+            "automatic_action": False,
+        },
+    )
+
+
+def record_protected_stage_abort(
+    plan_path: pathlib.Path, *, abortion_path: pathlib.Path,
+    created_at_utc: str,
+) -> dict[str, Any]:
+    """Reject a candidate after a protected bank/shard one-shot is spent."""
+
+    context = validate_campaign(plan_path)
+    entries = load_ledger(context["plan"])
+    source_record = _regular(abortion_path.resolve())
+    latest = entries[-1] if entries else {}
+    if latest.get("event") == "protected-stage-aborted":
+        if latest.get("source_abortion_sha256") != source_record["sha256"]:
+            raise ChallengerError("another protected abortion is already recorded")
+        return latest
+    abortion = _validate_protected_stage_abortion(
+        abortion_path.resolve(), campaign_plan=context["plan"],
+        revalidate_current_sources=True,
+    )
+    attempt = abortion.get("attempt")
+    allowed_prior = (
+        isinstance(attempt, int) and not isinstance(attempt, bool)
+        and latest.get("attempt") == attempt
+        and (
+            latest.get("event") in {
+                "dual-final-authorized", "dual-final-prepared",
+            }
+            or (
+                latest.get("event") == "final-gate-recorded"
+                and latest.get("gate_id") == "gate-a"
+                and latest.get("passed") is True
+            )
+        )
+    )
+    if not allowed_prior:
+        raise ChallengerError("protected abortion has no active final candidate")
+    root = (
+        pathlib.Path(context["root"]) / "attempt-ledger/artifacts"
+        / f"attempt-{attempt:03d}" / "protected-abort"
+    )
+    copied_abortion = _copy_attempt_artifact(source_record, root=root)
+    copied_abortion_record = {
+        **copied_abortion,
+        "schema": PROTECTED_STAGE_ABORTION_SCHEMA,
+        "body_sha256": abortion["body_sha256"],
+    }
+    copied_exclusions = []
+    seen_gates: set[str] = set()
+    for source_exclusion in abortion.get("fingerprint_exclusions", []):
+        source_path = _verify_sealed_record(
+            source_exclusion, DYNAMIC_EXCLUSION_SCHEMA,
+            "protected abortion fingerprint exclusion",
+        )
+        value = validate_dynamic_exclusion(source_path)
+        gate_id = str(value.get("gate_id", ""))
+        if value.get("attempt") != attempt or gate_id in seen_gates:
+            raise ChallengerError("protected abortion exclusion roster changed")
+        seen_gates.add(gate_id)
+        copied = _copy_attempt_artifact(
+            _regular(source_path), root=root / "sanitized-exclusions"
+        )
+        copied_path = pathlib.Path(copied["path"])
+        validate_dynamic_exclusion(copied_path)
+        copied_exclusions.append(_dynamic_exclusion_record(copied_path))
+    frozen_execution_sources = _frozen_execution_source_evidence(
+        context,
+        tool_roles=POST_PROMOTION_RELEASE_TOOL_ROLES,
+        build_manifest_record=_attempt_build_manifest_record(
+            entries, int(attempt)
+        ),
+        revalidate_current=False,
+        allowed_current_drift_routes=POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES,
+    )
+    return _append_event(
+        context, attempt=int(attempt), event="protected-stage-aborted",
+        created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
+        fields={
+            "abortion": copied_abortion_record,
+            "abortion_schema": PROTECTED_STAGE_ABORTION_SCHEMA,
+            "source_abortion_sha256": source_record["sha256"],
+            "protected_stage": abortion["protected_stage"],
+            "gate_id": abortion["gate_id"],
+            "shard_index": abortion["shard_index"],
+            "aborted_candidate_identity": abortion["candidate"],
+            "dynamic_exclusions": copied_exclusions,
+            "frozen_execution_sources": frozen_execution_sources,
+            "failure_class": "infrastructure-interruption",
+            "candidate_rejected": True,
+            "partial_metrics_read": False,
+            "improvement_counted": False,
+            "training_eligible": False,
+            "retry_authorized": False,
+            "adaptation_route": "open-next-attempt-protected-rejection",
+            "automatic_action": False,
+        },
+    )
 
 
 def record_attempt_outcome(
@@ -4643,11 +6892,16 @@ def record_attempt_outcome(
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             raise ChallengerError(f"{label} is invalid")
     if (
-        metrics.get("strength_delta_pp") != float(strength_delta_pp)
-        or metrics.get("teacher_regret_reduction_fraction")
+        metrics.get("teacher_regret_reduction_fraction")
         != float(teacher_regret_reduction_fraction)
     ):
         raise ChallengerError("attempt improvement metrics disagree with evidence")
+    strength_delta_evidence = _strength_improvement_evidence(
+        entries, metrics, current_attempt=attempt
+    )
+    derived_strength_delta_pp = float(
+        strength_delta_evidence["improvement_percentage_points"]
+    )
     architecture = _architecture(candidate_runtime)
     source = _regular(candidate_source, ascii_required=True)
     if not 0 < source["bytes"] < SOURCE_LIMIT:
@@ -4682,16 +6936,29 @@ def record_attempt_outcome(
     copied_exclusion = _copy_attempt_artifact(
         _regular(development_exclusion), root=artifact_root
     )
+    copied_exclusion_record = {
+        **copied_exclusion,
+        "schema": DEVELOPMENT_EXCLUSION_SCHEMA,
+        "body_sha256": qualification.load_sealed(
+            pathlib.Path(copied_exclusion["path"]),
+            DEVELOPMENT_EXCLUSION_SCHEMA,
+        )["body_sha256"],
+    }
+    cumulative_development_exclusion = _write_development_dynamic_exclusion(
+        root=artifact_root / "sanitized-exclusions",
+        source_record=copied_exclusion_record,
+        attempt=attempt,
+        phase=phase,
+        candidate=candidate,
+    )
     admitted = _phase_admission(phase, metrics)
     phase_improved = (
-        float(strength_delta_pp) >= 1.5
+        derived_strength_delta_pp >= 1.5
         or float(teacher_regret_reduction_fraction) >= 0.10
     )
-    attempt_improved = phase_improved or any(
-        entry["event"] == "attempt-outcome-recorded"
-        and entry["attempt"] == attempt and entry.get("improved") is True
-        for entry in entries
-    )
+    # The full-round candidate is independently trained, so its terminal
+    # evidence supersedes rather than inherits the pilot candidate's gains.
+    attempt_improved = phase_improved
     prior_no_improvement = _completed_no_improvement_streak(entries)
     consecutive = (
         prior_no_improvement if admitted else
@@ -4708,21 +6975,18 @@ def record_attempt_outcome(
     return _append_event(
         context, attempt=attempt, event="attempt-outcome-recorded",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "phase": phase,
             "candidate": candidate,
             "outcome_receipt": receipt,
             "outcome_receipt_schema": PHASE_OUTCOME_EVIDENCE_SCHEMA,
             "admission_receipt": copied_admission,
-            "development_exclusion": {
-                **copied_exclusion,
-                "schema": DEVELOPMENT_EXCLUSION_SCHEMA,
-                "body_sha256": qualification.load_sealed(
-                    development_exclusion, DEVELOPMENT_EXCLUSION_SCHEMA
-                )["body_sha256"],
-            },
+            "development_exclusion": copied_exclusion_record,
+            "dynamic_exclusions": [cumulative_development_exclusion],
             "metrics": dict(metrics),
-            "strength_delta_pp": float(strength_delta_pp),
+            "strength_delta_pp": derived_strength_delta_pp,
+            "strength_delta_evidence": strength_delta_evidence,
             "teacher_regret_reduction_fraction": float(teacher_regret_reduction_fraction),
             "admitted": admitted,
             "phase_improved": phase_improved,
@@ -4732,6 +6996,230 @@ def record_attempt_outcome(
             "automatic_action": False,
         },
     )
+
+
+def _attribution_outcomes(
+    entries: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    if (
+        not entries
+        or entries[-1].get("event") != "attempt-outcome-recorded"
+        or entries[-1].get("adaptation_route")
+        != "open-next-attempt-attribution-adaptation"
+        or entries[-1].get("consecutive_no_improvement") != 2
+    ):
+        raise ChallengerError(
+            "attribution audit requires exactly two stalled attempts"
+        )
+    selected: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+    for entry in reversed(entries):
+        attempt = entry.get("attempt")
+        if (
+            entry.get("event") == "attempt-outcome-recorded"
+            and entry.get("admitted") is False
+            and entry.get("improved") is False
+            and isinstance(attempt, int) and not isinstance(attempt, bool)
+            and attempt not in seen
+        ):
+            selected.append(entry)
+            seen.add(attempt)
+            if len(selected) == 2:
+                break
+    selected.reverse()
+    if (
+        len(selected) != 2
+        or [entry.get("consecutive_no_improvement") for entry in selected]
+        != [1, 2]
+        or int(selected[1]["attempt"]) != int(entries[-1]["attempt"])
+    ):
+        raise ChallengerError("attribution stalled-attempt ancestry changed")
+    return selected
+
+
+def _attribution_body(
+    context: Mapping[str, Any], *, entries: Sequence[Mapping[str, Any]],
+    next_attempt: int, created_at_utc: str,
+) -> dict[str, Any]:
+    outcomes = _attribution_outcomes(entries)
+    if next_attempt != int(outcomes[-1]["attempt"]) + 1:
+        raise ChallengerError("attribution next attempt is not the exact successor")
+    evidence = []
+    quantization_gap = False
+    teacher_ranking_gap = True
+    for outcome in outcomes:
+        metrics = outcome.get("metrics")
+        if not isinstance(metrics, Mapping):
+            raise ChallengerError("attribution outcome metrics are absent")
+        flip = metrics.get("quantized_action_flip_rate")
+        control_flip = metrics.get("scalar_control_action_flip_rate")
+        regret = outcome.get("teacher_regret_reduction_fraction")
+        if any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in (flip, control_flip, regret)
+        ):
+            raise ChallengerError(
+                "attribution requires quantization and teacher-regret metrics"
+            )
+        flip_delta = float(flip) - float(control_flip)
+        quantization_gap = quantization_gap or (
+            metrics.get("canonical_retention_passed") is not True
+            or flip_delta > 0.005
+        )
+        teacher_ranking_gap = teacher_ranking_gap and float(regret) < 0.10
+        sequence = int(outcome["sequence"])
+        event_path = _ledger_path(context["plan"]) / (
+            f"{sequence:06d}-{outcome['body_sha256']}.json"
+        )
+        receipt_path = _verify_record(
+            outcome.get("outcome_receipt"), "attribution outcome receipt"
+        )
+        receipt = qualification.load_sealed(
+            receipt_path, PHASE_OUTCOME_EVIDENCE_SCHEMA
+        )
+        if (
+            receipt.get("protected_or_live_metrics_read") is not False
+            or outcome.get("phase") not in PHASE_QUOTAS
+        ):
+            raise ChallengerError(
+                "attribution source is not an unprotected phase outcome"
+            )
+        evidence.append({
+            "attempt": outcome["attempt"],
+            "phase": outcome["phase"],
+            "ledger_event": _sealed_record(event_path, LEDGER_SCHEMA),
+            "outcome_receipt": _sealed_record(
+                receipt_path, PHASE_OUTCOME_EVIDENCE_SCHEMA
+            ),
+            "development_exclusion": outcome["development_exclusion"],
+            "metrics_sha256": sha256_bytes(
+                canonical_json_bytes(dict(metrics))
+            ),
+            "canonical_retention_passed": metrics.get(
+                "canonical_retention_passed"
+            ),
+            "quantized_action_flip_rate": float(flip),
+            "scalar_control_action_flip_rate": float(control_flip),
+            "quantization_flip_delta": flip_delta,
+            "teacher_regret_reduction_fraction": float(regret),
+            "strength_delta_pp": float(outcome["strength_delta_pp"]),
+            "rank4_screen_wins": metrics.get("rank4_screen", {}).get(
+                "candidate_wins"
+            ) if isinstance(metrics.get("rank4_screen"), Mapping) else None,
+        })
+    prior_interventions = [
+        str(entry["intervention"])
+        for entry in entries
+        if entry.get("event") == "attempt-opened"
+        and entry.get("attribution_receipt") is not None
+    ]
+    quantization_tried = any(
+        intervention.startswith("quantization-gap-")
+        for intervention in prior_interventions
+    )
+    teacher_tried = any(
+        intervention.startswith("teacher-ranking-gap-")
+        for intervention in prior_interventions
+    )
+    search_tried = [
+        intervention for intervention in prior_interventions
+        if intervention.startswith("search-throughput-gap-")
+    ]
+    if quantization_gap and not quantization_tried:
+        classification = "quantization-gap"
+        selection_reason = "unaddressed-quantized-action-or-retention-gap"
+    elif teacher_ranking_gap and not teacher_tried:
+        classification = "teacher-ranking-gap"
+        selection_reason = "unaddressed-teacher-action-regret-gap"
+    else:
+        classification = "search-throughput-gap"
+        selection_reason = "residual-gap-after-compatible-model-interventions"
+    sequence = ATTRIBUTION_INTERVENTION_SEQUENCES[classification]
+    selected_index = min(len(search_tried), len(sequence) - 1) if (
+        classification == "search-throughput-gap"
+    ) else 0
+    intervention = sequence[selected_index]
+    return {
+        "schema": ATTRIBUTION_EVIDENCE_SCHEMA,
+        "namespace": NAMESPACE,
+        "campaign_id": CAMPAIGN_ID,
+        "status": "evidence-derived-attribution-complete",
+        "created_at_utc": utc(created_at_utc, "attribution audit timestamp"),
+        "completed_no_improvement_attempts": 2,
+        "source_outcomes": evidence,
+        "classifier": {
+            "version": "rank4-teacher-gap-attribution-v1",
+            "quantization_flip_excess_threshold": 0.005,
+            "teacher_regret_reduction_threshold": 0.10,
+            "quantization_gap_detected": quantization_gap,
+            "teacher_ranking_gap_detected": teacher_ranking_gap,
+            "prior_attribution_interventions": prior_interventions,
+            "selection_reason": selection_reason,
+        },
+        "classification": classification,
+        "selected_intervention": intervention,
+        "intervention_contract": _adaptation_contract_for_intervention(
+            intervention, entries
+        ),
+        "next_attempt": next_attempt,
+        "protected_or_live_data_used_for_attribution": False,
+        "automatic_selection": True,
+    }
+
+
+def audit_attribution(
+    plan_path: pathlib.Path, *, next_attempt: int, created_at_utc: str,
+) -> pathlib.Path:
+    """Derive and seal the next intervention from two unprotected outcomes."""
+
+    context = validate_campaign(plan_path)
+    entries = load_ledger(context["plan"])
+    directory = (
+        pathlib.Path(context["root"]) / "attempt-ledger/attribution-audits"
+        / f"attempt-{next_attempt:03d}"
+    )
+    if directory.exists() and (
+        directory.is_symlink() or not directory.is_dir()
+    ):
+        raise ChallengerError("attribution audit directory is redirected")
+    all_existing = sorted(directory.iterdir()) if directory.exists() else []
+    existing = sorted(directory.glob("*.attribution-evidence.json"))
+    orphan_pattern = re.compile(
+        r"\.[0-9a-f]{64}\.attribution-evidence\.json\.[A-Za-z0-9_-]+"
+    )
+    unexpected = [
+        path for path in all_existing
+        if path not in existing and orphan_pattern.fullmatch(path.name) is None
+    ]
+    if unexpected or any(
+        path.is_symlink() or not path.is_file() for path in all_existing
+    ):
+        raise ChallengerError("attribution audit roster changed")
+    if existing:
+        if len(existing) != 1:
+            raise ChallengerError("attribution audit roster changed")
+        value = qualification.load_sealed(
+            existing[0], ATTRIBUTION_EVIDENCE_SCHEMA
+        )
+        expected = qualification.seal(_attribution_body(
+            context, entries=entries, next_attempt=next_attempt,
+            created_at_utc=str(value.get("created_at_utc", "")),
+        ))
+        if value != expected:
+            raise ChallengerError("existing attribution audit changed")
+        return existing[0].resolve()
+    body = _attribution_body(
+        context, entries=entries, next_attempt=next_attempt,
+        created_at_utc=created_at_utc,
+    )
+    path, _ = _write_content_addressed(
+        directory, body, ".attribution-evidence.json"
+    )
+    roster = sorted(directory.glob("*.attribution-evidence.json"))
+    if roster != [path]:
+        raise ChallengerError("attribution audit roster changed")
+    return path
 
 
 def open_next_attempt(
@@ -4761,6 +7249,18 @@ def open_next_attempt(
         raise ChallengerError("ledger did not authorize a next attempt")
     if not isinstance(hypothesis, str) or not hypothesis.strip() or len(hypothesis) > 500:
         raise ChallengerError("next attempt hypothesis is absent or too long")
+    production = context["inputs"].get("production_allowlist_enforced") is True
+    if production and any(
+        value is not None for value in (
+            student_runtime, prior_runtime, initial_float_checkpoint,
+            build_manifest,
+        )
+    ):
+        raise ChallengerError(
+            "production attempts cannot override runtime/checkpoint/build inputs"
+        )
+    if (roots_tsv is None) is not (roots_manifest is None):
+        raise ChallengerError("roots TSV and manifest overrides must be supplied together")
     expected_interventions = {
         "open-next-attempt-teacher-refresh": "teacher-refresh",
         "open-next-attempt-same-contract": "same-contract",
@@ -4776,15 +7276,20 @@ def open_next_attempt(
             attribution_receipt, ATTRIBUTION_EVIDENCE_SCHEMA
         )
         classification = attribution.get("classification")
+        expected_attribution = qualification.seal(_attribution_body(
+            context, entries=entries, next_attempt=attempt,
+            created_at_utc=str(attribution.get("created_at_utc", "")),
+        ))
         if (
-            attribution.get("campaign_id") != CAMPAIGN_ID
-            or attribution.get("completed_no_improvement_attempts") != 2
+            attribution != expected_attribution
             or classification not in ATTRIBUTION_INTERVENTIONS
             or attribution.get("selected_intervention")
-            != ATTRIBUTION_INTERVENTIONS[classification]
+            not in ATTRIBUTION_INTERVENTION_SEQUENCES[classification]
             or attribution.get("next_attempt") != attempt
-            or attribution.get("protected_or_live_data_read") is not False
-            or intervention != ATTRIBUTION_INTERVENTIONS[classification]
+            or attribution.get(
+                "protected_or_live_data_used_for_attribution"
+            ) is not False
+            or intervention != attribution.get("selected_intervention")
         ):
             raise ChallengerError("attribution audit/intervention changed")
         copied = _copy_attempt_artifact(
@@ -4803,6 +7308,14 @@ def open_next_attempt(
         if intervention != expected_interventions[latest["adaptation_route"]]:
             raise ChallengerError("next attempt intervention disagrees with its route")
 
+    adaptation_contract = _adaptation_contract_for_intervention(
+        intervention, entries
+    )
+    if copied_attribution is not None and attribution.get(
+        "intervention_contract"
+    ) != adaptation_contract:
+        raise ChallengerError("attribution intervention contract changed")
+
     frozen = context["inputs"]["attempt_one_inputs"]
     prior_candidates = [
         entry.get("candidate", {}).get("runtime")
@@ -4815,6 +7328,12 @@ def open_next_attempt(
         if attempt == 1 or not prior_candidates
         else prior_candidates[0]
     )
+    previous_opened = next(
+        entry for entry in reversed(entries)
+        if entry.get("event") == "attempt-opened"
+        and entry.get("attempt") == current
+    )
+    previous_inputs = previous_opened["attempt_inputs"]
     overrides = {
         "student_runtime": student_runtime,
         "prior_runtime": prior_runtime,
@@ -4827,10 +7346,69 @@ def open_next_attempt(
         "student_runtime": default_student,
         "prior_runtime": frozen["prior_runtime"],
         "initial_float_checkpoint": frozen["initial_float_checkpoint"],
-        "roots_tsv": frozen["roots_tsv"],
-        "roots_manifest": frozen["roots_manifest"],
+        "roots_tsv": previous_inputs["roots_tsv"],
+        "roots_manifest": previous_inputs["roots_manifest"],
         "build_manifest": frozen["build_manifest"],
     }
+    loss_reuse_manifest = None
+    loss_reuse_verifier_sources = None
+    validated_override_records: dict[str, Mapping[str, Any]] = {}
+    if production and roots_manifest is not None:
+        if (
+            latest.get("event") != "attempt-outcome-recorded"
+            or latest.get("admitted") is not False
+            or latest.get("attempt") != current
+            or latest.get("phase") not in PHASE_QUOTAS
+        ):
+            raise ChallengerError(
+                "loss-root reuse requires the immediately rejected unprotected attempt"
+            )
+        roots_snapshot = {
+            "roots_tsv": _regular(roots_tsv),
+            "roots_manifest": _regular(roots_manifest),
+        }
+        try:
+            loss_reuse_verifier_sources = _frozen_execution_source_evidence(
+                context, tool_roles=("loss_reuse",),
+                build_manifest_record=defaults["build_manifest"],
+            )
+            from tools import compact_value_bfm_loss_reuse as loss_reuse
+
+            loss_reuse_manifest = loss_reuse.validate_loss_reuse_for_campaign(
+                roots_manifest.resolve(), campaign_plan=plan_path.resolve(),
+                expected_source_attempt=current,
+                expected_source_phase=str(latest["phase"]),
+            )
+        except Exception as error:
+            raise ChallengerError(
+                "production roots override failed deep loss-reuse validation"
+            ) from error
+        if (
+            not isinstance(loss_reuse_manifest, Mapping)
+            or not isinstance(loss_reuse_verifier_sources, Mapping)
+        ):
+            raise ChallengerError("loss-reuse validation returned malformed evidence")
+        returned_manifest_payload = canonical_json_bytes(loss_reuse_manifest)
+        returned_roots = loss_reuse_manifest.get("source_roots")
+        if (
+            len(returned_manifest_payload)
+            != roots_snapshot["roots_manifest"]["bytes"]
+            or sha256_bytes(returned_manifest_payload)
+            != roots_snapshot["roots_manifest"]["sha256"]
+            or not isinstance(returned_roots, Mapping)
+            or pathlib.Path(str(returned_roots.get("path", ""))).resolve()
+            != roots_tsv.resolve()
+            or returned_roots.get("bytes")
+            != roots_snapshot["roots_tsv"]["bytes"]
+            or returned_roots.get("sha256")
+            != roots_snapshot["roots_tsv"]["sha256"]
+            or _regular(roots_manifest) != roots_snapshot["roots_manifest"]
+            or _regular(roots_tsv) != roots_snapshot["roots_tsv"]
+        ):
+            raise ChallengerError(
+                "loss-reuse roots changed during deep validation"
+            )
+        validated_override_records = roots_snapshot
     attempt_root = (
         pathlib.Path(context["root"]) / "attempt-ledger/artifacts"
         / f"attempt-{attempt:03d}/inputs"
@@ -4841,7 +7419,9 @@ def open_next_attempt(
         if supplied is None:
             attempt_inputs[name] = defaults[name]
             continue
-        record = _regular(supplied)
+        record = validated_override_records.get(name)
+        if record is None:
+            record = _regular(supplied)
         if name == "build_manifest":
             _validate_build_manifest(supplied, production=False)
         copied = _copy_attempt_artifact(record, root=attempt_root)
@@ -4862,12 +7442,29 @@ def open_next_attempt(
     _validate_attempt_inputs(
         attempt_inputs, plan=context["plan"], require_student_12x8=True
     )
+    loss_reuse_provenance = previous_opened.get("loss_reuse_provenance")
+    if loss_reuse_manifest is not None:
+        copied_manifest_path = pathlib.Path(
+            str(attempt_inputs["roots_manifest"]["path"])
+        )
+        copied_manifest = qualification.load_sealed(copied_manifest_path)
+        loss_reuse_provenance = {
+            **_regular(copied_manifest_path),
+            "schema": str(copied_manifest["schema"]),
+            "body_sha256": copied_manifest["body_sha256"],
+            "reuse_schema": loss_reuse_manifest["reuse_schema"],
+            "source_attempt": current,
+            "source_phase": latest["phase"],
+            "deeply_rederived_before_open": True,
+            "verifier_sources": loss_reuse_verifier_sources,
+        }
     dynamic_exclusions = _cumulative_dynamic_exclusions(entries)
     return _append_event(
         context,
         attempt=attempt,
         event="attempt-opened",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "parent_attempt": current,
             "parent_event_sha256": latest["body_sha256"],
@@ -4876,8 +7473,10 @@ def open_next_attempt(
             "policy_head": False,
             "hypothesis": hypothesis.strip(),
             "intervention": intervention,
+            "adaptation_contract": adaptation_contract,
             "attribution_receipt": copied_attribution,
             "attempt_inputs": attempt_inputs,
+            "loss_reuse_provenance": loss_reuse_provenance,
             "dynamic_exclusions": dynamic_exclusions,
         },
     )
@@ -4941,18 +7540,39 @@ def _write_bank_dynamic_exclusion(
 BankValidator = Callable[[pathlib.Path], Mapping[str, Any]]
 
 
+def _guard_bank_validator(
+    context: Mapping[str, Any], validator: BankValidator, *,
+    allow_injected_test_evidence: bool,
+) -> None:
+    injected = validator is not openings.validate_bank
+    production = context["inputs"].get("production_allowlist_enforced") is True
+    if injected and (production or not allow_injected_test_evidence):
+        raise ChallengerError("injected protected-bank validation is test-only")
+    if not injected and allow_injected_test_evidence:
+        raise ChallengerError(
+            "test-evidence authorization was supplied without an injected bank validator"
+        )
+
+
 def _required_final_exclusion_hashes(
     context: Mapping[str, Any], entries: Sequence[Mapping[str, Any]],
 ) -> list[str]:
+    cumulative_non_development = [
+        record for record in _cumulative_dynamic_exclusions(entries)
+        if record.get("classification")
+        != "unprotected-development-canonical-fingerprints"
+    ]
     records = [
         *context["inputs"]["protected_exclusions"].values(),
         *context["inputs"]["live_exclusions"].values(),
         *(
             entry["development_exclusion"]
             for entry in entries
-            if entry.get("event") == "attempt-outcome-recorded"
+            if entry.get("event") in {
+                "attempt-outcome-recorded", "development-gate-aborted",
+            }
         ),
-        *_cumulative_dynamic_exclusions(entries),
+        *cumulative_non_development,
     ]
     return sorted({str(record["sha256"]) for record in records})
 
@@ -5112,15 +7732,19 @@ def authorize_dual_final(
         or release_candidate.get("architecture") != architecture
     ):
         raise ChallengerError("released candidate differs from dual-final candidate")
-    if authorization_path.exists():
-        existing = qualification.load_sealed(
+    existing = (
+        qualification.load_sealed(
             authorization_path, DUAL_FINAL_AUTHORIZATION_SCHEMA
         )
-        if existing.get("candidate") != candidate:
-            raise ChallengerError("dual-final authorization candidate changed")
-        return authorization_path
-    if root.exists() and any(root.iterdir()):
+        if authorization_path.exists() else None
+    )
+    if existing is None and root.exists() and any(root.iterdir()):
         raise ChallengerError("dual-final artifacts predate candidate authorization")
+    authorization_created = (
+        str(existing["created_at_utc"])
+        if existing is not None
+        else utc(created_at_utc, "dual-final authorization timestamp")
+    )
     body = {
         "schema": DUAL_FINAL_AUTHORIZATION_SCHEMA,
         "namespace": NAMESPACE,
@@ -5128,7 +7752,7 @@ def authorize_dual_final(
         "campaign_plan": _sealed_record(plan_path, PLAN_SCHEMA),
         "attempt": attempt,
         "status": "candidate-frozen-before-protected-bank-materialization",
-        "created_at_utc": utc(created_at_utc, "dual-final authorization timestamp"),
+        "created_at_utc": authorization_created,
         "basis_event_sha256": latest["body_sha256"],
         "candidate": candidate,
         "generated_source": (
@@ -5157,10 +7781,14 @@ def authorize_dual_final(
         "automatic_launch": False,
         "uploads_authorized": 0,
     }
-    qualification.write_sealed(authorization_path, body)
+    if existing is None:
+        qualification.write_sealed(authorization_path, body)
+    elif existing != qualification.seal(body):
+        raise ChallengerError("dual-final authorization changed before ledger append")
     _append_event(
         context, attempt=attempt, event="dual-final-authorized",
-        created_at_utc=created_at_utc,
+        created_at_utc=authorization_created,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "authorization": _sealed_record(
                 authorization_path, DUAL_FINAL_AUTHORIZATION_SCHEMA
@@ -5314,8 +7942,13 @@ def prepare_dual_final(
     authorization_path: pathlib.Path, *, plan_path: pathlib.Path,
     bank_a: pathlib.Path, bank_b: pathlib.Path, created_at_utc: str,
     bank_validator: BankValidator = openings.validate_bank,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     context = validate_campaign(plan_path)
+    _guard_bank_validator(
+        context, bank_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     entries = load_ledger(context["plan"])
     latest = entries[-1]
     try:
@@ -5335,7 +7968,8 @@ def prepare_dual_final(
         and reference_path.exists()
     ):
         validate_dual_final(
-            reference_path, plan_path=plan_path, bank_validator=bank_validator
+            reference_path, plan_path=plan_path, bank_validator=bank_validator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
         )
         return reference_path
     if latest.get("event") != "dual-final-authorized":
@@ -5395,7 +8029,30 @@ def prepare_dual_final(
         )
     ]
     if reference_path.exists():
-        validate_dual_final(reference_path, plan_path=plan_path, bank_validator=bank_validator)
+        state = validate_dual_final(
+            reference_path, plan_path=plan_path, bank_validator=bank_validator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
+        )
+        if [gate["bank"] for gate in state["plan"]["gates"]] != records:
+            raise ChallengerError(
+                "existing dual final was prepared from different banks"
+            )
+        _append_event(
+            context,
+            attempt=attempt,
+            event="dual-final-prepared",
+            created_at_utc=str(state["plan"]["created_at_utc"]),
+            expected_previous_sha256=latest["body_sha256"],
+            fields={
+                "dual_final_reference": _sealed_record(
+                    reference_path, DUAL_FINAL_REFERENCE_SCHEMA
+                ),
+                "candidate": state["plan"]["candidate"],
+                "gate_ids": ["gate-a", "gate-b"],
+                "dynamic_exclusions": state["plan"]["dynamic_exclusions"],
+                "games_launched": 0,
+            },
+        )
         return reference_path
     body = {
         "schema": DUAL_FINAL_SCHEMA,
@@ -5445,6 +8102,7 @@ def prepare_dual_final(
         attempt=attempt,
         event="dual-final-prepared",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "dual_final_reference": _sealed_record(reference_path, DUAL_FINAL_REFERENCE_SCHEMA),
             "candidate": candidate,
@@ -5459,8 +8117,13 @@ def prepare_dual_final(
 def validate_dual_final(
     reference_path: pathlib.Path, *, plan_path: pathlib.Path,
     bank_validator: BankValidator = openings.validate_bank,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, Any]:
     context = validate_campaign(plan_path)
+    _guard_bank_validator(
+        context, bank_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     expected_root = pathlib.Path(context["plan"]["outputs"]["dual_final"])
     reference = qualification.load_sealed(reference_path, DUAL_FINAL_REFERENCE_SCHEMA)
     dual_path = _verify_sealed_record(reference.get("dual_final_plan"), DUAL_FINAL_SCHEMA, "dual final plan")
@@ -5653,15 +8316,19 @@ def record_final_result(
     dual_reference: pathlib.Path, *, plan_path: pathlib.Path,
     gate_id: str, evidence_path: pathlib.Path, completed_at_utc: str,
     bank_validator: BankValidator = openings.validate_bank,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
-    state = validate_dual_final(dual_reference, plan_path=plan_path, bank_validator=bank_validator)
+    state = validate_dual_final(
+        dual_reference, plan_path=plan_path, bank_validator=bank_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     gates = {gate["gate_id"]: gate for gate in state["plan"]["gates"]}
     if gate_id not in gates:
         raise ChallengerError("unknown final gate id")
     gate = gates[gate_id]
     output = pathlib.Path(gate["result_path"])
     if output.exists():
-        validate_final_result(
+        stored = validate_final_result(
             output, dual=state["plan"], gate_id=gate_id, require_pass=False
         )
         entries = load_ledger(state["context"]["plan"])
@@ -5671,7 +8338,52 @@ def record_final_result(
             and entry.get("result") == _sealed_record(output, FINAL_RESULT_SCHEMA)
             for entry in entries
         ):
-            raise ChallengerError("final result exists without its ledger event")
+            latest = entries[-1]
+            if (
+                _regular(evidence_path) != stored.get("source_evidence")
+                or (
+                    gate_id == "gate-a"
+                    and latest.get("event") != "dual-final-prepared"
+                )
+                or (
+                    gate_id == "gate-b"
+                    and (
+                        latest.get("event") != "final-gate-recorded"
+                        or latest.get("gate_id") != "gate-a"
+                        or latest.get("passed") is not True
+                        or latest.get("adaptation_route") != "run-gate-b"
+                    )
+                )
+            ):
+                raise ChallengerError(
+                    "orphaned final result cannot rejoin this ledger state"
+                )
+            passed = stored.get("passed") is True
+            _append_event(
+                state["context"],
+                attempt=state["plan"]["attempt"],
+                event="final-gate-recorded",
+                created_at_utc=str(stored["completed_at_utc"]),
+                expected_previous_sha256=latest["body_sha256"],
+                fields={
+                    "gate_id": gate_id,
+                    "result": _sealed_record(output, FINAL_RESULT_SCHEMA),
+                    "evidence": stored["evidence"],
+                    "passed": passed,
+                    "dynamic_exclusions": (
+                        [] if passed
+                        else list(state["plan"]["dynamic_exclusions"])
+                    ),
+                    "adaptation_route": (
+                        "run-gate-b"
+                        if gate_id == "gate-a" and passed
+                        else "complete-dual-final"
+                        if passed
+                        else "open-next-attempt-protected-rejection"
+                    ),
+                    "automatic_action": False,
+                },
+            )
         return output
     entries = load_ledger(state["context"]["plan"])
     latest = entries[-1]
@@ -5734,6 +8446,7 @@ def record_final_result(
         attempt=state["plan"]["attempt"],
         event="final-gate-recorded",
         created_at_utc=completed_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "gate_id": gate_id,
             "result": _sealed_record(output, FINAL_RESULT_SCHEMA),
@@ -5811,8 +8524,12 @@ def complete_dual_final(
     result_a: pathlib.Path, result_b: pathlib.Path,
     completed_at_utc: str,
     bank_validator: BankValidator = openings.validate_bank,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
-    state = validate_dual_final(dual_reference, plan_path=plan_path, bank_validator=bank_validator)
+    state = validate_dual_final(
+        dual_reference, plan_path=plan_path, bank_validator=bank_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     first = validate_final_result(result_a, dual=state["plan"], gate_id="gate-a")
     second = validate_final_result(result_b, dual=state["plan"], gate_id="gate-b")
     if result_a.resolve() == result_b.resolve() or first["candidate"] != second["candidate"]:
@@ -5850,15 +8567,29 @@ def complete_dual_final(
         "upload_authorized": False,
     }
     if output.exists():
-        if qualification.load_sealed(output, DUAL_QUALIFICATION_SCHEMA) != qualification.seal(body):
+        existing = qualification.load_sealed(
+            output, DUAL_QUALIFICATION_SCHEMA
+        )
+        body["completed_at_utc"] = utc(
+            existing.get("completed_at_utc"),
+            "existing dual final completion timestamp",
+        )
+        if existing != qualification.seal(body):
             raise ChallengerError("dual final qualification changed")
+    else:
+        qualification.write_sealed(output, body)
+    if entries[-1].get("event") == "dual-final-qualified":
+        if entries[-1].get("qualification") != _sealed_record(
+            output, DUAL_QUALIFICATION_SCHEMA
+        ):
+            raise ChallengerError("dual final ledger qualification changed")
         return output
-    qualification.write_sealed(output, body)
     _append_event(
         state["context"],
         attempt=state["plan"]["attempt"],
         event="dual-final-qualified",
-        created_at_utc=completed_at_utc,
+        created_at_utc=str(body["completed_at_utc"]),
+        expected_previous_sha256=entries[-1]["body_sha256"],
         fields={
             "qualification": _sealed_record(output, DUAL_QUALIFICATION_SCHEMA),
             "candidate_unchanged": True,
@@ -5868,6 +8599,218 @@ def complete_dual_final(
         },
     )
     return output
+
+
+def claim_upload_authorization(
+    plan_path: pathlib.Path, *, attempt: int, output_root: pathlib.Path,
+    release_evidence_path: pathlib.Path, candidate_commit: str,
+    campaign_upload_binding: Mapping[str, Any], authorized_at_utc: str,
+) -> dict[str, Any]:
+    """Append the single-use capability claim before publishing upload files."""
+
+    context = validate_campaign(plan_path)
+    entries = load_ledger(context["plan"])
+    latest = entries[-1]
+    existing_claim = None
+    if latest.get("event") == "upload-authorization-claimed":
+        existing_claim = latest
+    elif (
+        latest.get("event") == "upload-authorized"
+        and len(entries) >= 2
+        and entries[-2].get("event") == "upload-authorization-claimed"
+    ):
+        existing_claim = entries[-2]
+    basis = (
+        entries[-2]
+        if existing_claim is latest and len(entries) >= 2
+        else latest
+    )
+    if existing_claim is not None:
+        basis = next(
+            item for item in reversed(entries[: existing_claim["sequence"]])
+            if item.get("event") == "dual-final-qualified"
+        )
+    if (
+        basis.get("event") != "dual-final-qualified"
+        or basis.get("attempt") != attempt
+    ):
+        raise ChallengerError(
+            "upload capability claim requires the latest dual qualification"
+        )
+    qualified = qualification.load_sealed(
+        _verify_sealed_record(
+            basis.get("qualification"), DUAL_QUALIFICATION_SCHEMA,
+            "upload capability qualification",
+        ),
+        DUAL_QUALIFICATION_SCHEMA,
+    )
+    release_record = _sealed_record(
+        release_evidence_path, RELEASE_EVIDENCE_SCHEMA
+    )
+    release = qualification.load_sealed(
+        release_evidence_path, RELEASE_EVIDENCE_SCHEMA
+    )
+    prior_uploads = [
+        item for item in entries if item.get("event") == "upload-attested"
+    ]
+    ordinal = len(prior_uploads) + 1
+    output_root = output_root.resolve()
+    production = context["inputs"].get("production_allowlist_enforced") is True
+    expected_root = (
+        pathlib.Path(context["plan"]["outputs"]["root"])
+        / "release" / f"attempt-{attempt:03d}" / "upload"
+    )
+    authorized_at = utc(authorized_at_utc, "upload capability claim time")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", candidate_commit) is None
+        or not isinstance(campaign_upload_binding, Mapping)
+        or campaign_upload_binding.get("upload_ordinal") != ordinal
+        or (production and output_root != expected_root)
+        or release.get("attempt") != attempt
+        or release.get("candidate_commit") != candidate_commit
+        or release.get("candidate", {}).get("source", {}).get("sha256")
+        != qualified.get("candidate", {}).get("source", {}).get("sha256")
+    ):
+        raise ChallengerError("upload capability claim inputs changed")
+    fields = {
+        "qualification": basis["qualification"],
+        "candidate": qualified["candidate"],
+        "release_evidence": release_record,
+        "candidate_commit": candidate_commit,
+        "campaign_upload_binding": dict(campaign_upload_binding),
+        "upload_ordinal": ordinal,
+        "output_root": str(output_root),
+        "authorized_at_utc": authorized_at,
+        "files_published": False,
+        "adaptation_route": "publish-upload-capability",
+        "automatic_action": False,
+    }
+    if existing_claim is not None:
+        expected = {
+            key: existing_claim[key]
+            for key in fields
+        }
+        if expected != fields:
+            raise ChallengerError(
+                "existing upload capability claim uses different inputs"
+            )
+        return dict(existing_claim)
+    return _append_event(
+        context,
+        attempt=attempt,
+        event="upload-authorization-claimed",
+        created_at_utc=authorized_at,
+        expected_previous_sha256=latest["body_sha256"],
+        fields=fields,
+    )
+
+
+def record_upload_authorization(
+    plan_path: pathlib.Path, *, attempt: int,
+    authorization_path: pathlib.Path, authorization_inputs_path: pathlib.Path,
+    created_at_utc: str,
+) -> dict[str, Any]:
+    """Claim the sole immutable upload capability before a browser click."""
+
+    context = validate_campaign(plan_path)
+    entries = load_ledger(context["plan"])
+    latest = entries[-1]
+    authorization_record = _sealed_record(
+        authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+    )
+    inputs_record = _sealed_record(
+        authorization_inputs_path, UPLOAD_AUTHORIZATION_INPUTS_SCHEMA
+    )
+    if latest.get("event") == "upload-authorized":
+        if (
+            latest.get("authorization") != authorization_record
+            or latest.get("authorization_inputs") != inputs_record
+            or latest.get("attempt") != attempt
+        ):
+            raise ChallengerError(
+                "existing upload capability uses different immutable inputs"
+            )
+        return dict(latest)
+    if (
+        latest.get("event") != "upload-authorization-claimed"
+        or latest.get("attempt") != attempt
+    ):
+        raise ChallengerError(
+            "upload capability publication requires its prior ledger claim"
+        )
+    authorization = qualification.load_sealed(
+        authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+    )
+    inputs = qualification.load_sealed(
+        authorization_inputs_path, UPLOAD_AUTHORIZATION_INPUTS_SCHEMA
+    )
+    campaign_binding = authorization.get("campaign_upload_binding")
+    ordinal = (
+        campaign_binding.get("upload_ordinal")
+        if isinstance(campaign_binding, Mapping) else None
+    )
+    authorized_at = utc(created_at_utc, "upload capability timestamp")
+    qualified = qualification.load_sealed(
+        pathlib.Path(latest["qualification"]["path"]),
+        DUAL_QUALIFICATION_SCHEMA,
+    )
+    expected_root = (
+        pathlib.Path(str(latest["output_root"])).resolve()
+    )
+    expected_authorization_reference = qualification.artifact_reference(
+        authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+    )
+    expected_qualification_reference = qualification.artifact_reference(
+        pathlib.Path(latest["qualification"]["path"]),
+        DUAL_QUALIFICATION_SCHEMA,
+    )
+    if (
+        isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal <= 0
+        or inputs.get("authorized_at_utc") != authorized_at
+        or inputs.get("campaign_id") != CAMPAIGN_ID
+        or inputs.get("attempt") != attempt
+        or inputs.get("authorization") != expected_authorization_reference
+        or inputs.get("dual_qualification")
+        != expected_qualification_reference
+        or inputs.get("campaign_upload_binding") != campaign_binding
+        or authorization.get("uploads_authorized") != 1
+        or authorization.get("rank4_replacement_authorized") is not False
+        or authorization.get("authorized_at_utc")
+        != latest.get("authorized_at_utc")
+        or authorization.get("candidate", {}).get("sha256")
+        != qualified.get("candidate", {}).get("source", {}).get("sha256")
+        or authorization.get("candidate", {}).get("bytes")
+        != qualified.get("candidate", {}).get("source", {}).get("bytes")
+        or authorization.get("campaign_upload_claim") != {
+            "sequence": latest["sequence"],
+            "body_sha256": latest["body_sha256"],
+            "attempt": attempt,
+            "upload_ordinal": ordinal,
+        }
+        or inputs.get("campaign_upload_claim")
+        != authorization.get("campaign_upload_claim")
+        or campaign_binding != latest.get("campaign_upload_binding")
+        or authorized_at != latest.get("authorized_at_utc")
+        or authorization_path.resolve().parent != expected_root
+        or authorization_inputs_path.resolve().parent != expected_root
+    ):
+        raise ChallengerError("upload capability inputs changed")
+    return _append_event(
+        context,
+        attempt=attempt,
+        event="upload-authorized",
+        created_at_utc=authorized_at,
+        expected_previous_sha256=latest["body_sha256"],
+        fields={
+            "qualification": latest["qualification"],
+            "candidate": latest["candidate"],
+            "authorization": authorization_record,
+            "authorization_inputs": inputs_record,
+            "upload_ordinal": ordinal,
+            "consumed": False,
+            "automatic_action": False,
+        },
+    )
 
 
 def record_upload_attestation(
@@ -5885,8 +8828,10 @@ def record_upload_attestation(
         ):
             raise ChallengerError("existing upload attestation uses another submission")
         return dict(latest)
-    if latest.get("event") != "dual-final-qualified":
-        raise ChallengerError("upload attestation requires the latest dual qualification")
+    if latest.get("event") != "upload-authorized":
+        raise ChallengerError(
+            "upload attestation requires the claimed upload capability"
+        )
     qualified_path = _verify_sealed_record(
         latest.get("qualification"), DUAL_QUALIFICATION_SCHEMA,
         "upload dual qualification",
@@ -5933,6 +8878,10 @@ def record_upload_attestation(
         != qualification.artifact_reference(
             authorization_path, qualification.UPLOAD_AUTH_SCHEMA
         )
+        or _sealed_record(
+            authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+        ) != latest.get("authorization")
+        or latest.get("upload_ordinal") != upload_ordinal
         or authorization.get("uploads_authorized") != 1
         or authorization.get("rank4_replacement_authorized") is not False
         or authorization.get("candidate", {}).get("sha256") != candidate["sha256"]
@@ -5967,6 +8916,7 @@ def record_upload_attestation(
     event = _append_event(
         context, attempt=int(latest["attempt"]), event="upload-attested",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "qualification": latest["qualification"],
             "candidate": qualified["candidate"],
@@ -6002,6 +8952,104 @@ def _default_live_window_validator(
     return module.verify_window_reference(reference_path, data_root=data_root)
 
 
+def _deep_validate_live_window_reference(
+    context: Mapping[str, Any], *, reference_path: pathlib.Path,
+    data_root: pathlib.Path,
+    validator: Callable[[pathlib.Path, pathlib.Path], Mapping[str, Any]],
+    allow_injected_test_evidence: bool,
+) -> dict[str, Any]:
+    """Reopen the exact external 90-game evidence closure."""
+
+    if validator is not _default_live_window_validator and (
+        context["inputs"].get("production_allowlist_enforced") is True
+        or not allow_injected_test_evidence
+    ):
+        raise ChallengerError("injected live-window validation is test-only")
+    reference_path = reference_path.resolve()
+    data_root = data_root.resolve()
+    try:
+        reference_path.relative_to(data_root)
+    except ValueError as error:
+        raise ChallengerError("live-window reference escaped its data root") from error
+    try:
+        reference = qualification.load_sealed(reference_path)
+        validated = dict(validator(reference_path, data_root))
+    except Exception as error:
+        raise ChallengerError("live-window reference failed full validation") from error
+    if validated != reference:
+        raise ChallengerError("live-window validator returned another reference")
+    return reference
+
+
+def _assess_live_window(
+    upload: Mapping[str, Any], *, reference: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], Mapping[str, Any], str | None, bool]:
+    result = receipt if isinstance(receipt.get("summary"), Mapping) else reference
+    summary = result.get("summary")
+    identity = result.get("identity")
+    live_status = summary.get("status") if isinstance(summary, Mapping) else None
+    if (
+        reference.get("status") != live_status
+        or reference.get("exact_games") != 90
+    ):
+        raise ChallengerError("live-window reference/receipt status changed")
+    clean = bool(
+        result.get("exact_games") == 90
+        and live_status == "complete-accepted-diagnostic"
+        and result.get("training_eligible") is False
+        and result.get("rollback_authorized") is False
+        and result.get("second_upload_authorized") is False
+        and isinstance(result.get("game_ids"), list)
+        and len(result["game_ids"]) == 90
+        and len(set(result["game_ids"])) == 90
+        and isinstance(identity, Mapping)
+        and identity.get("source_sha256")
+        == upload["candidate"]["source"]["sha256"]
+        and identity.get("source_bytes")
+        == upload["candidate"]["source"]["bytes"]
+        and identity.get("agent_id") == upload["agent_id"]
+        and identity.get("submission_id") == upload["submission_id"]
+        and identity.get("repository_commit") == upload["candidate_commit"]
+        and isinstance(summary, Mapping)
+        and summary.get("focus_operational_failures") == []
+        and summary.get("focus_operational_failure_games") == 0
+        and receipt.get("submission_attestation", {}).get("sha256")
+        == upload["source_submission_attestation"]["sha256"]
+    )
+    if result.get("exact_games") != 90:
+        raise ChallengerError("live diagnostic is not exactly 90 games")
+    return result, summary if isinstance(summary, Mapping) else {}, live_status, clean
+
+
+def _load_live_receipt_snapshot(
+    reference: Mapping[str, Any], *, data_root: pathlib.Path,
+) -> tuple[pathlib.Path, dict[str, Any], dict[str, Any]]:
+    receipt_reference = reference.get("receipt")
+    if (
+        not isinstance(receipt_reference, Mapping)
+        or set(receipt_reference) != {"path", "sha256", "body_sha256"}
+    ):
+        raise ChallengerError("live-window receipt reference is malformed")
+    try:
+        module = _load(
+            LIVE_WINDOW_PATH,
+            "rank4_teacher_challenger_live_receipt_paths",
+        )
+        receipt_path = module.resolve_path(receipt_reference["path"])
+        receipt_path.relative_to(data_root.resolve())
+        receipt_record = _regular(receipt_path)
+        receipt = qualification.load_sealed(receipt_path)
+    except Exception as error:
+        raise ChallengerError("live-window receipt closure is invalid") from error
+    if (
+        receipt_record["sha256"] != receipt_reference.get("sha256")
+        or receipt.get("body_sha256") != receipt_reference.get("body_sha256")
+    ):
+        raise ChallengerError("live-window receipt identity changed")
+    return receipt_path, receipt, receipt_record
+
+
 def record_live_window(
     plan_path: pathlib.Path, *, live_reference: pathlib.Path,
     live_data_root: pathlib.Path, created_at_utc: str,
@@ -6017,13 +9065,60 @@ def record_live_window(
     """Validate and bind an existing exact-90 live diagnostic; never polls it."""
 
     context = validate_campaign(plan_path)
+    _guard_live_fingerprint_extractor(
+        context, extractor=live_fingerprint_extractor,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     entries = load_ledger(context["plan"])
     latest = entries[-1]
+    build_manifest_record = _attempt_build_manifest_record(
+        entries, int(latest["attempt"])
+    )
+    live_source_evidence = (
+        _frozen_execution_source_evidence(
+            context, tool_roles=POST_PROMOTION_LIVE_TOOL_ROLES,
+            build_manifest_record=build_manifest_record,
+            revalidate_current=False,
+            allowed_current_drift_routes=(
+                POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+            ),
+        )
+        if live_validator is _default_live_window_validator else None
+    )
     if latest.get("event") == "live-window-recorded":
-        if latest.get("source_live_reference") != _sealed_record(
-            live_reference, str(qualification.load_sealed(live_reference)["schema"])
+        reference = _deep_validate_live_window_reference(
+            context, reference_path=live_reference, data_root=live_data_root,
+            validator=live_validator,
+            allow_injected_test_evidence=allow_injected_test_evidence,
+        )
+        source_reference = _sealed_record(
+            live_reference, str(reference["schema"])
+        )
+        if (
+            qualification.load_sealed(live_reference) != reference
+            or latest.get("source_live_reference") != source_reference
+            or latest.get("source_live_data_root") != str(live_data_root.resolve())
+            or latest.get("live_verifier_sources") != live_source_evidence
         ):
             raise ChallengerError("existing live window uses another reference")
+        _receipt_path, receipt, _receipt_record = _load_live_receipt_snapshot(
+            reference, data_root=live_data_root
+        )
+        upload = next(
+            entry for entry in reversed(entries[:-1])
+            if entry.get("event") == "upload-attested"
+            and entry.get("attempt") == latest.get("attempt")
+        )
+        _result, summary, status, clean = _assess_live_window(
+            upload, reference=reference, receipt=receipt
+        )
+        if (
+            latest.get("passed") is not clean
+            or latest.get("status") != status
+            or latest.get("focus_operational_failure_games")
+            != summary.get("focus_operational_failure_games")
+        ):
+            raise ChallengerError("recorded live-window assessment changed")
         if latest.get("passed") is False:
             if dynamic_exclusion_path is None:
                 raise ChallengerError(
@@ -6049,53 +9144,25 @@ def record_live_window(
         or latest.get("adaptation_route") != "record-live-window"
     ):
         raise ChallengerError("live window requires the latest upload attestation")
-    try:
-        validated_reference = dict(live_validator(live_reference, live_data_root))
-    except Exception as error:
-        raise ChallengerError("live-window reference failed full validation") from error
-    try:
-        reference = qualification.load_sealed(live_reference)
-        receipt_reference = reference["receipt"]
-        receipt_path = pathlib.Path(str(receipt_reference["path"])).resolve()
-        receipt = qualification.load_sealed(receipt_path)
-    except Exception as error:
-        raise ChallengerError("live-window receipt closure is invalid") from error
-    result = receipt if isinstance(receipt.get("summary"), Mapping) else validated_reference
-    if (
-        validated_reference.get("status") != result.get("summary", {}).get("status")
-        or validated_reference.get("exact_games") != 90
-    ):
-        raise ChallengerError("live-window reference/receipt status changed")
-    source_attestation = latest["source_submission_attestation"]
-    identity = result.get("identity")
-    summary = result.get("summary")
-    live_status = summary.get("status") if isinstance(summary, Mapping) else None
-    clean = bool(
-        result.get("exact_games") == 90
-        and live_status == "complete-accepted-diagnostic"
-        and result.get("training_eligible") is False
-        and result.get("rollback_authorized") is False
-        and result.get("second_upload_authorized") is False
-        and isinstance(result.get("game_ids"), list)
-        and len(result["game_ids"]) == 90
-        and len(set(result["game_ids"])) == 90
-        and isinstance(identity, Mapping)
-        and identity.get("source_sha256")
-        == latest["candidate"]["source"]["sha256"]
-        and identity.get("source_bytes")
-        == latest["candidate"]["source"]["bytes"]
-        and identity.get("agent_id") == latest["agent_id"]
-        and identity.get("submission_id") == latest["submission_id"]
-        and identity.get("repository_commit") == latest["candidate_commit"]
-        and isinstance(summary, Mapping)
-        and summary.get("focus_operational_failures") == []
-        and summary.get("focus_operational_failure_games") == 0
-        and receipt.get("submission_attestation", {}).get("sha256")
-        == source_attestation["sha256"]
+    reference = _deep_validate_live_window_reference(
+        context, reference_path=live_reference, data_root=live_data_root,
+        validator=live_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
-    if result.get("exact_games") != 90:
-        raise ChallengerError("live diagnostic is not exactly 90 games")
+    validated_reference = dict(reference)
+    source_reference_record = _sealed_record(
+        live_reference, str(reference["schema"])
+    )
+    if qualification.load_sealed(live_reference) != reference:
+        raise ChallengerError("live-window reference changed after validation")
+    receipt_path, receipt, receipt_record = _load_live_receipt_snapshot(
+        reference, data_root=live_data_root
+    )
+    result, summary, live_status, clean = _assess_live_window(
+        latest, reference=validated_reference, receipt=receipt
+    )
     dynamic_exclusion = None
+    dynamic_source_record = None
     if clean:
         if dynamic_exclusion_path is not None:
             raise ChallengerError("passing live window cannot add a retry exclusion")
@@ -6113,6 +9180,7 @@ def record_live_window(
             extractor=live_fingerprint_extractor,
             allow_injected_test_evidence=allow_injected_test_evidence,
         )
+        dynamic_source_record = _regular(dynamic_exclusion_path)
         game_ids_sha256 = sha256_bytes(canonical_json_bytes(sorted(result["game_ids"])))
         if (
             exclusion.get("classification")
@@ -6132,29 +9200,80 @@ def record_live_window(
         / f"attempt-{latest['attempt']:03d}/live"
     )
     copied_reference = _copy_attempt_artifact(
-        _regular(live_reference), root=artifact_root
+        {
+            key: source_reference_record[key]
+            for key in ("path", "bytes", "sha256")
+        },
+        root=artifact_root,
     )
     copied_receipt = _copy_attempt_artifact(
-        _regular(receipt_path), root=artifact_root
+        receipt_record, root=artifact_root
     )
     if dynamic_exclusion_path is not None:
+        if dynamic_source_record is None:
+            raise ChallengerError("live dynamic exclusion snapshot is absent")
         copied_dynamic = _copy_attempt_artifact(
-            _regular(dynamic_exclusion_path), root=artifact_root / "exclusions"
+            dynamic_source_record, root=artifact_root / "exclusions"
         )
         copied_dynamic_path = pathlib.Path(copied_dynamic["path"])
         # Preserve the sealed payload exactly; the copied record is what all
         # future attempts bind, never the live transcript/metric closure.
         dynamic_exclusion = _dynamic_exclusion_record(copied_dynamic_path)
+    copied_live_validator = None
+    if live_source_evidence is not None:
+        copied_live_validator = _copy_attempt_artifact(
+            _regular(LIVE_WINDOW_PATH), root=artifact_root / "validator"
+        )
+    revalidated_reference = _deep_validate_live_window_reference(
+        context, reference_path=live_reference, data_root=live_data_root,
+        validator=live_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    _second_receipt_path, second_receipt, second_receipt_record = (
+        _load_live_receipt_snapshot(
+            revalidated_reference, data_root=live_data_root
+        )
+    )
+    if (
+        revalidated_reference != reference
+        or _sealed_record(live_reference, str(reference["schema"]))
+        != source_reference_record
+        or second_receipt != receipt
+        or second_receipt_record != receipt_record
+        or qualification.load_sealed(
+            pathlib.Path(copied_reference["path"])
+        ) != reference
+        or qualification.load_sealed(
+            pathlib.Path(copied_receipt["path"])
+        ) != receipt
+        or (
+            dynamic_source_record is not None
+            and _regular(dynamic_exclusion_path) != dynamic_source_record
+        )
+        or (
+            live_source_evidence is not None
+            and (
+                copied_live_validator is None
+                or copied_live_validator["sha256"]
+                != live_source_evidence["tools"]["live_window_verifier"][
+                    "sha256"
+                ]
+            )
+        )
+    ):
+        raise ChallengerError("live-window evidence changed during campaign copy")
     return _append_event(
         context, attempt=int(latest["attempt"]), event="live-window-recorded",
         created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "upload_ordinal": latest["upload_ordinal"],
             "submission_id": latest["submission_id"],
             "candidate": latest["candidate"],
-            "source_live_reference": _sealed_record(
-                live_reference, str(reference["schema"])
-            ),
+            "source_live_reference": source_reference_record,
+            "source_live_data_root": str(live_data_root.resolve()),
+            "live_verifier_sources": live_source_evidence,
+            "live_validator": copied_live_validator,
             "live_reference": copied_reference,
             "live_receipt": copied_receipt,
             "dynamic_exclusion": dynamic_exclusion,
@@ -6184,6 +9303,10 @@ def authorize_additional_upload(
     allow_injected_test_evidence: bool = False,
 ) -> dict[str, Any]:
     context = validate_campaign(plan_path)
+    _guard_live_fingerprint_extractor(
+        context, extractor=live_fingerprint_extractor,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     entries = load_ledger(context["plan"])
     latest = entries[-1]
     if (
@@ -6233,6 +9356,7 @@ def authorize_additional_upload(
     return _append_event(
         context, attempt=int(latest["attempt"]),
         event="additional-upload-authorized", created_at_utc=created_at_utc,
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "authorization": {
                 **copied,
@@ -6250,34 +9374,97 @@ def authorize_additional_upload(
 
 def complete_campaign(
     plan_path: pathlib.Path, *, completed_at_utc: str,
+    live_data_root: pathlib.Path | None = None,
+    live_validator: Callable[[pathlib.Path, pathlib.Path], Mapping[str, Any]] = (
+        _default_live_window_validator
+    ),
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     context = validate_campaign(plan_path)
     entries = load_ledger(context["plan"])
     latest = entries[-1]
     output = pathlib.Path(context["plan"]["outputs"]["completion"])
+    live_event = entries[-2] if latest.get("event") == "campaign-complete" else latest
+    build_manifest_record = _attempt_build_manifest_record(
+        entries, int(live_event.get("attempt", -1))
+    ) if live_event.get("event") == "live-window-recorded" else None
+    completion_live_sources = (
+        _frozen_execution_source_evidence(
+            context, tool_roles=POST_PROMOTION_LIVE_TOOL_ROLES,
+            build_manifest_record=build_manifest_record,
+            revalidate_current=False,
+            allowed_current_drift_routes=(
+                POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES
+            ),
+        )
+        if live_validator is _default_live_window_validator
+        and build_manifest_record is not None else None
+    )
+    if (
+        live_event.get("event") != "live-window-recorded"
+        or live_event.get("passed") is not True
+        or live_event.get("adaptation_route") != "complete-campaign"
+        or live_event.get("exact_games") != 90
+        or live_event.get("focus_operational_failure_games") != 0
+        or live_event.get("live_verifier_sources") != completion_live_sources
+    ):
+        raise ChallengerError("campaign completion requires a clean exact-90 live window")
+    recorded_root = pathlib.Path(str(live_event["source_live_data_root"]))
+    selected_root = (
+        recorded_root if live_data_root is None else live_data_root.resolve()
+    )
+    if selected_root != recorded_root:
+        raise ChallengerError("campaign completion uses another live data root")
+    source_reference = pathlib.Path(
+        str(live_event["source_live_reference"]["path"])
+    )
+    reference = _deep_validate_live_window_reference(
+        context, reference_path=source_reference, data_root=selected_root,
+        validator=live_validator,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    if _sealed_record(
+        source_reference, str(reference["schema"])
+    ) != live_event["source_live_reference"]:
+        raise ChallengerError("recorded live reference changed before completion")
+    _receipt_path, receipt, _receipt_record = _load_live_receipt_snapshot(
+        reference, data_root=selected_root
+    )
+    upload = next(
+        entry for entry in reversed(entries)
+        if entry.get("event") == "upload-attested"
+        and entry.get("attempt") == live_event["attempt"]
+    )
+    _result, summary, status, clean = _assess_live_window(
+        upload, reference=reference, receipt=receipt
+    )
+    copied_reference = _verify_record(
+        live_event.get("live_reference"), "completion copied live reference"
+    )
+    copied_receipt = _verify_record(
+        live_event.get("live_receipt"), "completion copied live receipt"
+    )
+    if (
+        clean is not True
+        or status != live_event.get("status")
+        or summary.get("focus_operational_failure_games") != 0
+        or qualification.load_sealed(copied_reference) != reference
+        or qualification.load_sealed(copied_receipt) != receipt
+        or upload.get("upload_ordinal") != live_event.get("upload_ordinal")
+        or upload.get("submission_id") != live_event.get("submission_id")
+        or upload.get("candidate") != live_event.get("candidate")
+    ):
+        raise ChallengerError("clean live-window proof no longer rederives")
     if latest.get("event") == "campaign-complete":
         _verify_sealed_record(
             latest.get("completion"), CAMPAIGN_COMPLETION_SCHEMA,
             "campaign completion",
         )
         return output
-    if (
-        latest.get("event") != "live-window-recorded"
-        or latest.get("passed") is not True
-        or latest.get("adaptation_route") != "complete-campaign"
-        or latest.get("exact_games") != 90
-        or latest.get("focus_operational_failure_games") != 0
-    ):
-        raise ChallengerError("campaign completion requires a clean exact-90 live window")
     qualified = next(
         entry for entry in reversed(entries)
         if entry.get("event") == "dual-final-qualified"
-        and entry.get("attempt") == latest["attempt"]
-    )
-    upload = next(
-        entry for entry in reversed(entries)
-        if entry.get("event") == "upload-attested"
-        and entry.get("attempt") == latest["attempt"]
+        and entry.get("attempt") == live_event["attempt"]
     )
     body = {
         "schema": CAMPAIGN_COMPLETION_SCHEMA,
@@ -6285,37 +9472,46 @@ def complete_campaign(
         "campaign_id": CAMPAIGN_ID,
         "status": "rank4-teacher-challenger-complete",
         "campaign_plan": _sealed_record(plan_path, PLAN_SCHEMA),
-        "attempt": latest["attempt"],
-        "candidate": latest["candidate"],
+        "attempt": live_event["attempt"],
+        "candidate": live_event["candidate"],
         "dual_qualification": qualified["qualification"],
         "upload_attestation": upload["submission_attestation"],
-        "live_reference": latest["live_reference"],
+        "live_reference": live_event["live_reference"],
+        "live_verifier_sources": live_event["live_verifier_sources"],
         "completed_at_utc": utc(completed_at_utc, "campaign completion timestamp"),
         "proof": {
             "strict_final_gates": 2,
             "candidate_unchanged": True,
             "exact_live_games": 90,
             "focus_operational_failure_games": 0,
-            "upload_ordinal": latest["upload_ordinal"],
+            "upload_ordinal": live_event["upload_ordinal"],
         },
         "next_attempt_authorized": False,
         "additional_upload_authorized": False,
     }
     if output.exists():
-        if qualification.load_sealed(output, CAMPAIGN_COMPLETION_SCHEMA) != qualification.seal(body):
+        existing = qualification.load_sealed(
+            output, CAMPAIGN_COMPLETION_SCHEMA
+        )
+        body["completed_at_utc"] = utc(
+            existing.get("completed_at_utc"),
+            "existing campaign completion timestamp",
+        )
+        if existing != qualification.seal(body):
             raise ChallengerError("campaign completion changed")
-        return output
-    qualification.write_sealed(output, body)
+    else:
+        qualification.write_sealed(output, body)
     _append_event(
-        context, attempt=int(latest["attempt"]), event="campaign-complete",
-        created_at_utc=completed_at_utc,
+        context, attempt=int(live_event["attempt"]), event="campaign-complete",
+        created_at_utc=str(body["completed_at_utc"]),
+        expected_previous_sha256=latest["body_sha256"],
         fields={
             "completion": _sealed_record(output, CAMPAIGN_COMPLETION_SCHEMA),
-            "candidate": latest["candidate"],
+            "candidate": live_event["candidate"],
             "strict_final_gates": 2,
             "exact_live_games": 90,
             "focus_operational_failure_games": 0,
-            "uploads_completed": latest["upload_ordinal"],
+            "uploads_completed": live_event["upload_ordinal"],
             "goal_achieved": True,
         },
     )
@@ -6414,6 +9610,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     outcome.add_argument("--strength-delta-pp", type=float, required=True)
     outcome.add_argument("--teacher-regret-reduction-fraction", type=float, required=True)
     outcome.add_argument("--created-at-utc", required=True)
+    development_abort = commands.add_parser("record-development-gate-abort")
+    development_abort.add_argument("--plan", type=pathlib.Path, required=True)
+    development_abort.add_argument(
+        "--abandonment", type=pathlib.Path, required=True
+    )
+    development_abort.add_argument("--created-at-utc", required=True)
+    attribution = commands.add_parser("audit-attribution")
+    attribution.add_argument("--plan", type=pathlib.Path, required=True)
+    attribution.add_argument("--next-attempt", type=int, required=True)
+    attribution.add_argument("--created-at-utc", required=True)
     next_attempt = commands.add_parser("open-attempt")
     next_attempt.add_argument("--plan", type=pathlib.Path, required=True)
     next_attempt.add_argument("--attempt", type=int, required=True)
@@ -6447,6 +9653,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     result.add_argument("--gate-id", choices=("gate-a", "gate-b"), required=True)
     result.add_argument("--evidence", type=pathlib.Path, required=True)
     result.add_argument("--completed-at-utc", required=True)
+    protected_abort = commands.add_parser("record-protected-stage-abort")
+    protected_abort.add_argument("--plan", type=pathlib.Path, required=True)
+    protected_abort.add_argument("--abortion", type=pathlib.Path, required=True)
+    protected_abort.add_argument("--created-at-utc", required=True)
     complete = commands.add_parser("complete-dual-final")
     complete.add_argument("--plan", type=pathlib.Path, required=True)
     complete.add_argument("--dual-reference", type=pathlib.Path, required=True)
@@ -6469,6 +9679,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     extra.add_argument("--created-at-utc", required=True)
     finish = commands.add_parser("complete-campaign")
     finish.add_argument("--plan", type=pathlib.Path, required=True)
+    finish.add_argument("--live-data-root", type=pathlib.Path, required=True)
     finish.add_argument("--completed-at-utc", required=True)
     validate = commands.add_parser("validate")
     validate.add_argument("--plan", type=pathlib.Path, required=True)
@@ -6548,6 +9759,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps({"event": event["event"], "admitted": event["admitted"], "route": event["adaptation_route"]}, sort_keys=True))
             return 0
+        elif arguments.command == "record-development-gate-abort":
+            event = record_development_gate_abort(
+                arguments.plan,
+                abandonment_path=arguments.abandonment,
+                created_at_utc=arguments.created_at_utc,
+            )
+            print(json.dumps({
+                "event": event["event"],
+                "route": event["adaptation_route"],
+            }, sort_keys=True))
+            return 0
+        elif arguments.command == "audit-attribution":
+            output = audit_attribution(
+                arguments.plan, next_attempt=arguments.next_attempt,
+                created_at_utc=arguments.created_at_utc,
+            )
         elif arguments.command == "open-attempt":
             event = open_next_attempt(
                 arguments.plan, attempt=arguments.attempt,
@@ -6585,6 +9812,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 gate_id=arguments.gate_id, evidence_path=arguments.evidence,
                 completed_at_utc=arguments.completed_at_utc,
             )
+        elif arguments.command == "record-protected-stage-abort":
+            event = record_protected_stage_abort(
+                arguments.plan,
+                abortion_path=arguments.abortion,
+                created_at_utc=arguments.created_at_utc,
+            )
+            print(json.dumps({
+                "event": event["event"],
+                "route": event["adaptation_route"],
+            }, sort_keys=True))
+            return 0
         elif arguments.command == "complete-dual-final":
             output = complete_dual_final(
                 arguments.dual_reference, plan_path=arguments.plan,
@@ -6617,7 +9855,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         elif arguments.command == "complete-campaign":
             output = complete_campaign(
-                arguments.plan, completed_at_utc=arguments.completed_at_utc
+                arguments.plan, live_data_root=arguments.live_data_root,
+                completed_at_utc=arguments.completed_at_utc
             )
         else:
             context = validate_campaign(arguments.plan)

@@ -666,7 +666,7 @@ class RecoveryRunnerTest(unittest.TestCase):
             for color in (0, 1)
         ]
         document = {
-            "schema": maintained.gate_support.RESULT_SCHEMA,
+            "schema": maintained.gate_support.LEGACY_RESULT_SCHEMA,
             "bindings": {
                 "candidate_source_sha256": "a" * 64,
                 "candidate_source_bytes": 1,
@@ -710,6 +710,7 @@ class RecoveryRunnerTest(unittest.TestCase):
                 path,
                 expected_bank_sha256="d" * 64,
                 expected_candidate_sha256="a" * 64,
+                allow_legacy_attempt_zero=True,
             )
         runner.validate_real_gate_counts(validated, pairs=1)
         stale = copy.deepcopy(validated)

@@ -51,6 +51,12 @@ The profiles merge back into exact global game-ordinal order. At most eight
 workers run concurrently, and every worker receives one-thread BLAS/OpenMP
 settings.
 
+Before a produced game can inherit a root's split, the adapter rederives its
+attempt seed and native game ID, verifies the manifest's root row and root
+transcript hash, and checks that the exact frozen root transcript is the game
+prefix. A claimed root ID therefore cannot move a continuation across the
+whole-root train/validation boundary.
+
 ## Fingerprint-only exclusions
 
 Runtime filtering accepts only self-contained fingerprint artifacts. In
@@ -112,13 +118,33 @@ The combined `run` command performs the same sequence. `--resume` reuses only
 phase-bound receipts whose inputs and outputs remain byte-identical. It also
 revalidates the frozen build/source closure before reading any stage receipt.
 
-Each retained game contributes equal temporal quartiles (opening, middle,
-late, decisive), never more than 20 positions. All positions receive a 64k
-fixed-work complete-turn action group and an independent maintained-Rank-4
-label. Hard selection takes exactly 25% from each individual game, preferring
-exhaustive groups by teacher/student action regret, then action, Rank-4, and
-terminal-outcome disagreement. A 500k fixed-work action pass replaces exactly
-those rows.
+Production uses the single campaign-derived base
+`CAMPAIGN/phase-executions`, deriving `attempt-NNN/{pilot,full}` beneath it.
+Every heavy stage holds the shared nonblocking lease
+`CAMPAIGN/.rank4-teacher-heavy-stage.lock`, and receipts bind that path and the
+frozen source closure through the execution authority. Alternate roots and all
+injected contexts, producers, predictors, or packers are rejected in
+production; nonproduction tests must authorize such hooks explicitly.
+
+Each retained game contributes equal-sized, disjoint opening, tactical, late,
+and decisive strata, never more than 20 positions. Tactical states are ranked
+by immediate goal, rebound, constraint, and target-goal-distance evidence;
+decisive states are within the terminal horizon of the generated game. All
+positions receive a 64k fixed-work complete-turn action group and an independent
+maintained-Rank-4 label. Hard selection is global across the phase, with every
+non-exhaustive shallow group first and then teacher/student action regret,
+action, Rank-4, and terminal-outcome disagreement. Standard phases replace the
+hardest 25% at 500k nodes. The attribution-only `hardest-5pct-2m-v1` profile
+requires the full 20-position roster and replaces the hardest 5% at two million
+nodes.
+
+Action-group analysis has an offline-only exhaustive-root mode: it drains the
+complete-turn generator in deterministic 250-action pages before ordinary tree
+descent, so a root wider than deployed search still publishes every canonical
+successor with a value backed up by the same fixed-work search. Deployed and
+game-generating searches retain their 250-action cap. If the fixed node budget
+cannot even hold the exhaustive root set, the row remains non-exhaustive and
+finalization rejects it.
 
 Finalization emits:
 

@@ -8,6 +8,7 @@ import pathlib
 import os
 import tempfile
 import unittest
+from collections import Counter
 from unittest import mock
 
 
@@ -134,6 +135,49 @@ class ChallengerCliForwardingTests(unittest.TestCase):
             authorize.call_args.kwargs["deployed_source"],
             pathlib.Path("/tmp/deployed.cpp"),
         )
+
+    def test_abort_clis_forward_only_sealed_transition_inputs(self):
+        cases = (
+            (
+                [
+                    "record-development-gate-abort",
+                    "--plan", "/tmp/plan",
+                    "--abandonment", "/tmp/development-aborted.json",
+                    "--created-at-utc", "2026-09-04T00:00:00Z",
+                ],
+                "record_development_gate_abort",
+                {"abandonment_path": pathlib.Path(
+                    "/tmp/development-aborted.json"
+                )},
+            ),
+            (
+                [
+                    "record-protected-stage-abort",
+                    "--plan", "/tmp/plan",
+                    "--abortion", "/tmp/protected-aborted.json",
+                    "--created-at-utc", "2026-09-04T00:00:00Z",
+                ],
+                "record_protected_stage_abort",
+                {"abortion_path": pathlib.Path("/tmp/protected-aborted.json")},
+            ),
+        )
+        for arguments, function_name, expected in cases:
+            with self.subTest(command=arguments[0]), mock.patch.object(
+                challenger, function_name,
+                return_value={
+                    "event": arguments[0].replace("record-", ""),
+                    "adaptation_route": "open-next-attempt-same-contract",
+                },
+            ) as function, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(challenger.main(arguments), 0)
+            self.assertEqual(function.call_args.args, (pathlib.Path("/tmp/plan"),))
+            self.assertEqual(
+                function.call_args.kwargs,
+                {
+                    **expected,
+                    "created_at_utc": "2026-09-04T00:00:00Z",
+                },
+            )
 
 
 def make_runtime(root, dimensions=(6301, 12, 8, 1)):
@@ -368,6 +412,8 @@ class Fixture:
         challenger.record_attempt_zero_result(
             self.plan_path, result_path=rejected,
             created_at_utc="2026-09-04T00:00:30Z",
+            recovery_validator=self.attempt_zero_validator,
+            allow_injected_test_evidence=True,
         )
         challenger.open_next_attempt(
             self.plan_path, attempt=1,
@@ -377,12 +423,29 @@ class Fixture:
         )
         self.active_attempt = 1
 
+    @staticmethod
+    def attempt_zero_validator(_result, _plan, _root, passed):
+        return {
+            "status": "deep-recovery-test-validated",
+            "passed": passed,
+        }
+
     def pilot_metrics(self, passed=True):
+        game_volume = {
+            "variant_count": 1,
+            "pairs_per_variant": 100,
+            "games_per_variant": 200,
+            "total_pairs": 100,
+            "total_games": 200,
+            "each_pair_balanced_by_candidate_color": True,
+        }
         return {
             "ranking_validation_groups": 125,
             "comparable_exhaustive_validation_groups": 100,
             "comparable_exhaustive_validation_fraction": 0.8,
             "candidate_quantized": True,
+            "offline_model_eligible": True,
+            "diagnostic_only": False,
             "evaluation_classification": "unseen-root-unprotected",
             "canonical_retention_passed": passed,
             "mean_teacher_regret_reduction_fraction": 0.10 if passed else 0.0,
@@ -390,6 +453,12 @@ class Fixture:
             "scalar_control_action_flip_rate": 0.005,
             "strength_delta_pp": 1.5 if passed else 0.0,
             "teacher_regret_reduction_fraction": 0.10 if passed else 0.0,
+            "search_throughput_profile": "standard-v1",
+            "search_ab": {
+                "selected_variant_passed_screen": passed,
+                "expected_game_volume": game_volume,
+            },
+            "development_gate_game_volume": game_volume,
             "rank4_screen": {
                 "classification": "fresh-unprotected",
                 "pairs": 100,
@@ -406,6 +475,16 @@ class Fixture:
             "ranking_validation_groups": 125,
             "comparable_exhaustive_validation_groups": 100,
             "comparable_exhaustive_validation_fraction": 0.8,
+            "candidate_quantized": True,
+            "offline_model_eligible": True,
+            "diagnostic_only": False,
+            "evaluation_classification": "unseen-root-unprotected",
+            "canonical_retention_passed": passed,
+            "mean_teacher_regret_reduction_fraction": (
+                0.10 if passed else 0.0
+            ),
+            "quantized_action_flip_rate": 0.010,
+            "scalar_control_action_flip_rate": 0.005,
             "actual_clock": {
                 "classification": "fresh-unprotected",
                 "pairs": 500,
@@ -555,6 +634,7 @@ class Fixture:
             bank_a=first, bank_b=second,
             created_at_utc="2026-09-04T00:03:02Z",
             bank_validator=validator,
+            allow_injected_test_evidence=True,
         )
         return reference, first, second, validator
 
@@ -562,6 +642,7 @@ class Fixture:
         dual = challenger.validate_dual_final(
             dual_reference, plan_path=self.plan_path,
             bank_validator=self.banks()[2],
+            allow_injected_test_evidence=True,
         )
         aggregate = self.base / f"{gate_id}-aggregate.json"
         q.write_sealed(aggregate, {
@@ -608,6 +689,7 @@ class Fixture:
             ),
             completed_at_utc="2026-09-04T00:04:00Z",
             bank_validator=validator,
+            allow_injected_test_evidence=True,
         )
         result_b = challenger.record_final_result(
             dual_ref, plan_path=self.plan_path, gate_id="gate-b",
@@ -616,12 +698,14 @@ class Fixture:
             ),
             completed_at_utc="2026-09-04T00:05:00Z",
             bank_validator=validator,
+            allow_injected_test_evidence=True,
         )
         qualified = challenger.complete_dual_final(
             dual_ref, plan_path=self.plan_path,
             result_a=result_a, result_b=result_b,
             completed_at_utc="2026-09-04T00:06:00Z",
             bank_validator=validator,
+            allow_injected_test_evidence=True,
         )
         return qualified
 
@@ -630,15 +714,72 @@ class Fixture:
         authorization_path = release_root / "authorization.json"
         candidate = challenger._regular(self.source)
         candidate["sha256"] = source_sha or candidate["sha256"]
+        campaign_upload_binding = {
+            "upload_ordinal": 1,
+            "additional_upload_authorization": None,
+            "authorization_event_body_sha256": None,
+            "rejected_live_reference": None,
+            "rejected_live_dynamic_exclusion": None,
+        }
+        latest = challenger.load_ledger(self.context["plan"])[-1]
+        release_evidence = release_root / "release-evidence.json"
+        q.write_sealed(release_evidence, {
+            "schema": challenger.RELEASE_EVIDENCE_SCHEMA,
+            "attempt": latest["attempt"],
+            "candidate_commit": "a" * 40,
+            "candidate": {"source": candidate},
+        })
+        claim = challenger.claim_upload_authorization(
+            self.plan_path,
+            attempt=int(latest["attempt"]),
+            output_root=release_root,
+            release_evidence_path=release_evidence,
+            candidate_commit="a" * 40,
+            campaign_upload_binding=campaign_upload_binding,
+            authorized_at_utc="2026-09-04T00:06:30Z",
+        )
+        claim_binding = {
+            "sequence": claim["sequence"],
+            "body_sha256": claim["body_sha256"],
+            "attempt": claim["attempt"],
+            "upload_ordinal": claim["upload_ordinal"],
+        }
         q.write_sealed(authorization_path, {
             "schema": q.UPLOAD_AUTH_SCHEMA,
             "namespace": challenger.NAMESPACE,
             "uploads_authorized": 1,
             "rank4_replacement_authorized": False,
+            "authorized_at_utc": "2026-09-04T00:06:30Z",
             "candidate_commit": "a" * 40,
             "candidate": candidate,
             "upload_ledger_root": str(release_root.resolve()),
+            "campaign_upload_binding": campaign_upload_binding,
+            "campaign_upload_claim": claim_binding,
         })
+        inputs_path = release_root / "authorization-inputs.json"
+        q.write_sealed(inputs_path, {
+            "schema": challenger.UPLOAD_AUTHORIZATION_INPUTS_SCHEMA,
+            "namespace": challenger.NAMESPACE,
+            "campaign_id": challenger.CAMPAIGN_ID,
+            "attempt": latest["attempt"],
+            "authorized_at_utc": "2026-09-04T00:06:30Z",
+            "authorization": q.artifact_reference(
+                authorization_path, q.UPLOAD_AUTH_SCHEMA
+            ),
+            "dual_qualification": q.artifact_reference(
+                pathlib.Path(latest["qualification"]["path"]),
+                challenger.DUAL_QUALIFICATION_SCHEMA,
+            ),
+            "campaign_upload_binding": campaign_upload_binding,
+            "campaign_upload_claim": claim_binding,
+        })
+        challenger.record_upload_authorization(
+            self.plan_path,
+            attempt=int(latest["attempt"]),
+            authorization_path=authorization_path,
+            authorization_inputs_path=inputs_path,
+            created_at_utc="2026-09-04T00:06:30Z",
+        )
         attestation = release_root / "upload/05-submission-attested.json"
         q.write_sealed(attestation, {
             "schema": q.UPLOAD_EVENT_SCHEMA,
@@ -774,10 +915,18 @@ class Fixture:
                 fingerprint_extractor=self.live_fingerprint_extractor,
                 allow_injected_test_evidence=True,
             )
-        return (
-            reference, data_root, lambda path, root: q.load_sealed(path),
-            self.live_fingerprint_extractor,
-        )
+        def validate(path, root):
+            value = q.load_sealed(path)
+            receipt_path = pathlib.Path(value["receipt"]["path"])
+            if (
+                receipt_path.resolve().parent != root.resolve()
+                or q.sha256_file(receipt_path) != value["receipt"]["sha256"]
+            ):
+                raise ValueError("fixture live receipt changed")
+            q.load_sealed(receipt_path)
+            return value
+
+        return reference, data_root, validate, self.live_fingerprint_extractor
 
     def banks(self, overlap=False):
         first = self.base / "bank-a.json"
@@ -869,6 +1018,785 @@ class Fixture:
 
 
 class ChallengerCampaignTests(unittest.TestCase):
+    def test_build_source_closure_includes_native_exhaustive_root_regression(self):
+        self.assertIn(
+            "tests/bots/jacek_replay_bfm/jacek_replay_bfm_test.cpp",
+            challenger._campaign_source_paths(),
+        )
+
+    def test_development_abort_ledger_replays_and_opens_same_contract_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.phase("pilot")
+            challenger.record_progress(
+                fixture.plan_path, attempt=1, phase="pilot",
+                completed_games=2_000,
+                completed_quotas=fixture.completed_quotas("pilot"),
+                accepted_positions=40_000,
+                created_at_utc="2026-09-04T00:01:10Z",
+            )
+            exclusion_path = fixture.development_exclusion(1, "pilot")
+            abandonment_path = fixture.output / "development-aborted.json"
+            q.write_sealed(abandonment_path, {
+                "schema": challenger.DEVELOPMENT_GATE_ABORTION_SCHEMA,
+            })
+            abandonment = {
+                "attempt": 1, "phase": "pilot",
+                "candidate": {
+                    "runtime": challenger._regular(fixture.runtime),
+                    "source": challenger._regular(fixture.source),
+                },
+                "development_exclusion": challenger._sealed_record(
+                    exclusion_path, challenger.DEVELOPMENT_EXCLUSION_SCHEMA
+                ),
+                "abandoned_at_utc": "2026-09-04T00:01:11Z",
+                "partial_metrics_read": False,
+                "improvement_counted": False,
+                "retry_authorized": False,
+                "body_sha256": q.load_sealed(
+                    abandonment_path,
+                    challenger.DEVELOPMENT_GATE_ABORTION_SCHEMA,
+                )["body_sha256"],
+            }
+            with mock.patch.object(
+                challenger, "_validate_development_gate_abandonment",
+                return_value=abandonment,
+            ):
+                event = challenger.record_development_gate_abort(
+                    fixture.plan_path, abandonment_path=abandonment_path,
+                    created_at_utc="2026-09-04T00:01:12Z",
+                )
+                self.assertEqual(
+                    challenger.record_development_gate_abort(
+                        fixture.plan_path, abandonment_path=abandonment_path,
+                        created_at_utc="2026-09-04T00:01:13Z",
+                    ),
+                    event,
+                )
+                replayed = challenger.load_ledger(fixture.context["plan"])
+                self.assertEqual(replayed[-1], event)
+                opened = challenger.open_next_attempt(
+                    fixture.plan_path, attempt=2,
+                    hypothesis="repeat identical contract after infrastructure loss",
+                    intervention="same-contract",
+                    created_at_utc="2026-09-04T00:01:14Z",
+                )
+                replayed = challenger.load_ledger(fixture.context["plan"])
+            self.assertEqual(opened["route"], "open-next-attempt-same-contract")
+            self.assertEqual(len(opened["dynamic_exclusions"]), 1)
+            self.assertEqual(replayed[-1]["event"], "attempt-opened")
+            self.assertEqual(
+                opened["attempt_inputs"]["student_runtime"],
+                fixture.context["inputs"]["attempt_one_inputs"]["student_runtime"],
+            )
+
+    def test_protected_abort_ledger_replays_and_opens_clean_restart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.prepare_dual()
+            before = challenger.load_ledger(fixture.context["plan"])
+            prepared = before[-1]
+            self.assertEqual(prepared["event"], "dual-final-prepared")
+            abortion_path = fixture.output / "protected-aborted.json"
+            q.write_sealed(abortion_path, {
+                "schema": challenger.PROTECTED_STAGE_ABORTION_SCHEMA,
+            })
+            abortion = {
+                "attempt": 1,
+                "protected_stage": "shard-execution",
+                "gate_id": "gate-a", "shard_index": 4,
+                "candidate": {
+                    "runtime_sha256": q.sha256_file(fixture.runtime),
+                    "source_sha256": q.sha256_file(fixture.source),
+                },
+                "fingerprint_exclusions": [
+                    challenger._sealed_record(
+                        pathlib.Path(record["path"]),
+                        challenger.DYNAMIC_EXCLUSION_SCHEMA,
+                    )
+                    for record in prepared["dynamic_exclusions"]
+                ],
+                "aborted_at_utc": "2026-09-04T00:03:10Z",
+                "partial_metrics_read": False,
+                "candidate_rejected": True,
+                "retry_authorized": False,
+                "upload_authorized": False,
+                "body_sha256": q.load_sealed(
+                    abortion_path, challenger.PROTECTED_STAGE_ABORTION_SCHEMA
+                )["body_sha256"],
+            }
+            with mock.patch.object(
+                challenger, "_validate_protected_stage_abortion",
+                return_value=abortion,
+            ):
+                event = challenger.record_protected_stage_abort(
+                    fixture.plan_path, abortion_path=abortion_path,
+                    created_at_utc="2026-09-04T00:03:11Z",
+                )
+                self.assertEqual(
+                    challenger.record_protected_stage_abort(
+                        fixture.plan_path, abortion_path=abortion_path,
+                        created_at_utc="2026-09-04T00:03:12Z",
+                    ),
+                    event,
+                )
+                replayed = challenger.load_ledger(fixture.context["plan"])
+                self.assertEqual(replayed[-1], event)
+                opened = challenger.open_next_attempt(
+                    fixture.plan_path, attempt=2,
+                    hypothesis="fresh banks after protected infrastructure loss",
+                    intervention="protected-rejection-clean-restart",
+                    created_at_utc="2026-09-04T00:03:13Z",
+                )
+                replayed = challenger.load_ledger(fixture.context["plan"])
+            self.assertEqual(
+                opened["route"], "open-next-attempt-protected-rejection"
+            )
+            self.assertEqual(
+                len(opened["dynamic_exclusions"]), 4,
+            )
+            self.assertEqual(replayed[-1]["event"], "attempt-opened")
+            self.assertEqual(
+                opened["attempt_inputs"]["student_runtime"]["sha256"],
+                q.sha256_file(fixture.runtime),
+            )
+
+    def test_abort_recorders_end_attempt_without_improvement_or_loss_reuse(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            campaign_plan = root / "campaign-plan.json"
+            campaign_plan.write_bytes(b"campaign")
+            context = {
+                "root": root,
+                "plan": {
+                    "outputs": {
+                        "root": str(root), "plan": str(campaign_plan),
+                    },
+                },
+                "inputs": {"production_allowlist_enforced": False},
+            }
+            runtime = make_runtime(root / "runtime")
+            source = root / "candidate.cpp"
+            source.write_text("int main(){}\n", encoding="ascii")
+            exclusion_path = root / "development-exclusion.json"
+            q.write_sealed(exclusion_path, {
+                "schema": challenger.DEVELOPMENT_EXCLUSION_SCHEMA,
+                "campaign_id": challenger.CAMPAIGN_ID,
+                "attempt": 1, "phase": "pilot",
+                "classification": "unprotected-development-fingerprints",
+                "fingerprints": ["1" * 64],
+                "protected_or_live_data_included": False,
+            })
+            exclusion = challenger._sealed_record(
+                exclusion_path, challenger.DEVELOPMENT_EXCLUSION_SCHEMA
+            )
+            abandoned_path = root / "development-aborted.json"
+            q.write_sealed(abandoned_path, {
+                "schema": challenger.DEVELOPMENT_GATE_ABORTION_SCHEMA,
+            })
+            abandonment = {
+                "attempt": 1, "phase": "pilot",
+                "candidate": {
+                    "runtime": challenger._regular(runtime),
+                    "source": challenger._regular(source),
+                },
+                "development_exclusion": exclusion,
+                "abandoned_at_utc": "2026-09-04T00:00:02Z",
+                "partial_metrics_read": False,
+                "improvement_counted": False,
+                "retry_authorized": False,
+                "body_sha256": q.load_sealed(
+                    abandoned_path,
+                    challenger.DEVELOPMENT_GATE_ABORTION_SCHEMA,
+                )["body_sha256"],
+            }
+            latest = {
+                "attempt": 1, "event": "progress-recorded", "phase": "pilot",
+                "completed_games": challenger.PHASE_TOTALS["pilot"],
+                "adaptation_route": "record-attempt-outcome",
+                "body_sha256": "a" * 64,
+            }
+            captured = {}
+            def append(_context, **kwargs):
+                captured.update(kwargs)
+                return {"event": kwargs["event"], **kwargs["fields"]}
+            with (
+                mock.patch.object(
+                    challenger, "validate_campaign", return_value=context
+                ),
+                mock.patch.object(challenger, "load_ledger", return_value=[latest]),
+                mock.patch.object(
+                    challenger, "_validate_development_gate_abandonment",
+                    return_value=abandonment,
+                ),
+                mock.patch.object(challenger, "_append_event", side_effect=append),
+            ):
+                event = challenger.record_development_gate_abort(
+                    campaign_plan, abandonment_path=abandoned_path,
+                    created_at_utc="2026-09-04T00:00:03Z",
+                )
+            self.assertEqual(event["event"], "development-gate-aborted")
+            self.assertFalse(event["improvement_counted"])
+            self.assertFalse(event["partial_metrics_read"])
+            self.assertEqual(
+                event["adaptation_route"], "open-next-attempt-same-contract"
+            )
+            self.assertNotIn("metrics", event)
+            self.assertNotIn("candidate", event)
+            self.assertEqual(captured["expected_previous_sha256"], "a" * 64)
+
+            protected_path = root / "protected-aborted.json"
+            q.write_sealed(protected_path, {
+                "schema": challenger.PROTECTED_STAGE_ABORTION_SCHEMA,
+            })
+            protected = {
+                "attempt": 1,
+                "protected_stage": "shard-execution",
+                "gate_id": "gate-a", "shard_index": 7,
+                "candidate": {
+                    "runtime_sha256": challenger.sha256_file(runtime),
+                    "source_sha256": challenger.sha256_file(source),
+                },
+                "fingerprint_exclusions": [],
+                "aborted_at_utc": "2026-09-04T00:00:04Z",
+                "partial_metrics_read": False,
+                "candidate_rejected": True,
+                "retry_authorized": False,
+                "upload_authorized": False,
+                "body_sha256": "b" * 64,
+            }
+            opened = {
+                "attempt": 1, "event": "attempt-opened",
+                "attempt_inputs": {"build_manifest": {}},
+            }
+            prepared = {
+                "attempt": 1, "event": "dual-final-prepared",
+                "body_sha256": "c" * 64,
+            }
+            with (
+                mock.patch.object(
+                    challenger, "validate_campaign", return_value=context
+                ),
+                mock.patch.object(
+                    challenger, "load_ledger", return_value=[opened, prepared]
+                ),
+                mock.patch.object(
+                    challenger, "_validate_protected_stage_abortion",
+                    return_value=protected,
+                ),
+                mock.patch.object(
+                    challenger, "_frozen_execution_source_evidence",
+                    return_value=None,
+                ),
+                mock.patch.object(challenger, "_append_event", side_effect=append),
+            ):
+                event = challenger.record_protected_stage_abort(
+                    campaign_plan, abortion_path=protected_path,
+                    created_at_utc="2026-09-04T00:00:05Z",
+                )
+            self.assertEqual(event["event"], "protected-stage-aborted")
+            self.assertTrue(event["candidate_rejected"])
+            self.assertFalse(event["improvement_counted"])
+            self.assertFalse(event["training_eligible"])
+            self.assertNotIn("metrics", event)
+            self.assertEqual(
+                event["adaptation_route"],
+                "open-next-attempt-protected-rejection",
+            )
+
+    def test_protected_abort_resets_but_development_abort_preserves_streak(self):
+        rejected = {
+            "event": "attempt-outcome-recorded", "admitted": False,
+            "adaptation_route": "open-next-attempt-same-contract",
+            "consecutive_no_improvement": 1,
+        }
+        self.assertEqual(
+            challenger._completed_no_improvement_streak([
+                rejected, {"event": "development-gate-aborted"},
+            ]),
+            1,
+        )
+        self.assertEqual(
+            challenger._completed_no_improvement_streak([
+                rejected, {"event": "protected-stage-aborted"},
+            ]),
+            0,
+        )
+
+    def test_live_fingerprint_injection_is_never_allowed_in_production(self):
+        extractor = lambda *_args: {}
+        production = {"inputs": {"production_allowlist_enforced": True}}
+        with self.assertRaisesRegex(
+            challenger.ChallengerError, "nonproduction test evidence"
+        ):
+            challenger._guard_live_fingerprint_extractor(
+                production, extractor=extractor,
+                allow_injected_test_evidence=True,
+            )
+        nonproduction = {"inputs": {"production_allowlist_enforced": False}}
+        challenger._guard_live_fingerprint_extractor(
+            nonproduction, extractor=extractor,
+            allow_injected_test_evidence=True,
+        )
+
+    def test_append_event_rejects_a_stale_predecessor_under_campaign_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.phase("pilot")
+            before = challenger.load_ledger(fixture.context["plan"])
+            stale = before[-1]["body_sha256"]
+            challenger.record_progress(
+                fixture.plan_path, attempt=1, phase="pilot",
+                completed_games=0,
+                completed_quotas={name: 0 for name in challenger.PILOT_QUOTAS},
+                accepted_positions=0,
+                created_at_utc="2026-09-04T00:01:01Z",
+            )
+            current = challenger.load_ledger(fixture.context["plan"])
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "predecessor changed"
+            ):
+                challenger._append_event(
+                    fixture.context,
+                    attempt=1,
+                    event="progress-recorded",
+                    created_at_utc="2026-09-04T00:01:02Z",
+                    expected_previous_sha256=stale,
+                    fields={},
+                )
+            self.assertEqual(
+                challenger.load_ledger(fixture.context["plan"]), current
+            )
+            orphan = pathlib.Path(
+                fixture.context["plan"]["outputs"]["ledger"]
+            ) / f".999999-{'a' * 64}.json.hard_kill"
+            orphan.write_text("unpublished temporary inode\n")
+            self.assertEqual(
+                challenger.load_ledger(fixture.context["plan"]), current
+            )
+            self.assertTrue(
+                (fixture.output / ".attempt-ledger.lock").is_file()
+            )
+
+    def test_sealed_artifact_to_ledger_crash_windows_resume_exactly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.start_attempt_one()
+            with mock.patch.object(
+                challenger, "_append_event", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                challenger.materialize_phase(
+                    fixture.plan_path, attempt=1, phase="pilot",
+                    created_at_utc="2026-09-04T00:01:00Z",
+                )
+            pilot_reference = challenger.materialize_phase(
+                fixture.plan_path, attempt=1, phase="pilot",
+                created_at_utc="2026-09-04T00:01:01Z",
+            )
+            self.assertTrue(pilot_reference.is_file())
+
+            fixture.admit_pilot()
+            challenger.materialize_phase(
+                fixture.plan_path, attempt=1, phase="full",
+                created_at_utc="2026-09-04T00:02:00Z",
+            )
+            challenger.record_progress(
+                fixture.plan_path, attempt=1, phase="full",
+                completed_games=10_000,
+                completed_quotas=fixture.completed_quotas("full"),
+                accepted_positions=200_000,
+                created_at_utc="2026-09-04T00:02:01Z",
+            )
+            metrics = fixture.full_metrics()
+            exclusion = fixture.development_exclusion(1, "full")
+            challenger.record_attempt_outcome(
+                fixture.plan_path, attempt=1, phase="full",
+                candidate_runtime=fixture.runtime,
+                candidate_source=fixture.source,
+                outcome_receipt=fixture.outcome_receipt(
+                    "crash-window-full", attempt=1, phase="full",
+                    metrics=metrics, exclusion=exclusion,
+                ),
+                development_exclusion=exclusion,
+                metrics=metrics,
+                strength_delta_pp=5.0,
+                teacher_regret_reduction_fraction=0.10,
+                created_at_utc="2026-09-04T00:02:02Z",
+            )
+            with mock.patch.object(
+                challenger, "_append_event", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                challenger.authorize_dual_final(
+                    fixture.plan_path, attempt=1,
+                    candidate_runtime=fixture.runtime,
+                    candidate_source=fixture.source,
+                    created_at_utc="2026-09-04T00:03:00Z",
+                )
+            authorization = challenger.authorize_dual_final(
+                fixture.plan_path, attempt=1,
+                candidate_runtime=fixture.runtime,
+                candidate_source=fixture.source,
+                created_at_utc="2026-09-04T00:03:01Z",
+            )
+            first, second, validator = fixture.banks()
+            with mock.patch.object(
+                challenger, "_append_event", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                challenger.prepare_dual_final(
+                    authorization, plan_path=fixture.plan_path,
+                    bank_a=first, bank_b=second,
+                    created_at_utc="2026-09-04T00:03:02Z",
+                    bank_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+            dual = challenger.prepare_dual_final(
+                authorization, plan_path=fixture.plan_path,
+                bank_a=first, bank_b=second,
+                created_at_utc="2026-09-04T00:03:03Z",
+                bank_validator=validator,
+                allow_injected_test_evidence=True,
+            )
+            evidence_a = fixture.final_evidence(
+                dual, "gate-a", passing_summary(), first
+            )
+            with mock.patch.object(
+                challenger, "_append_event", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                challenger.record_final_result(
+                    dual, plan_path=fixture.plan_path, gate_id="gate-a",
+                    evidence_path=evidence_a,
+                    completed_at_utc="2026-09-04T00:04:00Z",
+                    bank_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+            result_a = challenger.record_final_result(
+                dual, plan_path=fixture.plan_path, gate_id="gate-a",
+                evidence_path=evidence_a,
+                completed_at_utc="2026-09-04T00:04:01Z",
+                bank_validator=validator,
+                allow_injected_test_evidence=True,
+            )
+            result_b = challenger.record_final_result(
+                dual, plan_path=fixture.plan_path, gate_id="gate-b",
+                evidence_path=fixture.final_evidence(
+                    dual, "gate-b", passing_summary(), second
+                ),
+                completed_at_utc="2026-09-04T00:05:00Z",
+                bank_validator=validator,
+                allow_injected_test_evidence=True,
+            )
+            with mock.patch.object(
+                challenger, "_append_event", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                challenger.complete_dual_final(
+                    dual, plan_path=fixture.plan_path,
+                    result_a=result_a, result_b=result_b,
+                    completed_at_utc="2026-09-04T00:06:00Z",
+                    bank_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+            qualified = challenger.complete_dual_final(
+                dual, plan_path=fixture.plan_path,
+                result_a=result_a, result_b=result_b,
+                completed_at_utc="2026-09-04T00:06:01Z",
+                bank_validator=validator,
+                allow_injected_test_evidence=True,
+            )
+            self.assertTrue(qualified.is_file())
+            self.assertEqual(
+                challenger.load_ledger(fixture.context["plan"])[-1]["event"],
+                "dual-final-qualified",
+            )
+
+    def test_live_receipt_snapshot_resolves_repository_relative_path_off_cwd(self):
+        build = challenger.REPOSITORY / "build"
+        build.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=build) as temporary:
+            root = pathlib.Path(temporary).resolve()
+            receipt = root / "receipt.json"
+            q.write_sealed(receipt, {"schema": "fixture.live-receipt.v1"})
+            value = q.load_sealed(receipt)
+            reference = {
+                "receipt": {
+                    "path": receipt.relative_to(
+                        challenger.REPOSITORY
+                    ).as_posix(),
+                    "sha256": q.sha256_file(receipt),
+                    "body_sha256": value["body_sha256"],
+                }
+            }
+            previous = pathlib.Path.cwd()
+            try:
+                os.chdir("/")
+                resolved, loaded, record = (
+                    challenger._load_live_receipt_snapshot(
+                        reference, data_root=root
+                    )
+                )
+            finally:
+                os.chdir(previous)
+            self.assertEqual(resolved, receipt)
+            self.assertEqual(loaded, value)
+            self.assertEqual(record["sha256"], q.sha256_file(receipt))
+
+    def test_archived_execution_binding_survives_current_source_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            manifest = root / "build.json"
+            relative = challenger.RECOVERY_RUNNER_PATH.relative_to(
+                challenger.REPOSITORY
+            ).as_posix()
+            source = challenger._regular(challenger.RECOVERY_RUNNER_PATH)
+            bundled_source = root / "artifacts/recovery-runner.py"
+            bundled_source.parent.mkdir()
+            bundled_source.write_bytes(challenger.RECOVERY_RUNNER_PATH.read_bytes())
+            bundled_source_record = {
+                "route": bundled_source.relative_to(root).as_posix(),
+                "bytes": bundled_source.stat().st_size,
+                "sha256": q.sha256_file(bundled_source),
+            }
+            repository = challenger._repository_identity()
+            q.write_sealed(manifest, {
+                "schema": challenger.BUILD_MANIFEST_SCHEMA,
+                "campaign_id": challenger.CAMPAIGN_ID,
+                "status": "clean-source-compiler-binaries-frozen",
+                "repository": repository,
+                "source_closure": {relative: source},
+            })
+            context = {
+                "plan": {
+                    "outputs": {"input_directory": str(root)},
+                    "repository": repository,
+                    "tools": {
+                        "recovery_runner_verifier": {
+                            "source": source,
+                            "bundle": {},
+                        },
+                    },
+                },
+                "inputs": {
+                    "production_allowlist_enforced": True,
+                    "build_bundle": {
+                        "sources": {relative: bundled_source_record},
+                    },
+                    "attempt_one_inputs": {
+                        "build_manifest": challenger._regular(manifest),
+                    },
+                },
+            }
+            current = challenger._frozen_execution_source_evidence(
+                context, tool_roles=("recovery_runner_verifier",),
+                build_manifest_record=challenger._regular(manifest),
+            )
+            stale_manifest = root / "stale-build.json"
+            q.write_sealed(stale_manifest, {
+                "schema": challenger.BUILD_MANIFEST_SCHEMA,
+                "campaign_id": challenger.CAMPAIGN_ID,
+                "status": "clean-source-compiler-binaries-frozen",
+                "repository": repository,
+                "source_closure": {
+                    relative: {**source, "sha256": "e" * 64},
+                },
+            })
+            stale_context = copy.deepcopy(context)
+            stale_context["inputs"]["attempt_one_inputs"][
+                "build_manifest"
+            ] = challenger._regular(stale_manifest)
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "differs from freeze"
+            ):
+                challenger._frozen_execution_source_evidence(
+                    stale_context,
+                    tool_roles=("recovery_runner_verifier",),
+                )
+            self.assertEqual(
+                challenger._frozen_execution_source_evidence(
+                    stale_context,
+                    tool_roles=("recovery_runner_verifier",),
+                    build_manifest_record=challenger._regular(manifest),
+                ),
+                current,
+            )
+            regular = challenger._regular
+
+            def drift(path, *, ascii_required=False):
+                value = regular(path, ascii_required=ascii_required)
+                if pathlib.Path(path).resolve() == challenger.RECOVERY_RUNNER_PATH:
+                    return {**value, "sha256": "f" * 64}
+                return value
+
+            with mock.patch.object(
+                challenger, "_regular", side_effect=drift
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "differs from freeze"
+            ):
+                challenger._frozen_execution_source_evidence(
+                    context, tool_roles=("recovery_runner_verifier",),
+                    build_manifest_record=challenger._regular(manifest),
+                )
+            with mock.patch.object(challenger, "_regular", side_effect=drift):
+                archived = challenger._frozen_execution_source_evidence(
+                    context, tool_roles=("recovery_runner_verifier",),
+                    build_manifest_record=challenger._regular(manifest),
+                    revalidate_current=False,
+                )
+            self.assertEqual(archived, current)
+            with mock.patch.object(
+                challenger, "_repository_identity",
+                return_value={
+                    "root": str(challenger.REPOSITORY.resolve()),
+                    "commit": "f" * 40,
+                },
+            ):
+                post_promotion = challenger._frozen_execution_source_evidence(
+                    context, tool_roles=("recovery_runner_verifier",),
+                    build_manifest_record=challenger._regular(manifest),
+                    revalidate_current=False,
+                    allowed_current_drift_routes=(),
+                )
+            self.assertEqual(post_promotion["allowed_current_drift_routes"], [])
+            self.assertEqual(
+                {
+                    key: value for key, value in post_promotion.items()
+                    if key != "allowed_current_drift_routes"
+                },
+                {
+                    key: value for key, value in current.items()
+                    if key != "allowed_current_drift_routes"
+                },
+            )
+            with mock.patch.object(
+                challenger, "_regular", side_effect=drift
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "differs from freeze"
+            ):
+                challenger._frozen_execution_source_evidence(
+                    context, tool_roles=("recovery_runner_verifier",),
+                    build_manifest_record=challenger._regular(manifest),
+                    revalidate_current=False,
+                    allowed_current_drift_routes=(),
+                )
+
+    def test_post_promotion_phase_closure_persists_only_four_route_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            producer = root / "producer"
+            producer.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            producer.chmod(0o755)
+            producer_records = {
+                role: challenger._regular(producer)
+                for role in challenger.BUILD_BINARY_ROLES
+            }
+            unpromoted = "tools/compact_value_bfm_pilot_pipeline.py"
+            required = (
+                unpromoted,
+                challenger.POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES[0],
+            )
+            sources = {
+                relative: challenger._regular(challenger.REPOSITORY / relative)
+                for relative in required
+            }
+            promoted = challenger.POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES[0]
+            sources[promoted] = {
+                **sources[promoted],
+                "bytes": sources[promoted]["bytes"] + 1,
+                "sha256": "e" * 64,
+            }
+            manifest = root / "build-manifest.json"
+            q.write_sealed(manifest, {
+                "schema": challenger.BUILD_MANIFEST_SCHEMA,
+                "campaign_id": challenger.CAMPAIGN_ID,
+                "status": "clean-source-compiler-binaries-frozen",
+                "repository": challenger._repository_identity(),
+                "source_closure": sources,
+                "compiler": challenger._compiler_identity(),
+                "binaries": {
+                    role: {**record, "executable": True}
+                    for role, record in producer_records.items()
+                },
+            })
+            campaign = {
+                "plan": {"outputs": {"input_directory": str(root)}},
+                "inputs": {"production_allowlist_enforced": True},
+            }
+            phase = {"phase": {
+                "attempt": 2,
+                "attempt_inputs": {
+                    "build_manifest": challenger._regular(manifest),
+                },
+                "producer_binaries": producer_records,
+            }}
+            prior = [{"event": "dual-final-authorized", "attempt": 1}]
+            with (
+                mock.patch.object(challenger, "load_ledger", return_value=prior),
+                mock.patch.object(
+                    challenger, "_repository_identity",
+                    return_value={
+                        "root": str(challenger.REPOSITORY.resolve()),
+                        "commit": "f" * 40,
+                    },
+                ),
+            ):
+                closure = challenger.verify_phase_build_source_closure(
+                    required_sources=required,
+                    campaign_context=campaign, phase_context=phase,
+                )
+                resumed = challenger.verify_phase_build_source_closure(
+                    required_sources=required, stored_closure=closure,
+                )
+            self.assertEqual(resumed, closure)
+            self.assertEqual(
+                closure["source_validation_mode"],
+                "post-promotion-allowed-drift",
+            )
+            self.assertEqual(
+                closure["allowed_current_drift_routes"],
+                sorted(challenger.POST_PROMOTION_ALLOWED_SOURCE_DRIFT_ROUTES),
+            )
+            challenger.validate_build_source_closure_evidence(
+                closure, required_sources=required
+            )
+            forged = copy.deepcopy(closure)
+            forged["allowed_current_drift_routes"] = forged[
+                "allowed_current_drift_routes"
+            ][:-1]
+            forged["closure_sha256"] = challenger.sha256_bytes(
+                challenger.canonical_json_bytes({
+                    key: value for key, value in forged.items()
+                    if key != "closure_sha256"
+                })
+            )
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "evidence changed"
+            ):
+                challenger.validate_build_source_closure_evidence(
+                    forged, required_sources=required
+                )
+            regular = challenger._regular
+            def drift_unpromoted(path, *, ascii_required=False):
+                record = regular(path, ascii_required=ascii_required)
+                if pathlib.Path(path).resolve() == (
+                    challenger.REPOSITORY / unpromoted
+                ).resolve():
+                    return {**record, "sha256": "d" * 64}
+                return record
+            with (
+                mock.patch.object(challenger, "_regular", side_effect=drift_unpromoted),
+                mock.patch.object(
+                    challenger, "_repository_identity",
+                    return_value={
+                        "root": str(challenger.REPOSITORY.resolve()),
+                        "commit": "f" * 40,
+                    },
+                ),
+                self.assertRaisesRegex(
+                    challenger.ChallengerError, "current phase source differs"
+                ),
+            ):
+                challenger.verify_phase_build_source_closure(
+                    required_sources=required, stored_closure=closure,
+                )
+
     def test_freeze_is_content_addressed_and_opens_attempt_zero(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
@@ -974,6 +1902,194 @@ class ChallengerCampaignTests(unittest.TestCase):
                     created_at_utc="2026-09-04T00:00:30Z",
                 )
 
+    def test_attempt_zero_default_validation_requires_real_recovery_namespace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            rejected = fixture.output / "bound-but-shallow-rejection.json"
+            q.write_sealed(rejected, {
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "recovery_plan": challenger._sealed_record(
+                    fixture.recovery_plan, challenger.RECOVERY_PLAN_SCHEMA
+                ),
+                "event": "terminal-failure",
+                "no_retry": True,
+            })
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "omits its output namespace"
+            ):
+                challenger.record_attempt_zero_result(
+                    fixture.plan_path, result_path=rejected,
+                    created_at_utc="2026-09-04T00:00:30Z",
+                )
+
+    def test_attempt_zero_injected_validation_is_test_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            rejected = fixture.output / "attempt-zero-rejected.json"
+            q.write_sealed(rejected, {
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "recovery_plan": challenger._sealed_record(
+                    fixture.recovery_plan, challenger.RECOVERY_PLAN_SCHEMA
+                ),
+                "event": "terminal-failure",
+                "no_retry": True,
+            })
+            production = copy.deepcopy(fixture.context)
+            production["inputs"]["production_allowlist_enforced"] = True
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "test-only"
+            ):
+                challenger.record_attempt_zero_result(
+                    fixture.plan_path, result_path=rejected,
+                    created_at_utc="2026-09-04T00:00:30Z",
+                    recovery_validator=fixture.attempt_zero_validator,
+                    allow_injected_test_evidence=True,
+                )
+
+    def test_attempt_zero_default_validator_copies_deep_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            plan_record = challenger._sealed_record(
+                fixture.recovery_plan, challenger.RECOVERY_PLAN_SCHEMA
+            )
+            recovery_result = fixture.output / "deep-recovery-result.json"
+            q.write_sealed(recovery_result, {
+                "schema": challenger.RECOVERY_RESULT_SCHEMA,
+                "recovery_plan": plan_record,
+            })
+            finalist = fixture.output / "deep-finalist.json"
+            q.write_sealed(finalist, {
+                "schema": challenger.RECOVERY_FINALIST_SCHEMA,
+                "recovery_plan": plan_record,
+                "recovery_result": challenger._sealed_record(
+                    recovery_result, challenger.RECOVERY_RESULT_SCHEMA
+                ),
+                "candidate": {
+                    "runtime": challenger._regular(fixture.runtime),
+                    "generated_source": challenger._regular(fixture.source),
+                },
+            })
+            reference = fixture.output / "deep-finalist-reference.json"
+            q.write_sealed(reference, {
+                "schema": challenger.RECOVERY_FINALIST_REFERENCE_SCHEMA,
+                "complete": True,
+                "recovery_plan": plan_record,
+                "recovery_result": challenger._sealed_record(
+                    recovery_result, challenger.RECOVERY_RESULT_SCHEMA
+                ),
+                "finalist": challenger._sealed_record(
+                    finalist, challenger.RECOVERY_FINALIST_SCHEMA
+                ),
+            })
+            journal = fixture.base / "external-recovery/events"
+            journal.mkdir(parents=True)
+            head = journal / f"000001-{'a' * 64}.json"
+            q.write_sealed(head, {
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "event": "campaign-complete",
+            })
+            sealed_head = q.load_sealed(head)
+            renamed_head = journal / (
+                f"000001-{sealed_head['body_sha256']}.json"
+            )
+            head.rename(renamed_head)
+
+            class FakeRunner:
+                def __init__(self, **_kwargs):
+                    self.routes = {"journal": journal}
+
+                def _validate_journal_binding(self):
+                    return [q.load_sealed(renamed_head)]
+
+            class FakeRecoveryModule:
+                DiscreteV3RecoveryRunner = FakeRunner
+
+                @staticmethod
+                def validate_recovery_finalist(*_args, **_kwargs):
+                    return {"validated": True}
+
+            with mock.patch.object(
+                challenger, "_attempt_zero_recovery_routes",
+                return_value=(
+                    fixture.recovery_plan, fixture.recovery_plan,
+                    fixture.base,
+                ),
+            ), mock.patch.object(
+                challenger, "_load", return_value=FakeRecoveryModule
+            ):
+                event = challenger.record_attempt_zero_result(
+                    fixture.plan_path, result_path=reference,
+                    created_at_utc="2026-09-04T00:00:30Z",
+                )
+            deep = event["deep_recovery_validation"]
+            self.assertEqual(deep["status"], "deep-recovery-finalist-validated")
+            self.assertTrue(pathlib.Path(deep["journal_head"]["path"]).is_file())
+            self.assertTrue(pathlib.Path(deep["validator"]["path"]).is_file())
+            self.assertEqual(
+                challenger.load_ledger(fixture.context["plan"])[-1][
+                    "deep_recovery_validation"
+                ],
+                deep,
+            )
+
+    def test_attempt_zero_deep_rejection_accepts_exact_nonthreshold_exception(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan = root / "plan.json"
+            q.write_sealed(plan, {"schema": challenger.RECOVERY_PLAN_SCHEMA})
+            journal = root / "events"
+            journal.mkdir()
+            terminal = journal / "terminal.json"
+            q.write_sealed(terminal, {
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "event": "terminal-failure",
+                "stage": None,
+                "reason": "ValueError: selection failed",
+                "no_retry": True,
+            })
+
+            class FakeRunner:
+                def __init__(self, **_kwargs):
+                    self.routes = {"journal": journal}
+
+                def _prepare_contract(self):
+                    return [], []
+
+                def _validate_journal_binding(self):
+                    return [q.load_sealed(terminal)]
+
+                def _execute_algorithm(self, _rows, *, launch_missing):
+                    self.assert_false = launch_missing
+                    raise ValueError("selection failed")
+
+            class FakeRecoveryModule:
+                DiscreteV3RecoveryRunner = FakeRunner
+
+            with mock.patch.object(
+                challenger, "_load", return_value=FakeRecoveryModule
+            ):
+                evidence = challenger._default_attempt_zero_validator(
+                    terminal, plan, root.parent, False
+                )
+            self.assertEqual(
+                evidence["status"],
+                "deep-recovery-terminal-failure-validated",
+            )
+            changed = q.load_sealed(terminal)
+            changed.pop("body_sha256")
+            changed["reason"] = "ValueError: another failure"
+            q.write_sealed(root / "changed.json", changed)
+            with mock.patch.object(
+                challenger, "_load", return_value=FakeRecoveryModule
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "genuine terminal journal head"
+            ):
+                challenger._default_attempt_zero_validator(
+                    root / "changed.json", plan, root.parent, False
+                )
+
     def test_attempt_zero_pass_routes_directly_to_dual_final(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
@@ -1012,6 +2128,8 @@ class ChallengerCampaignTests(unittest.TestCase):
             event = challenger.record_attempt_zero_result(
                 fixture.plan_path, result_path=passed,
                 created_at_utc="2026-09-04T00:00:30Z",
+                recovery_validator=fixture.attempt_zero_validator,
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(event["adaptation_route"], "prepare-dual-final")
             self.assertTrue(pathlib.Path(event["referenced_finalist"]["path"]).is_file())
@@ -1027,6 +2145,7 @@ class ChallengerCampaignTests(unittest.TestCase):
                 bank_a=first, bank_b=second,
                 created_at_utc="2026-09-04T00:03:02Z",
                 bank_validator=validator,
+                allow_injected_test_evidence=True,
             )
             self.assertTrue(reference.is_file())
 
@@ -1039,6 +2158,12 @@ class ChallengerCampaignTests(unittest.TestCase):
                 lambda value: value.update(canonical_retention_passed=False),
                 lambda value: value.update(mean_teacher_regret_reduction_fraction=0.099),
                 lambda value: value.update(quantized_action_flip_rate=0.0101),
+                lambda value: value["search_ab"].update(
+                    selected_variant_passed_screen=False
+                ),
+                lambda value: value["development_gate_game_volume"].update(
+                    total_games=400
+                ),
                 lambda value: value.update(
                     comparable_exhaustive_validation_groups=99,
                     comparable_exhaustive_validation_fraction=99 / 125,
@@ -1056,6 +2181,7 @@ class ChallengerCampaignTests(unittest.TestCase):
             full = fixture.full_metrics()
             self.assertTrue(challenger._phase_admission("full", full))
             for mutate in (
+                lambda value: value.update(canonical_retention_passed=False),
                 lambda value: value["actual_clock"].update(classification="protected"),
                 lambda value: value["actual_clock"].update(candidate_wins=549),
                 lambda value: value["actual_clock"].update(candidate_color_wins={"0": 264, "1": 286}),
@@ -1359,6 +2485,7 @@ class ChallengerCampaignTests(unittest.TestCase):
                     created_at_utc=f"2026-09-04T00:1{attempt}:00Z",
                 )
                 metrics = fixture.pilot_metrics(False)
+                metrics["canonical_retention_passed"] = True
                 exclusion = fixture.development_exclusion(attempt, "pilot")
                 receipt = fixture.outcome_receipt(
                     f"failed-attempt-{attempt}", attempt=attempt,
@@ -1376,11 +2503,18 @@ class ChallengerCampaignTests(unittest.TestCase):
                 )
                 outcomes.append(outcome)
                 if attempt == 1:
-                    challenger.open_next_attempt(
+                    opened = challenger.open_next_attempt(
                         fixture.plan_path, attempt=2,
                         hypothesis="repeat exact pilot once",
                         intervention="same-contract",
                         created_at_utc="2026-09-04T00:30:00Z",
+                    )
+                    self.assertEqual(
+                        [
+                            item["classification"]
+                            for item in opened["dynamic_exclusions"]
+                        ],
+                        ["unprotected-development-canonical-fingerprints"],
                     )
             self.assertEqual(outcomes[0]["consecutive_no_improvement"], 1)
             self.assertEqual(outcomes[0]["adaptation_route"], "open-next-attempt-same-contract")
@@ -1389,18 +2523,51 @@ class ChallengerCampaignTests(unittest.TestCase):
                 outcomes[1]["adaptation_route"],
                 "open-next-attempt-attribution-adaptation",
             )
-            attribution = fixture.base / "attribution.json"
-            q.write_sealed(attribution, {
-                "schema": challenger.ATTRIBUTION_EVIDENCE_SCHEMA,
-                "campaign_id": challenger.CAMPAIGN_ID,
-                "classification": "teacher-ranking-gap",
-                "completed_no_improvement_attempts": 2,
-                "selected_intervention": (
-                    "teacher-ranking-gap-hard-state-density"
+            attribution = challenger.audit_attribution(
+                fixture.plan_path, next_attempt=3,
+                created_at_utc="2026-09-04T00:30:30Z",
+            )
+            attribution_value = q.load_sealed(
+                attribution, challenger.ATTRIBUTION_EVIDENCE_SCHEMA
+            )
+            orphan = attribution.parent / f".{attribution.name}.orphan"
+            orphan.write_text("interrupted temporary write\n")
+            self.assertEqual(
+                challenger.audit_attribution(
+                    fixture.plan_path, next_attempt=3,
+                    created_at_utc="2026-09-04T00:30:59Z",
                 ),
-                "next_attempt": 3,
-                "protected_or_live_data_read": False,
+                attribution,
+            )
+            self.assertEqual(
+                len(list(attribution.parent.glob("*.attribution-evidence.json"))),
+                1,
+            )
+            self.assertEqual(
+                attribution_value["classification"], "teacher-ranking-gap"
+            )
+            self.assertTrue(attribution_value["automatic_selection"])
+            forged = fixture.base / "caller-selected-attribution.json"
+            forged_body = dict(attribution_value)
+            forged_body.pop("body_sha256")
+            forged_body.update({
+                "classification": "quantization-gap",
+                "selected_intervention": "quantization-gap-qat-scales",
+                "intervention_contract": challenger.INTERVENTION_CONTRACTS[
+                    "quantization-gap-qat-scales"
+                ],
             })
+            q.write_sealed(forged, forged_body)
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "audit/intervention"
+            ):
+                challenger.open_next_attempt(
+                    fixture.plan_path, attempt=3,
+                    hypothesis="caller attempts to choose classification",
+                    intervention="quantization-gap-qat-scales",
+                    attribution_receipt=forged,
+                    created_at_utc="2026-09-04T00:30:59Z",
+                )
             challenger.open_next_attempt(
                 fixture.plan_path, attempt=3,
                 hypothesis="increase hard-state density after attribution",
@@ -1408,9 +2575,15 @@ class ChallengerCampaignTests(unittest.TestCase):
                 attribution_receipt=attribution,
                 created_at_utc="2026-09-04T00:31:00Z",
             )
-            challenger.materialize_phase(
+            third_phase = challenger.materialize_phase(
                 fixture.plan_path, attempt=3, phase="pilot",
                 created_at_utc="2026-09-04T00:32:00Z",
+            )
+            self.assertEqual(
+                challenger.validate_phase_reference(
+                    third_phase, fixture.context["plan"]
+                )["phase"]["adaptation_contract"]["teacher_ranking_profile"],
+                "hardest-5pct-2m-v1",
             )
             challenger.record_progress(
                 fixture.plan_path, attempt=3, phase="pilot",
@@ -1437,6 +2610,422 @@ class ChallengerCampaignTests(unittest.TestCase):
             self.assertEqual(
                 third["adaptation_route"], "open-next-attempt-same-contract"
             )
+
+    def test_two_stalled_full_candidates_reach_unprotected_attribution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.start_attempt_one()
+
+            def finish_stalled_full(attempt):
+                challenger.materialize_phase(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    created_at_utc=f"2026-09-04T03:0{attempt}:00Z",
+                )
+                challenger.record_progress(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    completed_games=2_000,
+                    completed_quotas=fixture.completed_quotas("pilot"),
+                    accepted_positions=40_000,
+                    created_at_utc=f"2026-09-04T03:1{attempt}:00Z",
+                )
+                pilot_metrics = fixture.pilot_metrics(True)
+                pilot_exclusion = fixture.development_exclusion(
+                    attempt, "pilot"
+                )
+                challenger.record_attempt_outcome(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    candidate_runtime=fixture.runtime,
+                    candidate_source=fixture.source,
+                    outcome_receipt=fixture.outcome_receipt(
+                        f"full-stall-pilot-{attempt}", attempt=attempt,
+                        phase="pilot", metrics=pilot_metrics,
+                        exclusion=pilot_exclusion,
+                    ),
+                    development_exclusion=pilot_exclusion,
+                    metrics=pilot_metrics,
+                    strength_delta_pp=2.5,
+                    teacher_regret_reduction_fraction=0.10,
+                    created_at_utc=f"2026-09-04T03:2{attempt}:00Z",
+                )
+                full_reference = challenger.materialize_phase(
+                    fixture.plan_path, attempt=attempt, phase="full",
+                    created_at_utc=f"2026-09-04T03:3{attempt}:00Z",
+                )
+                full_phase = challenger.validate_phase_reference(
+                    full_reference, fixture.context["plan"]
+                )["phase"]
+                inherited = [
+                    challenger.validate_dynamic_exclusion(
+                        pathlib.Path(record["path"])
+                    )
+                    for record in full_phase["dynamic_exclusions"]
+                ]
+                self.assertTrue(any(
+                    exclusion.get("attempt") == attempt
+                    and exclusion.get("phase") == "pilot"
+                    for exclusion in inherited
+                ))
+                challenger.record_progress(
+                    fixture.plan_path, attempt=attempt, phase="full",
+                    completed_games=10_000,
+                    completed_quotas=fixture.completed_quotas("full"),
+                    accepted_positions=200_000,
+                    created_at_utc=f"2026-09-04T03:4{attempt}:00Z",
+                )
+                full_metrics = fixture.full_metrics(False)
+                full_metrics["canonical_retention_passed"] = True
+                full_exclusion = fixture.development_exclusion(attempt, "full")
+                return challenger.record_attempt_outcome(
+                    fixture.plan_path, attempt=attempt, phase="full",
+                    candidate_runtime=fixture.runtime,
+                    candidate_source=fixture.source,
+                    outcome_receipt=fixture.outcome_receipt(
+                        f"full-stall-{attempt}", attempt=attempt,
+                        phase="full", metrics=full_metrics,
+                        exclusion=full_exclusion,
+                    ),
+                    development_exclusion=full_exclusion,
+                    metrics=full_metrics,
+                    strength_delta_pp=4.9,
+                    teacher_regret_reduction_fraction=0.0,
+                    created_at_utc=f"2026-09-04T03:5{attempt}:00Z",
+                )
+
+            first = finish_stalled_full(1)
+            self.assertEqual(first["consecutive_no_improvement"], 1)
+            challenger.open_next_attempt(
+                fixture.plan_path, attempt=2,
+                hypothesis="repeat a stalled full recipe once",
+                intervention="same-contract",
+                created_at_utc="2026-09-04T03:59:00Z",
+            )
+            second = finish_stalled_full(2)
+            self.assertEqual(second["consecutive_no_improvement"], 2)
+            self.assertEqual(
+                second["adaptation_route"],
+                "open-next-attempt-attribution-adaptation",
+            )
+            attribution = challenger.audit_attribution(
+                fixture.plan_path, next_attempt=3,
+                created_at_utc="2026-09-04T04:00:00Z",
+            )
+            value = q.load_sealed(
+                attribution, challenger.ATTRIBUTION_EVIDENCE_SCHEMA
+            )
+            self.assertEqual(
+                [item["phase"] for item in value["source_outcomes"]],
+                ["full", "full"],
+            )
+            self.assertEqual(value["classification"], "teacher-ranking-gap")
+
+    def test_attribution_prioritizes_unaddressed_quantization_gap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.start_attempt_one()
+            for attempt in (1, 2):
+                challenger.materialize_phase(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    created_at_utc=f"2026-09-04T01:0{attempt}:00Z",
+                )
+                challenger.record_progress(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    completed_games=2_000,
+                    completed_quotas=fixture.completed_quotas("pilot"),
+                    accepted_positions=40_000,
+                    created_at_utc=f"2026-09-04T01:1{attempt}:00Z",
+                )
+                metrics = fixture.pilot_metrics(False)
+                exclusion = fixture.development_exclusion(attempt, "pilot")
+                outcome = challenger.record_attempt_outcome(
+                    fixture.plan_path, attempt=attempt, phase="pilot",
+                    candidate_runtime=fixture.runtime,
+                    candidate_source=fixture.source,
+                    outcome_receipt=fixture.outcome_receipt(
+                        f"quant-gap-{attempt}", attempt=attempt,
+                        phase="pilot", metrics=metrics, exclusion=exclusion,
+                    ),
+                    development_exclusion=exclusion, metrics=metrics,
+                    strength_delta_pp=0.0,
+                    teacher_regret_reduction_fraction=0.0,
+                    created_at_utc=f"2026-09-04T01:2{attempt}:00Z",
+                )
+                if attempt == 1:
+                    challenger.open_next_attempt(
+                        fixture.plan_path, attempt=2,
+                        hypothesis="repeat before attribution",
+                        intervention="same-contract",
+                        created_at_utc="2026-09-04T01:30:00Z",
+                    )
+            self.assertEqual(
+                outcome["adaptation_route"],
+                "open-next-attempt-attribution-adaptation",
+            )
+            audit = challenger.audit_attribution(
+                fixture.plan_path, next_attempt=3,
+                created_at_utc="2026-09-04T01:31:00Z",
+            )
+            value = q.load_sealed(
+                audit, challenger.ATTRIBUTION_EVIDENCE_SCHEMA
+            )
+            self.assertEqual(value["classification"], "quantization-gap")
+            opened = challenger.open_next_attempt(
+                fixture.plan_path, attempt=3,
+                hypothesis="refine QAT scales",
+                intervention="quantization-gap-qat-scales",
+                attribution_receipt=audit,
+                created_at_utc="2026-09-04T01:32:00Z",
+            )
+            self.assertEqual(
+                opened["adaptation_contract"]["qat_profile"],
+                "refined-adaptive-scales-v1",
+            )
+
+    def test_compatible_adaptation_axes_persist_and_search_stays_individual(self):
+        entries = [{
+            "event": "attempt-opened",
+            "attempt": 1,
+            "adaptation_contract": {
+                **challenger.STANDARD_ADAPTATION_CONTRACT,
+                "qat_profile": "refined-adaptive-scales-v1",
+            },
+        }]
+        teacher = challenger._adaptation_contract_for_intervention(
+            "teacher-ranking-gap-hard-state-density", entries
+        )
+        self.assertEqual(teacher, {
+            "qat_profile": "refined-adaptive-scales-v1",
+            "teacher_ranking_profile": "hardest-5pct-2m-v1",
+            "search_throughput_profile": "standard-v1",
+        })
+        entries.append({
+            "event": "attempt-opened", "attempt": 2,
+            "adaptation_contract": teacher,
+        })
+        cached = challenger._adaptation_contract_for_intervention(
+            "search-throughput-gap-caching", entries
+        )
+        self.assertEqual(cached, {
+            **teacher,
+            "search_throughput_profile": "state-evaluation-cache-v1",
+        })
+        entries.append({
+            "event": "attempt-opened", "attempt": 3,
+            "adaptation_contract": cached,
+        })
+        widened = challenger._adaptation_contract_for_intervention(
+            "search-throughput-gap-progressive-widening", entries
+        )
+        self.assertEqual(widened, {
+            **teacher,
+            "search_throughput_profile": "progressive-widening-v1",
+        })
+
+    def test_production_overrides_require_immediate_deep_loss_reuse(self):
+        from tools import compact_value_bfm_loss_reuse as loss_reuse
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            rejected = fixture.base / "attempt-zero-rejected.json"
+            q.write_sealed(rejected, {
+                "schema": challenger.RECOVERY_JOURNAL_SCHEMA,
+                "recovery_plan": challenger._sealed_record(
+                    fixture.recovery_plan, challenger.RECOVERY_PLAN_SCHEMA
+                ),
+                "event": "terminal-failure", "no_retry": True,
+            })
+            challenger.record_attempt_zero_result(
+                fixture.plan_path, result_path=rejected,
+                created_at_utc="2026-09-04T02:00:00Z",
+                recovery_validator=fixture.attempt_zero_validator,
+                allow_injected_test_evidence=True,
+            )
+            production = copy.deepcopy(fixture.context)
+            production["inputs"]["production_allowlist_enforced"] = True
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "cannot override"
+            ):
+                challenger.open_next_attempt(
+                    fixture.plan_path, attempt=1,
+                    hypothesis="forged external runtime",
+                    intervention="teacher-refresh",
+                    student_runtime=fixture.runtime,
+                    created_at_utc="2026-09-04T02:00:01Z",
+                )
+            challenger.open_next_attempt(
+                fixture.plan_path, attempt=1,
+                hypothesis="first trained attempt",
+                intervention="teacher-refresh",
+                created_at_utc="2026-09-04T02:00:02Z",
+            )
+            challenger.materialize_phase(
+                fixture.plan_path, attempt=1, phase="pilot",
+                created_at_utc="2026-09-04T02:00:03Z",
+            )
+            challenger.record_progress(
+                fixture.plan_path, attempt=1, phase="pilot",
+                completed_games=2_000,
+                completed_quotas=fixture.completed_quotas("pilot"),
+                accepted_positions=40_000,
+                created_at_utc="2026-09-04T02:00:04Z",
+            )
+            first_metrics = fixture.pilot_metrics(False)
+            first_metrics["strength_delta_pp"] = 1.5
+            first_metrics["teacher_regret_reduction_fraction"] = 0.10
+            first_exclusion = fixture.development_exclusion(1, "pilot")
+            first_outcome = fixture.outcome_receipt(
+                "reuse-parent-1", attempt=1, phase="pilot",
+                metrics=first_metrics, exclusion=first_exclusion,
+            )
+            challenger.record_attempt_outcome(
+                fixture.plan_path, attempt=1, phase="pilot",
+                candidate_runtime=fixture.runtime,
+                candidate_source=fixture.source,
+                outcome_receipt=first_outcome,
+                development_exclusion=first_exclusion,
+                metrics=first_metrics, strength_delta_pp=1.5,
+                teacher_regret_reduction_fraction=0.10,
+                created_at_utc="2026-09-04T02:00:05Z",
+            )
+            reused_tsv = fixture.base / "reused-roots.tsv"
+            reused_tsv.write_text(
+                "group_id\tsource\twinner\ttranscript\n"
+                "reuse:1\tunprotected\t0\t0/0/3/0/61/0/07\n"
+            )
+            reused_manifest = fixture.base / "reused-roots.json"
+            q.write_sealed(reused_manifest, {
+                "schema": "papersoccer.jacek-replay-roots.v1",
+                "reuse_schema": loss_reuse.REUSE_SCHEMA,
+                "source_roots": challenger._regular(reused_tsv),
+                "output_sha256": q.sha256_file(reused_tsv),
+            })
+            validated_reuse = q.load_sealed(reused_manifest)
+            verifier_sources = {
+                "status": "execution-code-bound-to-clean-source-closure",
+                "tools": {"loss_reuse": {"sha256": "d" * 64}},
+            }
+            original_manifest_payload = reused_manifest.read_bytes()
+
+            def swap_after_deep_validation(*_args, **_kwargs):
+                reused_manifest.write_bytes(
+                    original_manifest_payload + b"changed-after-validation\n"
+                )
+                return validated_reuse
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), mock.patch.object(
+                challenger, "_frozen_execution_source_evidence",
+                return_value=verifier_sources,
+            ), mock.patch.object(
+                loss_reuse, "validate_loss_reuse_for_campaign",
+                side_effect=swap_after_deep_validation,
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "changed during deep validation"
+            ):
+                challenger.open_next_attempt(
+                    fixture.plan_path, attempt=2,
+                    hypothesis="reject a post-validation roots swap",
+                    intervention="targeted-retry",
+                    roots_tsv=reused_tsv, roots_manifest=reused_manifest,
+                    created_at_utc="2026-09-04T02:00:06Z",
+                )
+            reused_manifest.write_bytes(original_manifest_payload)
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), mock.patch.object(
+                challenger, "_frozen_execution_source_evidence",
+                return_value=verifier_sources,
+            ) as source_binding, mock.patch.object(
+                loss_reuse, "validate_loss_reuse_for_campaign",
+                return_value=validated_reuse,
+            ) as deep_validate:
+                opened_two = challenger.open_next_attempt(
+                    fixture.plan_path, attempt=2,
+                    hypothesis="reuse immediate unprotected losses",
+                    intervention="targeted-retry",
+                    roots_tsv=reused_tsv, roots_manifest=reused_manifest,
+                    created_at_utc="2026-09-04T02:00:06Z",
+                )
+            deep_validate.assert_called_once()
+            source_binding.assert_called_once()
+            self.assertTrue(
+                opened_two["loss_reuse_provenance"][
+                    "deeply_rederived_before_open"
+                ]
+            )
+            self.assertEqual(
+                opened_two["loss_reuse_provenance"]["verifier_sources"],
+                verifier_sources,
+            )
+            challenger.materialize_phase(
+                fixture.plan_path, attempt=2, phase="pilot",
+                created_at_utc="2026-09-04T02:00:07Z",
+            )
+            challenger.record_progress(
+                fixture.plan_path, attempt=2, phase="pilot",
+                completed_games=2_000,
+                completed_quotas=fixture.completed_quotas("pilot"),
+                accepted_positions=40_000,
+                created_at_utc="2026-09-04T02:00:08Z",
+            )
+            second_metrics = fixture.pilot_metrics(False)
+            second_exclusion = fixture.development_exclusion(2, "pilot")
+            challenger.record_attempt_outcome(
+                fixture.plan_path, attempt=2, phase="pilot",
+                candidate_runtime=fixture.runtime,
+                candidate_source=fixture.source,
+                outcome_receipt=fixture.outcome_receipt(
+                    "reuse-parent-2", attempt=2, phase="pilot",
+                    metrics=second_metrics, exclusion=second_exclusion,
+                ),
+                development_exclusion=second_exclusion,
+                metrics=second_metrics, strength_delta_pp=0.0,
+                teacher_regret_reduction_fraction=0.0,
+                created_at_utc="2026-09-04T02:00:09Z",
+            )
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), mock.patch.object(
+                loss_reuse, "validate_loss_reuse_for_campaign"
+            ) as unnecessary:
+                opened_three = challenger.open_next_attempt(
+                    fixture.plan_path, attempt=3,
+                    hypothesis="inherit already validated loss roots",
+                    intervention="same-contract",
+                    created_at_utc="2026-09-04T02:00:10Z",
+                )
+            unnecessary.assert_not_called()
+            self.assertEqual(
+                opened_three["attempt_inputs"]["roots_tsv"],
+                opened_two["attempt_inputs"]["roots_tsv"],
+            )
+            self.assertEqual(
+                opened_three["loss_reuse_provenance"],
+                opened_two["loss_reuse_provenance"],
+            )
+
+    def test_attempt_artifact_copy_rejects_source_swap_after_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source.tsv"
+            source.write_bytes(b"deeply-validated\n")
+            snapshot = challenger._regular(source)
+            verify_record = challenger._verify_record
+
+            def swap_after_record_check(record, label):
+                path = verify_record(record, label)
+                source.write_bytes(b"swapped-after-check\n")
+                return path
+
+            with mock.patch.object(
+                challenger, "_verify_record", side_effect=swap_after_record_check,
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "changed during copy"
+            ):
+                challenger._copy_attempt_artifact(
+                    snapshot, root=root / "archive",
+                )
 
     def test_progress_counters_cannot_regress(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1493,6 +3082,7 @@ class ChallengerCampaignTests(unittest.TestCase):
                     bank_a=first, bank_b=second,
                     created_at_utc="2026-09-04T00:03:00Z",
                     bank_validator=validator,
+                    allow_injected_test_evidence=True,
                 )
             authorization = fixture.dual_authorization()
             _first, _second, overlap_validator = fixture.banks(overlap=True)
@@ -1502,6 +3092,27 @@ class ChallengerCampaignTests(unittest.TestCase):
                     bank_a=first, bank_b=second,
                     created_at_utc="2026-09-04T00:03:02Z",
                     bank_validator=overlap_validator,
+                    allow_injected_test_evidence=True,
+                )
+
+    def test_production_rejects_injected_protected_bank_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            authorization = fixture.dual_authorization()
+            first, second, validator = fixture.banks()
+            production = copy.deepcopy(fixture.context)
+            production["inputs"]["production_allowlist_enforced"] = True
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=production
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "test-only"
+            ):
+                challenger.prepare_dual_final(
+                    authorization, plan_path=fixture.plan_path,
+                    bank_a=first, bank_b=second,
+                    created_at_utc="2026-09-04T00:03:02Z",
+                    bank_validator=validator,
+                    allow_injected_test_evidence=True,
                 )
 
     def test_two_independent_passing_gates_require_unchanged_candidate(self):
@@ -1517,6 +3128,7 @@ class ChallengerCampaignTests(unittest.TestCase):
                 ),
                 completed_at_utc="2026-09-04T00:04:00Z",
                 bank_validator=validator,
+                allow_injected_test_evidence=True,
             )
             result_b = challenger.record_final_result(
                 dual_ref, plan_path=fixture.plan_path, gate_id="gate-b",
@@ -1525,12 +3137,14 @@ class ChallengerCampaignTests(unittest.TestCase):
                 ),
                 completed_at_utc="2026-09-04T00:05:00Z",
                 bank_validator=validator,
+                allow_injected_test_evidence=True,
             )
             qualified = challenger.complete_dual_final(
                 dual_ref, plan_path=fixture.plan_path,
                 result_a=result_a, result_b=result_b,
                 completed_at_utc="2026-09-04T00:06:00Z",
                 bank_validator=validator,
+                allow_injected_test_evidence=True,
             )
             value = q.load_sealed(qualified, challenger.DUAL_QUALIFICATION_SCHEMA)
             self.assertTrue(value["candidate_unchanged"])
@@ -1565,6 +3179,7 @@ class ChallengerCampaignTests(unittest.TestCase):
                     ),
                     completed_at_utc="2026-09-04T00:04:00Z",
                     bank_validator=validator,
+                    allow_injected_test_evidence=True,
                 )
                 value = q.load_sealed(result, challenger.FINAL_RESULT_SCHEMA)
                 self.assertFalse(value["passed"])
@@ -1579,12 +3194,16 @@ class ChallengerCampaignTests(unittest.TestCase):
                     intervention="protected-rejection-clean-restart",
                     created_at_utc="2026-09-04T00:05:00Z",
                 )
-                self.assertEqual(len(opened["dynamic_exclusions"]), 2)
-                self.assertTrue(all(
-                    item["classification"]
-                    == "protected-final-canonical-fingerprints"
-                    for item in opened["dynamic_exclusions"]
-                ))
+                self.assertEqual(
+                    Counter(
+                        item["classification"]
+                        for item in opened["dynamic_exclusions"]
+                    ),
+                    {
+                        "unprotected-development-canonical-fingerprints": 2,
+                        "protected-final-canonical-fingerprints": 2,
+                    },
+                )
                 phase_reference = challenger.materialize_phase(
                     fixture.plan_path, attempt=2, phase="pilot",
                     created_at_utc="2026-09-04T00:05:01Z",
@@ -1608,17 +3227,59 @@ class ChallengerCampaignTests(unittest.TestCase):
             reference, data_root, validator, _extractor = fixture.live_artifacts(
                 upload_event
             )
+            receipt_path = data_root / "receipt.json"
+            receipt_bytes = receipt_path.read_bytes()
+            original_copy = challenger._copy_attempt_artifact
+
+            def mutate_after_reference(record, *, root):
+                copied = original_copy(record, root=root)
+                if pathlib.Path(record["path"]).resolve() == reference.resolve():
+                    receipt_path.write_text("swapped-after-validation\n")
+                return copied
+
+            with mock.patch.object(
+                challenger, "_copy_attempt_artifact",
+                side_effect=mutate_after_reference,
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError, "bytes changed"
+            ):
+                challenger.record_live_window(
+                    fixture.plan_path, live_reference=reference,
+                    live_data_root=data_root,
+                    created_at_utc="2026-09-04T11:59:59Z",
+                    live_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+            receipt_path.write_bytes(receipt_bytes)
             live_event = challenger.record_live_window(
                 fixture.plan_path, live_reference=reference,
                 live_data_root=data_root,
                 dynamic_exclusion_path=fixture.live_dynamic_exclusion,
                 created_at_utc="2026-09-04T12:00:00Z",
                 live_validator=validator,
+                allow_injected_test_evidence=True,
             )
             self.assertTrue(live_event["passed"])
+            with mock.patch.object(
+                challenger, "_append_event",
+                side_effect=RuntimeError("simulated ledger crash"),
+            ), self.assertRaisesRegex(RuntimeError, "simulated ledger crash"):
+                challenger.complete_campaign(
+                    fixture.plan_path,
+                    live_data_root=data_root,
+                    completed_at_utc="2026-09-04T12:00:01Z",
+                    live_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+            self.assertTrue(pathlib.Path(
+                fixture.context["plan"]["outputs"]["completion"]
+            ).is_file())
             completion = challenger.complete_campaign(
                 fixture.plan_path,
-                completed_at_utc="2026-09-04T12:00:01Z",
+                live_data_root=data_root,
+                completed_at_utc="2026-09-04T12:00:09Z",
+                live_validator=validator,
+                allow_injected_test_evidence=True,
             )
             self.assertEqual(
                 q.load_sealed(completion, challenger.CAMPAIGN_COMPLETION_SCHEMA)["proof"],
@@ -1631,8 +3292,76 @@ class ChallengerCampaignTests(unittest.TestCase):
                 },
             )
             self.assertEqual(
+                q.load_sealed(
+                    completion, challenger.CAMPAIGN_COMPLETION_SCHEMA
+                )["completed_at_utc"],
+                "2026-09-04T12:00:01Z",
+            )
+            self.assertEqual(
                 challenger.load_ledger(fixture.context["plan"])[-1]["event"],
                 "campaign-complete",
+            )
+            (data_root / "receipt.json").write_text("tampered\n")
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "failed full validation"
+            ):
+                challenger.complete_campaign(
+                    fixture.plan_path,
+                    live_data_root=data_root,
+                    completed_at_utc="2026-09-04T12:00:02Z",
+                    live_validator=validator,
+                    allow_injected_test_evidence=True,
+                )
+
+    def test_one_outstanding_upload_capability_cannot_be_reminted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(pathlib.Path(temporary))
+            fixture.qualify_dual()
+            authorization, _attestation = fixture.upload_artifacts()
+            ledger = challenger.load_ledger(fixture.context["plan"])
+            first = ledger[-1]
+            self.assertEqual(first["event"], "upload-authorized")
+            claim = ledger[-2]
+            self.assertEqual(claim["event"], "upload-authorization-claimed")
+            self.assertEqual(
+                q.load_sealed(authorization)["campaign_upload_claim"],
+                {
+                    "sequence": claim["sequence"],
+                    "body_sha256": claim["body_sha256"],
+                    "attempt": claim["attempt"],
+                    "upload_ordinal": claim["upload_ordinal"],
+                },
+            )
+            second_root = fixture.base / "second-release-root"
+            second_authorization = second_root / "authorization.json"
+            q.write_sealed(second_authorization, {
+                key: value for key, value in q.load_sealed(authorization).items()
+                if key != "body_sha256"
+            })
+            first_inputs = q.load_sealed(
+                fixture.base / "release/authorization-inputs.json"
+            )
+            second_inputs = second_root / "authorization-inputs.json"
+            second_inputs_body = {
+                key: value for key, value in first_inputs.items()
+                if key != "body_sha256"
+            }
+            second_inputs_body["authorization"] = q.artifact_reference(
+                second_authorization, q.UPLOAD_AUTH_SCHEMA
+            )
+            q.write_sealed(second_inputs, second_inputs_body)
+            with self.assertRaisesRegex(
+                challenger.ChallengerError, "different immutable inputs"
+            ):
+                challenger.record_upload_authorization(
+                    fixture.plan_path,
+                    attempt=1,
+                    authorization_path=second_authorization,
+                    authorization_inputs_path=second_inputs,
+                    created_at_utc="2026-09-04T00:06:30Z",
+                )
+            self.assertEqual(
+                challenger.load_ledger(fixture.context["plan"])[-1], first
             )
 
     def test_live_failure_needs_explicit_single_use_additional_upload_authorization(self):
@@ -1736,10 +3465,16 @@ class ChallengerCampaignTests(unittest.TestCase):
                 created_at_utc="2026-09-04T12:00:03Z",
             )
             self.assertEqual(opened["attempt"], 2)
-            self.assertEqual(len(opened["dynamic_exclusions"]), 1)
             self.assertEqual(
-                opened["dynamic_exclusions"][0]["classification"],
-                "live-diagnostic-canonical-fingerprints",
+                Counter(
+                    item["classification"]
+                    for item in opened["dynamic_exclusions"]
+                ),
+                {
+                    "unprotected-development-canonical-fingerprints": 2,
+                    "protected-final-canonical-fingerprints": 2,
+                    "live-diagnostic-canonical-fingerprints": 1,
+                },
             )
 
     def test_help_documents_resources_and_no_recurring_automation(self):

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import base64
 import copy
+import dataclasses
 import hashlib
 import importlib.util
+import os
 import pathlib
 import sys
 import tempfile
@@ -14,6 +16,15 @@ import threading
 import time
 import unittest
 from unittest import mock
+
+for _thread_variable in (
+    "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ[_thread_variable] = "1"
+os.environ[
+    "PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY"
+] = "1"
 
 import numpy as np
 
@@ -314,6 +325,7 @@ class SuccessorRankingTests(unittest.TestCase):
         parent_mover=0,
         value_movers=None,
         exhaustive=True,
+        teacher_ranking_profile="standard-v1",
     ):
         value_movers = value_movers or [parent_mover] * len(teacher_values)
         successors = tuple(
@@ -331,8 +343,30 @@ class SuccessorRankingTests(unittest.TestCase):
             parent_mover=parent_mover,
             successors=successors,
             successors_exhaustive=exhaustive,
-            evidence={"rich": True},
+            evidence={
+                "rich": True,
+                "work_budget": {
+                    "teacher_ranking_profile": teacher_ranking_profile,
+                },
+            },
         )
+
+    def test_hard_teacher_groups_have_increased_schedule_density(self):
+        standard = self.group([1.0, -1.0])
+        hard = self.group(
+            [0.8, -0.8],
+            teacher_ranking_profile=trainer.HARD_TEACHER_RANKING_PROFILE,
+        )
+        hard = dataclasses.replace(hard, group_id="e" * 64)
+        scheduled, evidence = trainer._density_weighted_ranking_groups(
+            (standard, hard)
+        )
+        self.assertEqual(scheduled.count(standard), 1)
+        self.assertEqual(
+            scheduled.count(hard), trainer.HARD_STATE_DENSITY_MULTIPLIER
+        )
+        self.assertTrue(evidence["density_increased"])
+        self.assertEqual(evidence["hard_unique_groups"], 1)
 
     @classmethod
     def ranking_inputs(cls):
@@ -415,20 +449,113 @@ class SuccessorRankingTests(unittest.TestCase):
         self.assertEqual(first[1], second[1])
         np.testing.assert_array_equal(first[2], second[2])
         schedule = trainer.successor_ranking_epoch_schedule(
-            5, 17, seed=20260907, epoch=3
+            17, 5, seed=20260907, epoch=3
         )
-        np.testing.assert_array_equal(
-            schedule,
+        repeated = trainer.successor_ranking_epoch_schedule(
+            17, 5, seed=20260907, epoch=3
+        )
+        self.assertTrue(all(
+            np.array_equal(first, second)
+            for first, second in zip(schedule, repeated, strict=True)
+        ))
+        next_epoch = trainer.successor_ranking_epoch_schedule(
+            17, 5, seed=20260907, epoch=4
+        )
+        self.assertNotEqual(
+            [[int(value) for value in batch] for batch in schedule],
+            [[int(value) for value in batch] for batch in next_epoch],
+        )
+        self.assertEqual(
+            sorted(int(value) for batch in schedule for value in batch),
+            list(range(17)),
+        )
+        self.assertLessEqual(
+            max(map(len, schedule)) - min(map(len, schedule)), 1
+        )
+        with self.assertRaises(trainer.TrainingError):
             trainer.successor_ranking_epoch_schedule(
                 5, 17, seed=20260907, epoch=3
+            )
+
+    def test_weighted_pool_schedule_covers_every_hard_duplicate_once(self):
+        standard = self.group([1.0, -1.0])
+        hard = dataclasses.replace(
+            self.group(
+                [0.8, -0.8],
+                teacher_ranking_profile=trainer.HARD_TEACHER_RANKING_PROFILE,
             ),
+            group_id="e" * 64,
         )
-        self.assertFalse(np.array_equal(
-            schedule,
-            trainer.successor_ranking_epoch_schedule(
-                5, 17, seed=20260907, epoch=4
+        pool, density = trainer._density_weighted_ranking_groups(
+            (standard, hard)
+        )
+        schedule = trainer.successor_ranking_epoch_schedule(
+            len(pool), 3, seed=20260907, epoch=2
+        )
+        coverage = trainer.ranking_schedule_coverage(
+            pool, schedule, epoch=2
+        )
+        self.assertEqual(
+            coverage["executed_weighted_entries"], len(pool)
+        )
+        self.assertEqual(
+            coverage["executed_hard_weighted_entries"],
+            trainer.HARD_STATE_DENSITY_MULTIPLIER,
+        )
+        self.assertEqual(
+            trainer.validate_ranking_schedule_coverage(
+                coverage, density=density, epoch=2, scalar_batches=3,
+                seed=20260907,
             ),
-        ))
+            coverage,
+        )
+        tampered = copy.deepcopy(coverage)
+        tampered["executed_hard_weighted_entries"] -= 1
+        with self.assertRaisesRegex(trainer.TrainingError, "weighted pool"):
+            trainer.validate_ranking_schedule_coverage(
+                tampered, density=density, epoch=2, scalar_batches=3,
+                seed=20260907,
+            )
+        forged_hash = copy.deepcopy(coverage)
+        forged_hash["schedule_sha256"] = "f" * 64
+        with self.assertRaisesRegex(trainer.TrainingError, "weighted pool"):
+            trainer.validate_ranking_schedule_coverage(
+                forged_hash, density=density, epoch=2, scalar_batches=3,
+                seed=20260907,
+            )
+
+    def test_microbatch_gradient_is_numerical_and_lambda_count_invariant(self):
+        group = self.group([1.0, -1.0])
+        predictions = np.asarray([0.2, -0.3], dtype=np.float32)
+        single_loss, single_gradient, _ = (
+            trainer.ranking_microbatch_loss_gradient((group,), predictions)
+        )
+        epsilon = 1e-3
+        numerical = []
+        for index in range(len(predictions)):
+            plus = predictions.copy()
+            minus = predictions.copy()
+            plus[index] += epsilon
+            minus[index] -= epsilon
+            numerical.append((
+                trainer.ranking_microbatch_loss_gradient((group,), plus)[0]
+                - trainer.ranking_microbatch_loss_gradient((group,), minus)[0]
+            ) / (2 * epsilon))
+        np.testing.assert_allclose(single_gradient, numerical, atol=2e-4)
+
+        repeated_predictions = np.tile(predictions, 4)
+        repeated_loss, repeated_gradient, report = (
+            trainer.ranking_microbatch_loss_gradient(
+                (group, group, group, group), repeated_predictions
+            )
+        )
+        self.assertAlmostEqual(single_loss, repeated_loss, places=7)
+        np.testing.assert_allclose(
+            repeated_gradient.reshape(4, -1).sum(axis=0),
+            single_gradient,
+            atol=1e-7,
+        )
+        self.assertEqual(report["lambda_application"], "once-after-group-mean")
 
     def test_metrics_exclude_singleton_and_nonexhaustive_groups_and_report_flips(self):
         comparable = self.group([1.0, -1.0])
@@ -537,7 +664,15 @@ class SuccessorRankingTests(unittest.TestCase):
             mock.patch.object(
                 trainer,
                 "pairwise_successor_ranking_loss_gradient",
-                return_value=(3.0, np.zeros(2, dtype=np.float32), {}),
+                return_value=(
+                    3.0,
+                    np.zeros(2, dtype=np.float32),
+                    {
+                        "successors_exhaustive": True,
+                        "skipped_nonexhaustive": False,
+                        "pair_count": 1,
+                    },
+                ),
             ),
             mock.patch.object(
                 trainer,
@@ -703,6 +838,340 @@ class SuccessorRankingTests(unittest.TestCase):
                 )
 
 
+class QATProfileTests(unittest.TestCase):
+    @staticmethod
+    def validation(value: float = 0.1):
+        return {
+            "common_adjudicator": {
+                "objective_weighted_huber": value,
+                "weighted_huber": value,
+                "sign_accuracy": 1.0,
+            },
+            "canonical_validation": {
+                "objective_weighted_huber": value,
+                "weighted_huber": value,
+                "sign_accuracy": 1.0,
+            },
+            "successor_ranking": {
+                "loss_weight": 0.0,
+                "float_vs_quantized_action_flip_rate": value,
+                "mean_teacher_regret": value,
+                "top1_agreement": 1.0 - min(value, 1.0),
+            },
+        }
+
+    def test_profile_registry_is_closed_body_hashed_and_tamper_evident(self):
+        self.assertEqual(
+            set(trainer.QAT_PROFILES),
+            {"standard-v1", "refined-adaptive-scales-v1"},
+        )
+        for name in trainer.QAT_PROFILES:
+            contract = trainer.qat_profile_contract(name)
+            self.assertEqual(
+                trainer.validate_qat_profile_contract(
+                    contract, expected_name=name
+                ),
+                contract,
+            )
+        tampered = copy.deepcopy(trainer.qat_profile_contract("standard-v1"))
+        tampered["scale_selection"]["coordinate_search_passes"] = 3
+        with self.assertRaisesRegex(trainer.TrainingError, "registry"):
+            trainer.validate_qat_profile_contract(tampered)
+        with self.assertRaisesRegex(trainer.TrainingError, "must be"):
+            trainer.resolve_qat_profile("unregistered")
+
+    def test_refined_profile_materially_changes_scale_candidate_selection(self):
+        architecture = trainer.ARCHITECTURES["compact-8x8"]
+        parameters = {
+            name: np.linspace(-1.0, 1.0, num=np.prod(shape), dtype=np.float32)
+            .reshape(shape)
+            for name, shape in architecture.shapes.items()
+        }
+
+        def evaluate(_parameters, _architecture, _inputs, _arm, *, quantized, **_kwargs):
+            return self.validation(sum(
+                float(quantized.scales[name]) for name in ("w1", "w2", "w3")
+            ))
+
+        with mock.patch.object(
+            trainer, "evaluate_validation_pair", side_effect=evaluate
+        ):
+            standard, standard_report = trainer.select_fixed_scales(
+                parameters,
+                architecture,
+                object(),
+                trainer.ARMS["search-target"],
+                qat_profile="standard-v1",
+            )
+            refined, refined_report = trainer.select_fixed_scales(
+                parameters,
+                architecture,
+                object(),
+                trainer.ARMS["search-target"],
+                qat_profile="refined-adaptive-scales-v1",
+            )
+        self.assertEqual(standard_report["passes"], 2)
+        self.assertEqual(standard_report["maximum_candidate_quantile"], "p995-lower-rank")
+        self.assertEqual(standard_report["local_refinement_trials"], 0)
+        self.assertEqual(
+            len(standard_report["trials"]),
+            standard_report["passes"] * sum(
+                len(values) for values in standard_report["candidates"].values()
+            ),
+        )
+        self.assertEqual(refined_report["passes"], 3)
+        self.assertEqual(refined_report["maximum_candidate_quantile"], "p998-lower-rank")
+        self.assertGreater(refined_report["local_refinement_trials"], 0)
+        self.assertTrue(any(
+            standard.scales[name] != refined.scales[name]
+            for name in ("w1", "w2", "w3")
+        ))
+
+    def test_refined_profile_prioritizes_the_quantized_action_flip_gap(self):
+        scalar_better = self.validation(0.01)
+        scalar_better["successor_ranking"][
+            "float_vs_quantized_action_flip_rate"
+        ] = 0.20
+        flip_better = self.validation(0.10)
+        flip_better["successor_ranking"][
+            "float_vs_quantized_action_flip_rate"
+        ] = 0.01
+        standard = trainer.QAT_PROFILES["standard-v1"]
+        refined = trainer.QAT_PROFILES["refined-adaptive-scales-v1"]
+        self.assertLess(
+            trainer._qat_validation_key(scalar_better, standard),
+            trainer._qat_validation_key(flip_better, standard),
+        )
+        self.assertLess(
+            trainer._qat_validation_key(flip_better, refined),
+            trainer._qat_validation_key(scalar_better, refined),
+        )
+
+    def test_refined_profile_records_four_adaptive_all_layer_qat_epochs(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        parameters = trainer.initialize_parameters(architecture, 20260907)
+        inputs = SuccessorRankingTests.ranking_inputs()
+        validation = self.validation()
+        with (
+            mock.patch.object(trainer, "_train_mixed_batch", return_value=0.0),
+            mock.patch.object(
+                trainer, "evaluate_validation_pair", return_value=validation
+            ),
+        ):
+            floating = trainer.train_float_seed(
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                20260907,
+                maximum_epochs=1,
+                patience=1,
+                learning_rate=trainer.RANKING_FLOAT_LEARNING_RATE,
+                ranking_weight=0.0,
+                initial_parameters=parameters,
+            )
+            result = trainer.run_fixed_scale_qat(
+                floating,
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                20260907,
+                qat_profile="refined-adaptive-scales-v1",
+            )
+        evidence = trainer.validate_qat_execution_evidence(
+            result.report, expected_profile="refined-adaptive-scales-v1"
+        )
+        self.assertEqual(evidence["executed_qat_epochs"], [1, 2, 3, 4])
+        self.assertEqual(evidence["selected_qat_epoch"], 1)
+        self.assertFalse(evidence["pre_qat_retained"])
+        self.assertEqual(
+            set(evidence["selected_per_layer_qat_evidence"]),
+            {"w1", "w2", "w3"},
+        )
+        self.assertTrue(evidence["adaptive_scale_qat"])
+        self.assertTrue(all(
+            item["adapted_after_epoch"]
+            for item in evidence["applied_scale_trajectory"]
+        ))
+        self.assertGreater(
+            len(evidence["scale_search"]["trials"]),
+            2 * 3 * len(trainer.ROBUST_SCALE_QUANTILES),
+        )
+        self.assertTrue(all(
+            item["adaptive_scale_search"]["trials"]
+            for item in evidence["history"]
+        ))
+        tampered = copy.deepcopy(evidence)
+        tampered["history"][0]["fixed_scales"]["w1"] = float(np.float32(0.2))
+        with self.assertRaisesRegex(trainer.TrainingError, "scale"):
+            trainer.validate_qat_execution_evidence(
+                tampered, expected_profile="refined-adaptive-scales-v1"
+            )
+        tampered = copy.deepcopy(evidence)
+        tampered["selected_qat_epoch"] = 0
+        tampered["pre_qat_retained"] = True
+        with self.assertRaisesRegex(trainer.TrainingError, "schedule/profile"):
+            trainer.validate_qat_execution_evidence(
+                tampered, expected_profile="refined-adaptive-scales-v1"
+            )
+
+    def test_active_ranking_receipt_covers_pool_in_warmup_and_all_qat_epochs(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        parameters = trainer.initialize_parameters(architecture, 20260907)
+        inputs = SuccessorRankingTests.ranking_inputs()
+        validation = self.validation()
+        validation["successor_ranking"]["loss_weight"] = 0.25
+        validation["successor_ranking"]["pairwise_loss"] = 0.1
+        with (
+            mock.patch.object(trainer, "_train_mixed_batch", return_value=0.0),
+            mock.patch.object(
+                trainer, "evaluate_validation_pair", return_value=validation
+            ),
+        ):
+            floating = trainer.train_float_seed(
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                20260907,
+                maximum_epochs=1,
+                patience=1,
+                learning_rate=trainer.RANKING_FLOAT_LEARNING_RATE,
+                ranking_weight=0.25,
+                initial_parameters=parameters,
+            )
+            quantized = trainer.run_fixed_scale_qat(
+                floating,
+                inputs,
+                architecture,
+                trainer.ARMS["search-target"],
+                20260907,
+                ranking_weight=0.25,
+            )
+        evidence = trainer.validate_successor_schedule_execution(
+            floating.report, quantized.report, seed=20260907
+        )
+        self.assertEqual(evidence["validated_full_pool_reports"], 5)
+        self.assertEqual(
+            [item["schedule_epoch"] for item in quantized.report["history"]],
+            [2, 3, 4, 5],
+        )
+        forged_float = copy.deepcopy(floating.report)
+        forged_float["history"][0]["ranking_schedule_coverage"][
+            "schedule_sha256"
+        ] = "f" * 64
+        with self.assertRaisesRegex(trainer.TrainingError, "weighted pool"):
+            trainer.validate_successor_schedule_execution(
+                forged_float, quantized.report, seed=20260907
+            )
+
+    def test_fresh_qat_runs_are_byte_reproducible_across_output_roots(self):
+        architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        arm = trainer.ARMS["search-target"]
+        seed = 20260907
+        ranking_weight = 0.10
+        qat_profile = trainer.STANDARD_QAT_PROFILE
+        group = SuccessorRankingTests.group([1.0, -1.0])
+        labels = trainer.SuccessorRankingLabels(
+            train=(group,),
+            validation=(group,),
+            teacher={"artifact_sha256": "1" * 64},
+            source_bundle_body_sha256="a" * 64,
+            artifact_sha256="b" * 64,
+            body_sha256="c" * 64,
+        )
+        common_rows = [active_row(2, index % 32) for index in range(4_096)]
+        inputs = trainer.TrainingInputs(
+            new=dataset([
+                active_row(index % 8, index % 32) for index in range(64)
+            ]),
+            anchor=dataset(
+                [active_row((index + 1) % 8, index % 32) for index in range(192)],
+                groups=[f"repro-anchor-{index}" for index in range(192)],
+            ),
+            common_adjudicator=dataset(
+                common_rows,
+                split="validation",
+                groups=[f"repro-common-{index}" for index in range(4_096)],
+            ),
+            canonical_validation=dataset(
+                [active_row((index + 3) % 8, index % 32) for index in range(32)],
+                split="validation",
+                groups=[f"repro-canonical-{index}" for index in range(32)],
+            ),
+            source_routes={},
+            successor_rankings=labels,
+        )
+        bundle = mock.Mock(body_sha256="a" * 64)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            initial = trainer.write_float_checkpoint(
+                root / "initial",
+                trainer.initialize_parameters(architecture, seed),
+                architecture,
+            )
+            outputs = [root / "first", root / "second"]
+            receipts = [
+                trainer.train_seed_candidate(
+                    bundle,
+                    inputs,
+                    architecture,
+                    arm,
+                    seed,
+                    output,
+                    ranking_weight=ranking_weight,
+                    initial_checkpoint=initial,
+                    qat_profile=qat_profile,
+                )
+                for output in outputs
+            ]
+
+            self.assertEqual(receipts[0], receipts[1])
+            self.assertEqual(
+                receipts[0]["binding"]["successor_ranking"]["loss_weight"],
+                ranking_weight,
+            )
+            self.assertEqual(receipts[0]["qat_profile"], qat_profile)
+            self.assertEqual(
+                receipts[0]["quantized_validation"],
+                receipts[1]["quantized_validation"],
+            )
+            self.assertEqual(
+                receipts[0]["quantized_training"],
+                receipts[1]["quantized_training"],
+            )
+
+            runtimes = []
+            receipt_payloads = []
+            for output, receipt in zip(outputs, receipts, strict=True):
+                runtime_path = output / receipt["quantized_runtime"]["path"]
+                runtime_payload = runtime_path.read_bytes()
+                loaded_architecture, quantized, selection, _document = (
+                    trainer.load_runtime(runtime_path)
+                )
+                self.assertEqual(loaded_architecture, architecture)
+                self.assertEqual(selection["seed"], seed)
+                runtimes.append((runtime_payload, quantized))
+
+                reference_path = trainer._seed_reference_path(
+                    output, architecture, arm, seed
+                )
+                _reference_payload, reference = trainer._load_canonical_json(
+                    reference_path, "QAT reproducibility seed reference"
+                )
+                receipt_path = output / reference["receipt"]
+                receipt_payloads.append(receipt_path.read_bytes())
+
+            self.assertEqual(runtimes[0][0], runtimes[1][0])
+            self.assertEqual(receipt_payloads[0], receipt_payloads[1])
+            for name in ("w1", "w2", "w3"):
+                np.testing.assert_array_equal(
+                    runtimes[0][1].integer[name], runtimes[1][1].integer[name]
+                )
+                self.assertEqual(
+                    runtimes[0][1].scales[name], runtimes[1][1].scales[name]
+                )
+
+
 class SeedWorkerOrchestrationTests(unittest.TestCase):
     @staticmethod
     def inputs(*, successor_mode: bool):
@@ -731,6 +1200,7 @@ class SeedWorkerOrchestrationTests(unittest.TestCase):
         active = 0
         maximum = 0
         input_ids = set()
+        native_executions = []
 
         def fake(_bundle, _inputs, _architecture, _arm, seed, _output, **_kwargs):
             nonlocal active, maximum
@@ -738,6 +1208,7 @@ class SeedWorkerOrchestrationTests(unittest.TestCase):
                 active += 1
                 maximum = max(maximum, active)
                 input_ids.add(id(_inputs))
+                native_executions.append(_kwargs["_native_thread_execution"])
             try:
                 # Force completion order to differ from the frozen seed order.
                 time.sleep({
@@ -758,10 +1229,29 @@ class SeedWorkerOrchestrationTests(unittest.TestCase):
             )
         self.assertEqual(maximum, 2)
         self.assertEqual(len(input_ids), 1)
+        self.assertEqual(len(native_executions), len(trainer.FIXED_SEEDS))
+        self.assertTrue(all(
+            execution == native_executions[0]
+            for execution in native_executions
+        ))
+        self.assertEqual(
+            trainer.validate_native_thread_execution(native_executions[0])[
+                "native_threads_per_seed_maximum"
+            ],
+            1,
+        )
         self.assertEqual(
             [receipt["seed"] for receipt in receipts],
             list(trainer.FIXED_SEEDS),
         )
+
+    def test_native_thread_scope_fails_closed_after_environment_drift(self):
+        with mock.patch.dict(os.environ, {"OMP_NUM_THREADS": "2"}):
+            with self.assertRaisesRegex(
+                trainer.TrainingError, "before NumPy import"
+            ):
+                with trainer.native_thread_execution_scope():
+                    self.fail("drifted native-thread environment was accepted")
 
     def test_seed_pool_propagates_failure_and_cancels_pending_work(self):
         failure = trainer.TrainingError("synthetic seed failure")
@@ -1060,7 +1550,7 @@ class GateAndProtectionTests(unittest.TestCase):
 
 
 class SmokeTrainingTests(unittest.TestCase):
-    def test_tiny_float_quantized_qat_smoke_and_pre_qat_tie_policy(self) -> None:
+    def test_tiny_float_quantized_qat_smoke_and_earlier_qat_tie_policy(self) -> None:
         rows = [active_row(index % 4, index % 8) for index in range(4)]
         new = dataset(rows, [1.0, -1.0, .5, -.5])
         anchor = dataset(
@@ -1102,8 +1592,12 @@ class SmokeTrainingTests(unittest.TestCase):
             quantized = trainer.run_fixed_scale_qat(
                 floating, inputs, architecture, arm, 20260907
             )
-        self.assertEqual(quantized.qat_epoch, 0)
-        self.assertTrue(quantized.report["pre_qat_retained"])
+        self.assertEqual(quantized.qat_epoch, 1)
+        self.assertFalse(quantized.report["pre_qat_retained"])
+        self.assertEqual(
+            quantized.report["tie_break"],
+            "prefer-earlier-qat-epoch-on-exact-tie",
+        )
 
     def test_float_checkpoint_is_byte_stable_and_strict(self) -> None:
         architecture = trainer.ARCHITECTURES["compact-8x8"]
@@ -1155,7 +1649,15 @@ class SmokeTrainingTests(unittest.TestCase):
             0,
             validation,
             {
+                "qat_profile": trainer.STANDARD_QAT_PROFILE,
+                "qat_profile_contract": trainer.qat_profile_contract(
+                    trainer.STANDARD_QAT_PROFILE
+                ),
                 "selected_qat_epoch": 0,
+                "selected_scales": {
+                    name: float(quantized.scales[name])
+                    for name in ("w1", "w2", "w3")
+                },
                 "scale_search": {
                     "selected_scales": {
                         name: float(quantized.scales[name])
@@ -1197,6 +1699,11 @@ class SmokeTrainingTests(unittest.TestCase):
             patches = (
                 mock.patch.object(trainer, "train_float_seed", return_value=floating),
                 mock.patch.object(trainer, "run_fixed_scale_qat", return_value=qat),
+                mock.patch.object(
+                    trainer,
+                    "validate_qat_execution_evidence",
+                    side_effect=lambda value, **_kwargs: dict(value),
+                ),
                 mock.patch.object(trainer, "offline_advancement_gate", return_value=gate),
                 mock.patch.object(
                     trainer,
@@ -1204,7 +1711,13 @@ class SmokeTrainingTests(unittest.TestCase):
                     return_value={"states": 4096, "maximum_absolute_error": 0.0},
                 ),
             )
-            with patches[0] as train_call, patches[1], patches[2], patches[3]:
+            with (
+                patches[0] as train_call,
+                patches[1],
+                patches[2],
+                patches[3],
+                patches[4],
+            ):
                 first = trainer.train_seed_candidate(
                     bundle, inputs, architecture, arm, 20260907, output
                 )
@@ -1217,6 +1730,10 @@ class SmokeTrainingTests(unittest.TestCase):
                 trainer,
                 "train_float_seed",
                 side_effect=AssertionError("completed seed retrained"),
+            ), mock.patch.object(
+                trainer,
+                "validate_qat_execution_evidence",
+                side_effect=lambda value, **_kwargs: dict(value),
             ):
                 resumed = trainer.train_seed_candidate(
                     bundle,
@@ -1232,7 +1749,13 @@ class SmokeTrainingTests(unittest.TestCase):
             second_output = output / "interrupted"
             (second_output / "float-checkpoints").mkdir(parents=True)
             (second_output / "float-checkpoints" / "orphan").write_bytes(b"orphan")
-            with patches[0] as restarted, patches[1], patches[2], patches[3]:
+            with (
+                patches[0] as restarted,
+                patches[1],
+                patches[2],
+                patches[3],
+                patches[4],
+            ):
                 trainer.train_seed_candidate(
                     bundle,
                     inputs,

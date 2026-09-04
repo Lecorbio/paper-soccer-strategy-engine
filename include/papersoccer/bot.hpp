@@ -262,6 +262,10 @@ struct JacekReplayBfmConfig {
   std::size_t max_partial_paths{50'000};
   double exploration{0.95};
   double fpu{0.5};
+  // Offline action-label analysis may enumerate the complete canonical root
+  // successor set in max_actions-sized pages before ordinary tree descent.
+  // Deployed/default search must leave this false.
+  bool offline_exhaustive_root_actions{false};
 };
 
 enum class JacekReplayBfmSearchTermination {

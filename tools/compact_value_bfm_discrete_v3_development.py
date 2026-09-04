@@ -1136,6 +1136,7 @@ def validate_run_receipt(
         gate_output_path,
         expected_bank_sha256=bank["gate_sha256"],
         expected_candidate_sha256=candidate["source_sha256"],
+        allow_legacy_attempt_zero=True,
     )
     if validated_gate != base_receipt.get("gate_result"):
         raise DevelopmentError("maintained receipt differs from validated gate output")
@@ -1156,7 +1157,8 @@ def validate_run_receipt(
         != maintained.RANK4_SHA256
         or gate.get("bindings", {}).get("rank4_source_bytes")
         != maintained.RANK4.stat().st_size
-        or gate.get("config") != request.get("expected_configuration")
+        or maintained.gate_support.legacy_standard_configuration(gate)
+        != request.get("expected_configuration")
     ):
         raise DevelopmentError("development gate binding/configuration changed")
     metric = maintained._metric(

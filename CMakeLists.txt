@@ -368,6 +368,16 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     add_test(
+      NAME papersoccer_compact_value_bfm_loss_reuse_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_loss_reuse)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_loss_reuse_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
       NAME papersoccer_compact_value_bfm_rank4_teacher_dual_final_unit_tests
       COMMAND ${CMAKE_COMMAND} -E env
               PYTHONDONTWRITEBYTECODE=1
@@ -882,6 +892,63 @@ if(NOT EMSCRIPTEN)
     submissions/codingame/bots/compact_value_bfm/feature_probe.cpp)
   add_executable(papersoccer_codingame_compact_value_bfm_inference_probe
     submissions/codingame/bots/compact_value_bfm/inference_probe.cpp)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_SOURCE
+    submissions/codingame/bots/compact_value_bfm/search_trace_probe.cpp)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_BASES
+    baseline
+    no_feature_sort_only
+    single_pass_selection_only
+    combined)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_MACROS_baseline
+    COMPACT_VALUE_BFM_REFERENCE_FEATURE_SORT=1
+    COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT=1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_MACROS_no_feature_sort_only
+    COMPACT_VALUE_BFM_REFERENCE_DESCENDANT_SORT=1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_MACROS_single_pass_selection_only
+    COMPACT_VALUE_BFM_REFERENCE_FEATURE_SORT=1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_MACROS_combined)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILES
+    state_evaluation_cache_v1
+    progressive_widening_v1
+    subtree_reuse_v1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILE_MACRO_state_evaluation_cache_v1
+    COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1=1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILE_MACRO_progressive_widening_v1
+    COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1=1)
+  set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILE_MACRO_subtree_reuse_v1
+    COMPACT_VALUE_BFM_SUBTREE_REUSE_V1=1)
+
+  function(papersoccer_compact_value_bfm_add_search_trace suffix)
+    set(target "papersoccer_codingame_compact_value_bfm_search_trace_${suffix}")
+    add_executable(${target}
+      ${PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_SOURCE})
+    if(ARGN)
+      target_compile_definitions(${target} PRIVATE ${ARGN})
+    endif()
+  endfunction()
+
+  foreach(base IN LISTS PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_BASES)
+    set(base_macros_variable
+      "PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_MACROS_${base}")
+    papersoccer_compact_value_bfm_add_search_trace(
+      ${base} ${${base_macros_variable}})
+    foreach(profile IN LISTS PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILES)
+      set(profile_macro_variable
+        "PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_PROFILE_MACRO_${profile}")
+      papersoccer_compact_value_bfm_add_search_trace(
+        ${base}_${profile}
+        ${${base_macros_variable}}
+        ${${profile_macro_variable}})
+    endforeach()
+  endforeach()
+
+  add_executable(
+    papersoccer_codingame_compact_value_bfm_search_trace_modular
+    ${PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_SOURCE}
+    submissions/codingame/bots/compact_value_bfm/engine.cpp)
+  target_compile_definitions(
+    papersoccer_codingame_compact_value_bfm_search_trace_modular
+    PRIVATE COMPACT_VALUE_BFM_TRACE_MODULAR=1)
   add_executable(papersoccer_codingame_compact_value_bfm_rank4_gate
     submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp)
   add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_self_test
@@ -904,6 +971,82 @@ if(NOT EMSCRIPTEN)
     set_tests_properties(
       papersoccer_codingame_compact_value_bfm_feature_parity PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
+    add_test(NAME papersoccer_codingame_compact_value_bfm_search_variant_parity
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/search_variant_parity.py
+        --baseline
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_baseline>
+        --no-feature-sort-only
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_no_feature_sort_only>
+        --single-pass-selection-only
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_single_pass_selection_only>
+        --combined
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_combined>)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_search_variant_parity PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
+    foreach(base IN LISTS PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_BASES)
+      set(control
+        "papersoccer_codingame_compact_value_bfm_search_trace_${base}")
+      add_test(
+        NAME papersoccer_codingame_compact_value_bfm_state_evaluation_cache_parity_${base}
+        COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+          ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/state_evaluation_cache_parity.py
+          --baseline $<TARGET_FILE:${control}>
+          --cached
+          $<TARGET_FILE:${control}_state_evaluation_cache_v1>)
+      add_test(
+        NAME papersoccer_codingame_compact_value_bfm_progressive_widening_invariance_${base}
+        COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+          ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/progressive_widening_invariance.py
+          --baseline $<TARGET_FILE:${control}>
+          --widened
+          $<TARGET_FILE:${control}_progressive_widening_v1>)
+      add_test(
+        NAME papersoccer_codingame_compact_value_bfm_subtree_reuse_invariance_${base}
+        COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+          ${Python3_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/subtree_reuse_invariance.py
+          --baseline $<TARGET_FILE:${control}>
+          --reused $<TARGET_FILE:${control}_subtree_reuse_v1>)
+      set_tests_properties(
+        papersoccer_codingame_compact_value_bfm_state_evaluation_cache_parity_${base}
+        papersoccer_codingame_compact_value_bfm_progressive_widening_invariance_${base}
+        papersoccer_codingame_compact_value_bfm_subtree_reuse_invariance_${base}
+        PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
+    endforeach()
+    add_test(
+      NAME papersoccer_codingame_compact_value_bfm_profile_exclusion
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/search_profile_exclusion.py
+        --compiler ${CMAKE_CXX_COMPILER}
+        --include-dir
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_profile_exclusion PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 30)
+    add_test(
+      NAME papersoccer_codingame_compact_value_bfm_source_compaction_parity
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/source_compaction_parity.py
+        --modular
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_modular>
+        --generated
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_baseline>
+        --generated
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_no_feature_sort_only>
+        --generated
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_single_pass_selection_only>
+        --generated
+        $<TARGET_FILE:papersoccer_codingame_compact_value_bfm_search_trace_combined>)
+    set_tests_properties(
+      papersoccer_codingame_compact_value_bfm_source_compaction_parity
+      PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
     add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_support_tests
       COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE} -m unittest

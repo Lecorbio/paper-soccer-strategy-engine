@@ -289,6 +289,8 @@ void complete_turn_action_group_output_is_deterministic_and_bound() {
                   != std::string::npos &&
               first.find("\"parent_identity\":") != std::string::npos &&
               first.find("\"successors_exhaustive\":") != std::string::npos &&
+              first.find("\"teacher_ranking_profile\":\"standard-v1\"") !=
+                  std::string::npos &&
               first.find("\"successors\":[{") != std::string::npos,
           "The action-group row omitted an immutable binding or successor set.");
 }

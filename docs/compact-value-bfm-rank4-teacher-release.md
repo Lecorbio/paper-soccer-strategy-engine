@@ -194,3 +194,35 @@ the maintained lifecycle is:
   --ledger-root "$UPLOAD_ROOT" --agent-id AGENT_ID \
   --submission-id SUBMISSION_ID
 ```
+
+The first authorization is fixed to upload ordinal 1 and requires an empty
+campaign upload history. An ordinal greater than 1 is accepted only after a
+rejected live window and one exact challenger `additional-upload-authorized`
+capability for the newly qualified attempt. The release upload authorization
+binds that capability's sealed user authorization, rejected live reference,
+sanitized dynamic exclusion, ledger-event hash, and upload ordinal. It must
+still be unused when the release authorization is first created; a different attempt,
+missing prior ordinal, altered live binding, or already-recorded upload fails
+closed. Production uses exactly
+`CAMPAIGN/release/attempt-NNN/upload`; alternate authorization roots are
+rejected, so two outstanding one-click capabilities cannot be minted for one
+attempt. Before publishing either file, authorization appends a unique
+`upload-authorization-claimed` campaign event. Both immutable files bind that
+claim hash; after validation, `upload-authorized` binds their exact bytes before
+the function returns. Resume repairs a crash at any boundary without minting a
+new time or token, including reconstructing a missing input envelope from the
+claim-bound capability.
+
+For trained attempts, release re-derives the active search-throughput profile,
+standard base, treatment flag, and exact compile-time macro roster from the
+sealed teacher-training admission. The final seven-slot deployment rewrite
+must remain below 95,000 ASCII bytes and retain at least 2,000 bytes of spare
+capacity. Attempt zero remains subject to the hard 95,000-byte limit because
+its accepted pre-compaction source must stay byte-exact.
+
+The production release preflight likewise has one fixed root,
+`CAMPAIGN/release/attempt-NNN/release-preflight`, and holds the shared campaign
+heavy-stage lease through compilation, parity, and timing. Its plan, claim,
+receipt, promotion, and release evidence bind the attempt's frozen build-source
+closure; injected command, parity, timing, or selection hooks are
+nonproduction-test-only.

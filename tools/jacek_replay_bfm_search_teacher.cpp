@@ -41,6 +41,9 @@ constexpr std::string_view kTerminationAuditSchema =
     "papersoccer.jacek-replay-search-termination-audit.v2";
 constexpr std::string_view kBoundaryIdentityAlgorithm =
     "sha256-mover-canonical-boundary-v1";
+constexpr std::string_view kStandardTeacherRankingProfile = "standard-v1";
+constexpr std::string_view kHard5Pct2MTeacherRankingProfile =
+    "hardest-5pct-2m-v1";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
@@ -57,6 +60,8 @@ struct Options {
   bool audit_terminations{};
   bool emit_action_groups{};
   std::string source_bundle_body_sha256{};
+  std::string teacher_ranking_profile{
+      std::string(kStandardTeacherRankingProfile)};
 };
 
 struct PositionRecord {
@@ -180,6 +185,7 @@ Options parse_options(int argc, char **argv) {
              "--model PATH --model-sha256 HEX --campaign-id ID "
              "[--tree-nodes N] [--time-ms N] [--max-actions N] "
              "[--max-partial-paths N] [--exploration C] [--fpu V] "
+             "[--teacher-ranking-profile standard-v1|hardest-5pct-2m-v1] "
              "[--audit-terminations | --emit-action-groups "
              "--source-bundle-body-sha256 HEX]\n"
              "stdin TSV header: "
@@ -203,6 +209,8 @@ Options parse_options(int argc, char **argv) {
       options.campaign_id = value;
     } else if (option == "--source-bundle-body-sha256") {
       options.source_bundle_body_sha256 = value;
+    } else if (option == "--teacher-ranking-profile") {
+      options.teacher_ranking_profile = value;
     } else if (option == "--tree-nodes" || option == "--nodes") {
       options.max_tree_nodes =
           parse_unsigned<std::size_t>(value, option);
@@ -228,12 +236,27 @@ Options parse_options(int argc, char **argv) {
     throw std::invalid_argument(
         "--model-sha256 must be 64 lowercase hexadecimal characters");
   }
-  if (options.max_tree_nodes < 2U ||
-      options.max_tree_nodes > 1'000'000U || options.max_actions == 0U ||
-      options.max_actions > 250U || options.max_partial_paths == 0U ||
+  const bool standard_profile =
+      options.teacher_ranking_profile == kStandardTeacherRankingProfile;
+  const bool hard_5pct_2m_profile =
+      options.teacher_ranking_profile == kHard5Pct2MTeacherRankingProfile;
+  if ((!standard_profile && !hard_5pct_2m_profile) ||
+      options.max_tree_nodes < 2U ||
+      (standard_profile && options.max_tree_nodes > 1'000'000U) ||
+      options.max_actions == 0U || options.max_actions > 250U ||
+      options.max_partial_paths == 0U ||
       options.max_partial_paths > 50'000U || options.exploration < 0.0 ||
       options.fpu < -1.0 || options.fpu > 1.0) {
     throw std::invalid_argument("invalid search-teacher configuration");
+  }
+  if (hard_5pct_2m_profile &&
+      (options.max_tree_nodes != 2'000'000U ||
+       options.max_actions != 250U ||
+       options.max_partial_paths != 50'000U || options.exploration != 0.5 ||
+       options.fpu != 0.5 || options.max_time_ms != 0U ||
+       !options.emit_action_groups || options.audit_terminations)) {
+    throw std::invalid_argument(
+        "hardest-5pct-2m-v1 requires the registered fixed-work action-group budget");
   }
   if ((!options.audit_terminations && options.max_time_ms != 0U) ||
       (options.audit_terminations && options.max_time_ms > 60'000U)) {
@@ -807,7 +830,9 @@ void write_action_group(
       << ",\"max_partial_paths\":" << options.max_partial_paths
       << ",\"exploration\":"
       << std::setprecision(std::numeric_limits<double>::max_digits10)
-      << options.exploration << ",\"fpu\":" << options.fpu << '}'
+      << options.exploration << ",\"fpu\":" << options.fpu
+      << ",\"teacher_ranking_profile\":"
+      << json_string(options.teacher_ranking_profile) << '}'
       << ",\"source_binding\":{\"campaign_id\":"
       << json_string(options.campaign_id)
       << ",\"position_id\":" << json_string(record.position_id)
@@ -1010,6 +1035,7 @@ int run(int argc, char **argv, std::istream &input, std::ostream &output) {
   config.max_partial_paths = options.max_partial_paths;
   config.exploration = options.exploration;
   config.fpu = options.fpu;
+  config.offline_exhaustive_root_actions = options.emit_action_groups;
   ps::JacekReplayBfmBot bot(std::move(config));
   validate_model_identity(bot.model_sha256(), options.model_sha256);
   std::vector<PositionRecord> records = read_records(input);

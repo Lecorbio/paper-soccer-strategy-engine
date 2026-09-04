@@ -16,6 +16,32 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 CONFIG = HERE / "submission.json"
 OPERATOR_CHARACTERS = frozenset("+-*/%<>=!&|^~?.:#")
+PRIVATE_IDENTIFIERS = (
+    "config_", "nodes_", "stats_", "output_", "root_", "deadline_",
+    "model_", "emergency_", "hidden_one_", "hidden_two_", "scale_one_",
+    "scale_two_", "scale_three_", "payload_sha256_", "weights_", "xs_",
+    "ys_", "arcs_", "degrees_", "rotated_vertices_", "rotated_edges_",
+    "boundaries_", "next_order_", "cap_dropped_", "BfmSearch",
+    "TurnGenerator", "SplitMix64", "Partial", "Node", "RootTranscript",
+    "CachedValue", "append", "set_edge", "valid_sha256", "rotate_right",
+    "base64_value", "decode_base64", "canonical_direction",
+    "canonical_action_less", "sort_canonical_arcs", "ordered_arcs",
+    "analyze_turn", "exact_goal_path", "classify", "boundary_coordinate",
+    "permitted_edge", "direction_for", "retain_goal", "retain_witnesses",
+    "remember_expansion", "reuse_expansion", "reuse_slot",
+    "selectable_child_count", "evaluate_child", "budget_available",
+    "select_descendant", "select_path", "first_child", "child_index",
+    "child_perspective", "selected_score", "selected_order",
+    "cache_", "reuse_", "traversal_closed",
+)
+PRIVATE_ALIASES = {
+    identifier: f"{prefix}{suffix}"
+    for identifier, (prefix, suffix) in zip(
+        PRIVATE_IDENTIFIERS,
+        ((prefix, suffix) for prefix in "zyx" for suffix in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        strict=False,
+    )
+}
 
 
 def atomic_write(path: pathlib.Path, payload: bytes) -> None:
@@ -133,6 +159,54 @@ def compact_cpp_code(source: str) -> str:
     return "\n".join(part for part in parts if part) + "\n"
 
 
+def minify_private_identifiers(source: str) -> str:
+    """Shorten only deployment-private C++ names without touching literals."""
+    output: list[str] = []
+    present: set[str] = set()
+    index = 0
+    while index < len(source):
+        current = source[index]
+        numeric_separator = (
+            current == "'" and index > 0 and source[index - 1].isdigit()
+            and index + 1 < len(source) and source[index + 1].isdigit()
+        )
+        if current in {'"', "'"} and not numeric_separator:
+            quote = current
+            begin = index
+            index += 1
+            escaped = False
+            while index < len(source):
+                character = source[index]
+                index += 1
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == quote:
+                    break
+            else:
+                raise ValueError("unterminated C++ literal during identifier minification")
+            output.append(source[begin:index])
+            continue
+        if current.isalpha() or current == "_":
+            end = index + 1
+            while end < len(source) and (
+                source[end].isalnum() or source[end] == "_"
+            ):
+                end += 1
+            identifier = source[index:end]
+            present.add(identifier)
+            output.append(PRIVATE_ALIASES.get(identifier, identifier))
+            index = end
+            continue
+        output.append(current)
+        index += 1
+    collisions = set(PRIVATE_ALIASES.values()) & (present - set(PRIVATE_ALIASES))
+    if collisions:
+        raise ValueError(f"private identifier alias collision: {sorted(collisions)}")
+    return "".join(output)
+
+
 def render(*, model_header: bytes | None = None) -> tuple[pathlib.Path, bytes]:
     config = json.loads(CONFIG.read_text())
     if config.get("schema") != "papersoccer.codingame-submission.v1":
@@ -181,7 +255,7 @@ def render(*, model_header: bytes | None = None) -> tuple[pathlib.Path, bytes]:
     banner = "\n#if defined(__GNUG__) && !defined(__clang__)\n#pragma GCC optimize(\"O3\")\n#endif\n"
     includes = "\n".join(f"#include <{header}>" for header in sorted(system_headers))
     readable = f"{banner}{includes}\n\n" + "\n\n".join(bodies) + "\n"
-    payload = compact_cpp_code(readable).encode("ascii")
+    payload = minify_private_identifiers(compact_cpp_code(readable)).encode("ascii")
     limit = int(config.get("source_limit", 95_000))
     if len(payload) >= limit:
         raise ValueError(f"generated source has {len(payload)} characters; limit is {limit}")

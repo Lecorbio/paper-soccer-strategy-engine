@@ -64,6 +64,25 @@ def strict_summary(*, wins=527, color0=267, color1=260, failures=0):
     }
 
 
+def clean_process_audit(**changes):
+    value = {
+        "auditor_pid": 123,
+        "process_nice": 0,
+        "logical_cpu_count": 8,
+        "load_average": {
+            "one_minute": 1.0,
+            "five_minutes": 1.5,
+            "fifteen_minutes": 2.0,
+        },
+        "one_minute_load_limit_exclusive": 8.0,
+        "competing_actual_clock_processes": [],
+        "ps_stdout_sha256": "a" * 64,
+        "ps_stderr_sha256": "b" * 64,
+    }
+    value.update(changes)
+    return value
+
+
 class PrepareFixture:
     def __init__(self, root: pathlib.Path, *, attempt: int = 0):
         self.root = root
@@ -81,7 +100,11 @@ class PrepareFixture:
         self.gate = root / "rank4-gate"
         self.gate.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
         self.gate.chmod(0o755)
-        self.campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
+        self.campaign = write(
+            root / "campaign.json", dual.challenger.PLAN_SCHEMA,
+            test_only_nonproduction=True,
+            production_allowlist_enforced=False,
+        )
         self.authorization_path = write(
             root / "authorization.json",
             dual.challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA,
@@ -168,11 +191,14 @@ class PrepareFixture:
     def ci_validator(self, _path, expected_head):
         return {"head_sha": expected_head, "conclusion": "success"}
 
-    def prepare(self, *, generalized_release: bool = False):
+    def prepare(
+        self, *, generalized_release: bool = False,
+        output_root: pathlib.Path | None = None,
+    ):
         return dual.prepare_execution(
             authorization_path=self.authorization_path,
             campaign_plan_path=self.campaign,
-            output_root=self.output,
+            output_root=self.output if output_root is None else output_root,
             deployment_preflight_path=(
                 None if generalized_release else self.preflight_path
             ),
@@ -186,6 +212,7 @@ class PrepareFixture:
             authorization_validator=self.authorization_validator,
             preflight_validator=self.preflight_validator,
             ci_validator=self.ci_validator,
+            allow_injected_test_evidence=True,
         )
 
 
@@ -305,6 +332,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     authorization_validator=fixture.authorization_validator,
                     preflight_validator=fixture.preflight_validator,
                     ci_validator=fixture.ci_validator,
+                    allow_injected_test_evidence=True,
                 )
                 self.assertEqual(state["plan"]["attempt"], attempt)
                 self.assertEqual(
@@ -312,6 +340,19 @@ class DualFinalExecutionTests(unittest.TestCase):
                     q.sha256_file(fixture.source),
                 )
                 self.assertTrue(state["plan"]["compile_binding"]["candidate_embedded"])
+                self.assertNotEqual(
+                    state["plan"]["gate"]["path"],
+                    state["plan"]["gate_source"]["path"],
+                )
+                self.assertEqual(
+                    state["plan"]["gate"]["sha256"],
+                    state["plan"]["gate_source"]["sha256"],
+                )
+                self.assertEqual(
+                    pathlib.Path(state["plan"]["gate"]["path"]).stat().st_mode
+                    & 0o222,
+                    0,
+                )
                 self.assertEqual(
                     state["plan"]["preflight_kind"],
                     "rank4-teacher-release" if attempt > 0
@@ -319,6 +360,130 @@ class DualFinalExecutionTests(unittest.TestCase):
                 )
                 self.assertEqual(state["plan"]["gate_contract"]["workers_per_gate"], 4)
                 self.assertEqual(state["plan"]["gate_contract"]["shards_per_gate"], 100)
+                self.assertEqual(
+                    state["plan"]["root"],
+                    str(fixture.authorization_path.resolve().parent / "execution"),
+                )
+                self.assertTrue(
+                    state["plan"]["execution_identity"]["one_execution_root"]
+                )
+                self.assertEqual(
+                    state["plan"]["campaign_heavy_stage_lock"],
+                    str(root := fixture.campaign.resolve().parent / ".rank4-teacher-heavy-stage.lock"),
+                )
+                self.assertEqual(root.parent, fixture.root.resolve())
+
+    def test_authorization_has_one_deterministic_execution_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary))
+            with self.assertRaisesRegex(
+                dual.DualFinalError, "deterministic campaign-attempt execution root"
+            ):
+                fixture.prepare(output_root=fixture.root / "another-execution")
+            plan_path = fixture.prepare()
+            plan = q.load_sealed(plan_path, dual.PLAN_SCHEMA)
+            self.assertEqual(
+                plan["execution_identity"],
+                dual._execution_identity(
+                    campaign_plan_path=fixture.campaign,
+                    authorization_path=fixture.authorization_path,
+                    attempt=0, root=fixture.output,
+                ),
+            )
+
+    def test_production_rejects_all_injected_prepare_and_run_callables(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
+            production_context = {
+                "inputs": {"production_allowlist_enforced": True},
+                "plan": {"outputs": {"dual_final": str(root / "dual-final")}},
+            }
+            noop = lambda *_args, **_kwargs: {}
+            with mock.patch.object(
+                dual.challenger, "validate_campaign",
+                return_value=production_context,
+            ), self.assertRaises(dual.DualFinalError) as caught:
+                dual.prepare_execution(
+                    authorization_path=root / "authorization.json",
+                    campaign_plan_path=campaign,
+                    output_root=root / "execution",
+                    deployment_preflight_path=root / "preflight.json",
+                    ci_path=root / "ci.json", rank4_source=root / "rank4.cpp",
+                    exclusion_paths=[], created_at_utc="2026-09-04T00:00:00Z",
+                    authorization_validator=noop,
+                    preflight_validator=noop, ci_validator=noop,
+                    fingerprint_loader=noop,
+                    allow_injected_test_evidence=True,
+                )
+            for name in (
+                "authorization_validator", "preflight_validator",
+                "ci_validator", "fingerprint_loader",
+            ):
+                self.assertIn(name, str(caught.exception))
+
+            plan_path = write(
+                root / "execution-plan.json", dual.PLAN_SCHEMA,
+                production=True,
+            )
+            with self.assertRaises(dual.DualFinalError) as caught:
+                dual.materialize_banks(
+                    plan_path, claimed_at_utc="2026-09-04T00:00:00Z",
+                    entropy=noop, bank_generator=noop, state_validator=noop,
+                    governance_preparer=noop,
+                    allow_injected_test_evidence=True,
+                )
+            for name in (
+                "entropy", "bank_generator", "state_validator",
+                "governance_preparer",
+            ):
+                self.assertIn(name, str(caught.exception))
+
+            with self.assertRaises(dual.DualFinalError) as caught:
+                dual.run_dual_final(
+                    plan_path, launched_at_utc="2026-09-04T00:00:00Z",
+                    runner=noop, result_validator=noop, clock=noop,
+                    state_validator=noop, result_recorder=noop,
+                    dual_completer=noop, executor_factory=noop,
+                    process_auditor=noop,
+                    allow_injected_test_evidence=True,
+                )
+            for name in (
+                "runner", "result_validator", "clock", "state_validator",
+                "result_recorder", "dual_completer", "executor_factory",
+                "process_auditor",
+            ):
+                self.assertIn(name, str(caught.exception))
+
+    def test_nonproduction_injection_requires_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            plan_path = write(
+                pathlib.Path(temporary) / "execution-plan.json",
+                dual.PLAN_SCHEMA, production=False,
+            )
+            with self.assertRaisesRegex(
+                dual.DualFinalError, "without explicit test opt-in"
+            ):
+                dual.materialize_banks(
+                    plan_path, claimed_at_utc="2026-09-04T00:00:00Z",
+                    state_validator=lambda _path: {},
+                )
+            forged_state = {
+                "path": plan_path,
+                "plan": {
+                    **q.load_sealed(plan_path, dual.PLAN_SCHEMA),
+                    "production": True,
+                    "root": str(pathlib.Path(temporary) / "production-root"),
+                },
+            }
+            with self.assertRaisesRegex(
+                dual.DualFinalError, "another execution identity"
+            ):
+                dual.materialize_banks(
+                    plan_path, claimed_at_utc="2026-09-04T00:00:00Z",
+                    state_validator=lambda _path: forged_state,
+                    allow_injected_test_evidence=True,
+                )
 
     def test_prepare_rejects_incomplete_exclusions_and_candidate_change(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -337,6 +502,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     authorization_validator=fixture.authorization_validator,
                     preflight_validator=fixture.preflight_validator,
                     ci_validator=fixture.ci_validator,
+                    allow_injected_test_evidence=True,
                 )
 
     def test_materialization_orders_a_then_b_and_requires_disjoint_fresh_banks(self):
@@ -360,6 +526,17 @@ class DualFinalExecutionTests(unittest.TestCase):
                 "path": plan_file,
                 "plan": {
                     "root": str(root), "attempt": 2,
+                    "execution_identity": {
+                        "campaign_plan_body_sha256": q.load_sealed(
+                            campaign, dual.challenger.PLAN_SCHEMA
+                        )["body_sha256"],
+                        "authorization_body_sha256": q.load_sealed(
+                            authorization,
+                            dual.challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA,
+                        )["body_sha256"],
+                        "attempt": 2, "root": str(root),
+                        "one_execution_root": True,
+                    },
                     "authorization": q.artifact_reference(
                         authorization, dual.challenger.DUAL_FINAL_AUTHORIZATION_SCHEMA
                     ),
@@ -368,6 +545,10 @@ class DualFinalExecutionTests(unittest.TestCase):
                     ),
                 },
             }
+            plan_file.write_bytes(q.canonical_json_bytes(q.seal({
+                "schema": dual.PLAN_SCHEMA, **state["plan"],
+            })))
+            state["plan"] = q.load_sealed(plan_file, dual.PLAN_SCHEMA)
             first_bank_path = root / "gate-a.bank"
             second_bank_path = root / "gate-b.bank"
             first_bank_path.write_bytes(b"a")
@@ -391,8 +572,12 @@ class DualFinalExecutionTests(unittest.TestCase):
                     "seed": {"seed_256_hex": "01" * 32}, "bank": bank_a,
                     "bank_path": first_bank_path,
                     "fingerprint_exclusion_path": first_exclusion,
+                    "path": write(
+                        root / "gate-a.receipt.json", dual.BANK_RECEIPT_SCHEMA
+                    ),
                     "receipt": {
                         "protected_bank": first_record,
+                        "gate_bank": first_record,
                         "exclusion_sources": [],
                     },
                 },
@@ -400,8 +585,12 @@ class DualFinalExecutionTests(unittest.TestCase):
                     "seed": {"seed_256_hex": "02" * 32}, "bank": bank_b,
                     "bank_path": second_bank_path,
                     "fingerprint_exclusion_path": second_exclusion,
+                    "path": write(
+                        root / "gate-b.receipt.json", dual.BANK_RECEIPT_SCHEMA
+                    ),
                     "receipt": {
                         "protected_bank": second_record,
+                        "gate_bank": second_record,
                         "exclusion_sources": [first_record],
                     },
                 },
@@ -426,6 +615,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     plan_file, claimed_at_utc="2026-09-04T00:01:00Z",
                     state_validator=lambda _path: state,
                     governance_preparer=prepare,
+                    allow_injected_test_evidence=True,
                 )
             self.assertEqual(result, dual_reference)
             self.assertEqual(order, ["gate-a", "gate-b"])
@@ -444,6 +634,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     plan_file, claimed_at_utc="2026-09-04T00:01:00Z",
                     state_validator=lambda _path: state,
                     governance_preparer=prepare,
+                    allow_injected_test_evidence=True,
                 )
             states["gate-b"]["seed"] = {"seed_256_hex": "02" * 32}
             states["gate-b"]["bank"] = bank_a
@@ -456,6 +647,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     plan_file, claimed_at_utc="2026-09-04T00:01:00Z",
                     state_validator=lambda _path: state,
                     governance_preparer=prepare,
+                    allow_injected_test_evidence=True,
                 )
 
     def test_started_bank_without_receipt_is_terminal(self):
@@ -471,7 +663,217 @@ class DualFinalExecutionTests(unittest.TestCase):
                     claimed_at_utc="2026-09-04T00:00:00Z",
                     entropy=lambda _size: b"x" * 32,
                     bank_generator=lambda **_kwargs: [],
+                    allow_injected_test_evidence=True,
                 )
+
+    def test_abandonment_recovers_fingerprints_when_bank_receipt_was_interrupted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary))
+            plan_path = fixture.prepare()
+            state = dual.validate_execution_plan(
+                plan_path,
+                authorization_validator=fixture.authorization_validator,
+                preflight_validator=fixture.preflight_validator,
+                ci_validator=fixture.ci_validator,
+                allow_injected_test_evidence=True,
+            )
+            dual._materialize_one(
+                state, gate_id="gate-a",
+                claimed_at_utc="2026-09-04T00:01:00Z",
+                entropy=lambda _size: b"x" * 32,
+                bank_generator=dual.openings.generate_openings,
+                allow_injected_test_evidence=True,
+            )
+            gate_root = pathlib.Path(state["plan"]["root"]) / "gates/gate-a"
+            (gate_root / "bank-receipt.json").unlink()
+            (gate_root / "fingerprint-exclusion.json").unlink()
+            derived = dual._derive_protected_abortion(
+                state, ensure_exclusions=True
+            )
+            self.assertEqual(derived["protected_stage"], "bank-materialization")
+            self.assertEqual(derived["gate_id"], "gate-a")
+            self.assertEqual(len(derived["fingerprint_exclusions"]), 1)
+            exclusion_path = pathlib.Path(
+                derived["fingerprint_exclusions"][0]["path"]
+            )
+            exclusion = q.load_sealed(
+                exclusion_path, dual.FINGERPRINT_EXCLUSION_SCHEMA
+            )
+            self.assertEqual(exclusion["fingerprint_count"], 500)
+            self.assertFalse(exclusion["contains_transcripts"])
+
+    def test_prepared_resume_binds_the_exact_recorded_banks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
+            plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+            dual_reference = write(
+                root / "dual-reference.json",
+                dual.challenger.DUAL_FINAL_REFERENCE_SCHEMA,
+            )
+            state = {
+                "path": plan_path,
+                "plan": {
+                    "root": str(root), "attempt": 3,
+                    "campaign_plan": q.artifact_reference(
+                        campaign, dual.challenger.PLAN_SCHEMA
+                    ),
+                    "execution_identity": {"attempt": 3},
+                },
+            }
+            bank_states = {}
+            exclusions = {}
+            expected_banks = {}
+            governance_gates = []
+            for index, gate_id in enumerate(dual.GATE_IDS):
+                protected = root / f"{gate_id}.protected"
+                protected.write_bytes(bytes([index + 1]))
+                gate_bank = root / f"{gate_id}.tsv"
+                gate_bank.write_bytes(bytes([index + 11]))
+                receipt_path = write(
+                    root / f"{gate_id}.receipt.json", dual.BANK_RECEIPT_SCHEMA
+                )
+                fingerprint = write(
+                    root / f"{gate_id}.fingerprints.json",
+                    dual.FINGERPRINT_EXCLUSION_SCHEMA,
+                )
+                receipt = {
+                    "protected_bank": dual._record(protected),
+                    "gate_bank": dual._record(gate_bank),
+                }
+                bank_states[gate_id] = {
+                    "path": receipt_path, "receipt": receipt,
+                    "fingerprint_exclusion_path": fingerprint,
+                }
+                exclusions[gate_id] = q.artifact_reference(
+                    fingerprint, dual.FINGERPRINT_EXCLUSION_SCHEMA
+                )
+                expected_banks[gate_id] = {
+                    "bank_receipt": q.artifact_reference(
+                        receipt_path, dual.BANK_RECEIPT_SCHEMA
+                    ),
+                    **receipt,
+                }
+                governance_gates.append({
+                    "gate_id": gate_id, "bank": receipt["protected_bank"]
+                })
+            prepared_path = write(
+                root / "prepared.json", dual.PREPARED_SCHEMA,
+                namespace=dual.NAMESPACE, campaign_id=dual.CAMPAIGN_ID,
+                attempt=3,
+                execution_plan=q.artifact_reference(plan_path, dual.PLAN_SCHEMA),
+                execution_identity={"attempt": 3},
+                dual_final_reference=q.artifact_reference(
+                    dual_reference, dual.challenger.DUAL_FINAL_REFERENCE_SCHEMA
+                ),
+                fingerprint_exclusions=exclusions, banks=expected_banks,
+                candidate_unchanged=True, independent_banks=True,
+                gate_b_excludes_gate_a=True, games_launched=0,
+            )
+            dual_state = {"plan": {"gates": governance_gates}}
+            with mock.patch.object(
+                dual, "validate_bank_receipt",
+                side_effect=lambda _state, *, gate_id: bank_states[gate_id],
+            ), mock.patch.object(
+                dual.challenger, "validate_dual_final", return_value=dual_state,
+            ):
+                self.assertEqual(dual._load_prepared(state)[0], dual_reference.resolve())
+                forged = q.load_sealed(prepared_path, dual.PREPARED_SCHEMA)
+                forged = {key: value for key, value in forged.items() if key != "body_sha256"}
+                forged["banks"] = {
+                    **forged["banks"],
+                    "gate-b": {
+                        **forged["banks"]["gate-b"],
+                        "protected_bank": forged["banks"]["gate-a"]["protected_bank"],
+                    },
+                }
+                prepared_path.write_bytes(q.canonical_json_bytes(q.seal(forged)))
+                with self.assertRaisesRegex(
+                    dual.DualFinalError, "prepared receipt changed"
+                ):
+                    dual._load_prepared(state)
+
+    def test_shared_heavy_stage_lock_and_sealed_prelaunch_audit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
+            execution = root / "execution"
+            execution.mkdir()
+            plan_path = write(execution / "execution-plan.json", dual.PLAN_SCHEMA)
+            gate = root / "rank4-gate"
+            gate.write_text("gate", encoding="ascii")
+            receipt_path = write(
+                execution / "gate-a.receipt.json", dual.BANK_RECEIPT_SCHEMA
+            )
+            state = {
+                "path": plan_path,
+                "plan": {
+                    "root": str(execution), "attempt": 2,
+                    "campaign_plan": q.artifact_reference(
+                        campaign, dual.challenger.PLAN_SCHEMA
+                    ),
+                    "campaign_heavy_stage_lock": str(
+                        root / ".rank4-teacher-heavy-stage.lock"
+                    ),
+                    "gate": {"path": str(gate)},
+                },
+            }
+            bank_state = {"path": receipt_path}
+            with dual._exclusive_heavy_stage_lock(state) as lock:
+                with self.assertRaisesRegex(
+                    dual.DualFinalError, "another campaign heavy stage"
+                ):
+                    with dual._exclusive_heavy_stage_lock(state):
+                        pass
+                audit_path = dual._seal_prelaunch_audit(
+                    state, bank_state=bank_state, gate_id="gate-a",
+                    lock_evidence=lock,
+                    process_auditor=lambda _binary: clean_process_audit(),
+                    clock=lambda: "2026-09-04T00:00:00Z",
+                )
+            audit = dual._validate_prelaunch_audit(
+                audit_path, state=state, bank_state=bank_state,
+                gate_id="gate-a",
+            )
+            self.assertEqual(audit["workers"], 4)
+            self.assertEqual(audit["threads_per_worker"], 1)
+            self.assertEqual(
+                audit["campaign_heavy_stage_lock"]["path"],
+                str((root / ".rank4-teacher-heavy-stage.lock").resolve()),
+            )
+
+    def test_prelaunch_audit_rejects_nice_load_and_competing_gate_processes(self):
+        for changed in (
+            {"process_nice": 1},
+            {"load_average": {
+                "one_minute": 8.0, "five_minutes": 1.0,
+                "fifteen_minutes": 1.0,
+            }},
+            {"competing_actual_clock_processes": [{"pid": 999}]},
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                dual.DualFinalError, "not clean"
+            ):
+                dual._validate_process_audit(clean_process_audit(**changed))
+
+        process = __import__("subprocess").CompletedProcess(
+            [], 0,
+            stdout=(
+                "99999 1 0 python compact_value_bfm_discrete_v3_recovery_runner.py\n"
+            ),
+            stderr="",
+        )
+        with mock.patch.object(dual.subprocess, "run", return_value=process), \
+                mock.patch.object(dual.os, "getpriority", return_value=0), \
+                mock.patch.object(dual.os, "getloadavg", return_value=(1, 1, 1)), \
+                mock.patch.object(dual.os, "cpu_count", return_value=8):
+            observed = dual._default_prelaunch_process_audit(pathlib.Path("/gate"))
+        self.assertEqual(
+            [item["pid"] for item in observed["competing_actual_clock_processes"]],
+            [99999],
+        )
+        with self.assertRaisesRegex(dual.DualFinalError, "not clean"):
+            dual._validate_process_audit(observed)
 
     def test_started_shard_without_receipt_is_terminal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -484,6 +886,345 @@ class DualFinalExecutionTests(unittest.TestCase):
                     state, {"binding_path": root / "binding.json"},
                     gate_id="gate-a", result_validator=lambda *_a, **_k: {},
                 )
+
+    def test_spent_shard_derives_metric_free_abort_without_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+            binding_path = write(
+                root / "gate-binding.json", q.GATE_BINDING_SCHEMA,
+                namespace=q.NAMESPACE,
+                candidate={"sha256": "1" * 64},
+                opponent={"sha256": "2" * 64},
+                harness={"sha256": "3" * 64},
+                bank={"sha256": "4" * 64},
+            )
+            binding = q.load_sealed(binding_path, q.GATE_BINDING_SCHEMA)
+            state = {
+                "path": plan_path,
+                "fingerprints": set(),
+                "plan": {
+                    "root": str(root), "attempt": 1,
+                    "uncontended_timing": {},
+                },
+            }
+            write(root / "prepared.json", dual.PREPARED_SCHEMA)
+            ledger = root / "gates/gate-a/ledger"
+            q.start_final_shard(
+                ledger, binding_path=binding_path, index=0,
+                started_at_utc="2026-09-04T00:00:00Z",
+            )
+            raw = ledger / "raw/shard-000.json"
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_bytes(b"partial")
+            bank_state = {
+                "binding_path": binding_path,
+                "binding": binding,
+            }
+            with (
+                mock.patch.object(
+                    dual, "_materialized_fingerprint_exclusions",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    dual, "validate_bank_receipt", return_value=bank_state
+                ),
+            ):
+                derived = dual._derive_protected_abortion(
+                    state, ensure_exclusions=False
+                )
+            self.assertEqual(derived["protected_stage"], "shard-execution")
+            self.assertEqual(derived["gate_id"], "gate-a")
+            self.assertEqual(derived["shard_index"], 0)
+            self.assertIsNotNone(derived["spent_claim"])
+            self.assertEqual(derived["partial_raw"], dual._record(raw))
+
+    def test_protected_abort_receipt_is_idempotent_and_calls_governance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
+            execution_root = root / "execution"
+            execution_root.mkdir()
+            source_binding = write(
+                root / "source-binding.json", q.SOURCE_BINDING_SCHEMA
+            )
+            gate = root / "gate"
+            gate.write_text("#!/bin/sh\n", encoding="ascii")
+            plan_path = execution_root / "execution-plan.json"
+            plan = {
+                "schema": dual.PLAN_SCHEMA,
+                "root": str(execution_root),
+                "attempt": 2,
+                "production": False,
+                "campaign_plan": q.artifact_reference(
+                    campaign, dual.challenger.PLAN_SCHEMA
+                ),
+                "campaign_heavy_stage_lock": str(
+                    root / ".rank4-teacher-heavy-stage.lock"
+                ),
+                "execution_identity": {"attempt": 2},
+                "source_binding": q.artifact_reference(
+                    source_binding, q.SOURCE_BINDING_SCHEMA
+                ),
+                "candidate": {
+                    "runtime": {"sha256": "1" * 64},
+                    "source": {"sha256": "2" * 64},
+                },
+                "candidate_commit": "3" * 40,
+                "gate": {"path": str(gate.resolve())},
+            }
+            q.write_sealed(plan_path, plan)
+            loaded = q.load_sealed(plan_path, dual.PLAN_SCHEMA)
+            state = {"path": plan_path, "plan": loaded}
+            derived = {
+                "protected_stage": "shard-execution",
+                "gate_id": "gate-a", "shard_index": 0,
+                "spent_claim": None,
+                "partial_raw": None, "invalid_receipt": None,
+                "fingerprint_exclusions": [],
+            }
+            calls = []
+            def record(*args, **kwargs):
+                calls.append((args, kwargs))
+                return {"event": "protected-stage-aborted"}
+            state_loader = lambda _path: state
+            auditor = lambda _gate: clean_process_audit()
+            with mock.patch.object(
+                dual, "_derive_protected_abortion", return_value=derived
+            ):
+                first = dual.abandon_protected_stage(
+                    plan_path, aborted_at_utc="2026-09-04T00:00:01Z",
+                    state_validator=state_loader,
+                    governance_recorder=record,
+                    process_auditor=auditor,
+                    allow_injected_test_evidence=True,
+                )
+                second = dual.abandon_protected_stage(
+                    plan_path, aborted_at_utc="2026-09-04T00:00:02Z",
+                    state_validator=state_loader,
+                    governance_recorder=record,
+                    process_auditor=auditor,
+                    allow_injected_test_evidence=True,
+                )
+            self.assertEqual(first, second)
+            receipt = q.load_sealed(first, dual.PROTECTED_STAGE_ABORTION_SCHEMA)
+            self.assertFalse(receipt["partial_metrics_read"])
+            self.assertFalse(receipt["retry_authorized"])
+            self.assertTrue(receipt["candidate_rejected"])
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(
+                calls[1][1]["created_at_utc"], receipt["aborted_at_utc"]
+            )
+
+    def test_protected_abandonment_rejects_an_active_gate_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary))
+            plan_path = fixture.prepare()
+            state = dual.validate_execution_plan(
+                plan_path,
+                authorization_validator=fixture.authorization_validator,
+                preflight_validator=fixture.preflight_validator,
+                ci_validator=fixture.ci_validator,
+                allow_injected_test_evidence=True,
+            )
+            lock_path = pathlib.Path(
+                state["plan"]["campaign_heavy_stage_lock"]
+            )
+            descriptor = dual.os.open(
+                lock_path, dual.os.O_CREAT | dual.os.O_RDWR, 0o600
+            )
+            dual.fcntl.flock(
+                descriptor, dual.fcntl.LOCK_EX | dual.fcntl.LOCK_NB
+            )
+            derive = mock.Mock()
+            try:
+                with (
+                    mock.patch.object(
+                        dual, "_derive_protected_abortion", derive
+                    ),
+                    self.assertRaisesRegex(
+                        dual.DualFinalError,
+                        "another campaign heavy stage is active",
+                    ),
+                ):
+                    dual.abandon_protected_stage(
+                        plan_path,
+                        aborted_at_utc="2026-09-04T00:00:01Z",
+                        state_validator=lambda _path: state,
+                        governance_recorder=lambda *_args, **_kwargs: {},
+                        allow_injected_test_evidence=True,
+                    )
+            finally:
+                dual.fcntl.flock(descriptor, dual.fcntl.LOCK_UN)
+                dual.os.close(descriptor)
+            derive.assert_not_called()
+            self.assertFalse(
+                (pathlib.Path(state["plan"]["root"])
+                 / "protected-stage-aborted.json").exists()
+            )
+            active_process = clean_process_audit(
+                competing_actual_clock_processes=[{
+                    "pid": 999, "ppid": 1, "nice": 0,
+                    "command_sha256": "f" * 64,
+                }]
+            )
+            derive = mock.Mock()
+            with (
+                mock.patch.object(dual, "_derive_protected_abortion", derive),
+                self.assertRaisesRegex(dual.DualFinalError, "not clean"),
+            ):
+                dual.abandon_protected_stage(
+                    plan_path,
+                    aborted_at_utc="2026-09-04T00:00:02Z",
+                    state_validator=lambda _path: state,
+                    governance_recorder=lambda *_args, **_kwargs: {},
+                    process_auditor=lambda _gate: active_process,
+                    allow_injected_test_evidence=True,
+                )
+            derive.assert_not_called()
+            self.assertFalse(
+                (pathlib.Path(state["plan"]["root"])
+                 / "protected-stage-aborted.json").exists()
+            )
+
+    def test_shard_audit_rejects_redirected_evidence_and_raw_routes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+            configuration = dual.deployment.deployment_configuration(
+                ["0.95", "0.5", "1"], "default",
+                dual.deployment.PROFILE_ROSTER["default"],
+            )
+            gate_path = root / "frozen-gate"
+            gate_path.write_text("#!/bin/sh\n", encoding="ascii")
+            gate_path.chmod(0o500)
+            plan = {
+                "root": str(root), "attempt": 1,
+                "candidate_search_profile": "standard-v1",
+                "candidate": {"source": {"sha256": "1" * 64}},
+                "runtime_identity": {
+                    "runtime_body_sha256": "2" * 64,
+                    "payload_sha256": "3" * 64,
+                },
+                "configuration": configuration,
+                "gate": dual._record(gate_path, executable=True),
+            }
+            state = {"path": plan_path, "plan": plan}
+            ledger = root / "gates/gate-a/ledger"
+            for name in ("claims", "receipts", "raw", "raw-evidence"):
+                (ledger / name).mkdir(parents=True, exist_ok=True)
+            binding_path = write(
+                root / "binding.json", q.GATE_BINDING_SCHEMA,
+                namespace=q.NAMESPACE,
+                candidate={"sha256": "1" * 64},
+                opponent={"sha256": "4" * 64},
+                harness={"sha256": "5" * 64},
+                bank={"sha256": "6" * 64},
+            )
+            binding = q.load_sealed(binding_path, q.GATE_BINDING_SCHEMA)
+            bank_receipt_path = write(
+                root / "bank-receipt.json", dual.BANK_RECEIPT_SCHEMA
+            )
+            bank_state = {
+                "path": bank_receipt_path, "binding_path": binding_path,
+                "binding": binding,
+                "receipt": {"gate_bank": {"sha256": "7" * 64}},
+            }
+            prelaunch = write(
+                ledger / "prelaunch-audits/audit-000.json",
+                dual.PRELAUNCH_AUDIT_SCHEMA,
+            )
+            raw_path = ledger / "raw/shard-000.json"
+            raw_path.write_text("{}", encoding="ascii")
+            games = [
+                {
+                    "pair_index": pair, "candidate_player": color,
+                    "failure": None, "winner": color, "turns": 1,
+                    "candidate": {
+                        "maximum_first_ms": 1.0,
+                        "maximum_later_ms": 1.0,
+                    },
+                }
+                for pair in range(5) for color in (0, 1)
+            ]
+            document = {
+                "bindings": {
+                    "candidate_runtime_body_sha256": "2" * 64,
+                    "candidate_payload_sha256": "3" * 64,
+                },
+                "config": dual._expected_gate_configuration(plan, pair_offset=0),
+                "games": games,
+            }
+            normalized = dual._adapt_result(
+                raw_path, plan=plan, bank=bank_state["receipt"], index=0,
+                result_validator=lambda *_args, **_kwargs: document,
+            )
+            q.start_final_shard(
+                ledger, binding_path=binding_path, index=0,
+                started_at_utc="2026-09-04T00:00:01Z",
+            )
+            evidence_path = write(
+                ledger / "raw-evidence/shard-000.json",
+                dual.RAW_EVIDENCE_SCHEMA,
+                namespace=dual.NAMESPACE, campaign_id=dual.CAMPAIGN_ID,
+                attempt=1, gate_id="gate-a",
+                execution_plan=q.artifact_reference(plan_path, dual.PLAN_SCHEMA),
+                bank_receipt=q.artifact_reference(
+                    bank_receipt_path, dual.BANK_RECEIPT_SCHEMA
+                ),
+                prelaunch_audit=q.artifact_reference(
+                    prelaunch, dual.PRELAUNCH_AUDIT_SCHEMA
+                ),
+                gate_executable=plan["gate"],
+                shard_index=0,
+                actual_clock_configuration=dual._expected_gate_configuration(
+                    plan, pair_offset=0
+                ),
+                raw_gate_result=dual._record(raw_path),
+                normalized_games_sha256=q.sha256_bytes(
+                    q.canonical_json_bytes(normalized)
+                ),
+            )
+            receipt = q.record_shard_receipt(
+                ledger, binding_path=binding_path, index=0, games=normalized,
+                completed_at_utc="2026-09-04T00:00:02Z",
+                evidence=q.artifact_reference(
+                    evidence_path, dual.RAW_EVIDENCE_SCHEMA
+                ),
+            )
+            validator = lambda *_args, **_kwargs: document
+            with mock.patch.object(
+                dual, "_validate_prelaunch_audit",
+                return_value={"audited_at_utc": "2026-09-04T00:00:00Z"},
+            ), mock.patch.object(
+                dual, "_verify_frozen_gate", return_value=gate_path,
+            ):
+                self.assertEqual(
+                    dual._audit_shards(
+                        state, bank_state, gate_id="gate-a",
+                        result_validator=validator,
+                    ),
+                    list(range(1, 100)),
+                )
+                alternate = write(
+                    root / "alternate-evidence.json", dual.RAW_EVIDENCE_SCHEMA
+                )
+                forged = {
+                    key: value for key, value in receipt.items()
+                    if key != "body_sha256"
+                }
+                forged["evidence"] = q.artifact_reference(
+                    alternate, dual.RAW_EVIDENCE_SCHEMA
+                )
+                receipt_path = ledger / "receipts/shard-000.json"
+                receipt_path.write_bytes(q.canonical_json_bytes(q.seal(forged)))
+                with self.assertRaisesRegex(
+                    dual.DualFinalError, "evidence route changed"
+                ):
+                    dual._audit_shards(
+                        state, bank_state, gate_id="gate-a",
+                        result_validator=validator,
+                    )
 
     def test_sanitized_bank_exclusion_contains_only_canonical_hashes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -531,14 +1272,41 @@ class DualFinalExecutionTests(unittest.TestCase):
             )
             self.assertEqual(governance["sha256"], q.sha256_file(path))
 
-    def _run_fixture(self, root: pathlib.Path, *, pass_a: bool, pass_b: bool):
-        plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+    def test_effective_candidate_profile_can_be_standard_under_intervention(self):
+        preflight = {
+            "derivation": {"source": {
+                "search_throughput_profile": "state-evaluation-cache-v1",
+                "candidate_search_profile": "standard-v1",
+            }}
+        }
+        self.assertEqual(
+            dual._preflight_candidate_search_profile(preflight),
+            "standard-v1",
+        )
+        del preflight["derivation"]["source"]["candidate_search_profile"]
+        with self.assertRaisesRegex(
+            dual.DualFinalError, "effective candidate search profile"
+        ):
+            dual._preflight_candidate_search_profile(preflight)
+
+    def _run_fixture(
+        self, root: pathlib.Path, *, pass_a: bool, pass_b: bool,
+        clock_values=None,
+    ):
+        plan_path = write(
+            root / "execution-plan.json", dual.PLAN_SCHEMA, production=False
+        )
         campaign = write(root / "campaign.json", dual.challenger.PLAN_SCHEMA)
         dual_reference = write(
             root / "dual-reference.json", dual.challenger.DUAL_FINAL_REFERENCE_SCHEMA
         )
         plan = {
             "root": str(root), "attempt": 4,
+            "production": False,
+            "execution_identity": {"attempt": 4, "root": str(root)},
+            "campaign_heavy_stage_lock": str(
+                (root / ".rank4-teacher-heavy-stage.lock").resolve()
+            ),
             "campaign_plan": q.artifact_reference(campaign, dual.challenger.PLAN_SCHEMA),
             "candidate": {
                 "runtime": {"sha256": "8" * 64},
@@ -546,10 +1314,20 @@ class DualFinalExecutionTests(unittest.TestCase):
             },
         }
         state = {"path": plan_path, "plan": plan}
+        plan_path.write_bytes(q.canonical_json_bytes(q.seal({
+            "schema": dual.PLAN_SCHEMA, **plan,
+        })))
+        state["plan"] = q.load_sealed(plan_path, dual.PLAN_SCHEMA)
+        plan = state["plan"]
         execution_order = []
+        gate_launches = {}
 
-        def execute(_state, *, gate_id, **_kwargs):
+        def execute(_state, *, gate_id, **kwargs):
             execution_order.append(f"run:{gate_id}")
+            gate_launches[gate_id] = {
+                "launched_at_utc": kwargs["launched_at_utc"],
+                "not_before_utc": kwargs["not_before_utc"],
+            }
             summary = strict_summary(
                 wins=527 if (pass_a if gate_id == "gate-a" else pass_b) else 526,
                 color0=267 if (pass_a if gate_id == "gate-a" else pass_b) else 266,
@@ -586,34 +1364,245 @@ class DualFinalExecutionTests(unittest.TestCase):
                 dual.challenger.DUAL_QUALIFICATION_SCHEMA,
             )
 
+        def seal_audit(_state, *, gate_id, **_kwargs):
+            execution_order.append(f"audit:{gate_id}")
+            return write(
+                root / f"gates/{gate_id}/ledger/prelaunch-audits/audit-000.json",
+                dual.PRELAUNCH_AUDIT_SCHEMA,
+            )
+
         with mock.patch.object(dual, "_load_prepared", return_value=(dual_reference, {})), \
                 mock.patch.object(dual.challenger, "validate_dual_final"), \
+                mock.patch.object(dual, "validate_bank_receipt", return_value={}), \
+                mock.patch.object(dual, "_seal_prelaunch_audit", side_effect=seal_audit), \
                 mock.patch.object(dual, "_execute_gate", side_effect=execute), \
                 mock.patch.object(dual, "_deep_evidence", side_effect=evidence):
+            times = iter(clock_values or (
+                "2026-09-04T00:02:00Z",
+                "2026-09-04T00:02:01Z",
+                "2026-09-04T00:03:00Z",
+            ))
             result = dual.run_dual_final(
-                plan_path, launched_at_utc="2026-09-04T00:02:00Z",
+                plan_path, launched_at_utc="2026-09-04T00:00:00Z",
                 state_validator=lambda _path: state,
                 result_recorder=record, dual_completer=complete,
-                clock=lambda: "2026-09-04T00:03:00Z",
+                clock=lambda: next(times),
+                allow_injected_test_evidence=True,
             )
-        return result, execution_order
+        return result, execution_order, gate_launches, state, dual_reference
 
     def test_gate_b_runs_only_after_gate_a_passes(self):
         with tempfile.TemporaryDirectory() as temporary:
-            failed, order = self._run_fixture(
+            failed, order, launches, _state, _dual_reference = self._run_fixture(
                 pathlib.Path(temporary), pass_a=False, pass_b=True
             )
             self.assertEqual(failed["status"], "gate-a-failed")
-            self.assertEqual(order, ["run:gate-a", "evidence:gate-a", "record:gate-a"])
+            self.assertEqual(order, [
+                "audit:gate-a", "run:gate-a", "evidence:gate-a", "record:gate-a",
+            ])
+            self.assertEqual(set(launches), {"gate-a"})
         with tempfile.TemporaryDirectory() as temporary:
-            passed, order = self._run_fixture(
+            passed, order, launches, _state, _dual_reference = self._run_fixture(
                 pathlib.Path(temporary), pass_a=True, pass_b=True
             )
             self.assertEqual(passed["status"], "two-gates-passed")
             self.assertEqual(order, [
-                "run:gate-a", "evidence:gate-a", "record:gate-a",
-                "run:gate-b", "evidence:gate-b", "record:gate-b", "complete",
+                "audit:gate-a", "run:gate-a", "evidence:gate-a", "record:gate-a",
+                "audit:gate-b", "run:gate-b", "evidence:gate-b",
+                "record:gate-b", "complete",
             ])
+            self.assertEqual(
+                launches,
+                {
+                    "gate-a": {
+                        "launched_at_utc": "2026-09-04T00:02:00Z",
+                        "not_before_utc": "2026-09-04T00:00:00Z",
+                    },
+                    "gate-b": {
+                        "launched_at_utc": "2026-09-04T00:02:01Z",
+                        "not_before_utc": "2026-09-04T00:02:00Z",
+                    },
+                },
+            )
+            receipt = q.load_sealed(
+                passed["receipt"], dual.RUN_RECEIPT_SCHEMA
+            )
+            self.assertEqual(
+                set(receipt["gate_prelaunch_audits"]), set(dual.GATE_IDS)
+            )
+            self.assertTrue(
+                receipt["campaign_heavy_stage_lock"]["held_exclusively"]
+            )
+            self.assertEqual(
+                receipt["execution_identity"],
+                {"attempt": 4, "root": str(pathlib.Path(temporary))},
+            )
+
+    def test_gate_b_internal_launch_cannot_predate_gate_a_completion(self):
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            dual.DualFinalError, "gate-b internally captured launch predates"
+        ):
+            self._run_fixture(
+                pathlib.Path(temporary), pass_a=True, pass_b=True,
+                clock_values=(
+                    "2026-09-04T00:01:00Z",
+                    "2026-09-04T00:01:59Z",
+                ),
+            )
+
+    def test_execution_receipt_revalidates_exact_governance_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            run, _order, _launches, state, dual_reference = self._run_fixture(
+                root, pass_a=True, pass_b=False
+            )
+            receipt = q.load_sealed(run["receipt"], dual.RUN_RECEIPT_SCHEMA)
+            result_paths = {
+                gate_id: pathlib.Path(record["path"])
+                for gate_id, record in receipt["gate_results"].items()
+            }
+            evidence_paths = {
+                gate_id: pathlib.Path(record["path"])
+                for gate_id, record in receipt["gate_evidence"].items()
+            }
+            dual_state = {
+                "context": {"plan": {}},
+                "plan": {},
+                "path": root / "dual-plan.json",
+            }
+
+            def validate_result(path, *, gate_id, **_kwargs):
+                if path.resolve() != result_paths[gate_id].resolve():
+                    raise ValueError("substituted result")
+                return {
+                    "candidate": state["plan"]["candidate"],
+                    "source_evidence": dual._record(evidence_paths[gate_id]),
+                    "completed_at_utc": "2026-09-04T00:02:00Z",
+                    "passed": gate_id == "gate-a",
+                }
+
+            ledger = [
+                {
+                    "event": "final-gate-recorded", "attempt": 4,
+                    "gate_id": gate_id,
+                    "result": dual.challenger._sealed_record(
+                        result_paths[gate_id], dual.challenger.FINAL_RESULT_SCHEMA
+                    ),
+                }
+                for gate_id in dual.GATE_IDS
+            ]
+            with mock.patch.object(
+                dual, "_load_prepared", return_value=(dual_reference, {})
+            ), mock.patch.object(
+                dual.challenger, "validate_dual_final", return_value=dual_state
+            ), mock.patch.object(
+                dual.challenger, "validate_final_result", side_effect=validate_result
+            ) as deep_result, mock.patch.object(
+                dual, "validate_gate_evidence",
+                side_effect=lambda path, **_kwargs: {
+                    "verdict": {"passed": path == evidence_paths["gate-a"]}
+                },
+            ), mock.patch.object(
+                dual, "validate_bank_receipt", return_value={"path": root}
+            ), mock.patch.object(
+                dual, "_validate_prelaunch_audit", return_value={"valid": True}
+            ), mock.patch.object(
+                dual.challenger, "load_ledger", return_value=ledger
+            ):
+                checked = dual.validate_execution_receipt(
+                    run["receipt"], state_validator=lambda _path: state,
+                    allow_injected_test_evidence=True,
+                )
+                self.assertEqual(checked["status"], "gate-b-failed")
+                self.assertEqual(deep_result.call_count, 2)
+
+                alternate = write(
+                    root / "alternate-result.json",
+                    dual.challenger.FINAL_RESULT_SCHEMA,
+                )
+                forged = {
+                    key: value for key, value in receipt.items()
+                    if key != "body_sha256"
+                }
+                forged["gate_results"] = {
+                    **forged["gate_results"],
+                    "gate-b": q.artifact_reference(
+                        alternate, dual.challenger.FINAL_RESULT_SCHEMA
+                    ),
+                }
+                run["receipt"].write_bytes(
+                    q.canonical_json_bytes(q.seal(forged))
+                )
+                with self.assertRaisesRegex(
+                    dual.DualFinalError, "governance result failed deep validation"
+                ):
+                    dual.validate_execution_receipt(
+                        run["receipt"], state_validator=lambda _path: state,
+                        allow_injected_test_evidence=True,
+                    )
+
+    def test_consumption_and_deep_validation_enforce_launch_lower_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+            receipt_path = write(
+                root / "bank-receipt.json", dual.BANK_RECEIPT_SCHEMA
+            )
+            fingerprint_path = write(
+                root / "fingerprint.json", dual.FINGERPRINT_EXCLUSION_SCHEMA
+            )
+            binding_path = write(
+                root / "binding.json", q.GATE_BINDING_SCHEMA, bank={}
+            )
+            state = {
+                "path": plan_path,
+                "plan": {
+                    "root": str(root), "attempt": 1,
+                    "uncontended_timing": {},
+                },
+            }
+            bank_state = {
+                "path": receipt_path,
+                "fingerprint_exclusion_path": fingerprint_path,
+                "binding_path": binding_path,
+                "binding": {"bank": {}},
+            }
+            audit_path = write(
+                root / "gates/gate-b/ledger/prelaunch-audits/audit-000.json",
+                dual.PRELAUNCH_AUDIT_SCHEMA,
+            )
+            audit = {"audited_at_utc": "2026-09-04T00:00:30Z"}
+            with mock.patch.object(
+                dual, "_validate_prelaunch_audit", return_value=audit
+            ):
+                dual._consume_gate(
+                    state, bank_state, gate_id="gate-b",
+                    launched_at_utc="2026-09-04T00:01:00Z",
+                    prelaunch_audit_path=audit_path,
+                )
+                with self.assertRaisesRegex(
+                    dual.DualFinalError, "predates its authorized predecessor"
+                ):
+                    dual._consume_gate(
+                        state, bank_state, gate_id="gate-b",
+                        launched_at_utc="2026-09-04T00:03:00Z",
+                        prelaunch_audit_path=audit_path,
+                        not_before_utc="2026-09-04T00:02:00Z",
+                    )
+            with mock.patch.object(
+                dual, "validate_bank_receipt", return_value=bank_state
+            ), mock.patch.object(
+                dual, "_validate_maintained_aggregate",
+                return_value={
+                    "verdict": {"passed": True},
+                    "completed_at_utc": "2026-09-04T00:02:00Z",
+                },
+            ), mock.patch.object(
+                dual, "_validate_prelaunch_audit", return_value=audit,
+            ), self.assertRaisesRegex(
+                dual.DualFinalError, "does not follow passing gate-a completion"
+            ):
+                dual._validate_consumption(state, bank_state, gate_id="gate-b")
 
     def test_strict_thresholds_are_527_260_and_zero_failures(self):
         self.assertTrue(q.strict_gate_verdict(strict_summary())["passed"])
@@ -682,8 +1671,13 @@ class DualFinalExecutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             plan_path = write(root / "execution-plan.json", dual.PLAN_SCHEMA)
+            gate_path = root / "rank4-gate"
+            gate_path.write_text("#!/bin/sh\n", encoding="ascii")
+            gate_path.chmod(0o500)
             plan = {
                 "root": str(root), "attempt": 1,
+                "production": False,
+                "candidate_search_profile": "standard-v1",
                 "configuration": dual.deployment.deployment_configuration(
                     ["0.95", "0.5", "1"], "default",
                     dual.deployment.PROFILE_ROSTER["default"],
@@ -692,7 +1686,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                     "source": {"path": "/candidate", "sha256": "1" * 64},
                 },
                 "rank4": {"path": "/rank4"},
-                "gate": {"path": "/gate"},
+                "gate": dual._record(gate_path, executable=True),
                 "repository": str(root),
                 "uncontended_timing": {
                     "first_max_ms": 101.0, "later_max_ms": 21.0,
@@ -707,6 +1701,10 @@ class DualFinalExecutionTests(unittest.TestCase):
                 "path": bank_receipt_path,
                 "receipt": {"gate_bank": {"path": "/bank", "sha256": "2" * 64}},
             }
+            audit_path = write(
+                root / "gates/gate-a/ledger/prelaunch-audits/audit-000.json",
+                dual.PRELAUNCH_AUDIT_SCHEMA,
+            )
             worker_counts = []
             specs = []
 
@@ -744,6 +1742,17 @@ class DualFinalExecutionTests(unittest.TestCase):
                     mock.patch.object(q, "aggregate_final", side_effect=aggregate), \
                     mock.patch.object(dual, "_validate_maintained_aggregate", return_value={}), \
                     mock.patch.object(
+                        dual, "_validate_prelaunch_audit",
+                        return_value={
+                            "audited_at_utc": "2026-09-04T00:00:00Z",
+                            "campaign_heavy_stage_lock": {},
+                        },
+                    ), \
+                    mock.patch.object(dual, "_verify_lock_identity"), \
+                    mock.patch.object(
+                        dual, "_verify_frozen_gate", return_value=gate_path,
+                    ), \
+                    mock.patch.object(
                         dual, "_adapt_result",
                         side_effect=lambda _raw, *, index, **_kwargs: games(index),
                     ):
@@ -752,7 +1761,9 @@ class DualFinalExecutionTests(unittest.TestCase):
                     launched_at_utc="2026-09-04T00:00:00Z",
                     runner=runner, result_validator=lambda *_a, **_k: {},
                     clock=lambda: "2026-09-04T00:00:00Z",
+                    prelaunch_audit_path=audit_path,
                     executor_factory=executor_factory,
+                    allow_injected_test_evidence=True,
                 )
             self.assertEqual(worker_counts, [4])
             self.assertEqual(dual.SHARDS, 100)
@@ -795,6 +1806,7 @@ class DualFinalExecutionTests(unittest.TestCase):
             timing = {"first_max_ms": 101.0, "later_max_ms": 21.0}
             plan = {
                 "root": str(root), "attempt": 1,
+                "candidate_search_profile": "standard-v1",
                 "campaign_plan": q.artifact_reference(campaign, dual.challenger.PLAN_SCHEMA),
                 "candidate": candidate, "candidate_commit": "a" * 40,
                 "runtime_identity": {
@@ -840,6 +1852,10 @@ class DualFinalExecutionTests(unittest.TestCase):
                 "fingerprint_exclusion_path": fingerprint_path,
             }
             ledger = root / "gates/gate-a/ledger"
+            prelaunch_path = write(
+                ledger / "prelaunch-audits/audit-000.json",
+                dual.PRELAUNCH_AUDIT_SCHEMA,
+            )
             summary = strict_summary()
             maintained_path = write(
                 ledger / "aggregate.json", q.FINAL_AGGREGATE_SCHEMA,
@@ -879,6 +1895,9 @@ class DualFinalExecutionTests(unittest.TestCase):
                 gate_binding=q.artifact_reference(
                     binding_path, q.GATE_BINDING_SCHEMA
                 ),
+                initial_prelaunch_audit=q.artifact_reference(
+                    prelaunch_path, dual.PRELAUNCH_AUDIT_SCHEMA
+                ),
                 workers=4, threads_per_worker=1,
                 one_launch_only=True, retry_authorized=False,
                 upload_authorized=False,
@@ -902,6 +1921,9 @@ class DualFinalExecutionTests(unittest.TestCase):
                     ledger / "raw-evidence" / f"shard-{index:03d}.json",
                     dual.RAW_EVIDENCE_SCHEMA,
                     raw_gate_result=dual._record(raw_path),
+                    prelaunch_audit=q.artifact_reference(
+                        prelaunch_path, dual.PRELAUNCH_AUDIT_SCHEMA
+                    ),
                 )
                 write(
                     ledger / "receipts" / f"shard-{index:03d}.json",
@@ -915,6 +1937,18 @@ class DualFinalExecutionTests(unittest.TestCase):
             receipt_loader = lambda path, **_kwargs: q.load_sealed(
                 path, q.SHARD_RECEIPT_SCHEMA
             )
+            search_activation = {
+                "schema": (
+                    dual.gate_support.SEARCH_PROFILE_ACTIVATION_AGGREGATE_SCHEMA
+                ),
+                "candidate_search_profile": "standard-v1",
+                "document_count": 100,
+                "candidate_decisions": 1_000,
+                "search_intervention": {},
+                "requirements": {"all_intervention_counters_zero": True},
+                "exercised": True,
+                "body_sha256": "8" * 64,
+            }
             validator = dual.validate_gate_evidence
             common_patches = (
                 mock.patch.object(dual, "_load_prepared", return_value=(dual_reference, prepared)),
@@ -932,15 +1966,25 @@ class DualFinalExecutionTests(unittest.TestCase):
                 )),
                 mock.patch.object(q, "validate_shard_receipt", side_effect=receipt_loader),
                 mock.patch.object(dual, "validate_execution_plan", return_value=state),
+                mock.patch.object(
+                    dual, "_aggregate_raw_search_profile",
+                    return_value=search_activation,
+                ),
+                mock.patch.object(
+                    dual, "_validate_prelaunch_audit",
+                    return_value={"audited_at_utc": "2026-09-04T00:00:00Z"},
+                ),
             )
             with common_patches[0], common_patches[1], common_patches[2], \
                     common_patches[3], common_patches[4], common_patches[5], \
-                    common_patches[6], common_patches[7], \
+                    common_patches[6], common_patches[7], common_patches[8], \
+                    common_patches[9], \
                     mock.patch.object(dual, "validate_gate_evidence"):
                 evidence_path = dual._deep_evidence(
                     state, dual_reference=dual_reference, gate_id="gate-a",
                     aggregate_path=maintained_path,
                     result_validator=lambda *_a, **_k: {},
+                    allow_injected_test_evidence=True,
                 )
             evidence = q.load_sealed(
                 evidence_path, dual.challenger.FINAL_GATE_EVIDENCE_SCHEMA
@@ -964,10 +2008,19 @@ class DualFinalExecutionTests(unittest.TestCase):
                         q, "validate_shard_receipt", side_effect=receipt_loader
                     ), mock.patch.object(
                         dual, "validate_execution_plan", return_value=state
+                    ), mock.patch.object(
+                        dual, "_aggregate_raw_search_profile",
+                        return_value=search_activation,
+                    ), mock.patch.object(
+                        dual, "_validate_prelaunch_audit",
+                        return_value={
+                            "audited_at_utc": "2026-09-04T00:00:00Z"
+                        },
                     ):
                 checked = validator(
                     evidence_path, state=state, dual_reference=dual_reference,
                     result_validator=lambda *_a, **_k: {},
+                    allow_injected_test_evidence=True,
                 )
                 self.assertEqual(checked["candidate"]["source_sha256"], "3" * 64)
                 tampered = {key: value for key, value in evidence.items() if key != "body_sha256"}
@@ -983,6 +2036,7 @@ class DualFinalExecutionTests(unittest.TestCase):
                         tampered_path, state=state,
                         dual_reference=dual_reference,
                         result_validator=lambda *_a, **_k: {},
+                        allow_injected_test_evidence=True,
                     )
 
 

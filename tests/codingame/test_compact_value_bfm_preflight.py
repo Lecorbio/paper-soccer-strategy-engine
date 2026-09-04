@@ -256,6 +256,33 @@ class ReceiptFixture:
 
 
 class PlanAndCacheTest(unittest.TestCase):
+    def test_search_parity_suite_is_built_run_and_source_frozen(self):
+        expected_sources = {
+            "search_trace_probe.cpp",
+            "search_variant_parity.py",
+            "state_evaluation_cache_parity.py",
+            "progressive_widening_invariance.py",
+            "subtree_reuse_invariance.py",
+            "search_profile_exclusion.py",
+            "source_compaction_parity.py",
+        }
+        frozen = {
+            path.name for path in preflight.SOURCE_CLOSURE
+            if path.parent == preflight.BOT_RELATIVE
+        }
+        self.assertLessEqual(expected_sources, frozen)
+        self.assertTrue(preflight.SEARCH_TRACE_TARGETS)
+        self.assertTrue(preflight.SEARCH_PARITY_TESTS)
+        self.assertLessEqual(
+            set(preflight.SEARCH_TRACE_TARGETS), set(preflight.BUILD_TARGETS)
+        )
+        self.assertLessEqual(
+            set(preflight.SEARCH_PARITY_TESTS), set(preflight.RELEASE_TESTS)
+        )
+        self.assertLessEqual(
+            set(preflight.SEARCH_PARITY_TESTS), set(preflight.SANITIZER_TESTS)
+        )
+
     def test_every_fresh_panel_has_exact_typed_worktree_python(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

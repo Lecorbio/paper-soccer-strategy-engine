@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import dataclasses
+import fcntl
+import functools
 import hashlib
 import json
 import math
@@ -57,12 +60,36 @@ STATE_FINGERPRINT_DOMAIN = "canonical-opening-state-serialization-v1"
 
 GAME_WORKERS_MAX = 8
 POSITIONS_PER_GAME_MAX = 20
-HARD_NUMERATOR = 1
-HARD_DENOMINATOR = 4
+PRODUCTION_EXECUTION_DIRECTORY = "phase-executions"
 SHALLOW_TREE_NODES = 64_000
-DEEP_TREE_NODES = 500_000
 RANK4_TREE_NODES = 32_000
 LABEL_GAMES_PER_CHUNK = 25
+SELFSEARCH_ATTEMPT_CAP_PER_GAME = 20
+STANDARD_TEACHER_RANKING_PROFILE = corpus.STANDARD_TEACHER_RANKING_PROFILE
+HARD_5PCT_2M_TEACHER_RANKING_PROFILE = (
+    corpus.HARD_5PCT_2M_TEACHER_RANKING_PROFILE
+)
+TEACHER_RANKING_PROFILES = {
+    STANDARD_TEACHER_RANKING_PROFILE: {
+        "hard_fraction": [1, 4],
+        "deep_tree_nodes": 500_000,
+        "hard_state_density_multiplier": 1,
+        "require_full_position_roster": False,
+    },
+    HARD_5PCT_2M_TEACHER_RANKING_PROFILE: {
+        "hard_fraction": [1, 20],
+        "deep_tree_nodes": 2_000_000,
+        "hard_state_density_multiplier": 8,
+        "require_full_position_roster": True,
+    },
+}
+# Compatibility names remain the standard profile's immutable defaults.
+HARD_NUMERATOR, HARD_DENOMINATOR = TEACHER_RANKING_PROFILES[
+    STANDARD_TEACHER_RANKING_PROFILE
+]["hard_fraction"]
+DEEP_TREE_NODES = TEACHER_RANKING_PROFILES[
+    STANDARD_TEACHER_RANKING_PROFILE
+]["deep_tree_nodes"]
 COMPACT_GAME_MODES = frozenset({
     "student-selfplay",
     "student-p1-vs-rank4",
@@ -83,6 +110,15 @@ THREAD_ENVIRONMENT = {
     "VECLIB_MAXIMUM_THREADS": "1",
     "PYTHONHASHSEED": "0",
 }
+
+
+def teacher_ranking_policy(profile: object) -> dict[str, object]:
+    if profile not in TEACHER_RANKING_PROFILES:
+        raise PilotPipelineError("teacher-ranking profile is unregistered")
+    return {
+        "teacher_ranking_profile": str(profile),
+        **TEACHER_RANKING_PROFILES[str(profile)],
+    }
 # Every mutable Python module used by this adapter plus the complete CMake
 # source closure of its three native producers.  A phase cannot start or resume
 # unless these bytes still equal the clean build manifest committed at freeze.
@@ -295,6 +331,72 @@ def _phase_context(
     ):
         raise PilotPipelineError("phase rows cannot execute as a native schedule")
     return campaign, phase
+
+
+def _production_execution_base(campaign: Mapping[str, Any]) -> pathlib.Path:
+    root = campaign.get("root")
+    if root is None:
+        root = campaign.get("plan", {}).get("outputs", {}).get("root")
+    if not isinstance(root, (str, os.PathLike)):
+        raise PilotPipelineError("campaign has no production execution root")
+    return pathlib.Path(root).resolve() / PRODUCTION_EXECUTION_DIRECTORY
+
+
+def _guard_test_hooks(
+    plan: Mapping[str, Any], *, hooks_used: bool,
+    allow_injected_test_evidence: bool,
+) -> None:
+    if not hooks_used:
+        return
+    authority = plan.get("execution_authority")
+    production = bool(
+        isinstance(authority, Mapping)
+        and authority.get("production_allowlist_enforced") is True
+    )
+    if production or allow_injected_test_evidence is not True:
+        raise PilotPipelineError(
+            "injected pipeline hooks are explicit nonproduction test evidence only"
+        )
+
+
+@contextlib.contextmanager
+def _heavy_stage_lease(plan: Mapping[str, Any]):
+    authority = plan.get("execution_authority")
+    lock_value = (
+        authority.get("heavy_stage_lock")
+        if isinstance(authority, Mapping) else None
+    )
+    if lock_value is None:
+        yield
+        return
+    lock_path = pathlib.Path(str(lock_value))
+    if not lock_path.is_absolute() or lock_path.name != (
+        ".rank4-teacher-heavy-stage.lock"
+    ):
+        raise PilotPipelineError("pipeline heavy-stage lock route changed")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise PilotPipelineError(
+                "another Rank-4 campaign heavy stage is active"
+            ) from error
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _heavy_stage(function):
+    @functools.wraps(function)
+    def guarded(plan_path: pathlib.Path, *args, **kwargs):
+        plan = load_pipeline(plan_path)
+        with _heavy_stage_lease(plan):
+            return function(plan_path, *args, **kwargs)
+    return guarded
 
 
 def _render_selfsearch_plan(rows: Sequence[Mapping[str, object]]) -> bytes:
@@ -585,15 +687,59 @@ def prepare_pipeline(
     game_producer: pathlib.Path | None = None,
     action_teacher: pathlib.Path | None = None,
     rank4_teacher: pathlib.Path | None = None,
+    teacher_ranking_profile: str | None = None,
     created_at_utc: str,
     campaign_context: Mapping[str, Any] | None = None,
     phase_context: Mapping[str, Any] | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
+    context_hooks_used = campaign_context is not None or phase_context is not None
+    trusted_campaign: dict[str, Any] | None = None
+    try:
+        trusted_campaign = challenger.validate_campaign(campaign_plan.resolve())
+    except Exception as error:
+        if not context_hooks_used or allow_injected_test_evidence is not True:
+            raise PilotPipelineError(
+                "campaign must validate before pipeline context is accepted"
+            ) from error
+    else:
+        if (
+            trusted_campaign["inputs"].get("production_allowlist_enforced") is True
+            and context_hooks_used
+        ):
+            raise PilotPipelineError(
+                "production pipeline cannot inject campaign or phase context"
+            )
+        if context_hooks_used and allow_injected_test_evidence is not True:
+            raise PilotPipelineError(
+                "injected pipeline context requires explicit test authorization"
+            )
+        if not context_hooks_used:
+            campaign_context = trusted_campaign
     campaign, phase = _phase_context(
         campaign_plan, phase_reference, campaign_context, phase_context
     )
+    expected_profile = phase["phase"]["adaptation_contract"][
+        "teacher_ranking_profile"
+    ]
+    if teacher_ranking_profile is not None and teacher_ranking_profile != expected_profile:
+        raise PilotPipelineError(
+            "teacher-ranking profile disagrees with the phase adaptation contract"
+        )
+    teacher_ranking_profile = str(expected_profile)
+    ranking_policy = teacher_ranking_policy(teacher_ranking_profile)
     phase_name = str(phase["phase"]["phase"])
     attempt = int(phase["phase"]["attempt"])
+    production = (
+        campaign.get("inputs", {}).get("production_allowlist_enforced") is True
+    )
+    expected_output_base = (
+        _production_execution_base(campaign) if production else None
+    )
+    if production and output_root.resolve() != expected_output_base:
+        raise PilotPipelineError(
+            "production pipeline output root is not campaign-derived"
+        )
     root = output_root.resolve() / f"attempt-{attempt:03d}" / phase_name
     root.mkdir(parents=True, exist_ok=True)
     paths = _pipeline_paths(root)
@@ -692,6 +838,8 @@ def prepare_pipeline(
         "campaign_id": phase["phase"]["campaign_id"],
         "attempt": attempt,
         "phase": phase_name,
+        "adaptation_contract": dict(phase["phase"]["adaptation_contract"]),
+        "teacher_ranking_profile": teacher_ranking_profile,
         "created_at_utc": created_at_utc,
         "campaign_plan": _record(campaign_plan),
         "phase_reference": _record(phase_reference),
@@ -720,6 +868,24 @@ def prepare_pipeline(
             "rank4_gate": _record(bound_rank4_gate),
         },
         "build_source_closure": build_source_closure,
+        "execution_authority": {
+            "production_allowlist_enforced": production,
+            "campaign_derived_output_base": (
+                str(expected_output_base) if expected_output_base is not None else None
+            ),
+            "context_hooks_injected": context_hooks_used,
+            "injected_test_evidence_authorized": bool(
+                context_hooks_used and allow_injected_test_evidence
+            ),
+            "build_source_closure_sha256": build_source_closure[
+                "closure_sha256"
+            ],
+            "heavy_stage_lock": (
+                str(pathlib.Path(campaign["plan"]["outputs"]["root"]).resolve()
+                    / ".rank4-teacher-heavy-stage.lock")
+                if production else None
+            ),
+        },
         "game_plan": {
             "schema": GAME_PLAN_SCHEMA,
             "phase": phase_name,
@@ -742,15 +908,25 @@ def prepare_pipeline(
             "attempt_inputs": dict(phase_inputs),
             "producer_binaries": dict(producer_bindings),
             "dynamic_exclusions": list(dynamic_exclusions),
+            "adaptation_contract": dict(
+                phase["phase"]["adaptation_contract"]
+            ),
         },
         "policy": {
             "game_workers_max": GAME_WORKERS_MAX,
             "threads_per_worker": 1,
             "positions_per_game_max": POSITIONS_PER_GAME_MAX,
             "position_splits": ["train", "validation"],
-            "hard_fraction": [HARD_NUMERATOR, HARD_DENOMINATOR],
+            "teacher_ranking_profile": teacher_ranking_profile,
+            "hard_fraction": ranking_policy["hard_fraction"],
             "shallow_tree_nodes": SHALLOW_TREE_NODES,
-            "deep_tree_nodes": DEEP_TREE_NODES,
+            "deep_tree_nodes": ranking_policy["deep_tree_nodes"],
+            "hard_state_density_multiplier": ranking_policy[
+                "hard_state_density_multiplier"
+            ],
+            "require_full_position_roster": ranking_policy[
+                "require_full_position_roster"
+            ],
             "rank4_tree_nodes": RANK4_TREE_NODES,
             "protected_tests_opened": False,
             "thread_environment": THREAD_ENVIRONMENT,
@@ -769,8 +945,61 @@ def load_pipeline(path: pathlib.Path) -> dict[str, Any]:
     outputs = plan.get("outputs")
     if not isinstance(outputs, dict) or outputs != _pipeline_paths(path.parent.resolve()):
         raise PilotPipelineError("pilot pipeline output routing changed")
+    authority = plan.get("execution_authority")
+    if (
+        not isinstance(authority, Mapping)
+        or set(authority) != {
+            "production_allowlist_enforced", "campaign_derived_output_base",
+            "context_hooks_injected", "injected_test_evidence_authorized",
+            "build_source_closure_sha256", "heavy_stage_lock",
+        }
+        or not isinstance(authority.get("production_allowlist_enforced"), bool)
+        or not isinstance(authority.get("context_hooks_injected"), bool)
+        or authority.get("injected_test_evidence_authorized")
+        is not authority.get("context_hooks_injected")
+        or authority.get("build_source_closure_sha256")
+        != plan.get("build_source_closure", {}).get("closure_sha256")
+    ):
+        raise PilotPipelineError("pipeline execution authority changed")
+    if authority["production_allowlist_enforced"]:
+        try:
+            campaign = challenger.validate_campaign(
+                _validate_record(plan.get("campaign_plan"), "campaign plan")
+            )
+        except Exception as error:
+            raise PilotPipelineError(
+                "production pipeline campaign failed revalidation"
+            ) from error
+        expected_base = _production_execution_base(campaign)
+        expected_root = (
+            expected_base / f"attempt-{int(plan['attempt']):03d}" / str(plan["phase"])
+        )
+        if (
+            campaign["inputs"].get("production_allowlist_enforced") is not True
+            or authority.get("campaign_derived_output_base") != str(expected_base)
+            or authority.get("context_hooks_injected") is not False
+            or pathlib.Path(outputs["root"]).resolve() != expected_root
+            or authority.get("heavy_stage_lock") != str(
+                pathlib.Path(campaign["plan"]["outputs"]["root"]).resolve()
+                / ".rank4-teacher-heavy-stage.lock"
+            )
+        ):
+            raise PilotPipelineError("production pipeline execution root changed")
+    elif (
+        authority.get("campaign_derived_output_base") is not None
+        or authority.get("heavy_stage_lock") is not None
+    ):
+        raise PilotPipelineError("nonproduction pipeline claims a production root")
     for label in ("campaign_plan", "phase_reference", "phase_plan", "tool"):
         _validate_record(plan.get(label), label)
+    try:
+        expected_adaptation = challenger._validated_adaptation_contract(
+            plan.get("adaptation_contract")
+        )
+    except Exception as error:
+        raise PilotPipelineError(
+            "pipeline phase adaptation binding failed validation"
+        ) from error
     for section in ("inputs", "producers"):
         values = plan.get(section)
         if not isinstance(values, dict):
@@ -811,6 +1040,12 @@ def load_pipeline(path: pathlib.Path) -> dict[str, Any]:
         plan.get("game_plan", {}).get("schedule"), "game schedule"
     )
     policy = plan.get("policy")
+    try:
+        ranking_policy = teacher_ranking_policy(
+            plan.get("teacher_ranking_profile")
+        )
+    except PilotPipelineError as error:
+        raise PilotPipelineError("teacher phase pipeline policy changed") from error
     rows = plan.get("game_plan", {}).get("rows")
     phase_binding = plan.get("phase_input_binding")
     if (
@@ -824,9 +1059,21 @@ def load_pipeline(path: pathlib.Path) -> dict[str, Any]:
             )
         )
         or not isinstance(policy, dict)
+        or plan.get("adaptation_contract") != expected_adaptation
+        or plan.get("teacher_ranking_profile")
+        != expected_adaptation.get("teacher_ranking_profile")
         or policy.get("game_workers_max") != 8
         or policy.get("threads_per_worker") != 1
-        or policy.get("hard_fraction") != [1, 4]
+        or policy.get("teacher_ranking_profile")
+        != ranking_policy["teacher_ranking_profile"]
+        or policy.get("hard_fraction") != ranking_policy["hard_fraction"]
+        or policy.get("shallow_tree_nodes") != SHALLOW_TREE_NODES
+        or policy.get("deep_tree_nodes") != ranking_policy["deep_tree_nodes"]
+        or policy.get("hard_state_density_multiplier")
+        != ranking_policy["hard_state_density_multiplier"]
+        or policy.get("require_full_position_roster")
+        is not ranking_policy["require_full_position_roster"]
+        or policy.get("rank4_tree_nodes") != RANK4_TREE_NODES
         or policy.get("protected_tests_opened") is not False
         or not isinstance(rows, list)
         or len(rows) != challenger.PHASE_TOTALS[plan["phase"]]
@@ -837,9 +1084,11 @@ def load_pipeline(path: pathlib.Path) -> dict[str, Any]:
         != Counter(challenger.PHASE_QUOTAS[plan["phase"]])
         or not isinstance(phase_binding, Mapping)
         or set(phase_binding) != {
-            "attempt_inputs", "producer_binaries", "dynamic_exclusions"
+            "attempt_inputs", "producer_binaries", "dynamic_exclusions",
+            "adaptation_contract",
         }
         or not isinstance(phase_binding.get("dynamic_exclusions"), list)
+        or phase_binding.get("adaptation_contract") != expected_adaptation
     ):
         raise PilotPipelineError("teacher phase pipeline policy changed")
     if schedule_path.read_bytes() != _render_selfsearch_plan(rows):
@@ -913,6 +1162,7 @@ def _reuse_stage(
         receipt.get("pipeline_body_sha256") != plan["body_sha256"]
         or receipt.get("attempt") != plan["attempt"]
         or receipt.get("phase") != plan["phase"]
+        or receipt.get("execution_authority") != plan["execution_authority"]
         or receipt.get("inputs") != dict(inputs)
     ):
         raise PilotPipelineError(f"stage {stage} receipt inputs changed")
@@ -936,6 +1186,7 @@ def _finish_stage(
             "attempt": plan["attempt"],
             "phase": plan["phase"],
             "stage": stage,
+            "execution_authority": plan["execution_authority"],
             "inputs": dict(inputs),
             "outputs": {name: _record(path) for name, path in outputs.items()},
             "details": dict(details),
@@ -983,6 +1234,65 @@ def _render_game_chunk(rows: Sequence[Mapping[str, object]]) -> bytes:
     return _render_selfsearch_plan(rows)
 
 
+def _frozen_root_lineage(
+    plan: Mapping[str, Any],
+) -> dict[str, dict[str, object]]:
+    """Return the exact roots consumed by the native continuation producer."""
+
+    path = _validate_record(plan["inputs"]["filtered_roots_tsv"], "filtered roots")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if lines[:1] != [GAME_HEADER]:
+        raise PilotPipelineError("filtered root TSV has the wrong schema")
+    roots: dict[str, dict[str, object]] = {}
+    for row_ordinal, line in enumerate(lines[1:]):
+        fields = line.split("\t")
+        if (
+            len(fields) != 4
+            or not fields[0]
+            or fields[0] in roots
+            or not fields[3]
+        ):
+            raise PilotPipelineError("filtered root TSV has a malformed row")
+        transcript = fields[3]
+        actions = transcript.split("/")
+        if any(not action or any(character not in "01234567" for character in action)
+               for action in actions):
+            raise PilotPipelineError("filtered root transcript is malformed")
+        roots[fields[0]] = {
+            "root_row_ordinal": row_ordinal,
+            "root_transcript": transcript,
+            "root_transcript_sha256": sha256_bytes(transcript.encode("ascii")),
+            "prefix_turns": len(actions),
+        }
+    if not roots:
+        raise PilotPipelineError("filtered root TSV is empty")
+    return roots
+
+
+def _expected_selfsearch_game_id(
+    *, campaign_id: str, game_ordinal: int, attempt_ordinal: int,
+    base_seed: int, game_seed: int, actor_mode: str, root_group_id: str,
+    root_transcript_sha256: str, prefix_turns: int,
+    transcript_sha256: str,
+) -> str:
+    fields = (
+        "papersoccer.jacek-selfsearch-game-id.v1",
+        campaign_id,
+        str(game_ordinal),
+        str(attempt_ordinal),
+        str(base_seed),
+        str(game_seed),
+        actor_mode,
+        root_group_id,
+        root_transcript_sha256,
+        str(prefix_turns),
+        transcript_sha256,
+    )
+    return "selfsearch-game:" + sha256_bytes(
+        ("\0".join(fields) + "\0").encode("utf-8")
+    )
+
+
 def _game_execution_profile(row: Mapping[str, object]) -> str:
     """Return the continuation-generator-compatible actor backend.
 
@@ -1016,6 +1326,7 @@ def _parse_game_chunk(
     configuration = manifest.get("configuration") if isinstance(manifest, dict) else None
     bindings = manifest.get("bindings") if isinstance(manifest, dict) else None
     compact = profile == "compact"
+    root_lineage = _frozen_root_lineage(plan)
     if (
         not isinstance(produced, list)
         or len(produced) != len(rows)
@@ -1060,21 +1371,90 @@ def _parse_game_chunk(
     ):
         raise PilotPipelineError("game producer manifest rows are incomplete")
     normalized = []
-    for planned, line, evidence in zip(rows, lines[1:], produced, strict=True):
+    expected_evidence_fields = {
+        "game_id", "row_ordinal", "game_ordinal", "attempt_ordinal",
+        "base_seed", "game_seed", "actor_mode", "root_group_id",
+        "prefix_turns", "root_lineage", "winner", "transcript_sha256",
+    }
+    for row_ordinal, (planned, line, evidence) in enumerate(
+        zip(rows, lines[1:], produced, strict=True)
+    ):
         fields = line.split("\t")
         if len(fields) != 4 or fields[2] not in {"0", "1"} or not fields[3]:
             raise PilotPipelineError("game producer emitted a malformed game")
+        frozen_root = root_lineage.get(fields[0])
+        lineage = evidence.get("root_lineage") if isinstance(evidence, dict) else None
+        attempt_ordinal = (
+            evidence.get("attempt_ordinal") if isinstance(evidence, dict) else None
+        )
+        game_seed = evidence.get("game_seed") if isinstance(evidence, dict) else None
+        transcript_actions = fields[3].split("/")
+        transcript_valid = all(
+            action and all(character in "01234567" for character in action)
+            for action in transcript_actions
+        )
+        transcript_sha256 = (
+            sha256_bytes(fields[3].encode("ascii")) if transcript_valid else None
+        )
+        valid_attempt = (
+            isinstance(attempt_ordinal, int)
+            and not isinstance(attempt_ordinal, bool)
+            and 0 <= attempt_ordinal < SELFSEARCH_ATTEMPT_CAP_PER_GAME
+        )
+        expected_game_seed = (
+            (
+                int(planned["base_seed"])
+                + attempt_ordinal * 0x9E3779B97F4A7C15
+            ) & ((1 << 64) - 1)
+            if valid_attempt else None
+        )
         if (
             not isinstance(evidence, dict)
+            or set(evidence) != expected_evidence_fields
+            or evidence.get("row_ordinal") != row_ordinal
             or evidence.get("game_ordinal") != planned["game_ordinal"]
             or evidence.get("base_seed") != planned["base_seed"]
             or evidence.get("actor_mode") != planned["actor_mode"]
             or evidence.get("root_group_id") != fields[0]
             or evidence.get("winner") != int(fields[2])
+            or not transcript_valid
             or evidence.get("transcript_sha256")
-            != sha256_bytes(fields[3].encode("ascii"))
+            != transcript_sha256
+            or not valid_attempt
+            or isinstance(game_seed, bool)
+            or not isinstance(game_seed, int)
+            or not 0 <= game_seed < 1 << 64
+            or game_seed != expected_game_seed
+            or isinstance(evidence.get("prefix_turns"), bool)
             or not isinstance(evidence.get("prefix_turns"), int)
-            or not 0 <= evidence["prefix_turns"] < len(fields[3].split("/"))
+            or not 0 <= evidence["prefix_turns"] < len(transcript_actions)
+            or frozen_root is None
+            or not isinstance(lineage, Mapping)
+            or set(lineage) != {
+                "root_row_ordinal", "root_transcript_sha256", "prefix_turns"
+            }
+            or lineage.get("root_row_ordinal")
+            != frozen_root.get("root_row_ordinal")
+            or lineage.get("root_transcript_sha256")
+            != frozen_root.get("root_transcript_sha256")
+            or lineage.get("prefix_turns") != frozen_root.get("prefix_turns")
+            or evidence.get("prefix_turns") != frozen_root.get("prefix_turns")
+            or transcript_actions[: evidence["prefix_turns"]]
+            != str(frozen_root["root_transcript"]).split("/")
+            or evidence.get("game_id") != _expected_selfsearch_game_id(
+                campaign_id=str(plan["campaign_id"]),
+                game_ordinal=int(planned["game_ordinal"]),
+                attempt_ordinal=attempt_ordinal,
+                base_seed=int(planned["base_seed"]),
+                game_seed=game_seed,
+                actor_mode=str(planned["actor_mode"]),
+                root_group_id=fields[0],
+                root_transcript_sha256=str(
+                    frozen_root["root_transcript_sha256"]
+                ),
+                prefix_turns=int(evidence["prefix_turns"]),
+                transcript_sha256=transcript_sha256,
+            )
         ):
             raise PilotPipelineError("game producer manifest disagrees with its TSV")
         normalized.append(
@@ -1088,16 +1468,26 @@ def _parse_game_chunk(
                 "winner": int(fields[2]),
                 "transcript": fields[3],
                 "prefix_turns": evidence["prefix_turns"],
+                "producer_game_id": evidence["game_id"],
+                "attempt_ordinal": attempt_ordinal,
+                "game_seed": game_seed,
+                "root_lineage": dict(lineage),
             }
         )
     return normalized
 
 
+@_heavy_stage
 def run_game_chunks(
     plan_path: pathlib.Path, *, workers: int = 8, resume: bool = False,
     producer: GameProducer | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
+    _guard_test_hooks(
+        plan, hooks_used=producer is not None,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     expected_games = challenger.PHASE_TOTALS[plan["phase"]]
     if isinstance(workers, bool) or not 1 <= workers <= GAME_WORKERS_MAX:
         raise PilotPipelineError("game workers must be in 1..8")
@@ -1606,8 +1996,49 @@ def _exclusion_context(plan: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _tactical_state_evidence(state: features.ReplayState) -> dict[str, int]:
+    legal = []
+    for destination in features._neighbors(state.ball):
+        if features._legal_destination(state, destination):
+            legal.append(destination)
+    target_goal_y = 0 if state.to_move == 0 else features.HEIGHT + 2
+    rebound_edges = sum(
+        features._boundary(destination)
+        or state.visit_count.get(destination, 0) > 0
+        for destination in legal
+        if not features._goal(destination)
+    )
+    goal_edges = sum(features._goal(destination) for destination in legal)
+    target_goal_edges = sum(
+        features._goal(destination) and destination[1] == target_goal_y
+        for destination in legal
+    )
+    return {
+        "legal_primitive_edges": len(legal),
+        "rebound_edges": rebound_edges,
+        "goal_edges": goal_edges,
+        "target_goal_edges": target_goal_edges,
+        "constrained_edges": len(features.DIRECTION_DELTAS) - len(legal),
+        "target_goal_distance": abs(state.ball[1] - target_goal_y),
+        "visited_ball_count": state.visit_count.get(state.ball, 0),
+    }
+
+
+def _even_sample(
+    values: Sequence[Mapping[str, object]], count: int,
+) -> list[dict[str, object]]:
+    if count <= 0 or len(values) < count:
+        raise PilotPipelineError("position stratum cannot satisfy its sample count")
+    return [
+        dict(values[index * len(values) // count])
+        for index in range(count)
+    ]
+
+
+@_heavy_stage
 def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> dict[str, object]:
     plan = load_pipeline(plan_path)
+    ranking_policy = teacher_ranking_policy(plan["teacher_ranking_profile"])
     games_path = pathlib.Path(plan["outputs"]["games"])
     games_manifest_path = pathlib.Path(plan["outputs"]["games_manifest"])
     inputs = {
@@ -1615,6 +2046,7 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
         "manifest": _record(games_manifest_path),
         "filtered_roots": plan["inputs"]["filtered_roots_manifest"],
         "exclusion_sources": plan["inputs"]["exclusion_sources"],
+        "teacher_ranking_profile": plan["teacher_ranking_profile"],
     }
     reused = _reuse_stage(plan, "02-positions", inputs, resume)
     if reused is not None:
@@ -1638,38 +2070,48 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
     exclusions = _exclusion_context(plan)
     excluded_by_role = exclusions["by_role"]
     exclusion_domains = exclusions["domains"]
-    output_lines = [POSITION_HEADER]
+    output_line_by_position: dict[str, str] = {}
     position_rows = []
     skipped = []
     seen_fingerprints: set[str] = set()
+    fingerprint_owner_split: dict[str, str] = {}
     fingerprints_by_split: dict[str, set[str]] = {
         "train": set(), "validation": set()
     }
     external_intersections = Counter()
     candidate_duplicate_intersections = 0
-    stratum_names = ("opening", "middle", "late", "decisive")
-    for game in rows:
+    duplicate_intersections_by_losing_split = Counter()
+    cross_split_duplicate_intersections_by_losing_split = Counter()
+    stratum_names = ("opening", "tactical", "late", "decisive")
+    if any(str(game.get("root_group_id")) not in assignments for game in rows):
+        raise PilotPipelineError(
+            "game producer used a root outside the filtered roster"
+        )
+    # Validation is immutable model-selection evidence.  Mine it first so a
+    # four-way-symmetric collision is always removed from training rather than
+    # accidentally removing the validation state because of schedule order.
+    ordered_games = sorted(
+        rows,
+        key=lambda game: (
+            0 if assignments[str(game["root_group_id"])] == "validation" else 1,
+            int(game["game_ordinal"]),
+        ),
+    )
+    for game in ordered_games:
         actions = str(game["transcript"]).split("/")
         prefix_turns = int(game["prefix_turns"])
         if not 0 <= prefix_turns < len(actions):
             raise PilotPipelineError("generated game prefix boundary is invalid")
         root_group_id = str(game["root_group_id"])
-        if root_group_id not in assignments:
-            raise PilotPipelineError("game producer used a root outside the filtered roster")
         split = assignments[root_group_id]
         state = features.ReplayState()
         prefix: list[str] = []
-        candidates: dict[str, list[dict[str, object]]] = {
-            name: [] for name in stratum_names
-        }
+        candidates: list[dict[str, object]] = []
         candidate_canonicals: set[str] = set()
         suffix_count = len(actions) - prefix_turns
         for turn, action in enumerate(actions):
             if turn >= prefix_turns:
                 relative = turn - prefix_turns
-                position_stratum = stratum_names[
-                    min(3, relative * 4 // suffix_count)
-                ]
                 prefix_text = "/".join(prefix)
                 fingerprints = challenger.openings.state_fingerprints(state)
                 canonical = fingerprints["canonical"]
@@ -1690,6 +2132,12 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
                         external_intersections[role] += 1
                 elif canonical in seen_fingerprints or canonical in candidate_canonicals:
                     candidate_duplicate_intersections += 1
+                    duplicate_intersections_by_losing_split[split] += 1
+                    owner_split = fingerprint_owner_split.get(canonical)
+                    if owner_split is not None and owner_split != split:
+                        cross_split_duplicate_intersections_by_losing_split[
+                            split
+                        ] += 1
                 else:
                     digest = sha256_bytes(
                         canonical_json_bytes(
@@ -1705,40 +2153,97 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
                             }
                         )
                     )
-                    candidates[position_stratum].append({
+                    candidates.append({
                         "position_id": f"position:{digest}",
                         "prefix": prefix_text,
                         "turn": turn,
+                        "relative_turn": relative,
+                        "turns_to_terminal": suffix_count - relative,
                         "mover": state.to_move,
                         "canonical_fingerprint": canonical,
                         "canonical_feature_fingerprint": feature_canonical,
-                        "position_stratum": position_stratum,
+                        "tactical_evidence": _tactical_state_evidence(state),
                     })
                     candidate_canonicals.add(canonical)
             features.apply_complete_turn(state, state.to_move, action)
             prefix.append(action)
         if state.winner != game["winner"]:
             raise PilotPipelineError("generated game transcript has the wrong winner")
-        per_stratum = min(5, *(len(candidates[name]) for name in stratum_names))
-        if per_stratum == 0:
+        opening_boundary = max(1, (suffix_count + 3) // 4)
+        decisive_horizon = min(5, max(1, suffix_count // 4))
+        pools = {
+            "opening": [
+                candidate for candidate in candidates
+                if int(candidate["relative_turn"]) < opening_boundary
+            ],
+            "tactical": [
+                candidate for candidate in candidates
+                if opening_boundary <= int(candidate["relative_turn"])
+                < suffix_count // 2
+            ],
+            "late": [
+                candidate for candidate in candidates
+                if int(candidate["relative_turn"]) >= suffix_count // 2
+                and int(candidate["turns_to_terminal"]) > decisive_horizon
+            ],
+            "decisive": [
+                candidate for candidate in candidates
+                if int(candidate["turns_to_terminal"]) <= decisive_horizon
+            ],
+        }
+        per_stratum = min(5, *(len(pools[name]) for name in stratum_names))
+        if per_stratum == 0 or (
+            ranking_policy["require_full_position_roster"]
+            and per_stratum != POSITIONS_PER_GAME_MAX // len(stratum_names)
+        ):
             skipped.append(game["game_id"])
             continue
         selected = []
         for name in stratum_names:
-            bucket = candidates[name]
-            selected.extend(
-                bucket[index * len(bucket) // per_stratum]
-                for index in range(per_stratum)
-            )
+            bucket = pools[name]
+            if name == "tactical":
+                bucket = sorted(
+                    bucket,
+                    key=lambda candidate: (
+                        -int(candidate["tactical_evidence"][
+                            "target_goal_edges"
+                        ]),
+                        -int(candidate["tactical_evidence"]["goal_edges"]),
+                        -int(candidate["tactical_evidence"]["rebound_edges"]),
+                        -int(candidate["tactical_evidence"][
+                            "constrained_edges"
+                        ]),
+                        int(candidate["tactical_evidence"][
+                            "target_goal_distance"
+                        ]),
+                        str(candidate["position_id"]),
+                    ),
+                )[:per_stratum]
+            else:
+                bucket = _even_sample(bucket, per_stratum)
+            for candidate in bucket:
+                candidate = dict(candidate)
+                candidate["position_stratum"] = name
+                candidate["stratum_evidence"] = (
+                    dict(candidate["tactical_evidence"])
+                    if name == "tactical"
+                    else {
+                        "relative_turn": candidate["relative_turn"],
+                        "turns_to_terminal": candidate["turns_to_terminal"],
+                        "opening_boundary": opening_boundary,
+                        "decisive_horizon": decisive_horizon,
+                    }
+                )
+                selected.append(candidate)
         selected.sort(key=lambda item: int(item["turn"]))
         source = f"challenger-{plan['phase']}:{game['actor_mode']}"
         for candidate in selected:
             position_id = str(candidate["position_id"])
-            output_lines.append("\t".join((
-                    position_id, root_group_id, str(game["game_id"]), source, split,
-                    str(game["winner"]), str(candidate["mover"]),
-                    str(candidate["prefix"]),
-            )))
+            output_line_by_position[position_id] = "\t".join((
+                position_id, root_group_id, str(game["game_id"]), source, split,
+                str(game["winner"]), str(candidate["mover"]),
+                str(candidate["prefix"]),
+            ))
             position_rows.append({
                 "position_id": position_id,
                 "root_group_id": root_group_id,
@@ -1747,6 +2252,7 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
                 "actor_mode": game["actor_mode"],
                 "game_stratum": [game["actor_mode"], game["winner"]],
                 "position_stratum": candidate["position_stratum"],
+                "stratum_evidence": candidate["stratum_evidence"],
                 "turn": candidate["turn"],
                 "split": split,
                 "winner": game["winner"],
@@ -1757,9 +2263,20 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
                 ],
             })
             seen_fingerprints.add(str(candidate["canonical_fingerprint"]))
+            fingerprint_owner_split[
+                str(candidate["canonical_fingerprint"])
+            ] = split
             fingerprints_by_split[split].add(
                 str(candidate["canonical_fingerprint"])
             )
+    # Preserve the original schedule order for all downstream chunking while
+    # keeping validation-first duplicate ownership above.
+    position_rows.sort(
+        key=lambda row: (int(row["game_ordinal"]), int(row["turn"]), row["position_id"])
+    )
+    output_lines = [POSITION_HEADER] + [
+        output_line_by_position[str(row["position_id"])] for row in position_rows
+    ]
     by_game = Counter(str(row["game_id"]) for row in position_rows)
     by_root = Counter(str(row["root_group_id"]) for row in position_rows)
     if any(count > POSITIONS_PER_GAME_MAX or count % 4 for count in by_game.values()):
@@ -1780,10 +2297,26 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
             "pipeline_body_sha256": plan["body_sha256"],
             "games": inputs,
             "maximum_positions_per_game": POSITIONS_PER_GAME_MAX,
+            "teacher_ranking_profile": plan["teacher_ranking_profile"],
+            "full_position_roster_required": ranking_policy[
+                "require_full_position_roster"
+            ],
             "positions": len(position_rows),
             "games_with_positions": len(by_game),
             "skipped_short_games": skipped,
             "split_policy": "inherit-frozen-whole-root-group-train-validation-v1",
+            "duplicate_precedence": "validation-before-train-four-way-symmetry-v1",
+            "position_strata": {
+                "opening": "first continuation quarter",
+                "tactical": (
+                    "middle-quarter states ranked by immediate goal, rebound, "
+                    "constraint, and target-goal-distance evidence"
+                ),
+                "late": "second-half states before the terminal-decision horizon",
+                "decisive": "at most five complete-turn boundaries before outcome",
+                "disjoint": True,
+                "maximum_per_stratum_per_game": 5,
+            },
             "split_counts": dict(Counter(str(row["split"]) for row in position_rows)),
             "position_stratum_counts": dict(
                 Counter(str(row["position_stratum"]) for row in position_rows)
@@ -1798,6 +2331,12 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
                 ],
                 "candidate_external_intersections": dict(external_intersections),
                 "candidate_duplicate_intersections": candidate_duplicate_intersections,
+                "duplicate_intersections_by_losing_split": dict(
+                    duplicate_intersections_by_losing_split
+                ),
+                "cross_split_duplicate_intersections_by_losing_split": dict(
+                    cross_split_duplicate_intersections_by_losing_split
+                ),
                 "train_validation_intersection_count": train_validation_intersection,
                 "protected_labels_metrics_transcripts_read": False,
             },
@@ -1827,7 +2366,14 @@ def materialize_positions(plan_path: pathlib.Path, *, resume: bool = False) -> d
     return _finish_stage(
         plan, "02-positions", inputs,
         {"positions": positions_path, "manifest": positions_manifest_path, "roots": roots_path},
-        {"positions": positions_manifest["positions"], "maximum_per_game": 20},
+        {
+            "positions": positions_manifest["positions"],
+            "maximum_per_game": 20,
+            "teacher_ranking_profile": plan["teacher_ranking_profile"],
+            "full_position_roster_required": ranking_policy[
+                "require_full_position_roster"
+            ],
+        },
     )
 
 
@@ -1851,8 +2397,12 @@ def _position_rows(path: pathlib.Path) -> tuple[list[str], dict[str, list[str]]]
 def _run_label_chunks(
     plan: Mapping[str, Any], *, stage: str, positions: pathlib.Path,
     output: pathlib.Path, kind: str, nodes: int, workers: int, resume: bool,
-    producer: LabelProducer | None,
+    producer: LabelProducer | None, allow_injected_test_evidence: bool,
 ) -> dict[str, object]:
+    _guard_test_hooks(
+        plan, hooks_used=producer is not None,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     if isinstance(workers, bool) or not 1 <= workers <= GAME_WORKERS_MAX:
         raise PilotPipelineError("label workers must be in 1..8")
     rows, by_game = _position_rows(positions)
@@ -1862,11 +2412,20 @@ def _run_label_chunks(
         for start in range(0, len(game_groups), LABEL_GAMES_PER_CHUNK)
     ]
     producer_key = "action_teacher" if kind == "action" else "rank4_teacher"
+    ranking_policy = teacher_ranking_policy(plan["teacher_ranking_profile"])
+    action_work_profile = (
+        plan["teacher_ranking_profile"]
+        if kind == "action" and nodes == ranking_policy["deep_tree_nodes"]
+        else STANDARD_TEACHER_RANKING_PROFILE
+        if kind == "action"
+        else None
+    )
     stage_inputs = {
         "positions": _record(positions),
         "producer": plan["producers"][producer_key],
         "teacher_runtime": plan["inputs"]["accepted_teacher_runtime"] if kind == "action" else None,
         "nodes": nodes,
+        "teacher_ranking_profile": action_work_profile,
         "workers": workers,
     }
     reused = _reuse_stage(plan, stage, stage_inputs, resume)
@@ -1908,6 +2467,7 @@ def _run_label_chunks(
                 "--campaign-id", plan["campaign_id"], "--tree-nodes", str(nodes),
                 "--time-ms", "0", "--max-actions", "250", "--max-partial-paths", "50000",
                 "--exploration", "0.5", "--fpu", "0.5", "--emit-action-groups",
+                "--teacher-ranking-profile", str(action_work_profile),
                 "--source-bundle-body-sha256", plan["source_bundle_body_sha256"],
             ]
         else:
@@ -1966,6 +2526,18 @@ def _validate_label_chunk(
                     or row["teacher"]["artifact_sha256"]
                     != plan["inputs"]["accepted_teacher_runtime"]["sha256"]
                     or row["group"]["work_budget"]["max_tree_nodes"] != nodes
+                    or row["group"]["work_budget"].get(
+                        "teacher_ranking_profile",
+                        STANDARD_TEACHER_RANKING_PROFILE,
+                    )
+                    != (
+                        plan["teacher_ranking_profile"]
+                        if nodes
+                        == teacher_ranking_policy(
+                            plan["teacher_ranking_profile"]
+                        )["deep_tree_nodes"]
+                        else STANDARD_TEACHER_RANKING_PROFILE
+                    )
                 ):
                     raise ValueError("action teacher binding changed")
             else:
@@ -2002,9 +2574,11 @@ def _validate_label_chunk(
         raise PilotPipelineError("labels do not exactly cover positions in order")
 
 
+@_heavy_stage
 def run_shallow_action_labels(
     plan_path: pathlib.Path, *, workers: int = 8, resume: bool = False,
     producer: LabelProducer | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
     return _run_label_chunks(
@@ -2013,12 +2587,15 @@ def run_shallow_action_labels(
         output=pathlib.Path(plan["outputs"]["shallow_actions"]),
         kind="action", nodes=SHALLOW_TREE_NODES, workers=workers,
         resume=resume, producer=producer,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
 
 
+@_heavy_stage
 def run_rank4_labels(
     plan_path: pathlib.Path, *, workers: int = 8, resume: bool = False,
     producer: LabelProducer | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
     return _run_label_chunks(
@@ -2027,6 +2604,7 @@ def run_rank4_labels(
         output=pathlib.Path(plan["outputs"]["rank4_labels"]),
         kind="rank4", nodes=RANK4_TREE_NODES, workers=workers,
         resume=resume, producer=producer,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
 
 
@@ -2095,11 +2673,19 @@ def action_regret(
     }
 
 
+@_heavy_stage
 def select_hard_positions(
     plan_path: pathlib.Path, *, resume: bool = False,
     predictor: Callable[[Mapping[str, Any]], Sequence[float]] | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
+    _guard_test_hooks(
+        plan, hooks_used=predictor is not None,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    ranking_policy = teacher_ranking_policy(plan["teacher_ranking_profile"])
+    hard_numerator, hard_denominator = ranking_policy["hard_fraction"]
     positions = pathlib.Path(plan["outputs"]["positions"])
     positions_manifest_path = pathlib.Path(plan["outputs"]["positions_manifest"])
     shallow = pathlib.Path(plan["outputs"]["shallow_actions"])
@@ -2109,6 +2695,7 @@ def select_hard_positions(
         "positions_manifest": _record(positions_manifest_path),
         "shallow": _record(shallow), "rank4": _record(rank4_path),
         "student": plan["inputs"]["student_runtime"],
+        "teacher_ranking_profile": plan["teacher_ranking_profile"],
     }
     reused = _reuse_stage(plan, "05-hard-selection", inputs, resume)
     if reused is not None:
@@ -2143,10 +2730,8 @@ def select_hard_positions(
     nonexhaustive_fill = 0
     selected_position_strata = Counter()
     selected_tactical = Counter()
+    scored = []
     for game_id, group_rows in by_game.items():
-        if len(group_rows) % 4:
-            raise PilotPipelineError("per-game positions cannot satisfy an exact 25%")
-        scored = []
         for line in group_rows:
             fields = line.split("\t")
             position_id, winner, mover = fields[0], int(fields[5]), int(fields[6])
@@ -2161,7 +2746,7 @@ def select_hard_positions(
                 (rank4_value >= 0.0) != (outcome >= 0.0)
             )
             key = (
-                int(not regret["successors_exhaustive"]),
+                int(regret["successors_exhaustive"]),
                 -float(regret["regret"]),
                 -int(regret["action_disagreement"]),
                 -int(search_rank4_disagree),
@@ -2181,32 +2766,43 @@ def select_hard_positions(
                 "teacher_outcome_disagreement": outcome_disagree,
                 "position_stratum": position_strata[position_id],
             }))
-        count = len(scored) // 4
-        ordered = sorted(scored)
-        chosen = ordered[:count]
-        nonexhaustive_fill += sum(
-            not bool(item[2]["successors_exhaustive"]) for item in chosen
+    if len(scored) * hard_numerator % hard_denominator:
+        raise PilotPipelineError(
+            "phase positions cannot satisfy the exact registered hard fraction"
         )
-        for _key, _position_id, item in chosen:
-            selected_position_strata[str(item["position_stratum"])] += 1
-            selected_tactical["teacher_student_action_disagreement"] += int(
-                bool(item["action_disagreement"])
-            )
-            selected_tactical["positive_action_regret"] += int(
-                float(item["regret"]) > 0.0
-            )
-            selected_tactical["search_rank4_sign_disagreement"] += int(
-                bool(item["search_rank4_sign_disagreement"])
-            )
-            selected_tactical["teacher_outcome_disagreement"] += int(
-                bool(item["teacher_outcome_disagreement"])
-            )
-        selected.update(item[1] for item in chosen)
-        evidence.extend({
-            **item[2],
-            "hard_rank_within_game": rank,
-            "selected_for_deep_label": rank < count,
-        } for rank, item in enumerate(ordered))
+    count = len(scored) * hard_numerator // hard_denominator
+    incomplete = sum(
+        not bool(item[2]["successors_exhaustive"]) for item in scored
+    )
+    if incomplete > count:
+        raise PilotPipelineError(
+            "deep-label quota cannot cover all nonexhaustive shallow groups"
+        )
+    ordered = sorted(scored)
+    chosen = ordered[:count]
+    nonexhaustive_fill = sum(
+        not bool(item[2]["successors_exhaustive"]) for item in chosen
+    )
+    for _key, _position_id, item in chosen:
+        selected_position_strata[str(item["position_stratum"])] += 1
+        selected_tactical["teacher_student_action_disagreement"] += int(
+            bool(item["action_disagreement"])
+        )
+        selected_tactical["positive_action_regret"] += int(
+            float(item["regret"]) > 0.0
+        )
+        selected_tactical["search_rank4_sign_disagreement"] += int(
+            bool(item["search_rank4_sign_disagreement"])
+        )
+        selected_tactical["teacher_outcome_disagreement"] += int(
+            bool(item["teacher_outcome_disagreement"])
+        )
+    selected.update(item[1] for item in chosen)
+    evidence.extend({
+        **item[2],
+        "hard_rank_global": rank,
+        "selected_for_deep_label": rank < count,
+    } for rank, item in enumerate(ordered))
     output_rows = [row_by_id[position_id] for position_id in row_by_id if position_id in selected]
     output_payload = (POSITION_HEADER + "\n" + "\n".join(output_rows) + "\n").encode()
     hard_path = pathlib.Path(plan["outputs"]["hard_positions"])
@@ -2218,12 +2814,17 @@ def select_hard_positions(
             "schema": HARD_SELECTION_SCHEMA,
             "pipeline_body_sha256": plan["body_sha256"],
             "inputs": inputs,
-            "fraction": [1, 4],
+            "teacher_ranking_profile": plan["teacher_ranking_profile"],
+            "fraction": list(ranking_policy["hard_fraction"]),
+            "hard_state_density_multiplier": ranking_policy[
+                "hard_state_density_multiplier"
+            ],
+            "selection_scope": "global-phase-after-mandatory-nonexhaustive",
             "positions": len(position_rows),
             "selected": len(selected),
             "games": len(by_game),
             "score_order": [
-                "exhaustive-first-nonexhaustive-deterministic-fill-only",
+                "nonexhaustive-mandatory-before-exhaustive-hardness",
                 "teacher-student-action-regret-desc",
                 "action-disagreement", "search-rank4-sign-disagreement",
                 "search-rank4-absolute-gap", "teacher-outcome-disagreement",
@@ -2239,21 +2840,33 @@ def select_hard_positions(
     return _finish_stage(
         plan, "05-hard-selection", inputs,
         {"positions": hard_path, "report": report_path},
-        {"positions": len(position_rows), "selected": report["selected"], "fraction": [1, 4]},
+        {
+            "positions": len(position_rows),
+            "selected": report["selected"],
+            "teacher_ranking_profile": plan["teacher_ranking_profile"],
+            "fraction": list(ranking_policy["hard_fraction"]),
+            "hard_state_density_multiplier": ranking_policy[
+                "hard_state_density_multiplier"
+            ],
+        },
     )
 
 
+@_heavy_stage
 def run_deep_action_labels(
     plan_path: pathlib.Path, *, workers: int = 8, resume: bool = False,
     producer: LabelProducer | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
+    ranking_policy = teacher_ranking_policy(plan["teacher_ranking_profile"])
     return _run_label_chunks(
         plan, stage="06-deep-actions",
         positions=pathlib.Path(plan["outputs"]["hard_positions"]),
         output=pathlib.Path(plan["outputs"]["deep_actions"]),
-        kind="action", nodes=DEEP_TREE_NODES, workers=workers,
+        kind="action", nodes=int(ranking_policy["deep_tree_nodes"]), workers=workers,
         resume=resume, producer=producer,
+        allow_injected_test_evidence=allow_injected_test_evidence,
     )
 
 
@@ -2366,11 +2979,20 @@ def _standard_train_validation_pack(
     return result
 
 
+@_heavy_stage
 def finalize_labels(
     plan_path: pathlib.Path, *, resume: bool = False,
     standard_packer: StandardPacker | None = None,
+    allow_injected_test_evidence: bool = False,
 ) -> dict[str, object]:
     plan = load_pipeline(plan_path)
+    _guard_test_hooks(
+        plan, hooks_used=standard_packer is not None,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    ranking_policy = teacher_ranking_policy(plan["teacher_ranking_profile"])
+    hard_numerator, hard_denominator = ranking_policy["hard_fraction"]
+    deep_tree_nodes = int(ranking_policy["deep_tree_nodes"])
     shallow_path = pathlib.Path(plan["outputs"]["shallow_actions"])
     deep_path = pathlib.Path(plan["outputs"]["deep_actions"])
     positions_path = pathlib.Path(plan["outputs"]["positions"])
@@ -2384,6 +3006,7 @@ def finalize_labels(
         "roots": _record(pathlib.Path(plan["outputs"]["root_assignments"])),
         "pack_tool": _record(pathlib.Path(replay_pack.__file__)),
         "prior_shard_manifests": plan["inputs"]["prior_shard_manifests"],
+        "teacher_ranking_profile": plan["teacher_ranking_profile"],
     }
     reused = _reuse_stage(plan, "07-finalize-labels", inputs, resume)
     if reused is not None:
@@ -2391,7 +3014,7 @@ def finalize_labels(
     shallow = corpus.load_complete_turn_action_groups((shallow_path,))
     deep = corpus.load_complete_turn_action_groups((deep_path,))
     position_rows, positions_by_game = _position_rows(positions_path)
-    hard_rows, hard_by_game = _position_rows(hard_path)
+    hard_rows, _hard_by_game = _position_rows(hard_path)
     expected_all = [row.split("\t")[0] for row in position_rows]
     expected_hard = [row.split("\t")[0] for row in hard_rows]
     shallow_by_position = {
@@ -2410,18 +3033,15 @@ def finalize_labels(
             for row in shallow
         )
         or any(
-            row["group"]["work_budget"]["max_tree_nodes"] != DEEP_TREE_NODES
+            row["group"]["work_budget"]["max_tree_nodes"] != deep_tree_nodes
             for row in deep
         )
-        or set(hard_by_game) != set(positions_by_game)
-        or any(
-            len(positions_by_game[game_id]) % 4
-            or len(hard_by_game[game_id]) * 4 != len(positions_by_game[game_id])
-            for game_id in positions_by_game
-        )
+        or len(expected_all) * hard_numerator % hard_denominator
+        or len(expected_hard) * hard_denominator
+        != len(expected_all) * hard_numerator
     ):
         raise PilotPipelineError(
-            "shallow coverage or exact per-game deep replacement changed"
+            "shallow coverage or exact global deep replacement changed"
         )
     merged = corpus.merge_complete_turn_action_groups(shallow, deep)
     merged_by_position = {
@@ -2430,7 +3050,7 @@ def finalize_labels(
     }
     if set(merged_by_position) != set(expected_all) or any(
         merged_by_position[position_id]["group"]["work_budget"]["max_tree_nodes"]
-        != (DEEP_TREE_NODES if position_id in deep_by_position else SHALLOW_TREE_NODES)
+        != (deep_tree_nodes if position_id in deep_by_position else SHALLOW_TREE_NODES)
         for position_id in expected_all
     ):
         raise PilotPipelineError("deep labels did not replace exactly the hard rows")
@@ -2512,6 +3132,16 @@ def finalize_labels(
         {
             "groups": len(merged), "scalar_samples": len(scalar_rows),
             "deep_replacements": len(deep), "protected_tests_opened": False,
+            "teacher_ranking_profile": plan["teacher_ranking_profile"],
+            "hard_fraction": list(ranking_policy["hard_fraction"]),
+            "deep_tree_nodes": deep_tree_nodes,
+            "hard_state_density_multiplier": ranking_policy[
+                "hard_state_density_multiplier"
+            ],
+            "all_successor_groups_exhaustive": all(
+                row["group"]["successors_exhaustive"] is True
+                for row in merged
+            ),
             "scalar_manifest_body_sha256": scalar_manifest["body_sha256"],
         },
     )

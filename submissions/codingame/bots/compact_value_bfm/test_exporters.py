@@ -100,6 +100,28 @@ value = value - -right;
         with self.assertRaisesRegex(ValueError, "unterminated C\\+\\+ block comment"):
             export_submission.compact_cpp_code("int value; /* broken")
 
+    def test_private_identifier_minification_preserves_literals(self):
+        source = 'int config_; const char *text = "config_ nodes_"; int nodes_;\n'
+        self.assertEqual(
+            export_submission.minify_private_identifiers(source),
+            'int zA; const char *text = "config_ nodes_"; int zB;\n',
+        )
+
+    def test_truncated_search_dead_ends_close_before_single_pass_selection(self):
+        source = (HERE / "engine.cpp").read_text()
+        self.assertIn("return solved || all_children_closed;", source)
+        self.assertIn(
+            "node.closed = traversal_closed(node.solved, all_closed);", source
+        )
+        self.assertIn("BFM open tree has no selectable descendant", source)
+        optimized = source[
+            source.index("#else\n    const double parent_log"):
+            source.index("#endif\n  }\n\n  std::optional", source.index(
+                "#else\n    const double parent_log"
+            ))
+        ]
+        self.assertNotIn("while (true)", optimized)
+
     def test_exporter_rejects_name_scale_code_and_padding(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

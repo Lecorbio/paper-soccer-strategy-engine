@@ -18,7 +18,10 @@ browser, or uploads to CodinGame.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
+import functools
 import importlib.util
 import json
 import os
@@ -92,6 +95,9 @@ CAMPAIGN_ID = challenger.CAMPAIGN_ID
 RELEASE_BRANCH = upload.BRANCH
 BOT_RELATIVE = maintained.BOT_RELATIVE
 RANK4_RELATIVE = maintained.RANK4_RELATIVE
+SOURCE_LIMIT_EXCLUSIVE = 95_000
+SOURCE_RESERVE_TARGET = 2_000
+SOURCE_MAXIMUM_FOR_TARGET = SOURCE_LIMIT_EXCLUSIVE - SOURCE_RESERVE_TARGET
 
 PROMOTION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-promotion.v1"
@@ -380,6 +386,9 @@ def _selected_candidate(
     source_kind: str
     macros: list[str]
     configuration: dict[str, Any]
+    search_throughput_profile = "standard-v1"
+    candidate_search_profile = "standard-v1"
+    search_variant: str | None = None
     if attempt == 0:
         matches = [
             entry for entry in entries
@@ -475,10 +484,31 @@ def _selected_candidate(
         ):
             raise ReleaseBridgeError("trained full admission selected another candidate")
         variant = selected.get("search_variant")
-        if variant not in teacher_training.SEARCH_VARIANTS:
+        search_throughput_profile = selected.get("search_throughput_profile")
+        try:
+            variants = teacher_training.active_search_variants(
+                search_throughput_profile
+            )
+            metadata = teacher_training._search_variant_metadata(
+                search_throughput_profile, variant
+            )
+        except Exception as error:
+            raise ReleaseBridgeError(
+                "trained search profile/variant is not frozen"
+            ) from error
+        if variant not in variants:
             raise ReleaseBridgeError("trained search variant is not frozen")
-        macros = list(teacher_training.SEARCH_VARIANTS[variant])
-        if selected.get("compile_time_macros") != macros:
+        macros = list(variants[variant])
+        search_variant = str(variant)
+        candidate_search_profile = str(metadata["candidate_search_profile"])
+        if (
+            selected.get("compile_time_macros") != macros
+            or selected.get("candidate_search_profile")
+            != candidate_search_profile
+            or selected.get("standard_base_variant")
+            != metadata["standard_base_variant"]
+            or selected.get("search_treatment") is not metadata["is_treatment"]
+        ):
             raise ReleaseBridgeError("trained search macro roster changed")
         configuration = deployment.deployment_configuration(
             ("0.95", "0.5", "1"), "default",
@@ -502,19 +532,125 @@ def _selected_candidate(
     ):
         raise ReleaseBridgeError("supplied release candidate is not the selected candidate")
     architecture = _architecture(runtime_path)
+    frozen_execution_sources = None
+    if context.get("inputs", {}).get("production_allowlist_enforced") is True:
+        try:
+            build_manifest_record = challenger._attempt_build_manifest_record(
+                entries, attempt
+            )
+            frozen_execution_sources = (
+                challenger._frozen_execution_source_evidence(
+                    context,
+                    tool_roles=challenger.POST_PROMOTION_RELEASE_TOOL_ROLES,
+                    build_manifest_record=build_manifest_record,
+                    revalidate_current=False,
+                    allowed_current_drift_routes=tuple(
+                        path.as_posix() for path in PROMOTED_RELATIVES
+                    ),
+                )
+            )
+        except Exception as error:
+            raise ReleaseBridgeError(
+                "release tools differ from the attempt's frozen source closure"
+            ) from error
     return {
         "attempt": attempt,
         "origin": source_kind,
         "runtime": canonical_runtime,
         "generated_source": canonical_source,
         "architecture": architecture,
+        "search_throughput_profile": search_throughput_profile,
+        "candidate_search_profile": candidate_search_profile,
+        "search_variant": search_variant,
         "compile_time_macros": macros,
         "configuration": configuration,
         "selection_evidence": selection_evidence,
+        "frozen_execution_sources": frozen_execution_sources,
     }
 
 
 SelectedValidator = Callable[..., Mapping[str, Any]]
+
+
+def _guard_release_hooks(
+    campaign_plan_path: pathlib.Path, *, hooks_used: bool,
+    allow_injected_test_evidence: bool,
+) -> Mapping[str, Any] | None:
+    try:
+        context = challenger.validate_campaign(campaign_plan_path.resolve())
+    except Exception as error:
+        if hooks_used and allow_injected_test_evidence is True:
+            return None
+        raise ReleaseBridgeError(
+            "release campaign failed validation before hook authorization"
+        ) from error
+    production = (
+        context.get("inputs", {}).get("production_allowlist_enforced") is True
+    )
+    if hooks_used and (production or allow_injected_test_evidence is not True):
+        raise ReleaseBridgeError(
+            "injected release hooks are explicit nonproduction test evidence only"
+        )
+    return context
+
+
+def _production_release_root(
+    context: Mapping[str, Any], *, attempt: int,
+) -> pathlib.Path:
+    return (
+        pathlib.Path(context["plan"]["outputs"]["root"]).resolve()
+        / "release" / f"attempt-{attempt:03d}"
+    )
+
+
+@contextlib.contextmanager
+def _release_heavy_stage_lease(
+    campaign_plan_path: pathlib.Path, *, allow_injected_test_evidence: bool,
+):
+    try:
+        context = challenger.validate_campaign(campaign_plan_path.resolve())
+    except Exception:
+        if allow_injected_test_evidence:
+            yield
+            return
+        raise
+    if context.get("inputs", {}).get("production_allowlist_enforced") is not True:
+        yield
+        return
+    lock_path = (
+        pathlib.Path(context["plan"]["outputs"]["root"]).resolve()
+        / ".rank4-teacher-heavy-stage.lock"
+    )
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise ReleaseBridgeError(
+                "another Rank-4 campaign heavy stage is active"
+            ) from error
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _release_heavy_stage(function):
+    @functools.wraps(function)
+    def guarded(plan_path: pathlib.Path, *args, **kwargs):
+        campaign_plan_path = kwargs.get("campaign_plan_path")
+        if campaign_plan_path is None:
+            raise ReleaseBridgeError("release heavy stage lacks campaign plan")
+        with _release_heavy_stage_lease(
+            campaign_plan_path,
+            allow_injected_test_evidence=bool(
+                kwargs.get("allow_injected_test_evidence", False)
+            ),
+        ):
+            return function(plan_path, *args, **kwargs)
+    return guarded
 
 
 def _variant_source(base: bytes, macros: Sequence[str]) -> bytes:
@@ -684,6 +820,14 @@ def _release_payloads(
         profile=profile,
         work=deployment.PROFILE_ROSTER[profile],
     )
+    maximum = (
+        SOURCE_LIMIT_EXCLUSIVE - 1
+        if selected.get("attempt") == 0 else SOURCE_MAXIMUM_FOR_TARGET
+    )
+    if not 0 < len(candidate) <= maximum:
+        raise ReleaseBridgeError(
+            "deployed source violates its hard/2KB-reserve size contract"
+        )
     manifest = deployment.create_manifest(
         variant, candidate,
         search_tuple=configuration["tuple"],
@@ -711,6 +855,11 @@ def _release_payloads(
             key: selected["generated_source"][key]
             for key in ("bytes", "sha256", "ascii")
         },
+        "search_throughput_profile": selected[
+            "search_throughput_profile"
+        ],
+        "candidate_search_profile": selected["candidate_search_profile"],
+        "search_variant": selected["search_variant"],
         "compile_time_macros": list(selected["compile_time_macros"]),
         "macros_embedded_at_source_start": True,
         "legacy_attempt_zero": legacy,
@@ -726,6 +875,10 @@ def _release_payloads(
         ],
         "release_preflight_embedded_runtime_parity_required": True,
         "only_runtime_payload_search_macros_and_deployment_slots_changed": True,
+        "source_limit_exclusive": SOURCE_LIMIT_EXCLUSIVE,
+        "source_reserve_target": SOURCE_RESERVE_TARGET,
+        "deployed_source_reserve": SOURCE_LIMIT_EXCLUSIVE - len(candidate),
+        "reserve_target_required": selected.get("attempt") != 0,
     }
     return {
         "model.hpp": model_header,
@@ -806,6 +959,7 @@ def promote_candidate(
         "campaign_plan": _reference(campaign_plan_path, challenger.PLAN_SCHEMA),
         "selected_candidate": selected,
         "derivation": payloads["derivation"],
+        "frozen_execution_sources": selected["frozen_execution_sources"],
         "configuration": dict(selected["configuration"]),
         "repository": str(repository),
         "branch": RELEASE_BRANCH,
@@ -864,6 +1018,8 @@ def validate_promotion(
         != _reference(campaign_plan_path, challenger.PLAN_SCHEMA)
         or value.get("selected_candidate") != selected
         or value.get("derivation") != payloads["derivation"]
+        or value.get("frozen_execution_sources")
+        != selected.get("frozen_execution_sources")
         or value.get("configuration") != selected["configuration"]
         or value.get("repository") != str(pathlib.Path(repository).resolve())
         or value.get("branch") != RELEASE_BRANCH
@@ -992,6 +1148,15 @@ def _preflight_snapshot(
         campaign_plan_path, attempt=attempt,
         candidate_runtime=candidate_runtime, candidate_source=candidate_source,
     ))
+    heavy_stage_lock = None
+    if selected.get("frozen_execution_sources") is not None:
+        campaign_context = challenger.validate_campaign(
+            campaign_plan_path.resolve()
+        )
+        heavy_stage_lock = str(
+            pathlib.Path(campaign_context["plan"]["outputs"]["root"]).resolve()
+            / ".rank4-teacher-heavy-stage.lock"
+        )
     payloads = _release_payloads(repository, selected)
     validate_promotion(
         promotion_path, campaign_plan_path=campaign_plan_path, attempt=attempt,
@@ -1039,6 +1204,11 @@ def _preflight_snapshot(
         "campaign_plan": _reference(campaign_plan_path, challenger.PLAN_SCHEMA),
         "attempt": attempt,
         "selected_candidate": selected,
+        "production_allowlist_enforced": (
+            selected.get("frozen_execution_sources") is not None
+        ),
+        "frozen_execution_sources": selected.get("frozen_execution_sources"),
+        "heavy_stage_lock": heavy_stage_lock,
         "promotion": _reference(promotion_path, PROMOTION_SCHEMA),
         "base_preflight": _reference(
             base_preflight_path, maintained.RECEIPT_SCHEMA
@@ -1113,8 +1283,23 @@ def prepare_preflight(
     clang_path: pathlib.Path, node_path: pathlib.Path,
     planned_at_utc: str,
     selected_validator: SelectedValidator = _selected_candidate,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
     _utc(planned_at_utc, "release preflight plan time")
+    context = _guard_release_hooks(
+        campaign_plan_path,
+        hooks_used=selected_validator is not _selected_candidate,
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
+    if (
+        context is not None
+        and context.get("inputs", {}).get("production_allowlist_enforced") is True
+        and output_root.resolve()
+        != _production_release_root(context, attempt=attempt)
+    ):
+        raise ReleaseBridgeError(
+            "production release-preflight root is not campaign-derived"
+        )
     root = _safe_directory(output_root / PREFLIGHT_DIRECTORY, create=True)
     plan_path = _safe_output(root / "plan.json")
     inputs = _preflight_snapshot(
@@ -1159,6 +1344,16 @@ def validate_preflight_plan(
     root = path.parent.resolve()
     if path.is_symlink() or path.resolve() != root / "plan.json":
         raise ReleaseBridgeError("release-preflight plan route changed")
+    if plan.get("inputs", {}).get("production_allowlist_enforced") is True:
+        campaign = challenger.validate_campaign(campaign_plan_path.resolve())
+        expected_root = (
+            _production_release_root(campaign, attempt=attempt)
+            / PREFLIGHT_DIRECTORY
+        )
+        if root != expected_root:
+            raise ReleaseBridgeError(
+                "production release-preflight plan root changed"
+            )
     tools = plan.get("inputs", {}).get("tools", {})
     if not isinstance(tools, Mapping):
         raise ReleaseBridgeError("release-preflight tool bindings are absent")
@@ -1245,6 +1440,7 @@ def _copy_release_harness(plan: Mapping[str, Any]) -> dict[str, Any]:
     return records
 
 
+@_release_heavy_stage
 def run_preflight(
     plan_path: pathlib.Path, *, campaign_plan_path: pathlib.Path,
     attempt: int, candidate_runtime: pathlib.Path,
@@ -1255,7 +1451,18 @@ def run_preflight(
     command_runner: CommandRunner = maintained.run_command,
     parity_runner: ParityRunner = maintained.run_inference_parity,
     timing_runner: TimingRunner = maintained.run_timing_suite,
+    allow_injected_test_evidence: bool = False,
 ) -> pathlib.Path:
+    _guard_release_hooks(
+        campaign_plan_path,
+        hooks_used=(
+            selected_validator is not _selected_candidate
+            or command_runner is not maintained.run_command
+            or parity_runner is not maintained.run_inference_parity
+            or timing_runner is not maintained.run_timing_suite
+        ),
+        allow_injected_test_evidence=allow_injected_test_evidence,
+    )
     plan = validate_preflight_plan(
         plan_path, campaign_plan_path=campaign_plan_path, attempt=attempt,
         candidate_runtime=candidate_runtime, candidate_source=candidate_source,
@@ -1292,6 +1499,10 @@ def run_preflight(
         "plan": _reference(plan_path, PREFLIGHT_PLAN_SCHEMA),
         "candidate_commit": plan["inputs"]["git"]["commit"],
         "candidate_sha256": plan["inputs"]["candidate"]["sha256"],
+        "frozen_execution_sources": plan["inputs"][
+            "frozen_execution_sources"
+        ],
+        "heavy_stage_lock": plan["inputs"]["heavy_stage_lock"],
         "one_shot": True,
     })
     harness = _copy_release_harness(plan)
@@ -1343,6 +1554,10 @@ def run_preflight(
         "parity": parity,
         "timing": timing,
         "uncontended_timing": uncontended,
+        "frozen_execution_sources": plan["inputs"][
+            "frozen_execution_sources"
+        ],
+        "heavy_stage_lock": plan["inputs"]["heavy_stage_lock"],
         "checks": {name: "passed" for name in sorted(PREFLIGHT_CHECKS)},
         "protected_banks_accessed": [],
         "git_writes": 0,
@@ -1420,13 +1635,16 @@ def validate_preflight_reference(
         set(claim) != {
             "schema", "namespace", "campaign_id", "attempt", "status",
             "claimed_at_utc", "plan", "candidate_commit",
-            "candidate_sha256", "one_shot", "body_sha256",
+            "candidate_sha256", "frozen_execution_sources", "heavy_stage_lock",
+            "one_shot",
+            "body_sha256",
         }
         or set(receipt) != {
             "schema", "namespace", "campaign_id", "attempt", "status",
             "completed_at_utc", "plan", "claim", "inputs", "commands",
             "harness", "binaries", "configuration_probe", "parity",
             "timing", "uncontended_timing", "checks",
+            "frozen_execution_sources", "heavy_stage_lock",
             "protected_banks_accessed", "git_writes", "uploads",
             "body_sha256",
         }
@@ -1437,6 +1655,9 @@ def validate_preflight_reference(
         or claim.get("plan") != _reference(plan_path, PREFLIGHT_PLAN_SCHEMA)
         or claim.get("candidate_commit") != plan["inputs"]["git"]["commit"]
         or claim.get("candidate_sha256") != plan["inputs"]["candidate"]["sha256"]
+        or claim.get("frozen_execution_sources")
+        != plan["inputs"].get("frozen_execution_sources")
+        or claim.get("heavy_stage_lock") != plan["inputs"].get("heavy_stage_lock")
         or claim.get("one_shot") is not True
     ):
         raise ReleaseBridgeError("release-preflight claim changed")
@@ -1451,6 +1672,10 @@ def validate_preflight_reference(
         or receipt.get("protected_banks_accessed") != []
         or receipt.get("git_writes") != 0
         or receipt.get("uploads") != 0
+        or receipt.get("frozen_execution_sources")
+        != plan["inputs"].get("frozen_execution_sources")
+        or receipt.get("heavy_stage_lock")
+        != plan["inputs"].get("heavy_stage_lock")
         or receipt.get("checks")
         != {name: "passed" for name in sorted(PREFLIGHT_CHECKS)}
     ):
@@ -1685,6 +1910,7 @@ def seal_release_evidence(
         "tracked_artifacts": artifacts,
         "promotion": _reference(promotion_path, PROMOTION_SCHEMA),
         "derivation": payloads["derivation"],
+        "frozen_execution_sources": selected["frozen_execution_sources"],
         "configuration": dict(selected["configuration"]),
         "source_binding": _reference(
             source_binding_path, qualification.SOURCE_BINDING_SCHEMA
@@ -1829,6 +2055,7 @@ def validate_release_evidence(
         "tracked_artifacts": artifacts,
         "promotion": _reference(promotion_path, PROMOTION_SCHEMA),
         "derivation": payloads["derivation"],
+        "frozen_execution_sources": selected["frozen_execution_sources"],
         "configuration": dict(selected["configuration"]),
         "source_binding": _reference(
             source_binding_path, qualification.SOURCE_BINDING_SCHEMA
@@ -2068,6 +2295,135 @@ def _dual_chain(
     }
 
 
+def _campaign_upload_binding(
+    entries: Sequence[Mapping[str, Any]], *, attempt: int,
+    upload_ordinal: int | None = None, require_unused: bool,
+) -> dict[str, Any]:
+    """Bind one release upload to the exact challenger continuation capability."""
+
+    uploads = [
+        (index, entry) for index, entry in enumerate(entries)
+        if entry.get("event") == "upload-attested"
+    ]
+    if upload_ordinal is None:
+        upload_ordinal = len(uploads) + 1
+    if (
+        isinstance(upload_ordinal, bool) or not isinstance(upload_ordinal, int)
+        or upload_ordinal <= 0
+    ):
+        raise ReleaseBridgeError("campaign upload ordinal is invalid")
+    used = [
+        entry for _index, entry in uploads
+        if entry.get("upload_ordinal") == upload_ordinal
+    ]
+    if len(used) > 1 or (used and used[0].get("attempt") != attempt):
+        raise ReleaseBridgeError("campaign upload ordinal was reused by another attempt")
+    if require_unused and used:
+        raise ReleaseBridgeError("campaign upload authorization is already consumed")
+    if upload_ordinal == 1:
+        if require_unused and uploads:
+            raise ReleaseBridgeError("first upload authorization follows an existing upload")
+        return {
+            "upload_ordinal": 1,
+            "additional_upload_authorization": None,
+            "authorization_event_body_sha256": None,
+            "rejected_live_reference": None,
+            "rejected_live_dynamic_exclusion": None,
+        }
+
+    prior_ordinals = {
+        entry.get("upload_ordinal") for _index, entry in uploads
+        if isinstance(entry.get("upload_ordinal"), int)
+        and not isinstance(entry.get("upload_ordinal"), bool)
+        and entry["upload_ordinal"] < upload_ordinal
+    }
+    if prior_ordinals != set(range(1, upload_ordinal)):
+        raise ReleaseBridgeError("additional upload lacks its complete prior upload chain")
+    capabilities = [
+        (index, entry) for index, entry in enumerate(entries)
+        if entry.get("event") == "additional-upload-authorized"
+        and entry.get("next_attempt") == attempt
+        and entry.get("next_upload_ordinal") == upload_ordinal
+    ]
+    if len(capabilities) != 1:
+        raise ReleaseBridgeError(
+            "additional upload lacks one exact challenger authorization"
+        )
+    index, event = capabilities[0]
+    if index == 0:
+        raise ReleaseBridgeError("additional upload authorization has no rejected window")
+    rejected = entries[index - 1]
+    authorization_record = event.get("authorization")
+    try:
+        authorization_path = challenger._verify_sealed_record(
+            authorization_record,
+            challenger.ADDITIONAL_UPLOAD_AUTHORIZATION_SCHEMA,
+            "release additional-upload authorization",
+        )
+        authorization = qualification.load_sealed(
+            authorization_path,
+            challenger.ADDITIONAL_UPLOAD_AUTHORIZATION_SCHEMA,
+        )
+        live_reference = rejected.get("source_live_reference")
+        if not isinstance(live_reference, Mapping):
+            raise ReleaseBridgeError("rejected live reference is absent")
+        challenger._verify_sealed_record(
+            live_reference, str(live_reference.get("schema", "")),
+            "release rejected live reference",
+        )
+        challenger._verify_dynamic_exclusion_record(
+            rejected.get("dynamic_exclusion"),
+            "release rejected live dynamic exclusion",
+        )
+    except Exception as error:
+        if isinstance(error, ReleaseBridgeError):
+            raise
+        raise ReleaseBridgeError(
+            "additional-upload authorization closure failed validation"
+        ) from error
+    expected_authorization_fields = {
+        "schema", "campaign_id", "previous_attempt", "next_attempt",
+        "next_upload_ordinal", "rejected_live_reference",
+        "rejected_live_dynamic_exclusion", "explicit_user_authorization",
+        "attempt_openings_authorized", "additional_uploads_authorized",
+        "protected_or_live_data_training_allowed", "automatic_action",
+        "body_sha256",
+    }
+    if (
+        set(authorization) != expected_authorization_fields
+        or rejected.get("event") != "live-window-recorded"
+        or rejected.get("passed") is not False
+        or rejected.get("adaptation_route")
+        != "await-explicit-additional-upload-authorization"
+        or rejected.get("upload_ordinal") != upload_ordinal - 1
+        or event.get("attempt") != rejected.get("attempt")
+        or event.get("consumed") is not False
+        or event.get("adaptation_route")
+        != "open-next-attempt-explicit-after-live-failure"
+        or authorization.get("campaign_id") != CAMPAIGN_ID
+        or authorization.get("previous_attempt") != rejected.get("attempt")
+        or authorization.get("next_attempt") != attempt
+        or authorization.get("next_upload_ordinal") != upload_ordinal
+        or authorization.get("rejected_live_reference")
+        != rejected.get("source_live_reference")
+        or authorization.get("rejected_live_dynamic_exclusion")
+        != rejected.get("dynamic_exclusion")
+        or authorization.get("explicit_user_authorization") is not True
+        or authorization.get("attempt_openings_authorized") != 1
+        or authorization.get("additional_uploads_authorized") != 1
+        or authorization.get("protected_or_live_data_training_allowed") is not False
+        or authorization.get("automatic_action") is not False
+    ):
+        raise ReleaseBridgeError("additional-upload authorization binding changed")
+    return {
+        "upload_ordinal": upload_ordinal,
+        "additional_upload_authorization": dict(authorization_record),
+        "authorization_event_body_sha256": event.get("body_sha256"),
+        "rejected_live_reference": dict(rejected["source_live_reference"]),
+        "rejected_live_dynamic_exclusion": dict(rejected["dynamic_exclusion"]),
+    }
+
+
 def authorize_upload(
     output_root: pathlib.Path, *, release_evidence_path: pathlib.Path,
     campaign_plan_path: pathlib.Path, attempt: int,
@@ -2083,33 +2439,70 @@ def authorize_upload(
         dual_qualified_path, campaign_plan_path=campaign_plan_path,
         release_path=release_evidence_path, release=release,
     )
-    entries = challenger.load_ledger(
-        challenger.validate_campaign(campaign_plan_path)["plan"]
+    campaign_context = challenger.validate_campaign(campaign_plan_path)
+    entries = challenger.load_ledger(campaign_context["plan"])
+    campaign_upload = _campaign_upload_binding(
+        entries, attempt=attempt, require_unused=True,
     )
-    if any(entry.get("event") == "upload-attested" for entry in entries):
-        raise ReleaseBridgeError("the campaign already contains an upload")
+    if campaign_context["inputs"].get("production_allowlist_enforced") is True:
+        expected_root = (
+            pathlib.Path(campaign_context["plan"]["outputs"]["root"]).resolve()
+            / "release" / f"attempt-{attempt:03d}" / "upload"
+        )
+        if output_root.resolve() != expected_root:
+            raise ReleaseBridgeError(
+                "production upload authorization root is not campaign-derived"
+            )
     root = _safe_directory(output_root, create=True)
     authorization_path = _safe_output(root / "one-upload-authorization.json")
     inputs_path = _safe_output(root / "authorization-inputs.json")
-    if authorization_path.exists() or inputs_path.exists():
-        return validate_upload_authorization(
-            output_root, release_evidence_path=release_evidence_path,
-            campaign_plan_path=campaign_plan_path, attempt=attempt,
-            candidate_runtime=candidate_runtime,
-            candidate_source=candidate_source,
-            dual_qualified_path=dual_qualified_path,
-        )["authorization"]
-    authorized = _utc(authorized_at_utc, "one-upload authorization time")
+    authorization_exists = authorization_path.exists()
+    inputs_exist = inputs_path.exists()
+    if inputs_exist and not authorization_exists:
+        raise ReleaseBridgeError(
+            "upload authorization inputs exist without their capability"
+        )
+    existing_authorization = (
+        qualification.load_sealed(
+            authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+        )
+        if authorization_exists else None
+    )
+    existing_ledger_claim = next((
+        entry for entry in reversed(entries)
+        if entry.get("event") == "upload-authorization-claimed"
+        and entry.get("attempt") == attempt
+        and entry.get("upload_ordinal") == campaign_upload["upload_ordinal"]
+    ), None)
+    authorized_text = str(
+        existing_ledger_claim.get("authorized_at_utc")
+        if existing_ledger_claim is not None
+        else existing_authorization.get("authorized_at_utc")
+        if existing_authorization is not None
+        else authorized_at_utc
+    )
+    authorized = _utc(authorized_text, "one-upload authorization time")
     gate_b = chain["gates"][1]
     ci_path = pathlib.Path(release["ci"]["path"])
     ci = upload.validate_ci_evidence(
         ci_path, expected_head=release["candidate_commit"]
     )
-    if authorized < max(
+    chronological_inputs = [
         _utc(release["created_at_utc"], "release evidence time"),
         _utc(chain["qualified"]["completed_at_utc"], "dual completion time"),
         _utc(ci["fetched_at_utc"], "CI fetch time"),
-    ):
+    ]
+    if campaign_upload["additional_upload_authorization"] is not None:
+        capability_event = next(
+            entry for entry in entries
+            if entry.get("body_sha256")
+            == campaign_upload["authorization_event_body_sha256"]
+        )
+        chronological_inputs.append(_utc(
+            capability_event.get("created_at_utc"),
+            "additional-upload authorization time",
+        ))
+    if authorized < max(chronological_inputs):
         raise ReleaseBridgeError("upload authorization predates qualification")
     binding = qualification.load_sealed(
         gate_b["binding_path"], qualification.GATE_BINDING_SCHEMA
@@ -2123,11 +2516,27 @@ def authorize_upload(
         != expected_candidate["bytes"]
     ):
         raise ReleaseBridgeError("Gate B binding differs from release source")
+    claim = challenger.claim_upload_authorization(
+        campaign_plan_path,
+        attempt=attempt,
+        output_root=root,
+        release_evidence_path=release_evidence_path,
+        candidate_commit=release["candidate_commit"],
+        campaign_upload_binding=campaign_upload,
+        authorized_at_utc=authorized_text,
+    )
+    claim_binding = {
+        "sequence": claim["sequence"],
+        "body_sha256": claim["body_sha256"],
+        "attempt": claim["attempt"],
+        "upload_ordinal": claim["upload_ordinal"],
+    }
     authorization_body = {
         "schema": qualification.UPLOAD_AUTH_SCHEMA,
         "namespace": NAMESPACE,
         "uploads_authorized": 1,
         "rank4_replacement_authorized": False,
+        "authorized_at_utc": authorized_text,
         "candidate_commit": release["candidate_commit"],
         "candidate": binding["candidate"],
         "binding": _reference(
@@ -2145,15 +2554,23 @@ def authorize_upload(
             dual_qualified_path, challenger.DUAL_QUALIFICATION_SCHEMA
         ),
         "two_independent_rank4_gates_passed": True,
+        "campaign_upload_binding": campaign_upload,
+        "campaign_upload_claim": claim_binding,
     }
-    qualification.write_sealed(authorization_path, authorization_body)
+    expected_authorization = qualification.seal(authorization_body)
+    if existing_authorization is None:
+        qualification.write_sealed(authorization_path, authorization_body)
+    elif existing_authorization != expected_authorization:
+        raise ReleaseBridgeError(
+            "orphaned upload authorization changed before input publication"
+        )
     qualification.write_sealed(inputs_path, {
         "schema": UPLOAD_INPUTS_SCHEMA,
         "namespace": NAMESPACE,
         "campaign_id": CAMPAIGN_ID,
         "attempt": attempt,
         "status": "exactly-one-upload-authorized-after-dual-qualification",
-        "authorized_at_utc": authorized_at_utc,
+        "authorized_at_utc": authorized_text,
         "release_evidence": _reference(
             release_evidence_path, RELEASE_EVIDENCE_SCHEMA
         ),
@@ -2170,20 +2587,27 @@ def authorize_upload(
         "candidate_commit": release["candidate_commit"],
         "candidate": release["candidate"],
         "ci": release["ci"],
+        "campaign_upload_binding": campaign_upload,
+        "campaign_upload_claim": claim_binding,
         "uploads_authorized": 1,
         "submit_clicks_authorized": 1,
         "second_upload_authorized": False,
         "rank4_replacement_authorized": False,
     })
-    validate_upload_authorization(
+    validated = validate_upload_authorization(
         output_root, release_evidence_path=release_evidence_path,
         campaign_plan_path=campaign_plan_path, attempt=attempt,
         candidate_runtime=candidate_runtime, candidate_source=candidate_source,
         dual_qualified_path=dual_qualified_path,
     )
-    return qualification.load_sealed(
-        authorization_path, qualification.UPLOAD_AUTH_SCHEMA
+    challenger.record_upload_authorization(
+        campaign_plan_path,
+        attempt=attempt,
+        authorization_path=authorization_path,
+        authorization_inputs_path=inputs_path,
+        created_at_utc=str(validated["inputs"]["authorized_at_utc"]),
     )
+    return validated["authorization"]
 
 
 def validate_upload_authorization(
@@ -2216,11 +2640,45 @@ def validate_upload_authorization(
     ci = upload.validate_ci_evidence(
         ci_path, expected_head=release["candidate_commit"]
     )
+    stored_campaign_upload = inputs.get("campaign_upload_binding")
+    if not isinstance(stored_campaign_upload, Mapping):
+        raise ReleaseBridgeError("campaign upload binding is absent")
+    campaign_context = challenger.validate_campaign(campaign_plan_path)
+    if campaign_context["inputs"].get("production_allowlist_enforced") is True:
+        expected_root = (
+            pathlib.Path(campaign_context["plan"]["outputs"]["root"]).resolve()
+            / "release" / f"attempt-{attempt:03d}" / "upload"
+        )
+        if root.resolve() != expected_root:
+            raise ReleaseBridgeError(
+                "production upload authorization root is not campaign-derived"
+            )
+    entries = challenger.load_ledger(campaign_context["plan"])
+    campaign_upload = _campaign_upload_binding(
+        entries, attempt=attempt,
+        upload_ordinal=stored_campaign_upload.get("upload_ordinal"),
+        require_unused=False,
+    )
+    claims = [
+        entry for entry in entries
+        if entry.get("event") == "upload-authorization-claimed"
+        and entry.get("attempt") == attempt
+        and entry.get("upload_ordinal") == campaign_upload["upload_ordinal"]
+    ]
+    if len(claims) != 1 or claims[0].get("output_root") != str(root.resolve()):
+        raise ReleaseBridgeError("upload authorization lacks its unique ledger claim")
+    claim_binding = {
+        "sequence": claims[0]["sequence"],
+        "body_sha256": claims[0]["body_sha256"],
+        "attempt": claims[0]["attempt"],
+        "upload_ordinal": claims[0]["upload_ordinal"],
+    }
     expected_authorization = qualification.seal({
         "schema": qualification.UPLOAD_AUTH_SCHEMA,
         "namespace": NAMESPACE,
         "uploads_authorized": 1,
         "rank4_replacement_authorized": False,
+        "authorized_at_utc": str(inputs.get("authorized_at_utc")),
         "candidate_commit": release["candidate_commit"],
         "candidate": binding["candidate"],
         "binding": _reference(
@@ -2238,6 +2696,8 @@ def validate_upload_authorization(
             dual_qualified_path, challenger.DUAL_QUALIFICATION_SCHEMA
         ),
         "two_independent_rank4_gates_passed": True,
+        "campaign_upload_binding": campaign_upload,
+        "campaign_upload_claim": claim_binding,
     })
     expected_inputs = qualification.seal({
         "schema": UPLOAD_INPUTS_SCHEMA,
@@ -2262,15 +2722,35 @@ def validate_upload_authorization(
         "candidate_commit": release["candidate_commit"],
         "candidate": release["candidate"],
         "ci": release["ci"],
+        "campaign_upload_binding": campaign_upload,
+        "campaign_upload_claim": claim_binding,
         "uploads_authorized": 1,
         "submit_clicks_authorized": 1,
         "second_upload_authorized": False,
         "rank4_replacement_authorized": False,
     })
-    _utc(inputs.get("authorized_at_utc"), "one-upload authorization time")
+    authorized = _utc(
+        inputs.get("authorized_at_utc"), "one-upload authorization time"
+    )
+    chronological_inputs = [
+        _utc(release["created_at_utc"], "release evidence time"),
+        _utc(chain["qualified"]["completed_at_utc"], "dual completion time"),
+        _utc(ci["fetched_at_utc"], "CI fetch time"),
+    ]
+    if campaign_upload["additional_upload_authorization"] is not None:
+        capability_event = next(
+            entry for entry in entries
+            if entry.get("body_sha256")
+            == campaign_upload["authorization_event_body_sha256"]
+        )
+        chronological_inputs.append(_utc(
+            capability_event.get("created_at_utc"),
+            "additional-upload authorization time",
+        ))
     if (
         authorization != expected_authorization
         or inputs != expected_inputs
+        or authorized < max(chronological_inputs)
         or authorization.get("uploads_authorized") != 1
         or authorization.get("rank4_replacement_authorized") is not False
     ):

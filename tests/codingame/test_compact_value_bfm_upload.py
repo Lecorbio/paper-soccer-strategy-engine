@@ -79,7 +79,7 @@ def gate_document(index, candidate_sha, bank_sha):
                  for game in games)
     merged = engine()
     return {
-        "schema": upload.gate_support.RESULT_SCHEMA,
+        "schema": upload.gate_support.LEGACY_RESULT_SCHEMA,
         "bindings": {
             "candidate_source_sha256": candidate_sha,
             "candidate_source_bytes": 10,
@@ -255,6 +255,7 @@ class FinalFixture:
             document = upload.gate_support.validate_result(
                 raw, expected_bank_sha256=bank_sha,
                 expected_candidate_sha256=candidate_sha,
+                allow_legacy_attempt_zero=True,
             )
             games = []
             for game in document["games"]:

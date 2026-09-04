@@ -11,6 +11,7 @@ from unittest import mock
 
 from tools import compact_value_bfm_rank4_teacher_release as release
 from tools import compact_value_bfm_upload as maintained_upload
+from tools import compact_value_bfm_teacher_training as teacher_training
 
 
 q = release.qualification
@@ -69,12 +70,16 @@ def make_selected(root: pathlib.Path, *, macros=()) -> dict:
         "runtime": release._record(runtime),
         "generated_source": release._record(source, ascii_required=True),
         "architecture": release._architecture(runtime),
+        "search_throughput_profile": "standard-v1",
+        "candidate_search_profile": "standard-v1",
+        "search_variant": "fixture",
         "compile_time_macros": list(macros),
         "configuration": release.deployment.deployment_configuration(
             ("0.95", "0.5", "1"), "default",
             release.deployment.PROFILE_ROSTER["default"],
         ),
         "selection_evidence": release._reference(selection, "fixture.selection.v1"),
+        "frozen_execution_sources": None,
     }
 
 
@@ -130,6 +135,148 @@ def gh_payload(head=COMMIT):
 
 
 class SourceAndPromotionTest(unittest.TestCase):
+    def test_release_hooks_are_never_injectable_in_production(self):
+        context = {
+            "inputs": {"production_allowlist_enforced": True},
+            "plan": {"outputs": {"root": "/tmp/campaign"}},
+        }
+        with mock.patch.object(
+            release.challenger, "validate_campaign", return_value=context
+        ), self.assertRaisesRegex(
+            release.ReleaseBridgeError, "nonproduction test evidence"
+        ):
+            release._guard_release_hooks(
+                pathlib.Path("/tmp/campaign-plan.json"),
+                hooks_used=True, allow_injected_test_evidence=True,
+            )
+
+    def test_release_derivation_covers_each_throughput_profile_and_base(self):
+        for profile in (
+            "state-evaluation-cache-v1",
+            "progressive-widening-v1",
+            "subtree-reuse-v1",
+        ):
+            for base in ("baseline", "combined"):
+                with self.subTest(profile=profile, base=base), \
+                        tempfile.TemporaryDirectory() as temporary:
+                    variants = teacher_training.active_search_variants(profile)
+                    variant = f"{base}--{profile}"
+                    selected = make_selected(
+                        pathlib.Path(temporary), macros=variants[variant]
+                    )
+                    selected["search_throughput_profile"] = profile
+                    selected["candidate_search_profile"] = profile
+                    selected["search_variant"] = variant
+                    payloads = release._release_payloads(
+                        pathlib.Path(temporary), selected
+                    )
+                    self.assertEqual(
+                        payloads["derivation"]["compile_time_macros"],
+                        list(variants[variant]),
+                    )
+                    self.assertEqual(
+                        payloads["derivation"]["search_throughput_profile"],
+                        profile,
+                    )
+                    self.assertGreaterEqual(
+                        payloads["derivation"]["deployed_source_reserve"],
+                        release.SOURCE_RESERVE_TARGET,
+                    )
+
+    def test_trained_throughput_treatment_resolves_dynamic_macro_roster(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            profile = "state-evaluation-cache-v1"
+            variant = f"combined--{profile}"
+            macro = "COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1"
+            selected_files = make_selected(root, macros=(macro,))
+            admission_path = root / "admission.json"
+            q.write_sealed(admission_path, {
+                "schema": teacher_training.ADMISSION_SCHEMA,
+            })
+            selected = {
+                "runtime": selected_files["runtime"],
+                "source": selected_files["generated_source"],
+                "search_throughput_profile": profile,
+                "candidate_search_profile": profile,
+                "search_variant": variant,
+                "standard_base_variant": "combined",
+                "search_treatment": True,
+                "compile_time_macros": [macro],
+            }
+            admission = {
+                "phase": "full", "attempt": 2, "admitted": True,
+                "selected_candidate": selected,
+            }
+            event = {
+                "event": "attempt-outcome-recorded", "attempt": 2,
+                "phase": "full", "admitted": True,
+                "adaptation_route": "prepare-dual-final",
+                "candidate": {
+                    "runtime": {
+                        key: selected_files["runtime"][key]
+                        for key in ("path", "bytes", "sha256")
+                    },
+                    "source": {
+                        key: selected_files["generated_source"][key]
+                        for key in ("path", "bytes", "sha256")
+                    },
+                },
+                "admission_receipt": release.challenger._sealed_record(
+                    admission_path, teacher_training.ADMISSION_SCHEMA
+                ),
+            }
+            adapter = types.SimpleNamespace(
+                load_phase_admission=lambda _path: admission,
+                active_search_variants=teacher_training.active_search_variants,
+                _search_variant_metadata=(
+                    teacher_training._search_variant_metadata
+                ),
+            )
+            context = {
+                "plan": {},
+                "inputs": {"production_allowlist_enforced": True},
+            }
+            frozen_sources = {
+                "status": "execution-code-bound-to-clean-source-closure"
+            }
+            with mock.patch.object(
+                release.challenger, "validate_campaign",
+                return_value=context,
+            ), mock.patch.object(
+                release.challenger, "load_ledger", return_value=[event],
+            ), mock.patch.object(
+                release.challenger, "_attempt_build_manifest_record",
+                return_value={"path": "/frozen/build.json"},
+            ), mock.patch.object(
+                release.challenger, "_frozen_execution_source_evidence",
+                return_value=frozen_sources,
+            ) as frozen_binding, mock.patch.object(
+                release, "_load", return_value=adapter
+            ):
+                resolved = release._selected_candidate(
+                    root / "campaign.json", attempt=2,
+                    candidate_runtime=pathlib.Path(
+                        selected_files["runtime"]["path"]
+                    ),
+                    candidate_source=pathlib.Path(
+                        selected_files["generated_source"]["path"]
+                    ),
+                )
+            self.assertEqual(resolved["search_throughput_profile"], profile)
+            self.assertEqual(resolved["search_variant"], variant)
+            self.assertEqual(resolved["compile_time_macros"], [macro])
+            self.assertEqual(resolved["frozen_execution_sources"], frozen_sources)
+            frozen_binding.assert_called_once_with(
+                context,
+                tool_roles=release.challenger.POST_PROMOTION_RELEASE_TOOL_ROLES,
+                build_manifest_record={"path": "/frozen/build.json"},
+                revalidate_current=False,
+                allowed_current_drift_routes=tuple(
+                    path.as_posix() for path in release.PROMOTED_RELATIVES
+                ),
+            )
+
     def test_attempt_zero_preserves_frozen_legacy_source_not_current_exporter(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -236,6 +383,13 @@ class SourceAndPromotionTest(unittest.TestCase):
                 release.ReleaseBridgeError, "runtime export plus frozen search macros"
             ):
                 release._release_payloads(root, tampered)
+            with mock.patch.object(
+                release.deployment, "derive_source",
+                return_value=b"x" * (release.SOURCE_MAXIMUM_FOR_TARGET + 1),
+            ), self.assertRaisesRegex(
+                release.ReleaseBridgeError, "2KB-reserve"
+            ):
+                release._release_payloads(root, selected)
 
     def test_promote_writes_only_fixed_four_artifacts_and_never_commits(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -472,6 +626,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
             "tracked_artifacts": artifacts,
             "promotion": release._reference(promotion, release.PROMOTION_SCHEMA),
             "derivation": payloads["derivation"],
+            "frozen_execution_sources": selected["frozen_execution_sources"],
             "configuration": selected["configuration"],
             "source_binding": release._reference(
                 source_binding, q.SOURCE_BINDING_SCHEMA
@@ -963,6 +1118,15 @@ class UploadAuthorizationTest(unittest.TestCase):
                 "gates": gates,
             }
             output = root / "upload"
+            claim_calls = []
+
+            def claim_before_publication(*_args, **_kwargs):
+                claim_calls.append("claim")
+                return {
+                    "sequence": 6, "body_sha256": "c" * 64,
+                    "attempt": 1, "upload_ordinal": 1,
+                }
+
             common_patches = (
                 mock.patch.object(
                     release, "validate_release_evidence", return_value=release_value
@@ -972,12 +1136,73 @@ class UploadAuthorizationTest(unittest.TestCase):
                     release.upload, "validate_ci_evidence", return_value=ci
                 ),
                 mock.patch.object(
-                    release.challenger, "validate_campaign", return_value={"plan": {}}
+                    release.challenger, "validate_campaign", return_value={
+                        "plan": {}, "inputs": {"production_allowlist_enforced": False}
+                    }
                 ),
-                mock.patch.object(release.challenger, "load_ledger", return_value=[]),
+                mock.patch.object(
+                    release.challenger, "load_ledger", return_value=[{
+                        "event": "upload-authorization-claimed",
+                        "sequence": 6,
+                        "body_sha256": "c" * 64,
+                        "attempt": 1,
+                        "upload_ordinal": 1,
+                        "output_root": str(output.resolve()),
+                        "authorized_at_utc": "2026-09-04T00:05:00Z",
+                    }],
+                ),
+                mock.patch.object(
+                    release.challenger, "claim_upload_authorization",
+                    side_effect=claim_before_publication,
+                ),
+                mock.patch.object(
+                    release.challenger, "record_upload_authorization",
+                    return_value={"event": "upload-authorized"},
+                ),
             )
             with common_patches[0], common_patches[1], common_patches[2], \
-                    common_patches[3], common_patches[4]:
+                    common_patches[3], common_patches[4], \
+                    common_patches[5], common_patches[6] as upload_event:
+                crash_output = output
+                original_write = release.qualification.write_sealed
+
+                def crash_between_capability_and_inputs(path, payload):
+                    self.assertTrue(
+                        claim_calls,
+                        "capability bytes were published before the ledger claim",
+                    )
+                    if pathlib.Path(path).name == "authorization-inputs.json":
+                        raise RuntimeError("simulated authorization-input crash")
+                    return original_write(path, payload)
+
+                with mock.patch.object(
+                    release.qualification, "write_sealed",
+                    side_effect=crash_between_capability_and_inputs,
+                ), self.assertRaisesRegex(RuntimeError, "simulated"):
+                    release.authorize_upload(
+                        crash_output, release_evidence_path=release_path,
+                        campaign_plan_path=root / "campaign.json", attempt=1,
+                        candidate_runtime=runtime, candidate_source=candidate,
+                        dual_qualified_path=dual_path,
+                        authorized_at_utc="2026-09-04T00:05:00Z",
+                    )
+                self.assertTrue(
+                    (crash_output / "one-upload-authorization.json").is_file()
+                )
+                self.assertFalse(
+                    (crash_output / "authorization-inputs.json").exists()
+                )
+                recovered = release.authorize_upload(
+                    crash_output, release_evidence_path=release_path,
+                    campaign_plan_path=root / "campaign.json", attempt=1,
+                    candidate_runtime=runtime, candidate_source=candidate,
+                    dual_qualified_path=dual_path,
+                    authorized_at_utc="2026-09-04T00:06:00Z",
+                )
+                self.assertEqual(
+                    recovered["authorized_at_utc"],
+                    "2026-09-04T00:05:00Z",
+                )
                 authorization = release.authorize_upload(
                     output, release_evidence_path=release_path,
                     campaign_plan_path=root / "campaign.json", attempt=1,
@@ -985,13 +1210,106 @@ class UploadAuthorizationTest(unittest.TestCase):
                     dual_qualified_path=dual_path,
                     authorized_at_utc="2026-09-04T00:05:00Z",
                 )
+                resumed = release.authorize_upload(
+                    output, release_evidence_path=release_path,
+                    campaign_plan_path=root / "campaign.json", attempt=1,
+                    candidate_runtime=runtime, candidate_source=candidate,
+                    dual_qualified_path=dual_path,
+                    authorized_at_utc="2026-09-04T00:06:00Z",
+                )
+            self.assertEqual(resumed, authorization)
+            self.assertEqual(upload_event.call_count, 3)
+            self.assertGreaterEqual(len(claim_calls), 3)
+            self.assertEqual(
+                upload_event.call_args.kwargs["created_at_utc"],
+                "2026-09-04T00:05:00Z",
+            )
             self.assertEqual(authorization["schema"], q.UPLOAD_AUTH_SCHEMA)
             self.assertEqual(authorization["uploads_authorized"], 1)
             self.assertFalse(authorization["rank4_replacement_authorized"])
             self.assertTrue(authorization["two_independent_rank4_gates_passed"])
             self.assertEqual(
+                authorization["campaign_upload_binding"],
+                {
+                    "upload_ordinal": 1,
+                    "additional_upload_authorization": None,
+                    "authorization_event_body_sha256": None,
+                    "rejected_live_reference": None,
+                    "rejected_live_dynamic_exclusion": None,
+                },
+            )
+            self.assertEqual(
                 authorization["release_evidence"],
                 release._reference(release_path, release.RELEASE_EVIDENCE_SCHEMA),
+            )
+            second_binding = {
+                "upload_ordinal": 2,
+                "additional_upload_authorization": {"sha256": "8" * 64},
+                "authorization_event_body_sha256": "9" * 64,
+                "rejected_live_reference": {"sha256": "a" * 64},
+                "rejected_live_dynamic_exclusion": {"sha256": "b" * 64},
+            }
+            with mock.patch.object(
+                release, "validate_release_evidence",
+                return_value={**release_value, "attempt": 2},
+            ), mock.patch.object(
+                release, "_dual_chain", return_value=chain,
+            ), mock.patch.object(
+                release.upload, "validate_ci_evidence", return_value=ci,
+            ), mock.patch.object(
+                release.challenger, "validate_campaign", return_value={
+                    "plan": {}, "inputs": {"production_allowlist_enforced": False}
+                },
+            ), mock.patch.object(
+                release.challenger, "load_ledger",
+                return_value=[
+                    {"event": "upload-attested", "upload_ordinal": 1},
+                    {
+                        "event": "additional-upload-authorized",
+                        "body_sha256": "9" * 64,
+                        "created_at_utc": "2026-09-04T00:01:00Z",
+                    },
+                    {
+                        "event": "upload-authorization-claimed",
+                        "sequence": 12,
+                        "body_sha256": "d" * 64,
+                        "attempt": 2,
+                        "upload_ordinal": 2,
+                        "output_root": str((root / "upload-2").resolve()),
+                        "authorized_at_utc": "2026-09-04T00:05:00Z",
+                    },
+                ],
+            ), mock.patch.object(
+                release.challenger, "claim_upload_authorization",
+                return_value={
+                    "sequence": 12, "body_sha256": "d" * 64,
+                    "attempt": 2, "upload_ordinal": 2,
+                },
+            ), mock.patch.object(
+                release.challenger, "record_upload_authorization",
+                return_value={"event": "upload-authorized"},
+            ), mock.patch.object(
+                release, "_campaign_upload_binding", return_value=second_binding,
+            ) as capability:
+                second = release.authorize_upload(
+                    root / "upload-2", release_evidence_path=release_path,
+                    campaign_plan_path=root / "campaign.json", attempt=2,
+                    candidate_runtime=runtime, candidate_source=candidate,
+                    dual_qualified_path=dual_path,
+                    authorized_at_utc="2026-09-04T00:05:00Z",
+                )
+            self.assertEqual(second["campaign_upload_binding"], second_binding)
+            self.assertEqual(capability.call_count, 2)
+            self.assertEqual(
+                capability.call_args_list[0].kwargs,
+                {"attempt": 2, "require_unused": True},
+            )
+            self.assertEqual(
+                capability.call_args_list[1].kwargs,
+                {
+                    "attempt": 2, "upload_ordinal": 2,
+                    "require_unused": False,
+                },
             )
             auth_path = output / "one-upload-authorization.json"
             changed = copy.deepcopy(authorization)
@@ -1006,8 +1324,24 @@ class UploadAuthorizationTest(unittest.TestCase):
                 mock.patch.object(
                     release.upload, "validate_ci_evidence", return_value=ci
                 ),
+                mock.patch.object(
+                    release.challenger, "validate_campaign", return_value={
+                        "plan": {}, "inputs": {"production_allowlist_enforced": False}
+                    }
+                ),
+                mock.patch.object(
+                    release.challenger, "load_ledger", return_value=[{
+                        "event": "upload-authorization-claimed",
+                        "sequence": 6,
+                        "body_sha256": "c" * 64,
+                        "attempt": 1,
+                        "upload_ordinal": 1,
+                        "output_root": str(output.resolve()),
+                    }]
+                ),
             )
-            with repatches[0], repatches[1], repatches[2], self.assertRaisesRegex(
+            with repatches[0], repatches[1], repatches[2], repatches[3], \
+                    repatches[4], self.assertRaisesRegex(
                 release.ReleaseBridgeError, "authorization chain changed"
             ):
                 release.validate_upload_authorization(
@@ -1016,6 +1350,104 @@ class UploadAuthorizationTest(unittest.TestCase):
                     candidate_runtime=runtime, candidate_source=candidate,
                     dual_qualified_path=dual_path,
                 )
+
+    def test_additional_upload_capability_is_exact_and_single_use(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            live_reference_path = root / "live-window.reference.json"
+            q.write_sealed(live_reference_path, {"schema": "fixture.live.v1"})
+            live_reference = release.challenger._sealed_record(
+                live_reference_path, "fixture.live.v1"
+            )
+            dynamic = {
+                "path": str((root / "dynamic.json").resolve()),
+                "bytes": 1, "sha256": "2" * 64,
+                "schema": release.challenger.DYNAMIC_EXCLUSION_SCHEMA,
+                "body_sha256": "3" * 64,
+                "classification": "live-diagnostic-canonical-fingerprints",
+                "fingerprint_count": 1,
+            }
+            authorization_path = root / "additional-upload.json"
+            q.write_sealed(authorization_path, {
+                "schema": release.challenger.ADDITIONAL_UPLOAD_AUTHORIZATION_SCHEMA,
+                "campaign_id": release.CAMPAIGN_ID,
+                "previous_attempt": 1,
+                "next_attempt": 2,
+                "next_upload_ordinal": 2,
+                "rejected_live_reference": live_reference,
+                "rejected_live_dynamic_exclusion": dynamic,
+                "explicit_user_authorization": True,
+                "attempt_openings_authorized": 1,
+                "additional_uploads_authorized": 1,
+                "protected_or_live_data_training_allowed": False,
+                "automatic_action": False,
+            })
+            authorization_record = release.challenger._sealed_record(
+                authorization_path,
+                release.challenger.ADDITIONAL_UPLOAD_AUTHORIZATION_SCHEMA,
+            )
+            entries = [
+                {
+                    "event": "upload-attested", "attempt": 1,
+                    "upload_ordinal": 1,
+                },
+                {
+                    "event": "live-window-recorded", "attempt": 1,
+                    "passed": False, "upload_ordinal": 1,
+                    "adaptation_route":
+                    "await-explicit-additional-upload-authorization",
+                    "source_live_reference": live_reference,
+                    "dynamic_exclusion": dynamic,
+                },
+                {
+                    "event": "additional-upload-authorized", "attempt": 1,
+                    "next_attempt": 2, "next_upload_ordinal": 2,
+                    "authorization": authorization_record,
+                    "consumed": False,
+                    "adaptation_route":
+                    "open-next-attempt-explicit-after-live-failure",
+                    "created_at_utc": "2026-09-04T00:01:00Z",
+                    "body_sha256": "4" * 64,
+                },
+            ]
+            with mock.patch.object(
+                release.challenger, "_verify_dynamic_exclusion_record"
+            ):
+                binding = release._campaign_upload_binding(
+                    entries, attempt=2, require_unused=True
+                )
+                self.assertEqual(binding["upload_ordinal"], 2)
+                self.assertEqual(
+                    binding["additional_upload_authorization"],
+                    authorization_record,
+                )
+                with self.assertRaisesRegex(
+                    release.ReleaseBridgeError, "already consumed"
+                ):
+                    release._campaign_upload_binding(
+                        [*entries, {
+                            "event": "upload-attested", "attempt": 2,
+                            "upload_ordinal": 2,
+                        }],
+                        attempt=2, upload_ordinal=2, require_unused=True,
+                    )
+                with self.assertRaisesRegex(
+                    release.ReleaseBridgeError, "one exact"
+                ):
+                    release._campaign_upload_binding(
+                        entries, attempt=3, upload_ordinal=2,
+                        require_unused=True,
+                    )
+                changed = copy.deepcopy(entries)
+                changed[1]["dynamic_exclusion"] = {
+                    **dynamic, "sha256": "5" * 64,
+                }
+                with self.assertRaisesRegex(
+                    release.ReleaseBridgeError, "binding changed"
+                ):
+                    release._campaign_upload_binding(
+                        changed, attempt=2, require_unused=True,
+                    )
 
 
 if __name__ == "__main__":

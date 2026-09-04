@@ -35,6 +35,8 @@ COMPLETE_TURN_ACTION_GROUP_SCHEMA = (
 COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA = (
     "papersoccer.compact-value-bfm-complete-turn-successor-labels.v1"
 )
+STANDARD_TEACHER_RANKING_PROFILE = "standard-v1"
+HARD_5PCT_2M_TEACHER_RANKING_PROFILE = "hardest-5pct-2m-v1"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
@@ -1207,6 +1209,7 @@ _ACTION_GROUP_WORK_FIELDS = {
     "exploration",
     "fpu",
 }
+_ACTION_GROUP_OPTIONAL_WORK_FIELDS = {"teacher_ranking_profile"}
 _ACTION_GROUP_SOURCE_FIELDS = {
     "campaign_id",
     "position_id",
@@ -1259,7 +1262,12 @@ def _validate_action_group_teacher(value: object) -> dict[str, object]:
 
 
 def _validate_action_group_work(value: object, source: Mapping[str, object]) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != _ACTION_GROUP_WORK_FIELDS:
+    if (
+        not isinstance(value, dict)
+        or not _ACTION_GROUP_WORK_FIELDS <= set(value)
+        or set(value) - _ACTION_GROUP_WORK_FIELDS
+        not in (set(), _ACTION_GROUP_OPTIONAL_WORK_FIELDS)
+    ):
         raise ValueError("action-group work budget is malformed")
     seed = _uint(value.get("seed"), "action-group seed")
     if _uint(value.get("max_time_ms"), "action-group max_time_ms") != 0:
@@ -1271,8 +1279,29 @@ def _validate_action_group_work(value: object, source: Mapping[str, object]) -> 
     )
     exploration = _finite_number(value.get("exploration"), "action-group exploration")
     fpu = _finite_number(value.get("fpu"), "action-group fpu")
-    if actions > 250 or paths > 50_000 or nodes > 1_000_000:
+    profile = value.get(
+        "teacher_ranking_profile", STANDARD_TEACHER_RANKING_PROFILE
+    )
+    if profile not in {
+        STANDARD_TEACHER_RANKING_PROFILE,
+        HARD_5PCT_2M_TEACHER_RANKING_PROFILE,
+    }:
+        raise ValueError("action-group teacher-ranking profile is unregistered")
+    if actions > 250 or paths > 50_000:
         raise ValueError("action-group work budget exceeds the teacher contract")
+    if profile == STANDARD_TEACHER_RANKING_PROFILE:
+        if nodes > 1_000_000:
+            raise ValueError("action-group work budget exceeds the teacher contract")
+    elif (
+        nodes != 2_000_000
+        or actions != 250
+        or paths != 50_000
+        or exploration != 0.5
+        or fpu != 0.5
+    ):
+        raise ValueError(
+            "registered hardest-5pct-2m work budget changed"
+        )
     if exploration < 0.0 or not -1.0 <= fpu <= 1.0:
         raise ValueError("action-group exploration or FPU is outside its range")
     material = (
@@ -1566,6 +1595,10 @@ def build_complete_turn_successor_labels(
     normalized = [validate_complete_turn_action_group(dict(row)) for row in rows]
     if not normalized:
         raise ValueError("complete-turn successor labels require at least one group")
+    if any(not row["group"]["successors_exhaustive"] for row in normalized):
+        raise ValueError(
+            "complete-turn successor labels require exhaustive legal successors"
+        )
     first = normalized[0]
     immutable = (
         first["feature_schema"],
@@ -1655,6 +1688,10 @@ def validate_complete_turn_successor_labels(value: object) -> dict[str, object]:
                 "group": group,
             }
             normalized = validate_complete_turn_action_group(row)
+            if normalized["group"]["successors_exhaustive"] is not True:
+                raise ValueError(
+                    "complete-turn successor labels require exhaustive legal successors"
+                )
             group_id = str(normalized["group"]["group_id"])
             if group_id in observed:
                 raise ValueError("complete-turn successor-label group is duplicated")

@@ -713,6 +713,7 @@ class DevelopmentRunner:
                 gate_output,
                 expected_bank_sha256=bank.sha256,
                 expected_candidate_sha256=candidate.source_sha256,
+                allow_legacy_attempt_zero=True,
             )
         else:
             gate_document = self.gate_executor(candidate, bank, spec)
@@ -721,6 +722,7 @@ class DevelopmentRunner:
                 gate_output,
                 expected_bank_sha256=bank.sha256,
                 expected_candidate_sha256=candidate.source_sha256,
+                allow_legacy_attempt_zero=True,
             )
         if (gate_document.get("bindings", {}).get("bank_sha256") != bank.sha256
                 or gate_document.get("bindings", {}).get("candidate_source_sha256")
