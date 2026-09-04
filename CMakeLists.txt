@@ -398,6 +398,18 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     add_test(
+      NAME papersoccer_compact_value_bfm_campaign_v2_unit_tests
+      COMMAND ${CMAKE_COMMAND} -E env
+              PYTHONDONTWRITEBYTECODE=1
+              ${Python3_EXECUTABLE} -m unittest
+              tests.codingame.test_compact_value_bfm_campaign_v2
+              tests.codingame.test_compact_value_bfm_ranking_store
+              tests.codingame.test_compact_value_bfm_opponent_evaluation)
+    set_tests_properties(
+      papersoccer_compact_value_bfm_campaign_v2_unit_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(
       NAME papersoccer_compact_value_bfm_teacher_training_unit_tests
       COMMAND ${CMAKE_COMMAND} -E env
               PYTHONDONTWRITEBYTECODE=1

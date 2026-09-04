@@ -86,6 +86,7 @@ struct Options {
   std::string campaign_id;
   std::string compact_student_runtime;
   std::string compact_prior_runtime;
+  bool fresh_roots_v2{false};
   std::size_t games{10'000};
   int round{};
   std::uint64_t seed{0x4A5242464D5631ULL};
@@ -242,7 +243,7 @@ Options parse_options(int argc, char **argv) {
       std::cout
           << "usage: papersoccer_jacek_replay_continuations --input roots.tsv "
              "--output continuations.tsv --manifest manifest.json "
-             "[--games N] [--round 0|1|2] "
+             "[--games N] [--round 0|1|2] [--root-policy fresh-complete-v2] "
              "[--model checkpoint] [--seed N] [--actor-nodes N] "
              "[--candidate-tree-nodes N] [--max-turns N] "
              "[--selfsearch-plan plan.tsv --campaign-id ID "
@@ -260,6 +261,11 @@ Options parse_options(int argc, char **argv) {
     else if (option == "--runner-up-model") options.runner_up_model = value;
     else if (option == "--selfsearch-plan") options.selfsearch_plan = value;
     else if (option == "--campaign-id") options.campaign_id = value;
+    else if (option == "--root-policy") {
+      if (value != "fresh-complete-v2")
+        throw std::invalid_argument("unknown root policy");
+      options.fresh_roots_v2 = true;
+    }
     else if (option == "--compact-student-runtime") {
       options.compact_student_runtime = value;
     } else if (option == "--compact-prior-runtime") {
@@ -291,7 +297,8 @@ Options parse_options(int argc, char **argv) {
   const bool selfsearch = !options.selfsearch_plan.empty();
   const bool compact = !options.compact_student_runtime.empty() ||
                        !options.compact_prior_runtime.empty();
-  if (options.input.empty() || options.output.empty() ||
+  if ((options.fresh_roots_v2 && !selfsearch) ||
+      options.input.empty() || options.output.empty() ||
       options.manifest.empty() || options.round < 0 || options.round > 2 ||
       (!selfsearch && options.round > 0 && options.model.empty()) ||
       (!selfsearch && options.round == 0 && !options.model.empty()) ||
@@ -381,7 +388,7 @@ std::string file_sha256(const std::string &path, std::string_view label) {
   return sha256(read_file(path, label));
 }
 
-std::vector<Root> load_roots(std::string_view bytes) {
+std::vector<Root> load_roots(std::string_view bytes, bool fresh_roots_v2) {
   std::istringstream input{std::string(bytes)};
   std::vector<Root> roots;
   std::string line;
@@ -398,6 +405,7 @@ std::vector<Root> load_roots(std::string_view bytes) {
     root.group_id = fields[0];
     root.row_ordinal = roots.size();
     root.transcript_sha256 = sha256(fields[3]);
+    if (!(fresh_roots_v2 && fields[3] == "-"))
     for (const std::string_view action : split(fields[3], '/')) {
       if (action.empty()) throw std::invalid_argument("empty replay action");
       root.actions.emplace_back(action);
@@ -908,7 +916,8 @@ std::optional<GeneratedGame> generate_selfsearch(
     const Root &root, const Options &options, std::uint64_t game_seed,
     SelfActorMode actor_mode, const CompactRuntimePair *compact_runtimes) {
   SplitMix64 random(game_seed);
-  const std::size_t prefix_length = random.index(root.actions.size());
+  const std::size_t prefix_length = options.fresh_roots_v2
+      ? root.actions.size() : random.index(root.actions.size());
   ps::GameState state = ps::make_initial_state(contest_rules());
   cv::State compact_state = cv::initial_state();
   require_lockstep(state, compact_state);
@@ -1113,7 +1122,7 @@ std::vector<SelfRecord> generate_selfsearch_records(
       const Root &root = roots[root_selector.index(roots.size())];
       completed = generate_selfsearch(root, options, game_seed,
                                       planned.actor_mode, compact_runtimes);
-      if (completed.has_value() && compact_runtimes != nullptr &&
+      if (!options.fresh_roots_v2 && completed.has_value() && compact_runtimes != nullptr &&
           completed->transcript.size() - completed->prefix_turns <
               kCompactMinimumPostPrefixTurns) {
         completed.reset();
@@ -1275,8 +1284,10 @@ std::string make_selfsearch_manifest(
            << json_string(
                   PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256)
            << ",\"minimum_post_prefix_turns\":"
-           << kCompactMinimumPostPrefixTurns;
+           << (options.fresh_roots_v2 ? 0U : kCompactMinimumPostPrefixTurns);
   }
+  if (options.fresh_roots_v2)
+    output << ",\"root_policy\":\"fresh-complete-v2\"";
   output << "},\"bindings\":{\"roots_sha256\":"
          << json_string(roots_sha256) << ",\"plan_sha256\":"
          << json_string(plan_sha256) << ",\"output_sha256\":"
@@ -1461,7 +1472,7 @@ int main(int argc, char **argv) {
             ? std::nullopt
             : std::optional<std::string>(
                   file_sha256(options.model, "candidate model"));
-    const std::vector<Root> roots = load_roots(input_bytes);
+    const std::vector<Root> roots = load_roots(input_bytes, options.fresh_roots_v2);
     if (!options.selfsearch_plan.empty()) {
       std::optional<CompactRuntimePair> compact_runtimes;
       if (!options.compact_student_runtime.empty()) {

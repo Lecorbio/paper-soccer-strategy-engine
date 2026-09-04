@@ -95,6 +95,7 @@ SIDECAR_INDEX_SCHEMA = "papersoccer.compact-value-bfm-sidecar-index.v1"
 SUCCESSOR_LABEL_SCHEMA = (
     "papersoccer.compact-value-bfm-complete-turn-successor-labels.v1"
 )
+SUCCESSOR_STORE_SCHEMA = "papersoccer.compact-value-bfm-ranking-store.v2"
 INPUT_AUDIT_SCHEMA = "papersoccer.compact-value-bfm-input-audit.v1"
 RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v1"
 SEED_RECEIPT_SCHEMA = "papersoccer.compact-value-bfm-seed-receipt.v1"
@@ -882,6 +883,7 @@ class SuccessorRankingLabels:
     source_bundle_body_sha256: str
     artifact_sha256: str
     body_sha256: str
+    artifact_schema: str = SUCCESSOR_LABEL_SCHEMA
 
 
 def _ranking_weight(value: float) -> float:
@@ -4995,8 +4997,10 @@ def training_binding(
         _initial_parameters, checkpoint = _bound_initial_checkpoint(
             initial_checkpoint, architecture
         )
+        if labels.artifact_schema not in {SUCCESSOR_LABEL_SCHEMA, SUCCESSOR_STORE_SCHEMA}:
+            raise TrainingError("unrecognized successor artifact schema")
         body["successor_ranking"] = {
-            "schema": SUCCESSOR_LABEL_SCHEMA,
+            "schema": labels.artifact_schema,
             "artifact_sha256": labels.artifact_sha256,
             "body_sha256": labels.body_sha256,
             "source_bundle_body_sha256": labels.source_bundle_body_sha256,
