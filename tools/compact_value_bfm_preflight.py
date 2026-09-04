@@ -1122,10 +1122,16 @@ def _exporter_record(
 ) -> dict[str, Any]:
     candidate_path = repository / BOT_RELATIVE / "submission.cpp"
     candidate = _regular_file(candidate_path, ascii_required=True)
+    frozen_candidate = {
+        key: inputs["candidate"][key] for key in candidate
+    }
     record = {
         "candidate": candidate,
         "runtime_sha256": base.sha256_file(runtime_path),
-        "fresh": candidate == inputs["candidate"],
+        # The input snapshot also carries the derived bootstrap-zero verdict.
+        # Freshness is a byte/path/ASCII comparison, not equality with that
+        # augmented policy record.
+        "fresh": candidate == frozen_candidate,
         "under_95k": candidate["bytes"] < SOURCE_LIMIT_EXCLUSIVE,
         "commands": {
             name: commands[name] for name in (
