@@ -1,5 +1,8 @@
 # Compact value-BFM challenger
 
+The sanitized outcome of the completed Rank-4 qualification and live diagnostic
+is recorded in [the Rank-4 campaign outcome](compact-value-bfm-rank4-campaign-outcome.md).
+
 `compact_value_bfm` is a separate, value-only CodinGame research entrant.  It
 does not replace `rank_4`, inherit a public rank, or make a Rank-1 claim.  Its
 deployment state is determined only by the content-addressed receipts in its
