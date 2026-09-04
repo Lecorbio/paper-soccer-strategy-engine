@@ -583,7 +583,10 @@ def _default_release_preflight_validator(
     except Exception as error:
         raise DualFinalError("authorized generated source could not be resolved") from error
     try:
-        from tools import compact_value_bfm_rank4_teacher_release as release
+        release = _load(
+            HERE / "compact_value_bfm_rank4_teacher_release.py",
+            "rank4_teacher_dual_final_release",
+        )
 
         adapter = getattr(release, "dual_final_preflight_state", None)
         if adapter is None:

@@ -254,6 +254,8 @@ class DualFinalExecutionTests(unittest.TestCase):
         with mock.patch.object(
             release, "dual_final_preflight_state", side_effect=adapt
         ), mock.patch.object(
+            dual, "_load", return_value=release
+        ), mock.patch.object(
             dual.challenger, "validate_campaign", return_value={"plan": {}}
         ), mock.patch.object(
             dual.challenger, "_resolve_campaign_artifact", return_value=selected
@@ -457,6 +459,8 @@ class DualFinalExecutionTests(unittest.TestCase):
                     return_value=fixture.source.resolve(),
                 ), mock.patch.object(
                     release, "dual_final_preflight_state", return_value=adapted,
+                ), mock.patch.object(
+                    dual, "_load", return_value=release,
                 ):
                     return dual._default_release_preflight_validator(
                         path,

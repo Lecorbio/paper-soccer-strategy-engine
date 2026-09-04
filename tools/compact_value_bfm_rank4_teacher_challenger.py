@@ -3510,7 +3510,10 @@ def _validate_development_gate_abandonment(
     """Replay the teacher runner's source-bound, metric-free abort receipt."""
 
     try:
-        from tools import compact_value_bfm_teacher_training as teacher_training
+        teacher_training = _load(
+            HERE / "compact_value_bfm_teacher_training.py",
+            "rank4_teacher_challenger_teacher_training",
+        )
 
         header = qualification.load_sealed(
             path, DEVELOPMENT_GATE_ABORTION_SCHEMA
@@ -3563,7 +3566,10 @@ def _validate_protected_stage_abortion(
     """Replay the dual-final runner's source-bound protected abort receipt."""
 
     try:
-        from tools import compact_value_bfm_rank4_teacher_dual_final as dual_final
+        dual_final = _load(
+            HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+            "rank4_teacher_challenger_dual_final",
+        )
 
         validator = (
             dual_final.validate_protected_stage_abortion
@@ -3777,7 +3783,10 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                         )
                     )
                     try:
-                        from tools import compact_value_bfm_loss_reuse as loss_reuse
+                        loss_reuse = _load(
+                            HERE / "compact_value_bfm_loss_reuse.py",
+                            "rank4_teacher_challenger_loss_reuse",
+                        )
 
                         archived_roots_tsv = _verify_record(
                             attempt_inputs["roots_tsv"],
@@ -5682,7 +5691,10 @@ def _derive_pipeline_progress(
     pipeline_plan_path: pathlib.Path,
 ) -> tuple[int, dict[str, int], int, dict[str, Any]]:
     try:
-        from tools import compact_value_bfm_pilot_pipeline as phase_pipeline
+        phase_pipeline = _load(
+            HERE / "compact_value_bfm_pilot_pipeline.py",
+            "rank4_teacher_challenger_pilot_pipeline",
+        )
 
         pipeline_plan = phase_pipeline.load_pipeline(pipeline_plan_path.resolve())
     except Exception as error:
@@ -7555,7 +7567,10 @@ def _validate_phase_outcome_evidence(
             raise ChallengerError("production phase outcome requires admission receipt")
     else:
         try:
-            from tools import compact_value_bfm_teacher_training as teacher_training
+            teacher_training = _load(
+                HERE / "compact_value_bfm_teacher_training.py",
+                "rank4_teacher_challenger_teacher_training",
+            )
 
             admission = teacher_training.load_phase_admission(
                 admission_receipt.resolve()
@@ -8310,7 +8325,10 @@ def open_next_attempt(
                 context, tool_roles=("loss_reuse",),
                 build_manifest_record=defaults["build_manifest"],
             )
-            from tools import compact_value_bfm_loss_reuse as loss_reuse
+            loss_reuse = _load(
+                HERE / "compact_value_bfm_loss_reuse.py",
+                "rank4_teacher_challenger_loss_reuse",
+            )
 
             loss_reuse_manifest = loss_reuse.validate_loss_reuse_for_campaign(
                 roots_manifest.resolve(), campaign_plan=plan_path.resolve(),
@@ -8562,7 +8580,10 @@ def authorize_dual_final(
     release_candidate = None
     if release_evidence_path is not None:
         try:
-            from tools import compact_value_bfm_rank4_teacher_release as release_bridge
+            release_bridge = _load(
+                HERE / "compact_value_bfm_rank4_teacher_release.py",
+                "rank4_teacher_challenger_release_bridge",
+            )
 
             release_evidence = release_bridge.validate_release_evidence(
                 release_evidence_path,
@@ -8811,7 +8832,10 @@ def _validate_dual_final_authorization(
             release_record, RELEASE_EVIDENCE_SCHEMA, "candidate release evidence"
         )
         try:
-            from tools import compact_value_bfm_rank4_teacher_release as release_bridge
+            release_bridge = _load(
+                HERE / "compact_value_bfm_rank4_teacher_release.py",
+                "rank4_teacher_challenger_release_bridge",
+            )
 
             release_bridge.validate_release_evidence(
                 release_path,
@@ -9205,7 +9229,10 @@ def _validate_final_gate_evidence(
     bridge_schema = value.get("bridge_schema")
     if bridge_schema is not None:
         try:
-            from tools import compact_value_bfm_rank4_teacher_dual_final as dual_runner
+            dual_runner = _load(
+                HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+                "rank4_teacher_challenger_dual_final",
+            )
 
             if bridge_schema != dual_runner.DEEP_GATE_EVIDENCE_SCHEMA:
                 raise ChallengerError("final gate bridge schema changed")

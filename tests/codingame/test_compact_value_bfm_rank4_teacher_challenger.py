@@ -1,3 +1,4 @@
+import ast
 import base64
 import contextlib
 import copy
@@ -6,6 +7,8 @@ import io
 import json
 import pathlib
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from collections import Counter
@@ -20,6 +23,56 @@ q = challenger.qualification
 
 
 class ChallengerCliForwardingTests(unittest.TestCase):
+    def test_direct_entrypoints_use_path_bound_lazy_imports(self):
+        entrypoints = (
+            (
+                pathlib.Path(challenger.__file__),
+                "rank4_teacher_challenger_release_bridge",
+            ),
+            (
+                challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+                "rank4_teacher_dual_final_release",
+            ),
+        )
+        for path in entrypoints:
+            with self.subTest(entrypoint=path.name):
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                package_imports = [
+                    node.lineno for node in ast.walk(tree)
+                    if isinstance(node, ast.ImportFrom) and node.module == "tools"
+                ]
+                self.assertEqual(package_imports, [])
+
+    def test_isolated_entrypoints_can_load_release_without_package_path(self):
+        entrypoints = (
+            pathlib.Path(challenger.__file__),
+            challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+        )
+        program = """
+import importlib.util
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+name = "isolated_" + path.stem
+spec = importlib.util.spec_from_file_location(name, path)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[name] = module
+spec.loader.exec_module(module)
+release = module._load(
+    module.HERE / "compact_value_bfm_rank4_teacher_release.py", sys.argv[2]
+)
+assert release.CAMPAIGN_ID == module.CAMPAIGN_ID
+"""
+        for path, alias in entrypoints:
+            with self.subTest(entrypoint=path.name), tempfile.TemporaryDirectory() as raw:
+                completed = subprocess.run(
+                    [sys.executable, "-I", "-c", program, str(path), alias],
+                    cwd=raw, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_attempt_one_checkpoint_role_uses_frozen_production_allowlist(self):
         self.assertIs(
             challenger._production_allowlist_for_role(
@@ -2274,6 +2327,8 @@ class ChallengerCampaignTests(unittest.TestCase):
             with mock.patch.object(
                 release_bridge, "validate_release_evidence",
                 return_value={"candidate": released_candidate},
+            ), mock.patch.object(
+                challenger, "_load", return_value=release_bridge,
             ):
                 authorization_path = challenger.authorize_dual_final(
                     fixture.plan_path, attempt=1,
@@ -2975,6 +3030,8 @@ class ChallengerCampaignTests(unittest.TestCase):
                 challenger, "_frozen_execution_source_evidence",
                 return_value=verifier_sources,
             ), mock.patch.object(
+                challenger, "_load", return_value=loss_reuse,
+            ), mock.patch.object(
                 loss_reuse, "validate_loss_reuse_for_campaign",
                 side_effect=swap_after_deep_validation,
             ), self.assertRaisesRegex(
@@ -2994,6 +3051,8 @@ class ChallengerCampaignTests(unittest.TestCase):
                 challenger, "_frozen_execution_source_evidence",
                 return_value=verifier_sources,
             ) as source_binding, mock.patch.object(
+                challenger, "_load", return_value=loss_reuse,
+            ), mock.patch.object(
                 loss_reuse, "validate_loss_reuse_for_campaign",
                 return_value=validated_reuse,
             ) as deep_validate:
@@ -3238,6 +3297,8 @@ class ChallengerCampaignTests(unittest.TestCase):
             campaign = {"inputs": {"production_allowlist_enforced": True}}
             with mock.patch.object(
                 challenger, "validate_campaign", return_value=campaign,
+            ), mock.patch.object(
+                challenger, "_load", return_value=dual_runner,
             ), mock.patch.object(
                 dual_runner, "validate_governance_evidence",
                 return_value={"summary": evidence["summary"]},
