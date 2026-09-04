@@ -233,17 +233,71 @@ def load_roster(path: Path = DEFAULT_ROSTER) -> dict[str, Any]:
     return roster
 
 
+def _cmake_bot_list(
+    repository: Path, *, cmake_path: Path, variable: str, required: bool = True
+) -> list[str]:
+    text = cmake_path.read_text(encoding="utf-8")
+    match = re.search(rf"set\s*\(\s*{re.escape(variable)}\b(.*?)\)", text, re.DOTALL)
+    if match is None and not required:
+        return []
+    _require(match is not None, f"cannot find set({variable} ...) in {cmake_path}")
+    body = re.sub(r"#.*", "", match.group(1))
+    return body.split()
+
+
 def _registered_bots(repository: Path, roster: Mapping[str, Any]) -> list[str]:
     registry = roster.get("cmakeRegistry")
     _require(isinstance(registry, dict), "roster.cmakeRegistry must be an object")
     cmake_path = repository / str(registry.get("path", ""))
     variable = str(registry.get("variable", ""))
     _require(variable == "PAPERSOCCER_CODINGAME_BOTS", "unexpected CMake registry variable")
+    return _cmake_bot_list(
+        repository, cmake_path=cmake_path, variable=variable
+    )
+
+
+def _research_bots(repository: Path, roster: Mapping[str, Any]) -> list[str]:
+    registry = roster.get("cmakeRegistry")
+    _require(isinstance(registry, dict), "roster.cmakeRegistry must be an object")
+    cmake_path = repository / str(registry.get("path", ""))
+    return _cmake_bot_list(
+        repository,
+        cmake_path=cmake_path,
+        variable="PAPERSOCCER_CODINGAME_RESEARCH_BOTS",
+        required=False,
+    )
+
+
+def _validate_build_bot_registry(
+    repository: Path, roster: Mapping[str, Any], research: Sequence[str]
+) -> None:
+    if not research:
+        return
+    registry = roster.get("cmakeRegistry")
+    _require(isinstance(registry, dict), "roster.cmakeRegistry must be an object")
+    cmake_path = repository / str(registry.get("path", ""))
+    build_sources = _cmake_bot_list(
+        repository,
+        cmake_path=cmake_path,
+        variable="PAPERSOCCER_CODINGAME_BUILD_BOTS",
+    )
+    _require(
+        build_sources == [
+            "${PAPERSOCCER_CODINGAME_BOTS}",
+            "${PAPERSOCCER_CODINGAME_RESEARCH_BOTS}",
+        ],
+        "CMake build bot registry is not the exact leaderboard/research union",
+    )
     text = cmake_path.read_text(encoding="utf-8")
-    match = re.search(rf"set\s*\(\s*{re.escape(variable)}\b(.*?)\)", text, re.DOTALL)
-    _require(match is not None, f"cannot find set({variable} ...) in {cmake_path}")
-    body = re.sub(r"#.*", "", match.group(1))
-    return body.split()
+    build_loops = re.findall(
+        r"foreach\s*\(\s*PAPERSOCCER_CODINGAME_BOT\s+IN\s+LISTS\s+"
+        r"PAPERSOCCER_CODINGAME_BUILD_BOTS\s*\)",
+        text,
+    )
+    _require(
+        len(build_loops) == 2,
+        "CMake submission build/current-test loops do not use the research union",
+    )
 
 
 def validate_roster(
@@ -340,11 +394,21 @@ def validate_roster(
         normalized.append(entrant)
 
     registered = _registered_bots(repository, roster)
+    research = _research_bots(repository, roster)
+    _validate_build_bot_registry(repository, roster, research)
     _require(
         len(registered) == EXPECTED_REGISTERED_BOTS,
         f"CMake must register exactly {EXPECTED_REGISTERED_BOTS} bots",
     )
     _require(len(set(registered)) == len(registered), "CMake bot registry contains duplicates")
+    _require(
+        len(set(research)) == len(research),
+        "CMake research bot registry contains duplicates",
+    )
+    _require(
+        set(registered).isdisjoint(research),
+        "leaderboard and research bot registries overlap",
+    )
     _require(
         set(registered) == covered_directories,
         "leaderboard roster does not exactly cover the CMake bot registry",
@@ -354,8 +418,8 @@ def validate_roster(
         path.name for path in bot_root.iterdir() if path.is_dir() and (path / "submission.cpp").is_file()
     }
     _require(
-        artifact_directories == set(registered),
-        "CMake bot registry does not exactly cover directories containing submission.cpp",
+        artifact_directories == set(registered) | set(research),
+        "CMake leaderboard/research registries do not exactly cover directories containing submission.cpp",
     )
     return normalized
 

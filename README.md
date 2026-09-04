@@ -134,6 +134,7 @@ On other systems, open `web/index.html` in a modern browser.
 - [CodinGame submission archive](submissions/codingame/README.md)
 - [Model artifacts and provenance](models/README.md)
 - [Offline Jacek replay BFM](docs/jacek-replay-bfm.md)
+- [Compact value-BFM challenger](docs/compact-value-bfm.md)
 - [Large-teacher self-search outcome](benchmarks/large_teacher_campaign/REPORT.md)
 
 ## License

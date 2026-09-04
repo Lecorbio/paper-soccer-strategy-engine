@@ -31,8 +31,8 @@ licensed by this repository:
 
 ## QtPaperSoccer-derived architecture
 
-The `jacek_native_bfm` CodinGame research track and the offline
-`JacekReplayBfmBot` architecture are independent adaptations
+The `jacek_native_bfm` and `compact_value_bfm` CodinGame research tracks and
+the offline `JacekReplayBfmBot` architecture are independent adaptations
 of public architectural behavior in Jacek Dermont's
 [QtPaperSoccer](https://github.com/jdermont/QtPaperSoccer), pinned at commit
 `366d5304c09c2c820bd3ef4ea94624c034b8d955` (2026-03-08). The upstream project

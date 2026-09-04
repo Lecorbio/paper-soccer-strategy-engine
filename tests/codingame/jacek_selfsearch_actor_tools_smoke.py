@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import pathlib
@@ -45,6 +46,68 @@ def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def canonical_json(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True,
+                   separators=(",", ":"))
+        + "\n"
+    ).encode("ascii")
+
+
+def compact_runtime(directory: pathlib.Path, name: str, seed: int) -> pathlib.Path:
+    hidden_one, hidden_two = 8, 8
+    counts = {
+        "w1": 6301 * hidden_one,
+        "w2": hidden_one * hidden_two,
+        "w3": hidden_two,
+    }
+    counts["total"] = sum(counts.values())
+    payload = bytes((counts["total"] * 3 + 7) // 8)
+    body = {
+        "schema": "papersoccer.compact-value-bfm-runtime.v1",
+        "feature_schema": (
+            "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"
+            "mover-relative-rotate180:true-turn-distance+free-degree"
+        ),
+        "architecture": {
+            "name": "compact-8x8",
+            "dimensions": [6301, hidden_one, hidden_two, 1],
+            "biases": False,
+            "activations": [
+                "square-leaky-0.01", "leaky-relu-0.01",
+                "fast-tanh-rational-v1",
+            ],
+            "payload_layout": "w1-input-major,w2-input-major,w3",
+        },
+        "quantization": {
+            "bits": 3,
+            "minimum": -3,
+            "maximum": 3,
+            "scheme": "symmetric-signed-three-bit-per-layer-fixed-scale",
+            "packing": "signed-three-bit-twos-complement-lsb-first",
+            "scales": {"w1": 0.03125, "w2": 0.0625, "w3": 0.125},
+            "weight_counts": counts,
+            "packed_byte_count": len(payload),
+            "payload_sha256": hashlib.sha256(payload).hexdigest(),
+            "payload_base64": base64.b64encode(payload).decode("ascii"),
+        },
+        "selection": {
+            "arm": "search-target",
+            "seed": seed,
+            "float_epoch": 1,
+            "qat_epoch": 4,
+            "source_bundle_body_sha256": "a" * 64,
+        },
+    }
+    document = {
+        **body,
+        "body_sha256": hashlib.sha256(canonical_json(body)).hexdigest(),
+    }
+    path = directory / f"{name}.runtime.json"
+    path.write_bytes(canonical_json(document))
+    return path
+
+
 def splitmix_next(state: int) -> tuple[int, int]:
     state = (state + 0x9E3779B97F4A7C15) & MASK64
     value = state
@@ -71,20 +134,30 @@ def run_continuations(
     model: pathlib.Path,
     directory: pathlib.Path,
     suffix: str,
+    compact_student: pathlib.Path | None = None,
+    compact_prior: pathlib.Path | None = None,
 ) -> tuple[bytes, dict]:
+    if (compact_student is None) != (compact_prior is None):
+        raise RuntimeError("compact smoke runtimes must be paired")
+    modes = ACTOR_MODES if compact_student is None else ACTOR_MODES[7:]
     roots = directory / "roots.tsv"
+    root_transcript = SHORT_WIN if compact_student is None else "0"
     roots.write_text(
         "group_id\tsource\twinner\ttranscript\n"
-        f"root:near-goal\tfixture\t0\t{SHORT_WIN}\n",
+        f"root:fixture\tfixture\t0\t{root_transcript}\n",
         encoding="utf-8",
     )
     plan = directory / "plan.tsv"
-    seeds = near_goal_seeds(len(ACTOR_MODES))
+    seeds = (
+        near_goal_seeds(len(modes))
+        if compact_student is None
+        else list(range(101, 101 + len(modes)))
+    )
     plan.write_text(
         "game_ordinal\tactor_mode\tbase_seed\n"
         + "".join(
             f"{ordinal}\t{mode}\t{seed}\n"
-            for ordinal, (mode, seed) in enumerate(zip(ACTOR_MODES, seeds, strict=True))
+            for ordinal, (mode, seed) in enumerate(zip(modes, seeds, strict=True))
         ),
         encoding="utf-8",
     )
@@ -99,14 +172,19 @@ def run_continuations(
         "--runner-up-model", str(model),
         "--selfsearch-plan", str(plan),
         "--campaign-id", "selfsearch-actor-smoke",
-        "--games", str(len(ACTOR_MODES)),
+        "--games", str(len(modes)),
         "--candidate-tree-nodes", "16",
         "--actor-nodes", "16",
         "--jacek-nn-nodes", "16",
         "--candidate-exploration", "0.5",
         "--candidate-fpu", "0.5",
-        "--max-turns", "64",
+        "--max-turns", "64" if compact_student is None else "160",
     )
+    if compact_student is not None and compact_prior is not None:
+        command += (
+            "--compact-student-runtime", str(compact_student),
+            "--compact-prior-runtime", str(compact_prior),
+        )
     completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(f"continuation smoke failed: {completed.stderr}")
@@ -114,8 +192,8 @@ def run_continuations(
     report = json.loads(manifest.read_bytes())
     if (
         report.get("schema") != "papersoccer.jacek-selfsearch-games.v1"
-        or report.get("requested_games") != len(ACTOR_MODES)
-        or report.get("successful_games") != len(ACTOR_MODES)
+        or report.get("requested_games") != len(modes)
+        or report.get("successful_games") != len(modes)
         or report.get("bindings", {}).get("roots_sha256") != sha256(roots)
         or report.get("bindings", {}).get("plan_sha256") != sha256(plan)
         or report.get("bindings", {}).get("output_sha256")
@@ -124,15 +202,60 @@ def run_continuations(
         or report.get("bindings", {}).get("runner_up_model_sha256") != sha256(model)
     ):
         raise RuntimeError("continuation smoke manifest bindings are invalid")
+    if compact_student is not None and compact_prior is not None:
+        configuration = report.get("configuration", {})
+        bindings = report.get("bindings", {})
+        student = json.loads(compact_student.read_bytes())
+        prior = json.loads(compact_prior.read_bytes())
+        expected = {
+            "compact_student_runtime_sha256": sha256(compact_student),
+            "compact_student_runtime_body_sha256": student["body_sha256"],
+            "compact_student_payload_sha256":
+                student["quantization"]["payload_sha256"],
+            "compact_student_source_bundle_body_sha256":
+                student["selection"]["source_bundle_body_sha256"],
+            "compact_student_selection_sha256": hashlib.sha256(
+                canonical_json(student["selection"])
+            ).hexdigest(),
+            "compact_prior_runtime_sha256": sha256(compact_prior),
+            "compact_prior_runtime_body_sha256": prior["body_sha256"],
+            "compact_prior_payload_sha256":
+                prior["quantization"]["payload_sha256"],
+            "compact_prior_source_bundle_body_sha256":
+                prior["selection"]["source_bundle_body_sha256"],
+            "compact_prior_selection_sha256": hashlib.sha256(
+                canonical_json(prior["selection"])
+            ).hexdigest(),
+        }
+        if (
+            configuration.get("actor_backend")
+            != "compact-value-bfm-runtime-v1"
+            or configuration.get("compact_runtime_schema")
+            != "papersoccer.compact-value-bfm-runtime.v1"
+            or configuration.get("minimum_post_prefix_turns") != 20
+            or not isinstance(configuration.get("compact_actor_source_sha256"), str)
+            or len(configuration["compact_actor_source_sha256"]) != 64
+            or bindings.get("compact_actor_source_sha256")
+            != configuration["compact_actor_source_sha256"]
+            or any(bindings.get(key) != value for key, value in expected.items())
+        ):
+            raise RuntimeError("compact continuation bindings are invalid")
     rows = report.get("rows")
     if (
         not isinstance(rows, list)
-        or [row.get("row_ordinal") for row in rows] != list(range(len(ACTOR_MODES)))
-        or [row.get("game_ordinal") for row in rows] != list(range(len(ACTOR_MODES)))
-        or [row.get("actor_mode") for row in rows] != list(ACTOR_MODES)
+        or [row.get("row_ordinal") for row in rows] != list(range(len(modes)))
+        or [row.get("game_ordinal") for row in rows] != list(range(len(modes)))
+        or [row.get("actor_mode") for row in rows] != list(modes)
         or [row.get("base_seed") for row in rows] != seeds
-        or any(row.get("prefix_turns") != 6 for row in rows)
-        or any(row.get("attempt_ordinal") != 0 for row in rows)
+        or (
+            compact_student is None
+            and (any(row.get("prefix_turns") != 6 for row in rows)
+                 or any(row.get("attempt_ordinal") != 0 for row in rows))
+        )
+        or (
+            compact_student is not None
+            and any(row.get("prefix_turns") != 0 for row in rows)
+        )
     ):
         raise RuntimeError("continuation smoke lineage is invalid")
     for field in (
@@ -144,8 +267,14 @@ def run_continuations(
         if not isinstance(value, str) or len(value) != 64:
             raise RuntimeError(f"continuation smoke lacks {field}")
     lines = payload.decode("utf-8").splitlines()
-    if lines[0] != "group_id\tsource\twinner\ttranscript" or len(lines) != 15:
+    if (lines[0] != "group_id\tsource\twinner\ttranscript"
+            or len(lines) != len(modes) + 1):
         raise RuntimeError("continuation smoke TSV is invalid")
+    if compact_student is not None:
+        for line, row in zip(lines[1:], rows, strict=True):
+            transcript = line.split("\t", 3)[3]
+            if len(transcript.split("/")) - row["prefix_turns"] < 20:
+                raise RuntimeError("compact continuation suffix is shorter than 20 turns")
     return payload, report
 
 
@@ -260,6 +389,57 @@ def main() -> int:
         )
         if first_payload != second_payload or first_report != second_report:
             raise RuntimeError("self-search continuation output is not deterministic")
+        student = compact_runtime(directory, "student", 20260907)
+        prior = compact_runtime(directory, "prior", 20260908)
+        compact_first_payload, compact_first_report = run_continuations(
+            arguments.continuations, arguments.model, directory, "compact-one",
+            student, prior,
+        )
+        compact_second_payload, compact_second_report = run_continuations(
+            arguments.continuations, arguments.model, directory, "compact-two",
+            student, prior,
+        )
+        if (compact_first_payload != compact_second_payload
+                or compact_first_report != compact_second_report):
+            raise RuntimeError("compact self-search output is not deterministic")
+        damaged = json.loads(student.read_bytes())
+        damaged["body_sha256"] = "0" * 64
+        damaged_path = directory / "damaged.runtime.json"
+        damaged_path.write_bytes(canonical_json(damaged))
+        try:
+            run_continuations(
+                arguments.continuations, arguments.model, directory,
+                "compact-damaged", damaged_path, prior,
+            )
+        except RuntimeError as error:
+            if "continuation smoke failed" not in str(error):
+                raise
+        else:
+            raise RuntimeError("compact self-search accepted a damaged body hash")
+        noncanonical = json.loads(student.read_bytes())
+        noncanonical_body = dict(noncanonical)
+        noncanonical_body.pop("body_sha256")
+        noncanonical_body_bytes = canonical_json(noncanonical_body).replace(
+            b'"w1":0.03125', b'"w1":3.125e-2'
+        )
+        noncanonical["body_sha256"] = hashlib.sha256(
+            noncanonical_body_bytes
+        ).hexdigest()
+        noncanonical_bytes = canonical_json(noncanonical).replace(
+            b'"w1":0.03125', b'"w1":3.125e-2'
+        )
+        noncanonical_path = directory / "noncanonical.runtime.json"
+        noncanonical_path.write_bytes(noncanonical_bytes)
+        try:
+            run_continuations(
+                arguments.continuations, arguments.model, directory,
+                "compact-noncanonical", noncanonical_path, prior,
+            )
+        except RuntimeError as error:
+            if "continuation smoke failed" not in str(error):
+                raise
+        else:
+            raise RuntimeError("compact self-search accepted noncanonical numbers")
         run_rank4_teacher(arguments.rank4_teacher)
     return 0
 

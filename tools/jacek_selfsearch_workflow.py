@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import collections
 import concurrent.futures
 import contextlib
@@ -16,6 +18,7 @@ import os
 import pathlib
 import random
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -93,6 +96,13 @@ JACEK_NN_ACTOR_SOURCE_PATHS = (
     "submissions/codingame/bots/jacek_nn/teacher_residual_model.hpp",
     "submissions/codingame/bots/jacek_nn/bot.cpp",
 )
+COMPACT_ACTOR_SOURCE_PATHS = (
+    "submissions/codingame/bots/compact_value_bfm/model.hpp",
+    "submissions/codingame/bots/compact_value_bfm/engine.hpp",
+    "submissions/codingame/bots/compact_value_bfm/engine.cpp",
+    "tools/compact_value_bfm_runtime_loader.hpp",
+    "tools/compact_value_bfm_runtime_loader.cpp",
+)
 BFM_RUNTIME_SOURCE_PATHS = (
     "include/papersoccer/bot.hpp",
     "src/bots/bot.cpp",
@@ -107,6 +117,7 @@ CONTINUATION_SOURCE_PATHS = (
     "tools/jacek_replay_continuations_internal.hpp",
     *RANK4_ACTOR_SOURCE_PATHS,
     *JACEK_NN_ACTOR_SOURCE_PATHS,
+    *COMPACT_ACTOR_SOURCE_PATHS,
 )
 SEARCH_TEACHER_SOURCE_PATHS = (
     "include/papersoccer/bot.hpp",
@@ -203,6 +214,20 @@ FULL_CONFIGURATION = {
     "training_seeds": [20260904, 20260905, 20260906],
 }
 
+COMPACT_RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v1"
+COMPACT_FEATURE_SCHEMA = (
+    "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"
+    "mover-relative-rotate180:true-turn-distance+free-degree"
+)
+COMPACT_ACTIVATIONS = [
+    "square-leaky-0.01", "leaky-relu-0.01", "fast-tanh-rational-v1",
+]
+COMPACT_ARCHITECTURES = {
+    (6301, 8, 8, 1): "compact-8x8",
+    (6301, 8, 16, 1): "source-neutral-8x16",
+    (6301, 12, 8, 1): "capacity-12x8",
+}
+
 
 def _load_json(path: pathlib.Path, label: str) -> dict:
     try:
@@ -212,6 +237,173 @@ def _load_json(path: pathlib.Path, label: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     return value
+
+
+def compact_runtime_identity(path: pathlib.Path) -> dict[str, object]:
+    """Validate one dynamic compact actor runtime and return bound identities."""
+
+    raw = path.read_bytes()
+    try:
+        runtime = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"compact runtime is not canonical JSON: {path}") from error
+    if not isinstance(runtime, dict) or raw != canonical_json_bytes(runtime):
+        raise ValueError(f"compact runtime is not canonical JSON: {path}")
+    if set(runtime) != {
+        "architecture", "body_sha256", "feature_schema", "quantization",
+        "schema", "selection",
+    } or runtime.get("schema") != COMPACT_RUNTIME_SCHEMA \
+            or runtime.get("feature_schema") != COMPACT_FEATURE_SCHEMA:
+        raise ValueError("compact runtime top-level contract changed")
+    body = dict(runtime)
+    claimed_body = body.pop("body_sha256")
+    if (
+        not isinstance(claimed_body, str)
+        or len(claimed_body) != 64
+        or any(character not in "0123456789abcdef" for character in claimed_body)
+        or hashlib.sha256(canonical_json_bytes(body)).hexdigest() != claimed_body
+    ):
+        raise ValueError("compact runtime body SHA-256 mismatch")
+
+    architecture = runtime["architecture"]
+    if not isinstance(architecture, dict) or set(architecture) != {
+        "activations", "biases", "dimensions", "name", "payload_layout",
+    }:
+        raise ValueError("compact runtime architecture fields changed")
+    dimensions = architecture.get("dimensions")
+    try:
+        dimension_key = tuple(dimensions)
+        architecture_name = COMPACT_ARCHITECTURES[dimension_key]
+    except (TypeError, KeyError) as error:
+        raise ValueError("compact runtime dimensions are ineligible") from error
+    if (
+        architecture.get("name") != architecture_name
+        or architecture.get("biases") is not False
+        or architecture.get("activations") != COMPACT_ACTIVATIONS
+        or architecture.get("payload_layout")
+        != "w1-input-major,w2-input-major,w3"
+        or any(type(value) is not int for value in dimensions)
+    ):
+        raise ValueError("compact runtime architecture contract changed")
+
+    hidden_one, hidden_two = dimensions[1:3]
+    counts = {
+        "w1": 6301 * hidden_one,
+        "w2": hidden_one * hidden_two,
+        "w3": hidden_two,
+    }
+    counts["total"] = counts["w1"] + counts["w2"] + counts["w3"]
+    quantization = runtime["quantization"]
+    if not isinstance(quantization, dict) or set(quantization) != {
+        "bits", "maximum", "minimum", "packed_byte_count", "packing",
+        "payload_base64", "payload_sha256", "scales", "scheme",
+        "weight_counts",
+    }:
+        raise ValueError("compact runtime quantization fields changed")
+    if (
+        quantization.get("bits") != 3
+        or quantization.get("minimum") != -3
+        or quantization.get("maximum") != 3
+        or quantization.get("scheme")
+        != "symmetric-signed-three-bit-per-layer-fixed-scale"
+        or quantization.get("packing")
+        != "signed-three-bit-twos-complement-lsb-first"
+        or quantization.get("weight_counts") != counts
+    ):
+        raise ValueError("compact runtime quantization contract changed")
+    scales = quantization.get("scales")
+    if not isinstance(scales, dict) or set(scales) != {"w1", "w2", "w3"}:
+        raise ValueError("compact runtime scale fields changed")
+    for name, raw_scale in scales.items():
+        if (
+            isinstance(raw_scale, bool)
+            or not isinstance(raw_scale, (int, float))
+            or not math.isfinite(float(raw_scale))
+            or float(raw_scale) <= 0.0
+            or struct.unpack("<f", struct.pack("<f", float(raw_scale)))[0]
+            != float(raw_scale)
+        ):
+            raise ValueError(f"compact runtime {name} scale is not exact float32")
+    encoded = quantization.get("payload_base64")
+    if not isinstance(encoded, str) or not encoded.isascii():
+        raise ValueError("compact runtime payload is not ASCII base64")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("compact runtime payload base64 is invalid") from error
+    expected_bytes = (counts["total"] * 3 + 7) // 8
+    payload_sha = hashlib.sha256(payload).hexdigest()
+    if (
+        base64.b64encode(payload).decode("ascii") != encoded
+        or quantization.get("packed_byte_count") != expected_bytes
+        or len(payload) != expected_bytes
+        or quantization.get("payload_sha256") != payload_sha
+    ):
+        raise ValueError("compact runtime payload identity changed")
+    for index in range(counts["total"]):
+        bit = index * 3
+        window = payload[bit // 8]
+        if bit % 8 > 5 and bit // 8 + 1 < len(payload):
+            window |= payload[bit // 8 + 1] << 8
+        if ((window >> (bit % 8)) & 7) == 4:
+            raise ValueError("compact runtime payload contains forbidden code 100")
+    tail = counts["total"] * 3 % 8
+    if tail and payload[-1] >> tail:
+        raise ValueError("compact runtime payload has nonzero trailing padding")
+
+    selection = runtime["selection"]
+    if not isinstance(selection, dict) or set(selection) != {
+        "arm", "float_epoch", "qat_epoch", "seed",
+        "source_bundle_body_sha256",
+    }:
+        raise ValueError("compact runtime selection fields changed")
+    source_bundle = selection.get("source_bundle_body_sha256")
+    if (
+        selection.get("arm") not in {"search-target", "teacher-assisted"}
+        or type(selection.get("seed")) is not int
+        or selection["seed"] not in {20260907, 20260908, 20260909}
+        or type(selection.get("float_epoch")) is not int
+        or not 1 <= selection["float_epoch"] <= 50
+        or type(selection.get("qat_epoch")) is not int
+        or not 0 <= selection["qat_epoch"] <= 4
+        or not isinstance(source_bundle, str)
+        or len(source_bundle) != 64
+        or any(character not in "0123456789abcdef" for character in source_bundle)
+    ):
+        raise ValueError("compact runtime selection binding changed")
+    return {
+        "runtime_sha256": hashlib.sha256(raw).hexdigest(),
+        "runtime_body_sha256": claimed_body,
+        "payload_sha256": payload_sha,
+        "source_bundle_body_sha256": source_bundle,
+        "selection_sha256": hashlib.sha256(
+            canonical_json_bytes(selection)
+        ).hexdigest(),
+        "architecture": architecture_name,
+        "arm": selection["arm"],
+        "seed": selection["seed"],
+    }
+
+
+def compact_actor_bindings(
+    student: Mapping[str, object], prior: Mapping[str, object]
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for prefix, identity in (
+        ("compact_student", student), ("compact_prior", prior),
+    ):
+        for source, suffix in (
+            ("runtime_sha256", "runtime_sha256"),
+            ("runtime_body_sha256", "runtime_body_sha256"),
+            ("payload_sha256", "payload_sha256"),
+            ("source_bundle_body_sha256", "source_bundle_body_sha256"),
+            ("selection_sha256", "selection_sha256"),
+        ):
+            value = identity.get(source)
+            if not isinstance(value, str) or len(value) != 64:
+                raise ValueError("compact actor identity is incomplete")
+            result[f"{prefix}_{suffix}"] = value
+    return result
 
 
 def _training_new_sample_count(
@@ -462,16 +654,19 @@ def render_game_plan_tsv(plan: Mapping[str, object]) -> bytes:
     if plan.get("schema") != GAME_PLAN_SCHEMA or not isinstance(plan.get("rows"), list):
         raise ValueError("game plan cannot be rendered")
     lines = ["game_ordinal\tactor_mode\tbase_seed"]
-    for expected_ordinal, row in enumerate(plan["rows"]):
+    previous_ordinal = -1
+    for row in plan["rows"]:
         if (
             not isinstance(row, dict)
-            or row.get("game_ordinal") != expected_ordinal
+            or type(row.get("game_ordinal")) is not int
+            or row["game_ordinal"] <= previous_ordinal
             or not isinstance(row.get("actor_mode"), str)
             or not isinstance(row.get("base_seed"), int)
         ):
             raise ValueError("game plan row is malformed")
+        previous_ordinal = row["game_ordinal"]
         lines.append(
-            f"{expected_ordinal}\t{row['actor_mode']}\t{row['base_seed']}"
+            f"{row['game_ordinal']}\t{row['actor_mode']}\t{row['base_seed']}"
         )
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -517,10 +712,13 @@ def merge_game_chunks(
             raise ValueError(f"game chunk {chunk_ordinal} rows disagree")
         configuration = chunk.get("configuration")
         bindings = chunk.get("bindings")
+        compact_backend = configuration.get("actor_backend") == \
+            "compact-value-bfm-runtime-v1" if isinstance(configuration, dict) else False
         source_fields = (
             "producer_source_sha256",
             "rank4_actor_source_sha256",
             "jacek_nn_actor_source_sha256",
+            *(("compact_actor_source_sha256",) if compact_backend else ()),
         )
         if not isinstance(configuration, dict) or not isinstance(bindings, dict):
             raise ValueError(f"game chunk {chunk_ordinal} provenance is missing")
@@ -535,6 +733,23 @@ def merge_game_chunks(
                 raise ValueError(
                     f"game chunk {chunk_ordinal} {field} is invalid"
                 )
+        compact_fields = (
+            "compact_student_runtime_sha256",
+            "compact_student_runtime_body_sha256",
+            "compact_student_payload_sha256",
+            "compact_student_source_bundle_body_sha256",
+            "compact_student_selection_sha256",
+            "compact_prior_runtime_sha256",
+            "compact_prior_runtime_body_sha256",
+            "compact_prior_payload_sha256",
+            "compact_prior_source_bundle_body_sha256",
+            "compact_prior_selection_sha256",
+        ) if compact_backend else ()
+        if compact_backend and configuration.get("compact_runtime_schema") != \
+                COMPACT_RUNTIME_SCHEMA:
+            raise ValueError(
+                f"game chunk {chunk_ordinal} compact runtime schema is invalid"
+            )
         models = {
             key: bindings.get(key)
             for key in (
@@ -542,8 +757,19 @@ def merge_game_chunks(
                 "runner_up_model_sha256",
                 "roots_sha256",
                 *source_fields,
+                *compact_fields,
             )
         }
+        if compact_backend and any(
+            not isinstance(models[field], str)
+            or len(models[field]) != 64
+            or any(character not in "0123456789abcdef"
+                   for character in models[field])
+            for field in compact_fields
+        ):
+            raise ValueError(
+                f"game chunk {chunk_ordinal} compact runtime binding is invalid"
+            )
         if common_configuration is None:
             common_configuration = configuration
             common_models = models
@@ -580,7 +806,17 @@ def merge_game_chunks(
             }
         )
     collected.sort(key=lambda item: item[0])
-    expected_ordinals = list(range(int(plan.get("games", -1))))
+    expected_ordinals = [
+        row.get("game_ordinal") if isinstance(row, dict) else None
+        for row in plan_rows
+    ]
+    if (
+        any(type(ordinal) is not int for ordinal in expected_ordinals)
+        or any(left >= right for left, right in zip(
+            expected_ordinals, expected_ordinals[1:], strict=False
+        ))
+    ):
+        raise ValueError("game plan ordinals are not strictly increasing")
     if [item[0] for item in collected] != expected_ordinals:
         raise ValueError("game chunks do not exactly cover the frozen plan")
     for (game_ordinal, _fields, row), planned in zip(
@@ -1604,6 +1840,7 @@ def _validate_game_chunk(
     actor: pathlib.Path,
     diversity: pathlib.Path,
     configuration: Mapping[str, object],
+    compact_bindings: Mapping[str, str] | None = None,
 ) -> dict:
     manifest = _load_json(manifest_path, "self-search game chunk")
     plan_lines = plan_chunk.read_text(encoding="utf-8").splitlines()
@@ -1619,13 +1856,17 @@ def _validate_game_chunk(
         or manifest.get("requested_games") != len(plan_rows)
         or manifest.get("successful_games") != len(plan_rows)
         or not isinstance(actual_configuration, dict)
-        or any(actual_configuration.get(key) != value
-               for key, value in configuration.items())
+        or actual_configuration != dict(configuration)
         or bindings.get("roots_sha256") != sha256(roots_tsv)
         or bindings.get("plan_sha256") != sha256(plan_chunk)
         or bindings.get("output_sha256") != sha256(games)
         or bindings.get("incumbent_model_sha256") != sha256(actor)
         or bindings.get("runner_up_model_sha256") != sha256(diversity)
+        or (
+            compact_bindings is not None
+            and any(bindings.get(key) != value
+                    for key, value in compact_bindings.items())
+        )
         or not isinstance(rows, list)
         or [row.get("game_ordinal") for row in rows if isinstance(row, dict)]
         != expected_ordinals
@@ -1637,6 +1878,8 @@ def _validate_game_chunk(
     for field in (
         "producer_source_sha256", "rank4_actor_source_sha256",
         "jacek_nn_actor_source_sha256",
+        *(("compact_actor_source_sha256",)
+          if compact_bindings is not None else ()),
     ):
         value = actual_configuration.get(field)
         if (
@@ -1677,8 +1920,40 @@ def run_game_chunks(
     generator: pathlib.Path,
     workers: int,
     source_identities: Mapping[str, str],
+    compact_student_runtime: pathlib.Path | None = None,
+    compact_prior_runtime: pathlib.Path | None = None,
 ) -> dict:
+    compact_requested = (
+        compact_student_runtime is not None or compact_prior_runtime is not None
+    )
+    if compact_requested and (
+        compact_student_runtime is None or compact_prior_runtime is None
+    ):
+        raise ValueError("compact student/prior runtimes must be supplied together")
+    compact_bindings: dict[str, str] | None = None
+    if compact_requested:
+        assert compact_student_runtime is not None
+        assert compact_prior_runtime is not None
+        if actor.resolve() != compact_student_runtime.resolve() \
+                or diversity.resolve() != compact_prior_runtime.resolve():
+            raise ValueError("compact actor paths differ from legacy actor bindings")
+        student_identity = compact_runtime_identity(compact_student_runtime)
+        prior_identity = compact_runtime_identity(compact_prior_runtime)
+        compact_bindings = compact_actor_bindings(
+            student_identity, prior_identity
+        )
     plan = _load_json(plan_path, "self-search game plan")
+    if compact_requested:
+        rows = plan.get("rows")
+        if (
+            not isinstance(rows, list)
+            or any(
+                not isinstance(row, dict)
+                or row.get("actor_mode") not in FULL_QUOTAS
+                for row in rows
+            )
+        ):
+            raise ValueError("compact runtime mode requires an all-student plan")
     chunk_root = manager.output / "game-chunks"
     plan_root = chunk_root / "plans"
     output_root = chunk_root / "outputs"
@@ -1700,6 +1975,14 @@ def run_game_chunks(
         "rank4_actor_source_sha256": source_identities["rank4_actor_source_sha256"],
         "jacek_nn_actor_source_sha256": source_identities["jacek_nn_actor_source_sha256"],
     }
+    if compact_requested:
+        configuration.update({
+            "actor_backend": "compact-value-bfm-runtime-v1",
+            "compact_runtime_schema": COMPACT_RUNTIME_SCHEMA,
+            "compact_actor_source_sha256":
+                source_identities["compact_actor_source_sha256"],
+            "minimum_post_prefix_turns": 20,
+        })
     producer = artifact_snapshot(generator)
     specs = []
     for ordinal, chunk_plan in enumerate(chunk_plans):
@@ -1718,6 +2001,12 @@ def run_game_chunks(
                 "roots": artifact_snapshot(roots_tsv),
                 "actor": artifact_snapshot(actor),
                 "diversity": artifact_snapshot(diversity),
+                **({
+                    "compact_student_runtime":
+                        artifact_snapshot(compact_student_runtime),
+                    "compact_prior_runtime":
+                        artifact_snapshot(compact_prior_runtime),
+                } if compact_requested else {}),
             },
         }
         specs.append((ordinal, chunk_plan, games, manifest, receipt, expected))
@@ -1742,6 +2031,7 @@ def run_game_chunks(
             actor=actor,
             diversity=diversity,
             configuration=configuration,
+            compact_bindings=compact_bindings,
         )
         return saved
 
@@ -1768,12 +2058,18 @@ def run_game_chunks(
                 "--candidate-exploration", str(spec.configuration["exploration"]),
                 "--candidate-fpu", str(spec.configuration["fpu"]),
             ]
+            if compact_requested:
+                command.extend([
+                    "--compact-student-runtime", str(compact_student_runtime),
+                    "--compact-prior-runtime", str(compact_prior_runtime),
+                ])
             _run(command)
             _validate_game_chunk(
                 campaign_id=spec.campaign_id, plan_chunk=chunk_plan,
                 games=staged_games, manifest_path=staged_manifest,
                 roots_tsv=roots_tsv, actor=actor, diversity=diversity,
                 configuration=configuration,
+                compact_bindings=compact_bindings,
             )
             os.replace(staged_games, games)
             os.replace(staged_manifest, manifest)
@@ -1811,6 +2107,8 @@ def run_game_chunks(
         "games": int(manifest["successful_games"]),
         "chunks": receipts,
         "chunk_artifacts": artifacts,
+        **({"compact_actor_bindings": compact_bindings}
+           if compact_bindings is not None else {}),
     }
 
 
@@ -3770,6 +4068,9 @@ def _source_identities(repository: pathlib.Path) -> dict:
         ),
         "jacek_nn_actor_source_sha256": _source_closure(
             repository, JACEK_NN_ACTOR_SOURCE_PATHS
+        ),
+        "compact_actor_source_sha256": _source_closure(
+            repository, COMPACT_ACTOR_SOURCE_PATHS
         ),
         "rank4_teacher_source_sha256": _source_closure(
             repository,

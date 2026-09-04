@@ -124,7 +124,10 @@ class RosterTests(unittest.TestCase):
             )
         }
         registered = set(subject._registered_bots(REPOSITORY, roster))
+        research = set(subject._research_bots(REPOSITORY, roster))
         self.assertEqual(registered, rostered)
+        self.assertEqual(research, {"compact_value_bfm"})
+        self.assertTrue(registered.isdisjoint(research))
         self.assertTrue(all(not entrant["aliases"] for entrant in entrants))
 
     def test_stale_submission_hash_is_rejected(self) -> None:
@@ -142,6 +145,25 @@ class RosterTests(unittest.TestCase):
         ), mock.patch.object(
             subject, "_registered_bots", return_value=[*registered, "unreviewed"]
         ), self.assertRaisesRegex(subject.ContractError, "does not exactly cover"):
+            subject.validate_roster(roster, REPOSITORY)
+
+    def test_research_bot_cannot_be_omitted_from_build_union(self) -> None:
+        roster = subject.load_roster()
+        original = subject._cmake_bot_list
+
+        def forged(repository, *, cmake_path, variable, required=True):
+            if variable == "PAPERSOCCER_CODINGAME_BUILD_BOTS":
+                return ["${PAPERSOCCER_CODINGAME_BOTS}"]
+            return original(
+                repository,
+                cmake_path=cmake_path,
+                variable=variable,
+                required=required,
+            )
+
+        with mock.patch.object(
+            subject, "_cmake_bot_list", side_effect=forged
+        ), self.assertRaisesRegex(subject.ContractError, "exact.*union"):
             subject.validate_roster(roster, REPOSITORY)
 
 

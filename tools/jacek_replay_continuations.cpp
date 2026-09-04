@@ -21,6 +21,7 @@ using namespace
 #undef turn_action_v2
 
 #include "papersoccer/bot.hpp"
+#include "compact_value_bfm_runtime_loader.hpp"
 #include "jacek_replay_bfm/jacek_replay_bfm_internal.hpp"
 #include "jacek_replay_continuations_internal.hpp"
 
@@ -57,15 +58,21 @@ using namespace
 #ifndef PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256
 #error "jacek_nn actor source closure SHA-256 must be provided by CMake"
 #endif
+#ifndef PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256
+#error "compact actor source closure SHA-256 must be provided by CMake"
+#endif
 
 namespace ps = papersoccer;
 namespace teacher = papersoccer::jacek_replay_continuation_teacher;
 namespace jacek_nn = papersoccer::jacek_replay_continuation_jacek_nn;
 namespace continuation = papersoccer::jacek_replay_continuations;
+namespace compact_runtime = papersoccer::compact_value_bfm_runtime;
+namespace cv = compact_value_bfm;
 
 namespace {
 
 constexpr std::size_t kAttemptCapPerRequestedGame = 20U;
+constexpr std::size_t kCompactMinimumPostPrefixTurns = 20U;
 constexpr std::string_view kManifestSchema =
     "papersoccer.jacek-replay-continuations-manifest.v1";
 
@@ -77,6 +84,8 @@ struct Options {
   std::string runner_up_model;
   std::string selfsearch_plan;
   std::string campaign_id;
+  std::string compact_student_runtime;
+  std::string compact_prior_runtime;
   std::size_t games{10'000};
   int round{};
   std::uint64_t seed{0x4A5242464D5631ULL};
@@ -122,6 +131,11 @@ struct SelfPlanRow {
   std::size_t game_ordinal{};
   SelfActorMode actor_mode{};
   std::uint64_t base_seed{};
+};
+
+struct CompactRuntimePair {
+  compact_runtime::LoadedRuntime student;
+  compact_runtime::LoadedRuntime prior;
 };
 
 struct SelfRecord {
@@ -233,7 +247,9 @@ Options parse_options(int argc, char **argv) {
              "[--candidate-tree-nodes N] [--max-turns N] "
              "[--selfsearch-plan plan.tsv --campaign-id ID "
              "--runner-up-model checkpoint --jacek-nn-nodes N "
-             "--candidate-exploration C --candidate-fpu V]\n";
+             "--candidate-exploration C --candidate-fpu V "
+             "[--compact-student-runtime runtime.json "
+             "--compact-prior-runtime runtime.json]]\n";
       std::exit(0);
     }
     const std::string value = require_value(index, argc, argv, option);
@@ -244,6 +260,11 @@ Options parse_options(int argc, char **argv) {
     else if (option == "--runner-up-model") options.runner_up_model = value;
     else if (option == "--selfsearch-plan") options.selfsearch_plan = value;
     else if (option == "--campaign-id") options.campaign_id = value;
+    else if (option == "--compact-student-runtime") {
+      options.compact_student_runtime = value;
+    } else if (option == "--compact-prior-runtime") {
+      options.compact_prior_runtime = value;
+    }
     else if (option == "--games") {
       options.games = parse_unsigned<std::size_t>(value, option);
     } else if (option == "--round") {
@@ -268,18 +289,23 @@ Options parse_options(int argc, char **argv) {
     }
   }
   const bool selfsearch = !options.selfsearch_plan.empty();
+  const bool compact = !options.compact_student_runtime.empty() ||
+                       !options.compact_prior_runtime.empty();
   if (options.input.empty() || options.output.empty() ||
       options.manifest.empty() || options.round < 0 || options.round > 2 ||
       (!selfsearch && options.round > 0 && options.model.empty()) ||
       (!selfsearch && options.round == 0 && !options.model.empty()) ||
       (selfsearch && (options.model.empty() || options.runner_up_model.empty() ||
                       !is_printable_text(options.campaign_id))) ||
+      (compact && (!selfsearch || options.compact_student_runtime.empty() ||
+                   options.compact_prior_runtime.empty())) ||
       (!std::isfinite(options.candidate_exploration) ||
        options.candidate_exploration < 0.0) ||
       (!std::isfinite(options.candidate_fpu) ||
        options.candidate_fpu < -1.0 || options.candidate_fpu > 1.0) ||
       options.candidate_tree_nodes < 2U ||
       options.candidate_tree_nodes > 1'000'000U ||
+      (compact && options.candidate_tree_nodes > cv::kMaximumTreeNodes) ||
       options.actor_nodes > teacher::kMaximumNodes ||
       options.jacek_nn_nodes > jacek_nn::kMaximumNodes ||
       options.games >
@@ -302,7 +328,13 @@ Options parse_options(int argc, char **argv) {
         normalized(options.model) == manifest)) ||
       (!options.runner_up_model.empty() &&
        (normalized(options.runner_up_model) == output ||
-        normalized(options.runner_up_model) == manifest))) {
+        normalized(options.runner_up_model) == manifest)) ||
+      (!options.compact_student_runtime.empty() &&
+       (normalized(options.compact_student_runtime) == output ||
+        normalized(options.compact_student_runtime) == manifest)) ||
+      (!options.compact_prior_runtime.empty() &&
+       (normalized(options.compact_prior_runtime) == output ||
+        normalized(options.compact_prior_runtime) == manifest))) {
     throw std::invalid_argument("continuation paths must be distinct");
   }
   return options;
@@ -488,6 +520,105 @@ char encode_direction(ps::Point from, ps::Point to) {
   throw std::logic_error("actor returned a non-neighbour move");
 }
 
+cv::Action compact_action(std::string_view text) {
+  if (text.empty() || text.size() > cv::kMaximumActionLength) {
+    throw std::logic_error("actor returned an invalid compact action length");
+  }
+  cv::Action result;
+  for (const char character : text) {
+    if (character < '0' || character > '7') {
+      throw std::logic_error("actor returned a non-direction character");
+    }
+    result.directions[result.length++] =
+        static_cast<std::uint8_t>(character - '0');
+  }
+  return result;
+}
+
+const std::array<ps::Segment, cv::kEdgeCount> &compact_edge_segments() {
+  static const std::array<ps::Segment, cv::kEdgeCount> segments = [] {
+    std::array<ps::Segment, cv::kEdgeCount> result{};
+    std::array<bool, cv::kEdgeCount> assigned{};
+    const cv::Topology &topology = cv::Topology::get();
+    for (int source = 0; source < cv::kVertexCount; ++source) {
+      const ps::Point from{topology.x(source), topology.y(source)};
+      for (int index = 0; index < topology.degree(source); ++index) {
+        const cv::Topology::Arc arc = topology.arc(source, index);
+        const ps::Segment segment{
+            from,
+            ps::Point{topology.x(arc.destination),
+                      topology.y(arc.destination)}};
+        if (assigned[arc.edge] && !(result[arc.edge] == segment)) {
+          throw std::logic_error("compact topology edge mapping is ambiguous");
+        }
+        result[arc.edge] = segment;
+        assigned[arc.edge] = true;
+      }
+    }
+    if (!std::all_of(assigned.begin(), assigned.end(),
+                     [](bool value) { return value; })) {
+      throw std::logic_error("compact topology edge mapping is incomplete");
+    }
+    return result;
+  }();
+  return segments;
+}
+
+void require_lockstep(const ps::GameState &core, const cv::State &compact) {
+  const cv::Topology &topology = cv::Topology::get();
+  const bool core_terminal = ps::is_terminal(core);
+  const std::optional<ps::Player> core_winner = ps::winner(core);
+  const int expected_winner = !core_winner.has_value()
+      ? -1
+      : (*core_winner == ps::Player::One ? 0 : 1);
+  if (topology.x(compact.ball) != core.ball.x ||
+      topology.y(compact.ball) != core.ball.y ||
+      compact.to_move != (core.to_move == ps::Player::One ? 0U : 1U) ||
+      compact.terminal() != core_terminal || compact.winner != expected_winner ||
+      compact.ply != core.used_segments.size() ||
+      core.path.size() != static_cast<std::size_t>(compact.ply) + 1U) {
+    throw std::logic_error("core/compact state lockstep diverged");
+  }
+  const auto &segments = compact_edge_segments();
+  for (int edge = 0; edge < cv::kEdgeCount; ++edge) {
+    const bool core_used = core.used_segments.contains(segments[edge]);
+    if (cv::edge_used(compact, edge) != core_used) {
+      throw std::logic_error("core/compact used-edge lockstep diverged");
+    }
+  }
+  std::array<bool, 8> core_directions{};
+  for (const ps::Move move : ps::legal_moves(core)) {
+    core_directions[static_cast<std::size_t>(
+        encode_direction(core.ball, move.to) - '0')] = true;
+  }
+  std::array<bool, 8> compact_directions{};
+  std::array<cv::Topology::Arc, 8> arcs{};
+  const std::uint8_t count = cv::legal_arcs(compact, arcs);
+  for (std::uint8_t index = 0; index < count; ++index) {
+    compact_directions[arcs[index].direction] = true;
+  }
+  if (core_directions != compact_directions) {
+    throw std::logic_error("core/compact legal-action lockstep diverged");
+  }
+}
+
+void apply_core_action_to_compact(const ps::GameState &core,
+                                  cv::State &compact,
+                                  std::string_view encoded) {
+  const cv::Action action = compact_action(encoded);
+  if (!cv::apply_action(compact, action)) {
+    throw std::logic_error("core actor action was illegal in compact state");
+  }
+  require_lockstep(core, compact);
+}
+
+void apply_compact_action_to_core(ps::GameState &core,
+                                  const cv::State &compact,
+                                  std::string_view encoded) {
+  teacher::apply_encoded_turn(core, encoded);
+  require_lockstep(core, compact);
+}
+
 std::string rank4_turn(ps::GameState &state, std::uint64_t nodes) {
   teacher::SearchConfig config;
   config.max_nodes = nodes;
@@ -563,9 +694,70 @@ std::string jacek_nn_turn(ps::GameState &state, std::string_view transcript,
   return encoded;
 }
 
+std::string compact_turn(cv::State &state, const cv::QuantizedModel &model,
+                         const Options &options, std::uint64_t seed) {
+  const cv::Action emergency = cv::emergency_complete_action(state, seed);
+  if (emergency.length == 0U) {
+    throw std::logic_error("compact actor could not establish an emergency turn");
+  }
+  cv::SearchConfig config;
+  config.max_actions = cv::kMaximumActions;
+  config.root_partial_paths = cv::kRootPartialPaths;
+  config.nonroot_partial_paths = cv::kNonrootPartialPaths;
+  config.max_tree_nodes = options.candidate_tree_nodes;
+  config.max_expansions = cv::kMaximumExpansions;
+  config.shuffle_seed = seed;
+  config.exploration = options.candidate_exploration;
+  config.fpu = options.candidate_fpu;
+  config.final_visit_weight = cv::kFinalVisitWeight;
+  config.model = &model;
+  cv::Action action = emergency;
+  try {
+    const cv::SearchResult result = cv::search(
+        state, std::chrono::steady_clock::time_point::max(), config,
+        &emergency);
+    if (result.action.length != 0U) action = result.action;
+  } catch (const std::exception &) {
+    // Match the deployment actor's already-computed complete-turn fallback.
+    action = emergency;
+  }
+  if (!cv::apply_action(state, action)) {
+    throw std::logic_error("compact actor returned an illegal complete turn");
+  }
+  return action.text();
+}
+
 bool selfplay_mode(SelfActorMode mode) noexcept {
   return mode == SelfActorMode::IncumbentSelfplay ||
          mode == SelfActorMode::StudentSelfplay;
+}
+
+bool student_actor(SelfActorMode mode, int player) noexcept {
+  switch (mode) {
+    case SelfActorMode::StudentSelfplay:
+      return true;
+    case SelfActorMode::StudentPlayerOneRank4:
+    case SelfActorMode::StudentPlayerOneJacekNn:
+    case SelfActorMode::StudentPlayerOnePriorIncumbent:
+      return player == 0;
+    case SelfActorMode::StudentPlayerTwoRank4:
+    case SelfActorMode::StudentPlayerTwoJacekNn:
+    case SelfActorMode::StudentPlayerTwoPriorIncumbent:
+      return player == 1;
+    default:
+      return false;
+  }
+}
+
+bool prior_compact_actor(SelfActorMode mode, int player) noexcept {
+  switch (mode) {
+    case SelfActorMode::StudentPlayerOnePriorIncumbent:
+      return player == 1;
+    case SelfActorMode::StudentPlayerTwoPriorIncumbent:
+      return player == 0;
+    default:
+      return false;
+  }
 }
 
 bool incumbent_actor(SelfActorMode mode, int player) noexcept {
@@ -714,14 +906,17 @@ std::unique_ptr<ps::JacekReplayBfmBot> make_bfm_actor(
 
 std::optional<GeneratedGame> generate_selfsearch(
     const Root &root, const Options &options, std::uint64_t game_seed,
-    SelfActorMode actor_mode) {
+    SelfActorMode actor_mode, const CompactRuntimePair *compact_runtimes) {
   SplitMix64 random(game_seed);
   const std::size_t prefix_length = random.index(root.actions.size());
   ps::GameState state = ps::make_initial_state(contest_rules());
+  cv::State compact_state = cv::initial_state();
+  require_lockstep(state, compact_state);
   std::vector<std::string> transcript;
   transcript.reserve(prefix_length + options.maximum_turns);
   for (std::size_t turn = 0; turn < prefix_length; ++turn) {
     teacher::apply_encoded_turn(state, root.actions[turn]);
+    apply_core_action_to_compact(state, compact_state, root.actions[turn]);
     transcript.push_back(root.actions[turn]);
   }
 
@@ -730,10 +925,13 @@ std::optional<GeneratedGame> generate_selfsearch(
   for (int player = 0; player < 2; ++player) {
     const std::uint64_t player_seed =
         game_seed ^ (static_cast<std::uint64_t>(player) << 63U);
-    if (incumbent_actor(actor_mode, player)) {
+    if (incumbent_actor(actor_mode, player) &&
+        !(compact_runtimes != nullptr && student_actor(actor_mode, player))) {
       incumbents[player] = make_bfm_actor(options.model, options, player_seed);
     }
-    if (runner_up_actor(actor_mode, player)) {
+    if (runner_up_actor(actor_mode, player) &&
+        !(compact_runtimes != nullptr &&
+          prior_compact_actor(actor_mode, player))) {
       runners[player] =
           make_bfm_actor(options.runner_up_model, options, player_seed);
     }
@@ -744,20 +942,40 @@ std::optional<GeneratedGame> generate_selfsearch(
        ++continuation) {
     const int player = state.to_move == ps::Player::One ? 0 : 1;
     const bool explore = continuation < 8U && random.index(100U) < 15U;
+    std::string action;
+    bool from_compact = false;
     if (explore) {
-      transcript.push_back(random_turn(state, random));
+      action = random_turn(state, random);
+    } else if (compact_runtimes != nullptr &&
+               student_actor(actor_mode, player)) {
+      action = compact_turn(
+          compact_state, *compact_runtimes->student.model, options,
+          game_seed ^ (static_cast<std::uint64_t>(player) << 63U));
+      from_compact = true;
     } else if (incumbent_actor(actor_mode, player)) {
-      transcript.push_back(candidate_turn(state, *incumbents[player]));
+      action = candidate_turn(state, *incumbents[player]);
+    } else if (compact_runtimes != nullptr &&
+               prior_compact_actor(actor_mode, player)) {
+      action = compact_turn(
+          compact_state, *compact_runtimes->prior.model, options,
+          game_seed ^ (static_cast<std::uint64_t>(player) << 63U));
+      from_compact = true;
     } else if (runner_up_actor(actor_mode, player)) {
-      transcript.push_back(candidate_turn(state, *runners[player]));
+      action = candidate_turn(state, *runners[player]);
     } else if (rank4_actor(actor_mode, player)) {
-      transcript.push_back(rank4_turn(state, options.actor_nodes));
+      action = rank4_turn(state, options.actor_nodes);
     } else if (jacek_nn_actor(actor_mode, player)) {
-      transcript.push_back(jacek_nn_turn(
-          state, serialize_transcript(transcript), options.jacek_nn_nodes));
+      action = jacek_nn_turn(
+          state, serialize_transcript(transcript), options.jacek_nn_nodes);
     } else {
       throw std::logic_error("self-search actor schedule has no mover");
     }
+    if (from_compact) {
+      apply_compact_action_to_core(state, compact_state, action);
+    } else {
+      apply_core_action_to_compact(state, compact_state, action);
+    }
+    transcript.push_back(std::move(action));
   }
   const std::optional<ps::Player> winning = ps::winner(state);
   if (!winning.has_value()) return std::nullopt;
@@ -877,7 +1095,8 @@ GenerationResult generate_records(const Options &options,
 
 std::vector<SelfRecord> generate_selfsearch_records(
     const Options &options, const std::vector<Root> &roots,
-    const std::vector<SelfPlanRow> &plan) {
+    const std::vector<SelfPlanRow> &plan,
+    const CompactRuntimePair *compact_runtimes) {
   std::vector<SelfRecord> records;
   records.reserve(plan.size());
   for (const SelfPlanRow &planned : plan) {
@@ -893,7 +1112,12 @@ std::vector<SelfRecord> generate_selfsearch_records(
       SplitMix64 root_selector(game_seed ^ 0xd1b54a32d192ed03ULL);
       const Root &root = roots[root_selector.index(roots.size())];
       completed = generate_selfsearch(root, options, game_seed,
-                                      planned.actor_mode);
+                                      planned.actor_mode, compact_runtimes);
+      if (completed.has_value() && compact_runtimes != nullptr &&
+          completed->transcript.size() - completed->prefix_turns <
+              kCompactMinimumPostPrefixTurns) {
+        completed.reset();
+      }
       if (completed.has_value()) {
         completed_attempt = attempt;
         completed_seed = game_seed;
@@ -1016,7 +1240,8 @@ std::string make_selfsearch_manifest(
     const Options &options, const std::vector<SelfPlanRow> &plan,
     const std::vector<SelfRecord> &records, std::string_view roots_sha256,
     std::string_view plan_sha256, std::string_view output_sha256,
-    std::string_view incumbent_sha256, std::string_view runner_sha256) {
+    std::string_view incumbent_sha256, std::string_view runner_sha256,
+    const CompactRuntimePair *compact_runtimes) {
   if (plan.size() != records.size()) {
     throw std::logic_error("self-search plan/output count mismatch");
   }
@@ -1040,7 +1265,19 @@ std::string make_selfsearch_manifest(
          << ",\"jacek_nn_actor_source_sha256\":"
          << json_string(
                 PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256)
-         << "},\"bindings\":{\"roots_sha256\":"
+         ;
+  if (compact_runtimes != nullptr) {
+    output << ",\"actor_backend\":"
+           << json_string("compact-value-bfm-runtime-v1")
+           << ",\"compact_runtime_schema\":"
+           << json_string(compact_runtime::kRuntimeSchema)
+           << ",\"compact_actor_source_sha256\":"
+           << json_string(
+                  PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256)
+           << ",\"minimum_post_prefix_turns\":"
+           << kCompactMinimumPostPrefixTurns;
+  }
+  output << "},\"bindings\":{\"roots_sha256\":"
          << json_string(roots_sha256) << ",\"plan_sha256\":"
          << json_string(plan_sha256) << ",\"output_sha256\":"
          << json_string(output_sha256) << ",\"incumbent_model_sha256\":"
@@ -1054,7 +1291,30 @@ std::string make_selfsearch_manifest(
          << ",\"jacek_nn_actor_source_sha256\":"
          << json_string(
                 PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256)
-         << "},\"rows\":[";
+         ;
+  if (compact_runtimes != nullptr) {
+    const auto write_identity = [&](std::string_view prefix,
+                                    const compact_runtime::Identity &identity) {
+      output << ',' << json_string(std::string(prefix) + "_runtime_sha256")
+             << ':' << json_string(identity.runtime_sha256)
+             << ',' << json_string(std::string(prefix) + "_runtime_body_sha256")
+             << ':' << json_string(identity.body_sha256)
+             << ',' << json_string(std::string(prefix) + "_payload_sha256")
+             << ':' << json_string(identity.payload_sha256)
+             << ','
+             << json_string(std::string(prefix) +
+                            "_source_bundle_body_sha256")
+             << ':' << json_string(identity.source_bundle_body_sha256)
+             << ',' << json_string(std::string(prefix) + "_selection_sha256")
+             << ':' << json_string(identity.selection_sha256);
+    };
+    output << ",\"compact_actor_source_sha256\":"
+           << json_string(
+                  PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256);
+    write_identity("compact_student", compact_runtimes->student.identity);
+    write_identity("compact_prior", compact_runtimes->prior.identity);
+  }
+  output << "},\"rows\":[";
   for (std::size_t index = 0; index < records.size(); ++index) {
     if (index != 0U) output << ',';
     const SelfRecord &record = records[index];
@@ -1187,7 +1447,9 @@ int main(int argc, char **argv) {
         !is_lower_sha256(
             PAPERSOCCER_JACEK_SELFSEARCH_RANK4_ACTOR_SOURCE_SHA256) ||
         !is_lower_sha256(
-            PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256)) {
+            PAPERSOCCER_JACEK_SELFSEARCH_JACEK_NN_ACTOR_SOURCE_SHA256) ||
+        !is_lower_sha256(
+            PAPERSOCCER_JACEK_SELFSEARCH_COMPACT_ACTOR_SOURCE_SHA256)) {
       throw std::logic_error("continuation source identity is invalid");
     }
     const Options options = parse_options(argc, argv);
@@ -1201,6 +1463,12 @@ int main(int argc, char **argv) {
                   file_sha256(options.model, "candidate model"));
     const std::vector<Root> roots = load_roots(input_bytes);
     if (!options.selfsearch_plan.empty()) {
+      std::optional<CompactRuntimePair> compact_runtimes;
+      if (!options.compact_student_runtime.empty()) {
+        compact_runtimes.emplace(CompactRuntimePair{
+            compact_runtime::load(options.compact_student_runtime),
+            compact_runtime::load(options.compact_prior_runtime)});
+      }
       const std::string plan_bytes =
           read_file(options.selfsearch_plan, "self-search game plan");
       const std::string plan_digest = sha256(plan_bytes);
@@ -1210,14 +1478,31 @@ int main(int argc, char **argv) {
           file_sha256(options.runner_up_model, "runner-up model");
       const std::vector<SelfPlanRow> plan =
           load_selfsearch_plan(options.selfsearch_plan);
+      if (compact_runtimes.has_value() &&
+          !std::all_of(plan.begin(), plan.end(), [](const SelfPlanRow &row) {
+            return student_actor(row.actor_mode, 0) ||
+                   student_actor(row.actor_mode, 1);
+          })) {
+        throw std::invalid_argument(
+            "compact runtime mode requires an all-student self-search plan");
+      }
       const std::vector<SelfRecord> records =
-          generate_selfsearch_records(options, roots, plan);
+          generate_selfsearch_records(
+              options, roots, plan,
+              compact_runtimes.has_value() ? &*compact_runtimes : nullptr);
       if (file_sha256(options.model, "incumbent model") != incumbent_digest ||
           file_sha256(options.runner_up_model, "runner-up model") !=
               runner_digest ||
           file_sha256(options.input, "replay roots TSV") != input_digest ||
           file_sha256(options.selfsearch_plan, "self-search game plan") !=
-              plan_digest) {
+              plan_digest ||
+          (compact_runtimes.has_value() &&
+           (file_sha256(options.compact_student_runtime,
+                        "compact student runtime") !=
+                compact_runtimes->student.identity.runtime_sha256 ||
+            file_sha256(options.compact_prior_runtime,
+                        "compact prior runtime") !=
+                compact_runtimes->prior.identity.runtime_sha256))) {
         throw std::runtime_error(
             "self-search input changed during game generation");
       }
@@ -1225,7 +1510,8 @@ int main(int argc, char **argv) {
       const std::string output_digest = sha256(tsv);
       const std::string manifest = make_selfsearch_manifest(
           options, plan, records, input_digest, plan_digest, output_digest,
-          incumbent_digest, runner_digest);
+          incumbent_digest, runner_digest,
+          compact_runtimes.has_value() ? &*compact_runtimes : nullptr);
       atomic_write(options.output, tsv);
       atomic_write(options.manifest, manifest);
       return 0;

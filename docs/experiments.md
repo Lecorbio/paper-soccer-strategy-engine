@@ -20,6 +20,12 @@ That record publishes scores, paired outcomes, latency samples, retention
 metrics, and provenance hashes without publishing the teacher runtime or
 changing its noncanonical status.
 
+The separate [`compact_value_bfm` campaign](compact-value-bfm.md) distills
+that accepted local teacher into small value-only networks and applies a new,
+source-bound Rank-4 gate. Its raw shards, checkpoints, banks, games, and live
+records remain ignored; no result is promoted by offline evaluator metrics
+alone.
+
 For a reader-focused presentation of the current frozen four-bot result, see
 the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/).
 The [flagship study report](../benchmarks/flagship_study/REPORT.md) retains the
