@@ -98,6 +98,28 @@ RANK4_RELATIVE = maintained.RANK4_RELATIVE
 SOURCE_LIMIT_EXCLUSIVE = 95_000
 SOURCE_RESERVE_TARGET = 2_000
 SOURCE_MAXIMUM_FOR_TARGET = SOURCE_LIMIT_EXCLUSIVE - SOURCE_RESERVE_TARGET
+RELEASE_GATE_SOURCE = {
+    "bytes": 43_550,
+    "sha256": "12dd0d59d71cce1adfba3849c2b0ddc85254b069226f1dfd7fd930a6ae3d5550",
+}
+RELEASE_SUBMISSION_TEST = {
+    "bytes": 17_579,
+    "sha256": "b0e7074db86e125da18695aed1204bb76e53f7d07a14c26912ddc89cd2c313c2",
+}
+ATTEMPT_ZERO_BASE_PREFLIGHT_VALIDATOR = {
+    "bytes": 57_043,
+    "sha256": "13d5107d5240c0aa6f4bc7fd41c26f98e5e2587bab86e8931e8b0b62a2c0ffcb",
+}
+ATTEMPT_ZERO_BASE_QUALIFICATION = {
+    "bytes": 45_956,
+    "sha256": "73e966984c0d6dcb019bc21990dfe4ac58924d45f74d69bb5902b6acf04082e9",
+}
+ATTEMPT_ZERO_RELEASE_COMMIT = (
+    "2fa8dc13070997043a431ff04ce594feb0660fb9"
+)
+ATTEMPT_ZERO_BASE_PREFLIGHT_RECEIPT_SHA256 = (
+    "4809d70c30b6e3b3d8d89bd2a325459b5f74588f03b7cadc4eae2350c14e9d75"
+)
 
 PROMOTION_SCHEMA = (
     "papersoccer.compact-value-bfm.rank4-teacher-challenger-promotion.v1"
@@ -1061,22 +1083,184 @@ def validate_promotion(
 
 def _validate_base_preflight(
     path: pathlib.Path, *, repository: pathlib.Path,
-    runtime_path: pathlib.Path, base_source: pathlib.Path,
-) -> dict[str, Any]:
+    runtime_path: pathlib.Path, base_source: pathlib.Path, attempt: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if (
         path.is_symlink() or not path.is_file()
         or path.stem != qualification.sha256_file(path)
     ):
         raise ReleaseBridgeError("maintained preflight is not content-addressed")
     receipt = qualification.load_sealed(path, maintained.RECEIPT_SCHEMA)
-    try:
-        maintained.validate_preflight_receipt(
-            receipt, claim=receipt["claim"], plan=receipt["plan"],
-            inputs=receipt["inputs_before"],
-        )
-    except Exception as error:
-        raise ReleaseBridgeError("maintained compact preflight failed deep validation") from error
     inputs = receipt["inputs_before"]
+    source_record = inputs.get("sources", {}).get(
+        "tools/compact_value_bfm_preflight.py"
+    )
+    python_record = inputs.get("tools", {}).get("python")
+    if not isinstance(source_record, Mapping) or not isinstance(
+        python_record, Mapping
+    ):
+        raise ReleaseBridgeError("maintained preflight validator binding is absent")
+    validator = pathlib.Path(str(source_record.get("path", ""))).resolve()
+    interpreter = pathlib.Path(str(python_record.get("path", ""))).absolute()
+    actual_validator = _record(validator, ascii_required=True)
+    actual_python = deployment_preflight._record(
+        interpreter, executable=True, allow_symlink=True
+    )
+    if (
+        validator != (repository / "tools/compact_value_bfm_preflight.py").resolve()
+        or any(
+            actual_validator.get(key) != source_record.get(key)
+            for key in ("bytes", "sha256", "ascii")
+        )
+        or any(
+            actual_python.get(key) != python_record.get(key)
+            for key in ("bytes", "sha256")
+        )
+    ):
+        raise ReleaseBridgeError("maintained preflight validator bytes changed")
+    git = _git_identity(repository, require_clean=True)
+    validator_blob = _git(
+        repository, "show",
+        f"{git['commit']}:tools/compact_value_bfm_preflight.py",
+    )
+    qualification_blob = _git(
+        repository, "show",
+        f"{git['commit']}:tools/compact_value_bfm_qualification.py",
+    )
+    if (
+        git["commit"] != inputs.get("candidate_commit")
+        or validator_blob != validator.read_bytes()
+        or qualification.sha256_bytes(validator_blob)
+        != source_record.get("sha256")
+        or not qualification_blob
+        or (
+            attempt == 0
+            and (
+                git["commit"] != ATTEMPT_ZERO_RELEASE_COMMIT
+                or path.stem != ATTEMPT_ZERO_BASE_PREFLIGHT_RECEIPT_SHA256
+                or any(
+                    source_record.get(key) != value
+                    for key, value in ATTEMPT_ZERO_BASE_PREFLIGHT_VALIDATOR.items()
+                )
+                or len(qualification_blob)
+                != ATTEMPT_ZERO_BASE_QUALIFICATION["bytes"]
+                or qualification.sha256_bytes(qualification_blob)
+                != ATTEMPT_ZERO_BASE_QUALIFICATION["sha256"]
+            )
+        )
+    ):
+        raise ReleaseBridgeError("maintained preflight validator is not committed")
+    validation_program = r'''
+import importlib.util
+import json
+import pathlib
+import sys
+
+validator = pathlib.Path(sys.argv[1]).resolve()
+receipt_path = pathlib.Path(sys.argv[2]).resolve()
+spec = importlib.util.spec_from_file_location("isolated_release_base_preflight", validator)
+if spec is None or spec.loader is None:
+    raise RuntimeError("cannot load isolated base preflight validator")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+if pathlib.Path(module.__file__).resolve() != validator:
+    raise RuntimeError("isolated base preflight validator path changed")
+receipt = module.base.load_sealed(receipt_path, module.RECEIPT_SCHEMA)
+module.validate_preflight_receipt(
+    receipt, claim=receipt["claim"], plan=receipt["plan"],
+    inputs=receipt["inputs_before"],
+)
+print("RANK4_RELEASE_BASE_PREFLIGHT=" + json.dumps({
+    "body_sha256": receipt["body_sha256"],
+    "status": receipt["status"],
+}, sort_keys=True))
+'''
+    program_sha256 = qualification.sha256_bytes(
+        validation_program.encode("utf-8")
+    )
+    environment = dict(os.environ)
+    removed_environment = [
+        "CC", "CFLAGS", "CPPFLAGS", "CXX", "CXXFLAGS", "LDFLAGS",
+        "PYTHONHOME", "PYTHONPATH",
+    ]
+    for name in removed_environment:
+        environment.pop(name, None)
+    with tempfile.TemporaryDirectory(
+        prefix="rank4-release-base-preflight-"
+    ) as temporary:
+        isolated_root = pathlib.Path(temporary).resolve()
+        isolated_validator = isolated_root / "compact_value_bfm_preflight.py"
+        isolated_qualification = (
+            isolated_root / "compact_value_bfm_qualification.py"
+        )
+        isolated_validator.write_bytes(validator_blob)
+        isolated_qualification.write_bytes(qualification_blob)
+        command = [
+            str(interpreter), "-B", "-I", "-c", validation_program,
+            str(isolated_validator), str(path.resolve()),
+        ]
+        completed = subprocess.run(
+            command, cwd=isolated_root, env=environment,
+            text=True, capture_output=True, check=False,
+        )
+        if (
+            isolated_validator.read_bytes() != validator_blob
+            or isolated_qualification.read_bytes() != qualification_blob
+            or any(isolated_root.glob("__pycache__"))
+        ):
+            raise ReleaseBridgeError(
+                "isolated base preflight source closure changed"
+            )
+    prefix = "RANK4_RELEASE_BASE_PREFLIGHT="
+    lines = completed.stdout.splitlines()
+    try:
+        child = (
+            json.loads(lines[0][len(prefix):])
+            if len(lines) == 1 and lines[0].startswith(prefix) else None
+        )
+    except json.JSONDecodeError:
+        child = None
+    if (
+        completed.returncode != 0
+        or completed.stderr != ""
+        or child != {
+            "body_sha256": receipt["body_sha256"],
+            "status": receipt["status"],
+        }
+    ):
+        raise ReleaseBridgeError("maintained compact preflight failed deep validation")
+    validation = {
+        "mode": "isolated-committed-receipt-validator-v1",
+        "attempt": attempt,
+        "validator": actual_validator,
+        "interpreter": actual_python,
+        "repository_commit": git["commit"],
+        "materialized_sources": {
+            "compact_value_bfm_preflight.py": {
+                "bytes": len(validator_blob),
+                "sha256": qualification.sha256_bytes(validator_blob),
+            },
+            "compact_value_bfm_qualification.py": {
+                "bytes": len(qualification_blob),
+                "sha256": qualification.sha256_bytes(qualification_blob),
+            },
+        },
+        "argv": [
+            "-B", "-I", "-c", program_sha256,
+            f"git:{git['commit']}:tools/compact_value_bfm_preflight.py",
+            str(path.resolve()),
+        ],
+        "removed_environment": removed_environment,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "stdout_sha256": qualification.sha256_bytes(
+            completed.stdout.encode("utf-8")
+        ),
+        "stderr_sha256": qualification.sha256_bytes(
+            completed.stderr.encode("utf-8")
+        ),
+    }
     if (
         inputs.get("candidate_commit")
         != _git_identity(repository, require_clean=True)["commit"]
@@ -1092,7 +1276,7 @@ def _validate_base_preflight(
     ):
         raise ReleaseBridgeError("maintained preflight is not release source/runtime bound")
     _uncontended_timing(receipt.get("timing", {}))
-    return receipt
+    return receipt, validation
 
 
 def _uncontended_timing(timing: Mapping[str, Any]) -> dict[str, Any]:
@@ -1126,12 +1310,16 @@ def _source_inputs(repository: pathlib.Path) -> dict[str, pathlib.Path]:
     bot = repository / BOT_RELATIVE
     return {
         "rank4": repository / RANK4_RELATIVE,
-        "gate_source": bot / "rank4_gate.cpp",
+        # Final-gate evidence requires the profile-aware v2 gate frozen by the
+        # campaign build, not the legacy v1 evaluator beside attempt zero.
+        "gate_source": REPOSITORY / BOT_RELATIVE / "rank4_gate.cpp",
         "protocol_smoke": repository
         / "submissions/codingame/tools/protocol_smoke_test.mjs",
         "export_model": bot / "export_model.py",
         "feature_parity": bot / "feature_parity.py",
-        "submission_test": bot / "submission_test.cpp",
+        "submission_test": (
+            REPOSITORY / BOT_RELATIVE / "submission_test.cpp"
+        ),
         "timing_probe": bot / "timing_probe.cpp",
         "inference_probe": bot / "inference_probe.cpp",
     }
@@ -1183,9 +1371,9 @@ def _preflight_snapshot(
     git, artifacts = _verify_promoted_commit(repository, payloads=payloads)
     base_source = repository / GENERATED_RELATIVE
     runtime_path = pathlib.Path(selected["runtime"]["path"])
-    base_receipt = _validate_base_preflight(
+    base_receipt, base_preflight_validation = _validate_base_preflight(
         base_preflight_path, repository=repository, runtime_path=runtime_path,
-        base_source=base_source,
+        base_source=base_source, attempt=attempt,
     )
     candidate_path = repository / DEPLOYED_RELATIVE
     manifest_path = repository / MANIFEST_RELATIVE
@@ -1205,8 +1393,16 @@ def _preflight_snapshot(
     if (
         sources["rank4"]["sha256"] != qualification.RANK4_SHA256
         or sources["rank4"]["bytes"] != qualification.RANK4_BYTES
+        or any(
+            sources["gate_source"].get(key) != value
+            for key, value in RELEASE_GATE_SOURCE.items()
+        )
+        or any(
+            sources["submission_test"].get(key) != value
+            for key, value in RELEASE_SUBMISSION_TEST.items()
+        )
     ):
-        raise ReleaseBridgeError("maintained Rank-4 source identity changed")
+        raise ReleaseBridgeError("maintained Rank-4/gate source identity changed")
     tools = {
         "python": deployment_preflight._record(
             python_path, executable=True, allow_symlink=True
@@ -1231,6 +1427,7 @@ def _preflight_snapshot(
             base_preflight_path, maintained.RECEIPT_SCHEMA
         ),
         "base_preflight_body_sha256": base_receipt["body_sha256"],
+        "base_preflight_validation": base_preflight_validation,
         "generated_source": _record(base_source, ascii_required=True),
         "candidate": _record(candidate_path, ascii_required=True),
         "runtime": dict(selected["runtime"]),

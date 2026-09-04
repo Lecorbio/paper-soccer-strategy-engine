@@ -135,6 +135,31 @@ def gh_payload(head=COMMIT):
 
 
 class SourceAndPromotionTest(unittest.TestCase):
+    def test_release_preflight_uses_frozen_current_gate_and_submission_test(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            sources = release._source_inputs(pathlib.Path(temporary))
+        gate = sources["gate_source"]
+        self.assertEqual(
+            gate,
+            release.REPOSITORY / release.BOT_RELATIVE / "rank4_gate.cpp",
+        )
+        self.assertEqual(
+            release._record(gate),
+            {"path": str(gate.resolve()), **release.RELEASE_GATE_SOURCE},
+        )
+        submission_test = sources["submission_test"]
+        self.assertEqual(
+            submission_test,
+            release.REPOSITORY / release.BOT_RELATIVE / "submission_test.cpp",
+        )
+        self.assertEqual(
+            release._record(submission_test),
+            {
+                "path": str(submission_test.resolve()),
+                **release.RELEASE_SUBMISSION_TEST,
+            },
+        )
+
     def test_release_hooks_are_never_injectable_in_production(self):
         context = {
             "inputs": {"production_allowlist_enforced": True},
