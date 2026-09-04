@@ -951,7 +951,19 @@ def promote_candidate(
         _atomic_replace(repository / relative, payloads[relative.name])
     artifacts = _artifact_records(repository, payloads)
     dirty_after = _git_status_paths(repository)
-    if not dirty_after or not dirty_after.issubset(allowed):
+    if not dirty_after:
+        # A freshly frozen governance campaign may resume after the exact four
+        # artifacts were already committed by an earlier superseded receipt.
+        # Accept only byte-identical tracked HEAD content; this is not a route
+        # for silently broadening the promotion diff.
+        for relative in PROMOTED_RELATIVES:
+            route = relative.as_posix()
+            _git(repository, "ls-files", "--error-unmatch", "--", route)
+            if _git(repository, "show", f"HEAD:{route}") != payloads[relative.name]:
+                raise ReleaseBridgeError(
+                    "clean resumed promotion is not already committed exactly"
+                )
+    elif not dirty_after.issubset(allowed):
         raise ReleaseBridgeError("promotion changed files outside the fixed release roster")
     output_path = _safe_output(output_path)
     body = {

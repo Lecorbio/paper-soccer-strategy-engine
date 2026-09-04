@@ -446,6 +446,31 @@ class CommandAndPanelReceiptTest(unittest.TestCase):
 
 
 class ExportParityTimingTest(unittest.TestCase):
+    def test_exporter_freshness_ignores_derived_bootstrap_field(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = pathlib.Path(temporary)
+            candidate = repository / preflight.BOT_RELATIVE / "submission.cpp"
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text("int main(){}\n")
+            runtime = repository / "model.runtime.json"
+            runtime.write_text("{}\n")
+            frozen = preflight._regular_file(candidate, ascii_required=True)
+            inputs = {
+                "candidate": {**frozen, "bootstrap_zero": False},
+                "runtime": preflight._regular_file(runtime, ascii_required=True),
+            }
+            commands = {
+                name: {"passed": True} for name in (
+                    "model_exporter_current", "submission_exporter_current",
+                    "submission_measure",
+                )
+            }
+            record = preflight._exporter_record(
+                repository=repository, runtime_path=runtime,
+                inputs=inputs, commands=commands,
+            )
+            self.assertTrue(record["fresh"])
+
     def test_exporter_requires_fresh_ascii_strictly_under_95k(self):
         inputs = input_snapshot()
         passed = {name: {"passed": True} for name in (

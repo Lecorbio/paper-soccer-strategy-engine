@@ -434,6 +434,56 @@ class SourceAndPromotionTest(unittest.TestCase):
             for item in release.PROMOTED_RELATIVES:
                 self.assertTrue((repository / item).is_file())
 
+    def test_promote_accepts_only_exact_already_committed_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            repository = root / "repository"
+            repository.mkdir()
+            selected = make_selected(root)
+            payloads = release._release_payloads(repository, selected)
+            for relative in release.PROMOTED_RELATIVES:
+                path = repository / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(payloads[relative.name])
+            plan = root / "campaign-plan.json"
+            q.write_sealed(plan, {"schema": release.challenger.PLAN_SCHEMA})
+            git = {
+                "repository": str(repository.resolve()),
+                "commit": COMMIT,
+                "branch": release.RELEASE_BRANCH,
+                "head_ref": f"refs/heads/{release.RELEASE_BRANCH}",
+                "clean": True,
+                "dirty_paths": [],
+            }
+
+            def git_read(_repository, *arguments):
+                if arguments[0] == "ls-files":
+                    return b"tracked\n"
+                if arguments[0] == "show":
+                    relative = arguments[1].split(":", 1)[1]
+                    return (repository / relative).read_bytes()
+                raise AssertionError(arguments)
+
+            with mock.patch.object(
+                release, "_git_identity", return_value=git
+            ), mock.patch.object(
+                release, "_git_status_paths", return_value=set()
+            ), mock.patch.object(
+                release, "_git", side_effect=git_read
+            ):
+                receipt = release.promote_candidate(
+                    campaign_plan_path=plan, attempt=1,
+                    candidate_runtime=pathlib.Path(selected["runtime"]["path"]),
+                    candidate_source=pathlib.Path(
+                        selected["generated_source"]["path"]
+                    ),
+                    repository=repository,
+                    output_path=root / "promotion.json",
+                    promoted_at_utc="2026-09-04T00:00:00Z",
+                    selected_validator=mock.Mock(return_value=selected),
+                )
+            self.assertEqual(receipt["dirty_paths_after"], [])
+
 
 class TimingAndCiTest(unittest.TestCase):
     def test_release_mutating_and_preflight_cli_require_explicit_repository(self):
