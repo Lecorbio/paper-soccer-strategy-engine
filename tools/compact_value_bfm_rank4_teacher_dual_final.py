@@ -237,6 +237,22 @@ def _verify_record(
     return path.resolve()
 
 
+def _verify_ascii_payload_record(value: Any, label: str) -> pathlib.Path:
+    """Verify ASCII content while accepting producers with or without its flag."""
+
+    if not isinstance(value, Mapping):
+        raise DualFinalError(f"{label} record is absent")
+    path = pathlib.Path(str(value.get("path", "")))
+    plain = _record(path)
+    if dict(value) not in (plain, {**plain, "ascii": True}):
+        raise DualFinalError(f"{label} changed")
+    try:
+        path.read_bytes().decode("ascii")
+    except UnicodeDecodeError as error:
+        raise DualFinalError(f"{label} is not ASCII") from error
+    return path.resolve()
+
+
 def _freeze_gate_executable(
     root: pathlib.Path, source: pathlib.Path,
 ) -> Record:
@@ -606,7 +622,15 @@ def _default_release_preflight_validator(
         raise DualFinalError("generalized candidate release evidence did not validate") from error
     if not isinstance(state, Mapping):
         raise DualFinalError("release preflight adapter returned malformed state")
-    return dict(state)
+    normalized = dict(state)
+    # The generalized release bridge retains a richer uncontended summary
+    # (worker/color/limit provenance) than the dual-final execution schema.
+    # Its release validator has already authenticated that summary against the
+    # timing receipt; keep the dual plan's long-standing canonical maxima shape.
+    normalized["uncontended_timing"] = _uncontended_timing(
+        normalized.get("timing", {})
+    )
+    return normalized
 
 
 def _preflight_authority(
@@ -1078,8 +1102,8 @@ def prepare_execution(
     candidate = authorization.get("candidate")
     if not isinstance(candidate, Mapping):
         raise DualFinalError("authorization candidate is absent")
-    source_path = _verify_record(
-        candidate.get("source"), "authorized candidate source", ascii_required=True
+    source_path = _verify_ascii_payload_record(
+        candidate.get("source"), "authorized candidate source"
     )
     runtime_path = _verify_record(
         candidate.get("runtime"), "authorized candidate runtime"
@@ -1342,8 +1366,8 @@ def validate_execution_plan(
         authorization.get("created_at_utc"), "dual-final authorization time"
     ):
         raise DualFinalError("execution plan predates authorization")
-    source = _verify_record(
-        plan["candidate"]["source"], "planned candidate source", ascii_required=True
+    source = _verify_ascii_payload_record(
+        plan["candidate"]["source"], "planned candidate source"
     )
     runtime = _verify_record(plan["candidate"]["runtime"], "planned candidate runtime")
     if plan.get("runtime_identity") != _runtime_identity(runtime):

@@ -224,7 +224,18 @@ class DualFinalExecutionTests(unittest.TestCase):
 
         def adapt(_path, **kwargs):
             observed.append(("adapt", kwargs["candidate_source"]))
-            return {"candidate": {"path": str(deployed)}}
+            return {
+                "candidate": {"path": str(deployed)},
+                "timing": timing_receipt(),
+                "uncontended_timing": {
+                    "workers": 1,
+                    "colors": [0, 1],
+                    "first_max_ms": 101.0,
+                    "later_max_ms": 21.0,
+                    "first_limit_exclusive_ms": 900.0,
+                    "later_limit_exclusive_ms": 180.0,
+                },
+            }
 
         release = __import__(
             "tools.compact_value_bfm_rank4_teacher_release", fromlist=["*"]
@@ -253,6 +264,10 @@ class DualFinalExecutionTests(unittest.TestCase):
                 authorization=authorization,
             )
         self.assertEqual(state["candidate"]["path"], str(deployed))
+        self.assertEqual(
+            state["uncontended_timing"],
+            {"first_max_ms": 101.0, "later_max_ms": 21.0},
+        )
         self.assertEqual(observed, [("adapt", selected)])
 
     def test_authorized_exclusion_paths_are_discovered_from_full_ledger(self):
@@ -372,6 +387,89 @@ class DualFinalExecutionTests(unittest.TestCase):
                     str(root := fixture.campaign.resolve().parent / ".rank4-teacher-heavy-stage.lock"),
                 )
                 self.assertEqual(root.parent, fixture.root.resolve())
+
+    def test_prepare_accepts_plain_authorized_source_record_but_requires_ascii(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary))
+            fixture.authorization["candidate"]["source"] = dual._record(
+                fixture.source
+            )
+            self.assertNotIn(
+                "ascii", fixture.authorization["candidate"]["source"]
+            )
+            plan_path = fixture.prepare()
+            self.assertEqual(fixture.prepare(), plan_path)
+            state = dual.validate_execution_plan(
+                plan_path,
+                authorization_validator=fixture.authorization_validator,
+                preflight_validator=fixture.preflight_validator,
+                ci_validator=fixture.ci_validator,
+                allow_injected_test_evidence=True,
+            )
+            self.assertNotIn("ascii", state["plan"]["candidate"]["source"])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary))
+            fixture.source.write_bytes(b"int main(){}\n// \xff\n")
+            fixture.authorization["candidate"]["source"] = dual._record(
+                fixture.source
+            )
+            with self.assertRaisesRegex(
+                dual.DualFinalError,
+                "authorized candidate source.*not ASCII",
+            ):
+                fixture.prepare()
+
+    def test_generalized_release_detailed_timing_is_compacted_in_plan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PrepareFixture(pathlib.Path(temporary), attempt=1)
+            release = __import__(
+                "tools.compact_value_bfm_rank4_teacher_release", fromlist=["*"]
+            )
+            adapted = fixture.preflight_validator(fixture.release_path)
+            detailed = release._uncontended_timing(adapted["timing"])
+            compact = dual._uncontended_timing(adapted["timing"])
+            self.assertEqual(
+                set(detailed),
+                {
+                    "workers", "colors", "first_max_ms", "later_max_ms",
+                    "first_limit_exclusive_ms", "later_limit_exclusive_ms",
+                },
+            )
+            self.assertEqual(
+                compact,
+                {
+                    "first_max_ms": detailed["first_max_ms"],
+                    "later_max_ms": detailed["later_max_ms"],
+                },
+            )
+            adapted["uncontended_timing"] = detailed
+            fixture.authorization["generated_source"] = dual._record(
+                fixture.source
+            )
+
+            def normalized_preflight(path):
+                with mock.patch.object(
+                    dual.challenger, "validate_campaign",
+                    return_value={"plan": {}},
+                ), mock.patch.object(
+                    dual.challenger, "_resolve_campaign_artifact",
+                    return_value=fixture.source.resolve(),
+                ), mock.patch.object(
+                    release, "dual_final_preflight_state", return_value=adapted,
+                ):
+                    return dual._default_release_preflight_validator(
+                        path,
+                        campaign_plan_path=fixture.campaign,
+                        authorization=fixture.authorization,
+                    )
+
+            fixture.preflight_validator = normalized_preflight
+            plan_path = fixture.prepare(generalized_release=True)
+
+            plan = q.load_sealed(plan_path, dual.PLAN_SCHEMA)
+            self.assertEqual(plan["uncontended_timing"], compact)
+            self.assertEqual(adapted["uncontended_timing"], detailed)
 
     def test_authorization_has_one_deterministic_execution_root(self):
         with tempfile.TemporaryDirectory() as temporary:
