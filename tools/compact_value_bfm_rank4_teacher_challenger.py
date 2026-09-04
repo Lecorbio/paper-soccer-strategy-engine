@@ -4159,6 +4159,7 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                     isolated = deep_validation.get("isolated_execution")
                     isolated_fields = {
                         "interpreter", "isolated", "cwd", "argv",
+                        "environment", "removed_environment",
                         "stdout", "stderr", "stdout_sha256",
                         "stderr_sha256",
                     }
@@ -4171,6 +4172,19 @@ def load_ledger(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                         or set(isolated) != isolated_fields
                         or isolated.get("isolated") is not True
                         or not isinstance(isolated.get("argv"), list)
+                        or isolated.get("environment") != {
+                            "MKL_NUM_THREADS": "1",
+                            "NUMEXPR_NUM_THREADS": "1",
+                            "OMP_NUM_THREADS": "1",
+                            "OPENBLAS_NUM_THREADS": "1",
+                            "VECLIB_MAXIMUM_THREADS": "1",
+                            "PYTHONDONTWRITEBYTECODE": "1",
+                            "PYTHONHASHSEED": "0",
+                        }
+                        or isolated.get("removed_environment") != [
+                            "CC", "CFLAGS", "CPPFLAGS", "CXX", "CXXFLAGS",
+                            "LDFLAGS", "PYTHONHOME", "PYTHONPATH",
+                        ]
                         or not isinstance(isolated.get("stdout"), str)
                         or not isinstance(isolated.get("stderr"), str)
                         or isolated.get("stderr") != ""
@@ -6440,7 +6454,7 @@ def _isolated_attempt_zero_validation(
     """Run the exact legacy verifier with its own repository-local imports."""
 
     environment = dict(os.environ)
-    environment.update({
+    isolated_environment = {
         "MKL_NUM_THREADS": "1",
         "NUMEXPR_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
@@ -6448,9 +6462,14 @@ def _isolated_attempt_zero_validation(
         "VECLIB_MAXIMUM_THREADS": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",
-    })
-    environment.pop("PYTHONPATH", None)
-    environment.pop("PYTHONHOME", None)
+    }
+    environment.update(isolated_environment)
+    removed_environment = [
+        "CC", "CFLAGS", "CPPFLAGS", "CXX", "CXXFLAGS", "LDFLAGS",
+        "PYTHONHOME", "PYTHONPATH",
+    ]
+    for name in removed_environment:
+        environment.pop(name, None)
     repository = runner_path.parents[4]
     if passed:
         command = [
@@ -6521,6 +6540,8 @@ else:
         "isolated": True,
         "cwd": str(repository.resolve()),
         "argv": command[1:],
+        "environment": isolated_environment,
+        "removed_environment": removed_environment,
         "stdout": completed.stdout,
         "stderr": completed.stderr,
         "stdout_sha256": sha256_bytes(completed.stdout.encode("utf-8")),

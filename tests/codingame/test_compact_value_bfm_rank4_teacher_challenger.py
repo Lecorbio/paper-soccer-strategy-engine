@@ -2043,7 +2043,9 @@ class ChallengerCampaignTests(unittest.TestCase):
             runner = root / "legacy-checkout" / "submissions/codingame/bots/compact_value_bfm/discrete_v3_recovery_runner.py"
             runner.parent.mkdir(parents=True)
             runner.write_text(
-                "import sys\n"
+                "import os, sys\n"
+                "if os.environ.get('CXX'):\n"
+                "    raise SystemExit(8)\n"
                 "if len(sys.argv) < 2 or sys.argv[1] != 'verify':\n"
                 "    raise SystemExit(7)\n"
             )
@@ -2068,9 +2070,10 @@ class ChallengerCampaignTests(unittest.TestCase):
             head_path = journal / f"000001-{head['body_sha256']}.json"
             head_path.write_bytes(q.canonical_json_bytes(head))
 
-            evidence = challenger._default_attempt_zero_validator(
-                result, plan, root, True
-            )
+            with mock.patch.dict(os.environ, {"CXX": "/wrong/compiler"}):
+                evidence = challenger._default_attempt_zero_validator(
+                    result, plan, root, True
+                )
 
             self.assertEqual(
                 evidence["executed_recovery_runner"]["sha256"],
@@ -2083,6 +2086,9 @@ class ChallengerCampaignTests(unittest.TestCase):
             self.assertNotEqual(
                 evidence["executed_recovery_runner"]["path"],
                 evidence["validator"]["path"],
+            )
+            self.assertIn(
+                "CXX", evidence["isolated_execution"]["removed_environment"]
             )
 
     def test_attempt_zero_deep_rejection_accepts_exact_nonthreshold_exception(self):
