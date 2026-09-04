@@ -43,9 +43,73 @@ complete-turn mate distance. Ancestors are overwritten by negamax/minimax;
 there is no rollout or average return. Selection is
 `value + C*sqrt(log(parentVisits)/childVisits)`, with `value+FPU` when
 unvisited. Final root selection is `value + lambda*log(max(1, visits))`.
+Proof status and traversal exhaustion are separate: a truncated expanded node
+becomes non-selectable once every child it actually retained is closed, while
+remaining unsolved unless it has proof evidence. This guarantees that the
+allocation-free selector and progressive-widening prefix cannot stall on a
+permanent dead end.
 Defaults are `C=.95`, `FPU=.5`, `lambda=1`, 80,000 nodes, 2,000,000 expansion
 safety cap, one thread, and 800/155 ms clocks. A deterministic complete turn is
 prepared before the clock starts.
+
+The CTest `papersoccer_codingame_compact_value_bfm_search_variant_parity`
+compiles the baseline, no-feature-sort-only, single-pass-selection-only, and
+combined implementations separately, then feeds every executable the same
+frozen 24-state legal corpus. It requires byte-identical fixed-work evidence
+from a zero-valued tie-breaking profile and a deterministic nonzero
+`6301->12->8->1` three-bit profile. The evidence includes input and successor
+state identities, feature identity, every legal root successor, the selected
+transcript, bit-exact values and final scores, the ordered root transcript with
+visits, selection visits and generation order, proof flags, and all exposed
+search counters.
+
+`COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1` enables the first independent
+search-throughput experiment. Its per-search, direct-mapped table reuses a
+value only after an exact used-edge, ball, mover, winner, and ply match; the
+complete-turn mover is the evaluation perspective. Collisions replace entries
+and cannot return a mismatched value. Search stats expose cache probes, hits,
+and misses. The dedicated
+`papersoccer_codingame_compact_value_bfm_state_evaluation_cache_parity_<base>`
+CTests require cache activity and remove only those three counters before
+demanding a byte-identical semantic trace from the corresponding uncached
+implementation. This mode is off by default and is not yet a selected campaign
+variant.
+
+`COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1` is the second independent
+search-throughput experiment. For each expanded node it makes the first
+`min(open, 8 + 2 * floor(sqrt(max(1, selectionVisits))))` open children in
+the existing deterministic generation order eligible for ordinary UCT
+selection. It gradually admits more children without changing generation,
+evaluations, score formulas, or tie comparisons. Search stats expose widening
+probes, restricted selections, eligible children, and deferred children. Its
+invariance CTest requires deterministic repeated output, exact root action,
+tactical-class, initial-value-bit, and generation-order agreement with the
+uncached combined baseline, legal selected turns in both modes, exercised
+restriction counters, and an actual allocation change. This mode is also off
+by default; compiling it together with state-evaluation-cache-v1 is rejected.
+
+`COMPACT_VALUE_BFM_SUBTREE_REUSE_V1` is the final independent throughput
+experiment. A direct-mapped exact-state index recognizes a node at the same
+complete-turn depth and mover perspective whose deterministic expansion used
+the full configured action cap. A hit clones that one-ply subtree's ordered
+states and exact initial values into fresh nodes with independent visits and
+backups, avoiding repeated complete-turn generation and inference without
+creating a shared-node DAG. Hash collisions, depth/state mismatches, and
+near-cap expansions are rejected. Search stats expose reuse probes, hits,
+misses, rejections, and reused-child counts. Its invariance CTest requires
+two byte-identical reuse runs and exact baseline agreement for state identity,
+all legal root successors, selected turns, score/tie results, inference bits,
+visits, generation order, and logical search accounting, while also requiring
+all reuse outcomes and strictly less measured generator work. The mode is off
+by default and cannot be combined with either earlier intervention.
+
+CMake expands every intervention across baseline, no-feature-sort-only,
+single-pass-selection-only, and combined controls. A header-only negative
+compile test rejects every pair of intervention macros. The
+`papersoccer_codingame_compact_value_bfm_source_compaction_parity` test also
+requires the readable modular engine and all four generated standard variants
+to emit the same trace, then checks its normalized semantic SHA-256 against the
+golden trace from pre-intervention commit `43d9ec9`.
 
 ## Generation and checks
 
@@ -105,7 +169,10 @@ build/papersoccer_codingame_compact_value_bfm_rank4_gate \
 
 The JSON binds candidate, model body/payload, bank, Rank-4/opponent source,
 configuration, every paired game, per-decision timings, deadline/headroom/hard
-timeout counters, and categorized failures. The protected-final tooling may
+timeout counters, and categorized failures. Both engine clocks stop after the
+complete-turn text is constructed and before the arena applies it or performs
+the lockstep audit, so harness verification cannot count against either bot.
+The protected-final tooling may
 create and consume a five-pair-sharded bank only after immutable development
 selection, a clean candidate commit, and the complete local preflight. No
 protected bank has been created by the checked-in bootstrap fixture.

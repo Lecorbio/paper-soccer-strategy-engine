@@ -27,7 +27,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::string_view kSchema =
-    "papersoccer.compact-value-bfm-rank4-gate.v1";
+    "papersoccer.compact-value-bfm-rank4-gate.v2";
 constexpr std::string_view kBankSchema =
     "papersoccer.compact-value-bfm-opening-bank.v1";
 constexpr std::string_view kRank4Sha256 =
@@ -39,6 +39,68 @@ constexpr double kLaterHeadroomMs = 180.0;
 
 enum class Mode { FixedWork, ActualClock };
 enum class Engine { Candidate, Rank4 };
+
+constexpr std::string_view candidate_search_profile() noexcept {
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1)
+  return "state-evaluation-cache-v1";
+#elif defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+  return "progressive-widening-v1";
+#elif defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1)
+  return "subtree-reuse-v1";
+#else
+  return "standard-v1";
+#endif
+}
+
+struct SearchInterventionCounters {
+  std::uint64_t cache_probes{};
+  std::uint64_t cache_hits{};
+  std::uint64_t cache_misses{};
+  std::uint64_t widening_probes{};
+  std::uint64_t widening_restrictions{};
+  std::uint64_t widening_eligible{};
+  std::uint64_t widening_deferred{};
+  std::uint64_t reuse_probes{};
+  std::uint64_t reuse_hits{};
+  std::uint64_t reuse_misses{};
+  std::uint64_t reuse_rejections{};
+  std::uint64_t reused_children{};
+};
+
+template <typename Stats>
+SearchInterventionCounters search_intervention_counters(
+    const Stats &stats) noexcept {
+  if constexpr (requires {
+                  stats.cache_probes;
+                  stats.cache_hits;
+                  stats.cache_misses;
+                  stats.widening_probes;
+                  stats.widening_restrictions;
+                  stats.widening_eligible;
+                  stats.widening_deferred;
+                  stats.reuse_probes;
+                  stats.reuse_hits;
+                  stats.reuse_misses;
+                  stats.reuse_rejections;
+                  stats.reused_children;
+                }) {
+    return SearchInterventionCounters{
+        stats.cache_probes,
+        stats.cache_hits,
+        stats.cache_misses,
+        stats.widening_probes,
+        stats.widening_restrictions,
+        stats.widening_eligible,
+        stats.widening_deferred,
+        stats.reuse_probes,
+        stats.reuse_hits,
+        stats.reuse_misses,
+        stats.reuse_rejections,
+        stats.reused_children,
+    };
+  }
+  return {};
+}
 
 struct Config {
   std::filesystem::path bank;
@@ -102,6 +164,7 @@ struct Invocation {
   std::uint64_t work{};
   std::uint64_t generated_children{};
   std::uint64_t evaluated_children{};
+  SearchInterventionCounters search_intervention;
 };
 
 struct EngineSummary {
@@ -113,6 +176,7 @@ struct EngineSummary {
   std::uint64_t work{};
   std::uint64_t generated_children{};
   std::uint64_t evaluated_children{};
+  SearchInterventionCounters search_intervention;
   double maximum_first_ms{};
   double maximum_later_ms{};
   std::vector<double> times;
@@ -449,6 +513,12 @@ Invocation invoke_candidate(MatchState &state, bool first,
   result.first = first;
   Clock::time_point started{};
   bool timing_started = false;
+  const auto stop_timing = [&] {
+    if (!timing_started) return;
+    result.milliseconds =
+        std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+    timing_started = false;
+  };
   cv::Action emergency{};
   bool emergency_ready = false;
   try {
@@ -468,6 +538,10 @@ Invocation invoke_candidate(MatchState &state, bool first,
     result.work = decision.stats.expansions;
     result.generated_children = decision.stats.generated_children;
     result.evaluated_children = decision.stats.evaluated_children;
+    result.search_intervention = search_intervention_counters(decision.stats);
+    // Match the Rank-4 endpoint below: action construction is timed, while
+    // arena application and the expensive lockstep audit are harness work.
+    stop_timing();
     if (result.action.empty()) {
       result.failure = "candidate_malformed";
     } else {
@@ -482,6 +556,7 @@ Invocation invoke_candidate(MatchState &state, bool first,
       }
     }
   } catch (const std::exception &error) {
+    stop_timing();
     if (emergency_ready) {
       result.action = emergency.text();
       result.deadline_reached = true;
@@ -497,6 +572,7 @@ Invocation invoke_candidate(MatchState &state, bool first,
       result.failure_detail = error.what();
     }
   } catch (...) {
+    stop_timing();
     if (emergency_ready) {
       result.action = emergency.text();
       result.deadline_reached = true;
@@ -510,10 +586,7 @@ Invocation invoke_candidate(MatchState &state, bool first,
       result.failure = "candidate_exception";
     }
   }
-  if (timing_started) {
-    result.milliseconds =
-        std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-  }
+  stop_timing();
   classify_time(result, config.mode);
   return result;
 }
@@ -595,6 +668,30 @@ void add_invocation(EngineSummary &summary, const Invocation &invocation) {
   summary.work += invocation.work;
   summary.generated_children += invocation.generated_children;
   summary.evaluated_children += invocation.evaluated_children;
+  summary.search_intervention.cache_probes +=
+      invocation.search_intervention.cache_probes;
+  summary.search_intervention.cache_hits +=
+      invocation.search_intervention.cache_hits;
+  summary.search_intervention.cache_misses +=
+      invocation.search_intervention.cache_misses;
+  summary.search_intervention.widening_probes +=
+      invocation.search_intervention.widening_probes;
+  summary.search_intervention.widening_restrictions +=
+      invocation.search_intervention.widening_restrictions;
+  summary.search_intervention.widening_eligible +=
+      invocation.search_intervention.widening_eligible;
+  summary.search_intervention.widening_deferred +=
+      invocation.search_intervention.widening_deferred;
+  summary.search_intervention.reuse_probes +=
+      invocation.search_intervention.reuse_probes;
+  summary.search_intervention.reuse_hits +=
+      invocation.search_intervention.reuse_hits;
+  summary.search_intervention.reuse_misses +=
+      invocation.search_intervention.reuse_misses;
+  summary.search_intervention.reuse_rejections +=
+      invocation.search_intervention.reuse_rejections;
+  summary.search_intervention.reused_children +=
+      invocation.search_intervention.reused_children;
   summary.times.push_back(invocation.milliseconds);
   if (invocation.first) {
     summary.maximum_first_ms =
@@ -650,6 +747,30 @@ void merge_engine(EngineSummary &target, const EngineSummary &source) {
   target.work += source.work;
   target.generated_children += source.generated_children;
   target.evaluated_children += source.evaluated_children;
+  target.search_intervention.cache_probes +=
+      source.search_intervention.cache_probes;
+  target.search_intervention.cache_hits +=
+      source.search_intervention.cache_hits;
+  target.search_intervention.cache_misses +=
+      source.search_intervention.cache_misses;
+  target.search_intervention.widening_probes +=
+      source.search_intervention.widening_probes;
+  target.search_intervention.widening_restrictions +=
+      source.search_intervention.widening_restrictions;
+  target.search_intervention.widening_eligible +=
+      source.search_intervention.widening_eligible;
+  target.search_intervention.widening_deferred +=
+      source.search_intervention.widening_deferred;
+  target.search_intervention.reuse_probes +=
+      source.search_intervention.reuse_probes;
+  target.search_intervention.reuse_hits +=
+      source.search_intervention.reuse_hits;
+  target.search_intervention.reuse_misses +=
+      source.search_intervention.reuse_misses;
+  target.search_intervention.reuse_rejections +=
+      source.search_intervention.reuse_rejections;
+  target.search_intervention.reused_children +=
+      source.search_intervention.reused_children;
   target.maximum_first_ms =
       std::max(target.maximum_first_ms, source.maximum_first_ms);
   target.maximum_later_ms =
@@ -690,7 +811,27 @@ GateSummary summarize(const std::vector<GameResult> &games,
   return summary;
 }
 
-std::string engine_json(const EngineSummary &engine) {
+std::string search_intervention_json(
+    const SearchInterventionCounters &counters) {
+  std::ostringstream output;
+  output << "{\"cache_probes\":" << counters.cache_probes
+         << ",\"cache_hits\":" << counters.cache_hits
+         << ",\"cache_misses\":" << counters.cache_misses
+         << ",\"widening_probes\":" << counters.widening_probes
+         << ",\"widening_restrictions\":"
+         << counters.widening_restrictions
+         << ",\"widening_eligible\":" << counters.widening_eligible
+         << ",\"widening_deferred\":" << counters.widening_deferred
+         << ",\"reuse_probes\":" << counters.reuse_probes
+         << ",\"reuse_hits\":" << counters.reuse_hits
+         << ",\"reuse_misses\":" << counters.reuse_misses
+         << ",\"reuse_rejections\":" << counters.reuse_rejections
+         << ",\"reused_children\":" << counters.reused_children << '}';
+  return output.str();
+}
+
+std::string engine_json(const EngineSummary &engine,
+                        bool include_search_intervention) {
   std::ostringstream output;
   output << std::fixed << std::setprecision(6)
          << "{\"decisions\":" << engine.decisions
@@ -701,7 +842,11 @@ std::string engine_json(const EngineSummary &engine) {
          << ",\"work\":" << engine.work
          << ",\"generated_children\":" << engine.generated_children
          << ",\"evaluated_children\":" << engine.evaluated_children
-         << ",\"maximum_first_ms\":" << engine.maximum_first_ms
+         << (include_search_intervention ? ",\"search_intervention\":" : "");
+  if (include_search_intervention) {
+    output << search_intervention_json(engine.search_intervention);
+  }
+  output << ",\"maximum_first_ms\":" << engine.maximum_first_ms
          << ",\"maximum_later_ms\":" << engine.maximum_later_ms
          << ",\"times_ms\":[";
   for (std::size_t index = 0; index < engine.times.size(); ++index) {
@@ -724,8 +869,8 @@ std::string game_json(const GameResult &game) {
          << ",\"failure_detail\":"
          << (game.failure_detail.empty() ? "null"
                                          : json_string(game.failure_detail))
-         << ",\"candidate\":" << engine_json(game.candidate)
-         << ",\"rank4\":" << engine_json(game.rank4) << '}';
+         << ",\"candidate\":" << engine_json(game.candidate, true)
+         << ",\"rank4\":" << engine_json(game.rank4, false) << '}';
   return output.str();
 }
 
@@ -766,6 +911,8 @@ std::string render(const Config &config, const Bank &bank,
          << ",\"candidate_nodes\":" << config.candidate_nodes
          << ",\"candidate_expansions\":" << config.candidate_expansions
          << ",\"candidate_shuffle_seed\":" << config.candidate_seed
+         << ",\"candidate_search_profile\":"
+         << json_string(candidate_search_profile())
          << ",\"candidate_clocks_ms\":[800,155]"
          << ",\"rank4_nodes\":" << config.rank4_nodes
          << ",\"rank4_clocks_ms\":[800,165]"
@@ -795,8 +942,8 @@ std::string render(const Config &config, const Bank &bank,
     first = false;
     output << json_string(category) << ':' << count;
   }
-  output << "},\"candidate\":" << engine_json(summary.candidate)
-         << ",\"rank4\":" << engine_json(summary.rank4)
+  output << "},\"candidate\":" << engine_json(summary.candidate, true)
+         << ",\"rank4\":" << engine_json(summary.rank4, false)
          << ",\"passed\":" << (summary.passed ? "true" : "false")
          << "}}\n";
   return output.str();
@@ -855,6 +1002,20 @@ Config arguments(int argc, char **argv) {
 }
 
 void self_test() {
+  struct LegacySearchStatsFixture {
+    std::uint64_t expansions{};
+  };
+  const SearchInterventionCounters legacy =
+      search_intervention_counters(LegacySearchStatsFixture{17});
+  if (search_intervention_json(legacy) !=
+      "{\"cache_probes\":0,\"cache_hits\":0,\"cache_misses\":0,"
+      "\"widening_probes\":0,\"widening_restrictions\":0,"
+      "\"widening_eligible\":0,\"widening_deferred\":0,"
+      "\"reuse_probes\":0,\"reuse_hits\":0,\"reuse_misses\":0,"
+      "\"reuse_rejections\":0,\"reused_children\":0}") {
+    throw std::runtime_error(
+        "rank4 gate legacy SearchStats compatibility self-test failed");
+  }
   const std::string transcript = "4/7/5/2/23/1/7/61/2/7";
   const std::string bank_text =
       "# " + std::string(kBankSchema) + "\nopening_id\ttranscript\n" +

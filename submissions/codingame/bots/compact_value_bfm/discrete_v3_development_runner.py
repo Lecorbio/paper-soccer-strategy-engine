@@ -588,8 +588,11 @@ class DiscreteV3DevelopmentRunner(maintained.DevelopmentRunner):
                 gate_output,
                 expected_bank_sha256=bank.sha256,
                 expected_candidate_sha256=candidate.source_sha256,
+                allow_legacy_attempt_zero=True,
             )
-            if gate.get("config") != self._expected_configuration(bank, spec):
+            if maintained.gate_support.legacy_standard_configuration(
+                gate
+            ) != self._expected_configuration(bank, spec):
                 raise RunnerError("orphan gate output used another configuration")
             receipt = maintained.body_hashed({
                 "schema": maintained.RUN_SCHEMA,

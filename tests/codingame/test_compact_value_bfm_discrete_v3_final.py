@@ -986,7 +986,7 @@ class DiscreteV3FinalBridgeTest(unittest.TestCase):
                         "candidate": engine(1), "rank4": engine(1),
                     })
             document = {
-                "schema": bridge.gate_support.RESULT_SCHEMA,
+                "schema": bridge.gate_support.LEGACY_RESULT_SCHEMA,
                 "bindings": {
                     "candidate_source_sha256": plan["inputs"]["candidate"]["sha256"],
                     "candidate_source_bytes": plan["inputs"]["candidate"]["bytes"],

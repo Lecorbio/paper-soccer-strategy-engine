@@ -29,6 +29,14 @@ ROOT_SCHEMA = "papersoccer.jacek-replay-roots.v1"
 TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v1"
 RANK4_TEACHER_SCHEMA = "papersoccer.jacek-replay-teacher.v3"
 SEARCH_TEACHER_SCHEMA = "papersoccer.jacek-replay-search-teacher.v4"
+COMPLETE_TURN_ACTION_GROUP_SCHEMA = (
+    "papersoccer.jacek-replay-complete-turn-action-group.v1"
+)
+COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA = (
+    "papersoccer.compact-value-bfm-complete-turn-successor-labels.v1"
+)
+STANDARD_TEACHER_RANKING_PROFILE = "standard-v1"
+HARD_5PCT_2M_TEACHER_RANKING_PROFILE = "hardest-5pct-2m-v1"
 TARGET_POLICY_SCHEMA = "papersoccer.jacek-replay-target-policy.v1"
 PUBLIC_SCHEMA = "papersoccer.public-jacek-training-games.v1"
 LIVE_SNAPSHOT_SCHEMA = "papersoccer.live-replay-training-snapshot.v1"
@@ -727,11 +735,15 @@ def target_policy_for_schema(schema: str) -> dict[str, object]:
             "transform": "mover-sign*tanh(root_score/12000)",
             "proof": "absolute-proven-winner-to-mover-relative-exact-sign",
         }
-    elif schema == SEARCH_TEACHER_SCHEMA:
+    elif schema in {SEARCH_TEACHER_SCHEMA, COMPLETE_TURN_ACTION_GROUP_SCHEMA}:
         common["teacher_value"] = {
             "input_frame": "mover-relative-value",
             "transform": "identity",
-            "proof": "explicit-root-solved-and-absolute-proven-winner",
+            "proof": (
+                "explicit-action-group-root-solved-and-absolute-proven-winner"
+                if schema == COMPLETE_TURN_ACTION_GROUP_SCHEMA
+                else "explicit-root-solved-and-absolute-proven-winner"
+            ),
         }
     else:
         raise ValueError("unsupported teacher schema for target policy")
@@ -1175,7 +1187,560 @@ def _search_teacher_value(row: Mapping[str, object], mover: int) -> float:
     )
 
 
+_ACTION_GROUP_TEACHER_FIELDS = {
+    "kind",
+    "artifact_sha256",
+    "payload_sha256",
+    "feature_schema_sha256",
+    "source_sha256",
+}
+_ACTION_GROUP_RANKING = {
+    "complete_turn_boundaries": True,
+    "teacher_value_frame": "explicit-mover-relative",
+    "successor_aliases": "canonical-boundary-state",
+    "best_tie_break": "successor-id-ascending",
+}
+_ACTION_GROUP_WORK_FIELDS = {
+    "seed",
+    "max_time_ms",
+    "max_tree_nodes",
+    "max_actions",
+    "max_partial_paths",
+    "exploration",
+    "fpu",
+}
+_ACTION_GROUP_OPTIONAL_WORK_FIELDS = {"teacher_ranking_profile"}
+_ACTION_GROUP_SOURCE_FIELDS = {
+    "campaign_id",
+    "position_id",
+    "root_group_id",
+    "group_id",
+    "source",
+    "split",
+    "winner",
+    "prefix",
+}
+_ACTION_GROUP_FIELDS = {
+    "group_id",
+    "parent_identity",
+    "identity_algorithm",
+    "parent_mover",
+    "root_value",
+    "root_solved",
+    "proven_winner",
+    "termination_reason",
+    "successors_exhaustive",
+    "work_budget",
+    "source_binding",
+    "successors",
+}
+_ACTION_GROUP_SUCCESSOR_FIELDS = {
+    "successor_id",
+    "active",
+    "transcript",
+    "teacher_value",
+    "value_mover",
+    "proof",
+    "termination",
+    "visits",
+    "selection_visits",
+}
+
+
+def _validate_action_group_teacher(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _ACTION_GROUP_TEACHER_FIELDS:
+        raise ValueError("action-group teacher identity is malformed")
+    if value.get("kind") != "jacek_replay_bfm_search":
+        raise ValueError("action-group teacher kind is invalid")
+    for field in _ACTION_GROUP_TEACHER_FIELDS - {"kind"}:
+        if not _valid_sha256(value.get(field)):
+            raise ValueError(f"action-group teacher {field} is invalid")
+    expected_feature = hashlib.sha256(features.FEATURE_SCHEMA.encode("utf-8")).hexdigest()
+    if value.get("feature_schema_sha256") != expected_feature:
+        raise ValueError("action-group teacher feature schema identity changed")
+    return dict(value)
+
+
+def _validate_action_group_work(value: object, source: Mapping[str, object]) -> dict[str, object]:
+    if (
+        not isinstance(value, dict)
+        or not _ACTION_GROUP_WORK_FIELDS <= set(value)
+        or set(value) - _ACTION_GROUP_WORK_FIELDS
+        not in (set(), _ACTION_GROUP_OPTIONAL_WORK_FIELDS)
+    ):
+        raise ValueError("action-group work budget is malformed")
+    seed = _uint(value.get("seed"), "action-group seed")
+    if _uint(value.get("max_time_ms"), "action-group max_time_ms") != 0:
+        raise ValueError("action-group labels require fixed work")
+    nodes = _positive_uint(value.get("max_tree_nodes"), "action-group max_tree_nodes")
+    actions = _positive_uint(value.get("max_actions"), "action-group max_actions")
+    paths = _positive_uint(
+        value.get("max_partial_paths"), "action-group max_partial_paths"
+    )
+    exploration = _finite_number(value.get("exploration"), "action-group exploration")
+    fpu = _finite_number(value.get("fpu"), "action-group fpu")
+    profile = value.get(
+        "teacher_ranking_profile", STANDARD_TEACHER_RANKING_PROFILE
+    )
+    if profile not in {
+        STANDARD_TEACHER_RANKING_PROFILE,
+        HARD_5PCT_2M_TEACHER_RANKING_PROFILE,
+    }:
+        raise ValueError("action-group teacher-ranking profile is unregistered")
+    if actions > 250 or paths > 50_000:
+        raise ValueError("action-group work budget exceeds the teacher contract")
+    if profile == STANDARD_TEACHER_RANKING_PROFILE:
+        if nodes > 1_000_000:
+            raise ValueError("action-group work budget exceeds the teacher contract")
+    elif (
+        nodes != 2_000_000
+        or actions != 250
+        or paths != 50_000
+        or exploration != 0.5
+        or fpu != 0.5
+    ):
+        raise ValueError(
+            "registered hardest-5pct-2m work budget changed"
+        )
+    if exploration < 0.0 or not -1.0 <= fpu <= 1.0:
+        raise ValueError("action-group exploration or FPU is outside its range")
+    material = (
+        _nonempty_string(source.get("campaign_id"), "action-group campaign_id")
+        + "\0"
+        + _nonempty_string(source.get("position_id"), "action-group position_id")
+        + "\0"
+        + str(nodes)
+    ).encode("utf-8")
+    if seed != int(hashlib.sha256(material).hexdigest()[:16], 16):
+        raise ValueError("action-group seed is not bound to its position and work")
+    return dict(value)
+
+
+def _canonical_transcript_for_physical(transcript: str, mover: int) -> str:
+    if not transcript or any(character not in "01234567" for character in transcript):
+        raise ValueError("action-group transcript is malformed")
+    if mover == 0:
+        return transcript
+    return "".join(str((int(character) + 4) % 8) for character in transcript)
+
+
+def _mover_canonical_position_identity(state: features.ReplayState) -> str:
+    """Hash the exact mover-canonical boundary state used by native search."""
+
+    rotate = state.to_move == 1
+    transform = features.rotate_point if rotate else (lambda point: point)
+    used_edges = bytearray((features.EDGE_COUNT + 7) // 8)
+    for first, second in state.used_segments:
+        edge = features.EDGE_INDEX[
+            features._segment(transform(first), transform(second))
+        ]
+        used_edges[edge // 8] |= 1 << (edge % 8)
+    visited_vertices = bytearray((features.VERTEX_COUNT + 7) // 8)
+    for point, visits in state.visit_count.items():
+        if visits > 0:
+            vertex = features.POINT_INDEX[transform(point)]
+            visited_vertices[vertex // 8] |= 1 << (vertex % 8)
+    ball = features.POINT_INDEX[transform(state.ball)]
+    status = 0 if state.winner is None else (1 if state.winner == 0 else 2)
+    if rotate and status in (1, 2):
+        status = 3 - status
+    material = (
+        b"sha256-mover-canonical-boundary-v1\0"
+        + features.FEATURE_SCHEMA.encode("utf-8")
+        + b"\0"
+        + bytes(used_edges)
+        + bytes(visited_vertices)
+        + ball.to_bytes(2, "big")
+        + bytes((status,))
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
+def validate_complete_turn_action_group(row: object) -> dict[str, object]:
+    """Validate one deterministic, source-bound complete-turn ranking row."""
+
+    expected_row_fields = {
+        "schema",
+        "feature_schema",
+        "source_bundle_body_sha256",
+        "teacher",
+        "ranking",
+        "split",
+        "group",
+    }
+    if (
+        not isinstance(row, dict)
+        or set(row) != expected_row_fields
+        or row.get("schema") != COMPLETE_TURN_ACTION_GROUP_SCHEMA
+        or row.get("feature_schema") != features.FEATURE_SCHEMA
+        or not _valid_sha256(row.get("source_bundle_body_sha256"))
+        or row.get("ranking") != _ACTION_GROUP_RANKING
+        or row.get("split") not in {"train", "validation"}
+    ):
+        raise ValueError("complete-turn action-group row is malformed")
+    teacher = _validate_action_group_teacher(row.get("teacher"))
+    group = row.get("group")
+    if not isinstance(group, dict) or set(group) != _ACTION_GROUP_FIELDS:
+        raise ValueError("complete-turn action group is malformed")
+    source = group.get("source_binding")
+    if not isinstance(source, dict) or set(source) != _ACTION_GROUP_SOURCE_FIELDS:
+        raise ValueError("action-group source binding is malformed")
+    if source.get("split") != row["split"]:
+        raise ValueError("action-group source split changed")
+    position_id = _nonempty_string(source.get("position_id"), "action-group position_id")
+    if (
+        not _valid_sha256(group.get("group_id"))
+        or group.get("group_id") != group.get("parent_identity")
+    ):
+        raise ValueError("action-group group_id is not its canonical parent identity")
+    for field in ("root_group_id", "group_id", "source", "campaign_id"):
+        _nonempty_string(source.get(field), f"action-group source {field}")
+    winner = source.get("winner")
+    mover = group.get("parent_mover")
+    if (
+        isinstance(winner, bool)
+        or not isinstance(winner, int)
+        or winner not in (0, 1)
+        or isinstance(mover, bool)
+        or not isinstance(mover, int)
+        or mover not in (0, 1)
+    ):
+        raise ValueError("action-group winner or parent mover is invalid")
+    state = _prefix_state(source.get("prefix"))
+    if state.to_move != mover:
+        raise ValueError("action-group parent mover disagrees with its prefix")
+    if (
+        not _valid_sha256(group.get("parent_identity"))
+        or group.get("identity_algorithm")
+        != "sha256-mover-canonical-boundary-v1"
+        or not isinstance(group.get("successors_exhaustive"), bool)
+    ):
+        raise ValueError("action-group parent identity is invalid")
+    if group.get("parent_identity") != _mover_canonical_position_identity(state):
+        raise ValueError("action-group parent identity disagrees with its prefix")
+    root_solved = group.get("root_solved")
+    if not isinstance(root_solved, bool):
+        raise ValueError("action-group root_solved is invalid")
+    root_value = _direct_teacher_target(
+        _finite_number(group.get("root_value"), "action-group root value"),
+        mover,
+        root_solved,
+        _proven_winner(group.get("proven_winner")),
+    )
+    del root_value
+    expected_root_termination = "root-solved" if root_solved else "fixed-work-cap"
+    if group.get("termination_reason") != expected_root_termination:
+        raise ValueError("action-group root termination is inconsistent")
+    _validate_action_group_work(group.get("work_budget"), source)
+
+    successors = group.get("successors")
+    if not isinstance(successors, list) or not successors:
+        raise ValueError("action group must contain successors")
+    order: list[tuple[str, str]] = []
+    for ordinal, successor in enumerate(successors):
+        if not isinstance(successor, dict) or set(successor) != _ACTION_GROUP_SUCCESSOR_FIELDS:
+            raise ValueError(f"action-group successor {ordinal} is malformed")
+        successor_id = successor.get("successor_id")
+        transcript = successor.get("transcript")
+        if not _valid_sha256(successor_id) or not isinstance(transcript, str):
+            raise ValueError(f"action-group successor {ordinal} identity is invalid")
+        physical = _canonical_transcript_for_physical(transcript, mover)
+        successor_state = dataclasses.replace(
+            state,
+            used_segments=set(state.used_segments),
+            visit_count=dict(state.visit_count),
+        )
+        features.apply_complete_turn(successor_state, mover, physical)
+        active = features.validate_active(successor.get("active"))
+        if active != features.encode_active(successor_state):
+            raise ValueError(f"action-group successor {ordinal} features disagree")
+        if successor_id != _mover_canonical_position_identity(successor_state):
+            raise ValueError(f"action-group successor {ordinal} identity disagrees")
+        value_mover = successor.get("value_mover")
+        if value_mover != successor_state.to_move:
+            raise ValueError(f"action-group successor {ordinal} value frame changed")
+        proof = successor.get("proof")
+        termination = successor.get("termination")
+        if (
+            not isinstance(proof, dict)
+            or set(proof) != {"solved", "proven_winner"}
+            or not isinstance(proof.get("solved"), bool)
+            or not isinstance(termination, dict)
+            or set(termination) != {"reason", "value_status"}
+        ):
+            raise ValueError(f"action-group successor {ordinal} proof is malformed")
+        solved = proof["solved"]
+        proven = _proven_winner(proof.get("proven_winner"))
+        value = _finite_number(
+            successor.get("teacher_value"),
+            f"action-group successor {ordinal} teacher value",
+        )
+        if solved:
+            if proven not in (0, 1) or value != (
+                1.0 if proven == value_mover else -1.0
+            ):
+                raise ValueError(f"action-group successor {ordinal} proof disagrees")
+            if termination != {"reason": "subtree-solved", "value_status": "exact-sign"}:
+                raise ValueError(f"action-group successor {ordinal} termination changed")
+        else:
+            if proven is not None or not -1.0 <= value <= 1.0:
+                raise ValueError(f"action-group successor {ordinal} value is invalid")
+            if termination != {
+                "reason": expected_root_termination,
+                "value_status": "backed-up-at-root-termination",
+            }:
+                raise ValueError(f"action-group successor {ordinal} termination changed")
+        _positive_uint(successor.get("visits"), f"action-group successor {ordinal} visits")
+        _uint(
+            successor.get("selection_visits"),
+            f"action-group successor {ordinal} selection visits",
+        )
+        order.append((str(successor_id), transcript))
+    if order != sorted(order) or len({item[0] for item in order}) != len(order):
+        raise ValueError("action-group successors are not uniquely canonical-ordered")
+    return json.loads(canonical_json_bytes(row))
+
+
+def load_complete_turn_action_groups(paths: Iterable[pathlib.Path]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(validate_complete_turn_action_group(json.loads(line)))
+            except (json.JSONDecodeError, TypeError, ValueError) as error:
+                raise ValueError(f"{path}:{line_number}: {error}") from error
+    if not rows:
+        raise ValueError("complete-turn action-group inputs contain no rows")
+    return rows
+
+
+def merge_complete_turn_action_groups(
+    shallow_rows: Sequence[Mapping[str, object]],
+    deep_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Replace a strict subset of shallow groups with deeper fixed-work rows."""
+
+    shallow = [validate_complete_turn_action_group(dict(row)) for row in shallow_rows]
+    deep = [validate_complete_turn_action_group(dict(row)) for row in deep_rows]
+    if not shallow or not deep:
+        raise ValueError("shallow and deep action-group inputs must be nonempty")
+
+    def index(rows: Sequence[dict[str, object]], label: str) -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        for row in rows:
+            group_id = str(row["group"]["group_id"])
+            if group_id in result:
+                raise ValueError(f"{label} action groups repeat a group_id")
+            result[group_id] = row
+        return result
+
+    shallow_by_id = index(shallow, "shallow")
+    deep_by_id = index(deep, "deep")
+    if not set(deep_by_id) < set(shallow_by_id):
+        raise ValueError("deep action groups must be a strict subset of shallow groups")
+    for group_id, deep_row in deep_by_id.items():
+        shallow_row = shallow_by_id[group_id]
+        for field in (
+            "feature_schema",
+            "source_bundle_body_sha256",
+            "teacher",
+            "ranking",
+            "split",
+        ):
+            if deep_row[field] != shallow_row[field]:
+                raise ValueError("deep action group changed an immutable binding")
+        shallow_group = shallow_row["group"]
+        deep_group = deep_row["group"]
+        for field in (
+            "group_id",
+            "parent_identity",
+            "identity_algorithm",
+            "parent_mover",
+            "source_binding",
+        ):
+            if deep_group[field] != shallow_group[field]:
+                raise ValueError("deep action group changed its canonical root")
+        if (
+            int(deep_group["work_budget"]["max_tree_nodes"])
+            <= int(shallow_group["work_budget"]["max_tree_nodes"])
+        ):
+            raise ValueError("deep action group did not increase fixed tree work")
+    merged = {**shallow_by_id, **deep_by_id}
+    return sorted(
+        merged.values(),
+        key=lambda row: (
+            0 if row["split"] == "train" else 1,
+            str(row["group"]["group_id"]),
+        ),
+    )
+
+
+def merge_complete_turn_action_group_files(
+    *, shallow: pathlib.Path, deep: pathlib.Path
+) -> bytes:
+    rows = merge_complete_turn_action_groups(
+        load_complete_turn_action_groups((shallow,)),
+        load_complete_turn_action_groups((deep,)),
+    )
+    return b"".join(canonical_json_bytes(row) for row in rows)
+
+
+def build_complete_turn_successor_labels(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Aggregate validated rows without changing any teacher value or ranking."""
+
+    normalized = [validate_complete_turn_action_group(dict(row)) for row in rows]
+    if not normalized:
+        raise ValueError("complete-turn successor labels require at least one group")
+    if any(not row["group"]["successors_exhaustive"] for row in normalized):
+        raise ValueError(
+            "complete-turn successor labels require exhaustive legal successors"
+        )
+    first = normalized[0]
+    immutable = (
+        first["feature_schema"],
+        first["source_bundle_body_sha256"],
+        first["teacher"],
+        first["ranking"],
+    )
+    if any(
+        (
+            row["feature_schema"],
+            row["source_bundle_body_sha256"],
+            row["teacher"],
+            row["ranking"],
+        )
+        != immutable
+        for row in normalized
+    ):
+        raise ValueError("complete-turn action groups have mixed immutable bindings")
+    splits: dict[str, list[dict[str, object]]] = {"train": [], "validation": []}
+    seen: set[str] = set()
+    for row in normalized:
+        group = dict(row["group"])
+        group_id = str(group["group_id"])
+        if group_id in seen:
+            raise ValueError("complete-turn action groups repeat a group_id")
+        seen.add(group_id)
+        splits[str(row["split"])].append(group)
+    for split in splits:
+        splits[split].sort(key=lambda group: str(group["group_id"]))
+    document: dict[str, object] = {
+        "schema": COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA,
+        "feature_schema": first["feature_schema"],
+        "source_bundle_body_sha256": first["source_bundle_body_sha256"],
+        "teacher": first["teacher"],
+        "ranking": first["ranking"],
+        "splits": splits,
+        "protected_tests_opened": False,
+    }
+    document["body_sha256"] = sha256_bytes(canonical_json_bytes(document))
+    return validate_complete_turn_successor_labels(document)
+
+
+def validate_complete_turn_successor_labels(value: object) -> dict[str, object]:
+    expected = {
+        "schema",
+        "feature_schema",
+        "source_bundle_body_sha256",
+        "teacher",
+        "ranking",
+        "splits",
+        "protected_tests_opened",
+        "body_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ValueError("complete-turn successor-label artifact is malformed")
+    body = dict(value)
+    claimed = body.pop("body_sha256")
+    if not _valid_sha256(claimed) or claimed != sha256_bytes(canonical_json_bytes(body)):
+        raise ValueError("complete-turn successor-label body SHA-256 mismatch")
+    if (
+        value.get("schema") != COMPLETE_TURN_SUCCESSOR_LABELS_SCHEMA
+        or value.get("feature_schema") != features.FEATURE_SCHEMA
+        or not _valid_sha256(value.get("source_bundle_body_sha256"))
+        or value.get("ranking") != _ACTION_GROUP_RANKING
+        or value.get("protected_tests_opened") is not False
+    ):
+        raise ValueError("complete-turn successor-label policy changed")
+    _validate_action_group_teacher(value.get("teacher"))
+    splits = value.get("splits")
+    if not isinstance(splits, dict) or set(splits) != {"train", "validation"}:
+        raise ValueError("complete-turn successor-label splits are malformed")
+    rows: list[dict[str, object]] = []
+    observed: set[str] = set()
+    for split in ("train", "validation"):
+        groups = splits.get(split)
+        if not isinstance(groups, list):
+            raise ValueError("complete-turn successor-label split is not an array")
+        order: list[str] = []
+        for group in groups:
+            row = {
+                "schema": COMPLETE_TURN_ACTION_GROUP_SCHEMA,
+                "feature_schema": value["feature_schema"],
+                "source_bundle_body_sha256": value["source_bundle_body_sha256"],
+                "teacher": value["teacher"],
+                "ranking": value["ranking"],
+                "split": split,
+                "group": group,
+            }
+            normalized = validate_complete_turn_action_group(row)
+            if normalized["group"]["successors_exhaustive"] is not True:
+                raise ValueError(
+                    "complete-turn successor labels require exhaustive legal successors"
+                )
+            group_id = str(normalized["group"]["group_id"])
+            if group_id in observed:
+                raise ValueError("complete-turn successor-label group is duplicated")
+            observed.add(group_id)
+            order.append(group_id)
+            rows.append(normalized)
+        if order != sorted(order):
+            raise ValueError("complete-turn successor-label groups are not ordered")
+    if not rows:
+        raise ValueError("complete-turn successor-label artifact contains no groups")
+    return json.loads(canonical_json_bytes(value))
+
+
+def _sample_from_complete_turn_action_group(
+    row: Mapping[str, object],
+) -> tuple[LabeledSample, LabeledSample]:
+    normalized = validate_complete_turn_action_group(dict(row))
+    group = normalized["group"]
+    source = group["source_binding"]
+    mover = int(group["parent_mover"])
+    winner = int(source["winner"])
+    teacher = _direct_teacher_target(
+        _finite_number(group["root_value"], "action-group root value"),
+        mover,
+        bool(group["root_solved"]),
+        _proven_winner(group["proven_winner"]),
+    )
+    target = 0.75 * teacher + 0.25 * (1.0 if winner == mover else -1.0)
+    state = _prefix_state(source["prefix"])
+    active = features.encode_active(state)
+    reflected = features.encode_active(state, reflected=True)
+    lineage = TeacherLineage(
+        schema=COMPLETE_TURN_ACTION_GROUP_SCHEMA,
+        position_id=str(source["position_id"]),
+        group_id=str(source["group_id"]),
+        root_group_id=str(source["root_group_id"]),
+        source=str(source["source"]),
+        split=str(source["split"]),
+        campaign_id=str(source["campaign_id"]),
+    )
+    return (
+        LabeledSample(active, target, 1.0, lineage.root_group_id, (lineage,)),
+        LabeledSample(reflected, target, 1.0, lineage.root_group_id, (lineage,)),
+    )
+
+
 def sample_from_teacher_row(row: object) -> tuple[LabeledSample, LabeledSample]:
+    if isinstance(row, dict) and row.get("schema") == COMPLETE_TURN_ACTION_GROUP_SCHEMA:
+        return _sample_from_complete_turn_action_group(row)
     if not isinstance(row, dict) or row.get("schema") not in {
         TEACHER_SCHEMA,
         RANK4_TEACHER_SCHEMA,

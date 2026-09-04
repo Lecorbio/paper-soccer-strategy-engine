@@ -32,6 +32,8 @@ QUALIFICATION_PATH = REPOSITORY / "tools/compact_value_bfm_qualification.py"
 GENERIC_COLLECTOR_PATH = (
     REPOSITORY / "submissions/codingame/tools/collect_arena_batch.py"
 )
+REPLAY_FEATURES_PATH = REPOSITORY / "tools/jacek_replay_features.py"
+OPENINGS_PATH = REPOSITORY / "tools/compact_value_bfm_openings.py"
 
 NAMESPACE = "compact_value_bfm"
 EXCLUSION_BINDING_SCHEMA = (
@@ -42,6 +44,9 @@ MONITOR_GAME_SCHEMA = "papersoccer.compact-value-bfm.live-monitor-game.v1"
 WAIT_SNAPSHOT_SCHEMA = "papersoccer.compact-value-bfm.live-wait-snapshot.v1"
 WINDOW_RECEIPT_SCHEMA = "papersoccer.compact-value-bfm.live-window-diagnostic.v1"
 WINDOW_REFERENCE_SCHEMA = "papersoccer.compact-value-bfm.live-window-reference.v1"
+LIVE_FINGERPRINT_EVIDENCE_SCHEMA = (
+    "papersoccer.compact-value-bfm.verified-live-canonical-fingerprints.v1"
+)
 EXCLUSION_SCHEMA = "papersoccer.live-replay-exclusions.v1"
 GENERIC_BATCH_SCHEMA = "papersoccer.codingame-arena-batch.v1"
 GENERIC_GAME_SCHEMA = "papersoccer.codingame-arena-game.v1"
@@ -104,6 +109,18 @@ def qualification_module() -> Any:
 def generic_collector_module() -> Any:
     return _load_module(
         "compact_value_bfm_live_generic_collector", GENERIC_COLLECTOR_PATH
+    )
+
+
+def replay_features_module() -> Any:
+    return _load_module(
+        "compact_value_bfm_live_replay_features", REPLAY_FEATURES_PATH
+    )
+
+
+def opening_fingerprints_module() -> Any:
+    return _load_module(
+        "compact_value_bfm_live_opening_fingerprints", OPENINGS_PATH
     )
 
 
@@ -1101,6 +1118,281 @@ def verify_window_reference(
         if recomputed != summary:
             raise LiveWindowError("live-window operational summary changed")
     return reference
+
+
+def _canonical_live_boundaries(
+    record: Mapping[str, Any], *, identity: LiveIdentity,
+) -> list[str]:
+    """Replay one accepted record and return every nonterminal turn boundary."""
+
+    game_id = record.get("game_id")
+    focus = record.get("focus")
+    replay = record.get("replay")
+    operational = record.get("operational")
+    if (
+        isinstance(game_id, bool) or not isinstance(game_id, int) or game_id <= 0
+        or record.get("schema") != GENERIC_GAME_SCHEMA
+        or record.get("status") != "accepted"
+        or record.get("source_sha256") != identity.source_sha256
+        or not isinstance(focus, Mapping)
+        or focus.get("agent_id") != identity.agent_id
+        or focus.get("submission_id") != identity.submission_id
+        or not isinstance(replay, Mapping)
+        or not isinstance(operational, Mapping)
+    ):
+        raise LiveWindowError("accepted live replay source identity changed")
+    transcript = replay.get("valid_transcript")
+    turns = replay.get("valid_turns")
+    rules = replay.get("rules_validation")
+    if (
+        not isinstance(transcript, str) or not transcript
+        or not isinstance(turns, list) or not turns
+        or not isinstance(rules, Mapping)
+        or rules.get("valid_turns") != turns
+        or rules.get("valid_turn_count") != len(turns)
+        or rules.get("status") not in {"terminal-valid", "incomplete", "invalid"}
+    ):
+        raise LiveWindowError(f"game {game_id} has no complete validated transcript")
+    actions = []
+    players = []
+    for ordinal, turn in enumerate(turns):
+        if (
+            not isinstance(turn, Mapping)
+            or set(turn) != {"action", "player_id"}
+            or not isinstance(turn.get("action"), str)
+            or not turn["action"]
+            or any(character not in "01234567" for character in turn["action"])
+            or turn.get("player_id") not in (0, 1)
+        ):
+            raise LiveWindowError(
+                f"game {game_id} validated turn {ordinal} is malformed"
+            )
+        actions.append(str(turn["action"]))
+        players.append(int(turn["player_id"]))
+    if transcript != "/".join(actions):
+        raise LiveWindowError(f"game {game_id} valid transcript/turns disagree")
+
+    features = replay_features_module()
+    opening_tools = opening_fingerprints_module()
+    state = features.ReplayState()
+    canonical = [opening_tools.state_fingerprints(state)["canonical"]]
+    for ordinal, (player, action) in enumerate(zip(players, actions, strict=True)):
+        if state.winner is not None or player != state.to_move:
+            raise LiveWindowError(
+                f"game {game_id} validated turn {ordinal} has wrong player/terminal order"
+            )
+        try:
+            features.apply_complete_turn(state, player, action)
+        except (KeyError, TypeError, ValueError) as error:
+            raise LiveWindowError(
+                f"game {game_id} valid transcript contains an incomplete or illegal complete turn"
+            ) from error
+        if state.winner is None:
+            canonical.append(opening_tools.state_fingerprints(state)["canonical"])
+    status = rules["status"]
+    if status == "terminal-valid":
+        if (
+            state.winner is None
+            or rules.get("terminal_winner_player_id") != state.winner
+        ):
+            raise LiveWindowError(f"game {game_id} terminal replay result changed")
+    elif (
+        state.winner is not None
+        or operational.get("classification") != "operationally-terminated"
+    ):
+        raise LiveWindowError(
+            f"game {game_id} incomplete replay lacks a bound operational ending"
+        )
+    return canonical
+
+
+def extract_verified_live_fingerprints(
+    reference_path: pathlib.Path, *, data_root: pathlib.Path,
+) -> dict[str, Any]:
+    """Return sealed, transcript-free fingerprints from a verified live window.
+
+    This is the only live-position extraction entrypoint intended for campaign
+    governance.  It first performs the complete existing live-window audit,
+    then revalidates the exact collector manifest and all 90 accepted records
+    before replaying their complete-turn boundaries independently.
+    """
+
+    validated = verify_window_reference(reference_path, data_root=data_root)
+    reference_path = reference_path.resolve()
+    data_root = data_root.resolve()
+    if reference_path != _window_reference_path(data_root).resolve():
+        raise LiveWindowError("trusted live fingerprint reference path changed")
+    reference = load_sealed(
+        reference_path, WINDOW_REFERENCE_SCHEMA, "live-window reference"
+    )
+    if validated != reference:
+        raise LiveWindowError("full live-window validation returned another reference")
+    receipt_ref = reference.get("receipt")
+    if not isinstance(receipt_ref, Mapping):
+        raise LiveWindowError("live-window receipt reference is absent")
+    receipt_path = resolve_path(receipt_ref.get("path"))
+    try:
+        receipt_path.relative_to(data_root)
+    except ValueError as error:
+        raise LiveWindowError("live fingerprint receipt escaped its data root") from error
+    if (
+        receipt_path.is_symlink() or not receipt_path.is_file()
+        or sha256_file(receipt_path) != receipt_ref.get("sha256")
+        or receipt_path.name != f"{receipt_ref.get('sha256')}.json"
+    ):
+        raise LiveWindowError("live fingerprint receipt identity changed")
+    receipt = load_sealed(
+        receipt_path, WINDOW_RECEIPT_SCHEMA, "live-window receipt"
+    )
+    game_ids = receipt.get("game_ids")
+    collector_ref = receipt.get("collector_manifest")
+    if (
+        not isinstance(game_ids, list)
+        or game_ids != sorted(set(game_ids))
+        or len(game_ids) != EXACT_GAMES
+        or any(
+            isinstance(game_id, bool) or not isinstance(game_id, int)
+            or game_id <= 0 for game_id in game_ids
+        )
+        or not isinstance(collector_ref, Mapping)
+        or not isinstance(collector_ref.get("path"), str)
+        or not collector_ref["path"]
+        or not valid_sha256(collector_ref.get("sha256"))
+    ):
+        raise LiveWindowError("trusted live collector/game-ID binding is incomplete")
+    attestation_ref = receipt.get("submission_attestation")
+    exclusion_ref = receipt.get("exclusion_binding")
+    if not isinstance(attestation_ref, Mapping) or not isinstance(exclusion_ref, Mapping):
+        raise LiveWindowError("trusted live receipt lost its source inputs")
+    attestation_path = resolve_path(attestation_ref.get("path"))
+    exclusion_path = resolve_path(exclusion_ref.get("path"))
+    if (
+        dict(attestation_ref) != artifact_reference(
+            attestation_path, qualification_module().UPLOAD_EVENT_SCHEMA
+        )
+        or dict(exclusion_ref) != artifact_reference(
+            exclusion_path, EXCLUSION_BINDING_SCHEMA
+        )
+    ):
+        raise LiveWindowError("trusted live sealed source input changed")
+    identity, exclusion, _registry_path = load_live_identity(
+        attestation_path, exclusion_path,
+    )
+    if receipt.get("identity") != identity_record(identity):
+        raise LiveWindowError("trusted live receipt source identity changed")
+    manifest_path = resolve_path(collector_ref["path"])
+    try:
+        manifest_path.relative_to(data_root)
+    except ValueError as error:
+        raise LiveWindowError("trusted collector manifest escaped its data root") from error
+    if (
+        manifest_path.is_symlink() or not manifest_path.is_file()
+        or sha256_file(manifest_path) != collector_ref["sha256"]
+    ):
+        raise LiveWindowError("trusted collector manifest changed")
+    verified = verify_generic_result(
+        {
+            "manifest_path": logical_path(manifest_path),
+            "manifest_sha256": collector_ref["sha256"],
+        },
+        identity=identity,
+        registry_sha256=exclusion["registry"]["sha256"],
+        expected_game_ids=game_ids,
+    )
+    manifest = verified.get("manifest")
+    records = verified.get("records")
+    if (
+        not isinstance(manifest, Mapping)
+        or not isinstance(records, list)
+        or len(records) != EXACT_GAMES
+        or any(
+            not isinstance(record, Mapping)
+            or isinstance(record.get("game_id"), bool)
+            or not isinstance(record.get("game_id"), int)
+            for record in records
+        )
+        or verified.get("manifest_path") != manifest_path
+        or verified.get("manifest_sha256") != collector_ref["sha256"]
+    ):
+        raise LiveWindowError("trusted collector verification is incomplete")
+    binding = manifest.get("binding")
+    source = binding.get("source") if isinstance(binding, Mapping) else None
+    if (
+        not isinstance(binding, Mapping) or not isinstance(source, Mapping)
+        or binding.get("schema") != GENERIC_BINDING_SCHEMA
+        or binding.get("agent_id") != identity.agent_id
+        or binding.get("asserted_submission_id") != identity.submission_id
+        or binding.get("repository_commit") != identity.repository_commit
+        or source.get("sha256") != identity.source_sha256
+        or source.get("bytes") != identity.source_bytes
+        or not valid_sha256(manifest.get("collector_sha256"))
+    ):
+        raise LiveWindowError("trusted collector source binding changed")
+    manifest_games = manifest.get("games")
+    embedded_records = [
+        stored.get("record") for stored in manifest_games
+        if isinstance(stored, Mapping)
+    ] if isinstance(manifest_games, list) else []
+    records = sorted((dict(record) for record in records), key=lambda row: row["game_id"])
+    if (
+        [record["game_id"] for record in records] != game_ids
+        or len(embedded_records) != EXACT_GAMES
+        or sorted(
+            (dict(record) for record in embedded_records if isinstance(record, Mapping)),
+            key=lambda row: row.get("game_id", -1),
+        ) != records
+    ):
+        raise LiveWindowError("trusted collector accepted-record roster changed")
+    canonical: set[str] = set()
+    boundary_count = 0
+    for record in records:
+        values = _canonical_live_boundaries(record, identity=identity)
+        boundary_count += len(values)
+        canonical.update(values)
+    fingerprints = sorted(canonical)
+    if not fingerprints or any(not valid_sha256(value) for value in fingerprints):
+        raise LiveWindowError("trusted live canonical fingerprint set is invalid")
+    game_ids_sha256 = sha256_bytes(canonical_json_bytes(game_ids))
+    fingerprints_sha256 = sha256_bytes(canonical_json_bytes(fingerprints))
+    return seal({
+        "schema": LIVE_FINGERPRINT_EVIDENCE_SCHEMA,
+        "namespace": NAMESPACE,
+        "status": "verified-live-canonical-fingerprints",
+        "live_window_reference": artifact_reference(
+            reference_path, WINDOW_REFERENCE_SCHEMA
+        ),
+        "live_window_receipt": artifact_reference(
+            receipt_path, WINDOW_RECEIPT_SCHEMA
+        ),
+        "collector_manifest": {
+            "path": logical_path(manifest_path),
+            "sha256": collector_ref["sha256"],
+            "schema": GENERIC_BATCH_SCHEMA,
+            "collector_sha256": manifest.get("collector_sha256"),
+            "accepted_records_sha256": sha256_bytes(
+                canonical_json_bytes(records)
+            ),
+        },
+        "source_identity": {
+            "agent_id": identity.agent_id,
+            "submission_id": identity.submission_id,
+            "repository_commit": identity.repository_commit,
+            "source_sha256": identity.source_sha256,
+            "source_bytes": identity.source_bytes,
+        },
+        "exact_games": EXACT_GAMES,
+        "game_ids": game_ids,
+        "game_ids_sha256": game_ids_sha256,
+        "canonicalization": "minimum(exact,rotate180,reflect,rotate180-reflect)",
+        "boundary_count": boundary_count,
+        "fingerprints": fingerprints,
+        "fingerprint_count": len(fingerprints),
+        "fingerprints_sha256": fingerprints_sha256,
+        "contains_transcripts": False,
+        "contains_metrics": False,
+        "contains_labels": False,
+        "training_eligible": False,
+    })
 
 
 def main(argv: Sequence[str] | None = None) -> int:

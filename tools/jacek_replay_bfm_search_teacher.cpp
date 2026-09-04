@@ -17,10 +17,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "jacek_replay_bfm/jacek_replay_bfm_internal.hpp"
+#include "mcts_internal.hpp"
 #include "papersoccer/geometry.hpp"
 #include "papersoccer/rules.hpp"
 
@@ -37,6 +39,11 @@ constexpr std::string_view kSchema =
     "papersoccer.jacek-replay-search-teacher.v4";
 constexpr std::string_view kTerminationAuditSchema =
     "papersoccer.jacek-replay-search-termination-audit.v2";
+constexpr std::string_view kBoundaryIdentityAlgorithm =
+    "sha256-mover-canonical-boundary-v1";
+constexpr std::string_view kStandardTeacherRankingProfile = "standard-v1";
+constexpr std::string_view kHard5Pct2MTeacherRankingProfile =
+    "hardest-5pct-2m-v1";
 constexpr std::string_view kHeader =
     "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix";
 
@@ -51,6 +58,10 @@ struct Options {
   double exploration{0.5};
   double fpu{0.5};
   bool audit_terminations{};
+  bool emit_action_groups{};
+  std::string source_bundle_body_sha256{};
+  std::string teacher_ranking_profile{
+      std::string(kStandardTeacherRankingProfile)};
 };
 
 struct PositionRecord {
@@ -174,13 +185,19 @@ Options parse_options(int argc, char **argv) {
              "--model PATH --model-sha256 HEX --campaign-id ID "
              "[--tree-nodes N] [--time-ms N] [--max-actions N] "
              "[--max-partial-paths N] [--exploration C] [--fpu V] "
-             "[--audit-terminations]\n"
+             "[--teacher-ranking-profile standard-v1|hardest-5pct-2m-v1] "
+             "[--audit-terminations | --emit-action-groups "
+             "--source-bundle-body-sha256 HEX]\n"
              "stdin TSV header: "
           << kHeader << '\n';
       std::exit(0);
     }
     if (option == "--audit-terminations") {
       options.audit_terminations = true;
+      continue;
+    }
+    if (option == "--emit-action-groups") {
+      options.emit_action_groups = true;
       continue;
     }
     const std::string value = required_value(index, argc, argv, option);
@@ -190,6 +207,10 @@ Options parse_options(int argc, char **argv) {
       options.model_sha256 = value;
     } else if (option == "--campaign-id") {
       options.campaign_id = value;
+    } else if (option == "--source-bundle-body-sha256") {
+      options.source_bundle_body_sha256 = value;
+    } else if (option == "--teacher-ranking-profile") {
+      options.teacher_ranking_profile = value;
     } else if (option == "--tree-nodes" || option == "--nodes") {
       options.max_tree_nodes =
           parse_unsigned<std::size_t>(value, option);
@@ -215,17 +236,45 @@ Options parse_options(int argc, char **argv) {
     throw std::invalid_argument(
         "--model-sha256 must be 64 lowercase hexadecimal characters");
   }
-  if (options.max_tree_nodes < 2U ||
-      options.max_tree_nodes > 1'000'000U || options.max_actions == 0U ||
-      options.max_actions > 250U || options.max_partial_paths == 0U ||
+  const bool standard_profile =
+      options.teacher_ranking_profile == kStandardTeacherRankingProfile;
+  const bool hard_5pct_2m_profile =
+      options.teacher_ranking_profile == kHard5Pct2MTeacherRankingProfile;
+  if ((!standard_profile && !hard_5pct_2m_profile) ||
+      options.max_tree_nodes < 2U ||
+      (standard_profile && options.max_tree_nodes > 1'000'000U) ||
+      options.max_actions == 0U || options.max_actions > 250U ||
+      options.max_partial_paths == 0U ||
       options.max_partial_paths > 50'000U || options.exploration < 0.0 ||
       options.fpu < -1.0 || options.fpu > 1.0) {
     throw std::invalid_argument("invalid search-teacher configuration");
+  }
+  if (hard_5pct_2m_profile &&
+      (options.max_tree_nodes != 2'000'000U ||
+       options.max_actions != 250U ||
+       options.max_partial_paths != 50'000U || options.exploration != 0.5 ||
+       options.fpu != 0.5 || options.max_time_ms != 0U ||
+       !options.emit_action_groups || options.audit_terminations)) {
+    throw std::invalid_argument(
+        "hardest-5pct-2m-v1 requires the registered fixed-work action-group budget");
   }
   if ((!options.audit_terminations && options.max_time_ms != 0U) ||
       (options.audit_terminations && options.max_time_ms > 60'000U)) {
     throw std::invalid_argument(
         "fixed-work labels require --time-ms 0; audits allow at most 60000");
+  }
+  if (options.audit_terminations && options.emit_action_groups) {
+    throw std::invalid_argument(
+        "--audit-terminations and --emit-action-groups are mutually exclusive");
+  }
+  if (options.emit_action_groups) {
+    if (!is_lower_sha256(options.source_bundle_body_sha256)) {
+      throw std::invalid_argument(
+          "action groups require --source-bundle-body-sha256");
+    }
+  } else if (!options.source_bundle_body_sha256.empty()) {
+    throw std::invalid_argument(
+        "--source-bundle-body-sha256 requires --emit-action-groups");
   }
   return options;
 }
@@ -399,6 +448,187 @@ void write_bool(std::ostream &out, bool value) {
   out << (value ? "true" : "false");
 }
 
+struct BoundaryIdentity {
+  std::string sha256{};
+  std::vector<std::uint16_t> active{};
+  ps::Player mover{ps::Player::One};
+};
+
+struct ActionGroupSuccessor {
+  std::string successor_id{};
+  std::vector<std::uint16_t> active{};
+  std::string transcript{};
+  float teacher_value{};
+  ps::Player value_mover{ps::Player::One};
+  std::uint32_t visits{};
+  std::uint32_t selection_visits{};
+  bool solved{};
+  std::optional<ps::Player> proven_winner{};
+};
+
+BoundaryIdentity boundary_identity(const ps::GameState &state) {
+  auto topology = std::make_shared<ps::detail::SearchTopology>(state.config);
+  ps::detail::SearchPosition position(topology, state);
+  ps::detail::ReplayBfmFeatureEncoder encoder(topology);
+  const ps::detail::ReplayBfmSparseFeatures features = encoder.encode(position);
+
+  const bool rotate = state.to_move == ps::Player::Two;
+  const auto transform = [rotate](ps::Point point) {
+    return rotate ? ps::Point{8 - point.x, 12 - point.y} : point;
+  };
+  std::array<std::uint8_t, (ps::detail::kReplayBfmEdgeInputs + 7U) / 8U>
+      used_edges{};
+  for (const ps::Segment &segment : state.used_segments) {
+    const auto edge = topology->find_edge(
+        ps::Segment{transform(segment.a), transform(segment.b)});
+    if (!edge.has_value()) {
+      throw std::runtime_error("boundary identity contains a noncanonical edge");
+    }
+    used_edges[*edge / 8U] |=
+        static_cast<std::uint8_t>(1U << (*edge % 8U));
+  }
+  std::array<std::uint8_t, (ps::detail::kReplayBfmVertices + 7U) / 8U>
+      visited_vertices{};
+  for (const auto &[point, visits] : state.visit_count) {
+    if (visits <= 0) continue;
+    const auto vertex = topology->find_vertex(transform(point));
+    if (!vertex.has_value()) {
+      throw std::runtime_error(
+          "boundary identity contains a noncanonical vertex");
+    }
+    visited_vertices[*vertex / 8U] |=
+        static_cast<std::uint8_t>(1U << (*vertex % 8U));
+  }
+  const auto ball = topology->find_vertex(transform(state.ball));
+  if (!ball.has_value()) {
+    throw std::runtime_error("boundary identity ball is outside the topology");
+  }
+  ps::Status status = state.status;
+  if (rotate && status == ps::Status::WonByOne) {
+    status = ps::Status::WonByTwo;
+  } else if (rotate && status == ps::Status::WonByTwo) {
+    status = ps::Status::WonByOne;
+  }
+
+  std::string material;
+  material.reserve(kBoundaryIdentityAlgorithm.size() +
+                   ps::JacekReplayBfmBot::feature_schema().size() +
+                   used_edges.size() + visited_vertices.size() + 5U);
+  material.append(kBoundaryIdentityAlgorithm);
+  material.push_back('\0');
+  material.append(ps::JacekReplayBfmBot::feature_schema());
+  material.push_back('\0');
+  material.append(reinterpret_cast<const char *>(used_edges.data()),
+                  used_edges.size());
+  material.append(reinterpret_cast<const char *>(visited_vertices.data()),
+                  visited_vertices.size());
+  material.push_back(static_cast<char>((*ball >> 8U) & 0xffU));
+  material.push_back(static_cast<char>(*ball & 0xffU));
+  material.push_back(static_cast<char>(status));
+  const std::span<const std::uint8_t> bytes(
+      reinterpret_cast<const std::uint8_t *>(material.data()),
+      material.size());
+
+  BoundaryIdentity result;
+  result.sha256 = ps::detail::replay_bfm_sha256_hex(bytes);
+  result.active.assign(features.indices.begin(),
+                       features.indices.begin() + features.count);
+  result.mover = state.to_move;
+  return result;
+}
+
+ps::GameState apply_complete_action(
+    const ps::GameState &root,
+    const ps::JacekReplayBfmRootActionAnalysis &action) {
+  if (action.action.empty()) {
+    throw std::runtime_error("action group contains an empty complete turn");
+  }
+  ps::GameState state = root;
+  const ps::Player mover = root.to_move;
+  for (std::size_t index = 0; index < action.action.size(); ++index) {
+    if (ps::is_terminal(state) || state.to_move != mover) {
+      throw std::runtime_error(
+          "action group continues after its complete-turn boundary");
+    }
+    state = ps::apply_move(state, action.action[index]);
+    if (index + 1U != action.action.size() &&
+        (ps::is_terminal(state) || state.to_move != mover)) {
+      throw std::runtime_error(
+          "action group continues after its complete-turn boundary");
+    }
+  }
+  if (!ps::is_terminal(state) && state.to_move == mover) {
+    throw std::runtime_error(
+        "action group transcript ends before the complete-turn boundary");
+  }
+  return state;
+}
+
+std::vector<ActionGroupSuccessor> action_group_successors(
+    const PositionRecord &record,
+    const ps::JacekReplayBfmPositionAnalysis &analysis) {
+  std::vector<ActionGroupSuccessor> successors;
+  successors.reserve(analysis.successors.size());
+  for (const ps::JacekReplayBfmRootActionAnalysis &action :
+       analysis.successors) {
+    if (action.canonical_transcript.empty() ||
+        !std::all_of(action.canonical_transcript.begin(),
+                     action.canonical_transcript.end(),
+                     [](char character) {
+                       return character >= '0' && character <= '7';
+                     })) {
+      throw std::runtime_error(
+          "action group has a malformed canonical transcript");
+    }
+    const ps::GameState successor_state =
+        apply_complete_action(record.state, action);
+    const BoundaryIdentity identity = boundary_identity(successor_state);
+    successors.push_back(ActionGroupSuccessor{
+        identity.sha256, identity.active, action.canonical_transcript,
+        successor_frame_teacher_value(
+            action, record.state.to_move, successor_state.to_move),
+        successor_state.to_move,
+        action.visits, action.selection_visits, action.solved,
+        action.proven_winner});
+  }
+  std::sort(successors.begin(), successors.end(),
+            [](const ActionGroupSuccessor &left,
+               const ActionGroupSuccessor &right) {
+              return std::tie(left.successor_id, left.transcript) <
+                     std::tie(right.successor_id, right.transcript);
+            });
+  if (successors.empty()) {
+    throw std::runtime_error("action group contains no successors");
+  }
+  for (std::size_t index = 1U; index < successors.size(); ++index) {
+    if (successors[index - 1U].successor_id ==
+        successors[index].successor_id) {
+      throw std::runtime_error(
+          "action group repeats a canonical successor identity");
+    }
+  }
+  return successors;
+}
+
+void write_optional_player(std::ostream &out,
+                           std::optional<ps::Player> player) {
+  if (player.has_value()) {
+    out << player_id(*player);
+  } else {
+    out << "null";
+  }
+}
+
+void write_active(std::ostream &out,
+                  const std::vector<std::uint16_t> &active) {
+  out << '[';
+  for (std::size_t index = 0; index < active.size(); ++index) {
+    if (index != 0U) out << ',';
+    out << active[index];
+  }
+  out << ']';
+}
+
 void write_search_stats(std::ostream &out,
                         const ps::JacekReplayBfmSearchStats &stats) {
   out << "{\"expansions\":" << stats.expansions
@@ -549,6 +779,100 @@ void write_label(std::ostream &out, const Options &options,
   out << ",\"weight\":1.0}\n";
 }
 
+void write_action_group(
+    std::ostream &out, const Options &options, const PositionRecord &record,
+    std::uint64_t seed, const ps::JacekReplayBfmPositionAnalysis &analysis,
+    std::string_view model_sha256, std::string_view payload_sha256) {
+  const BoundaryIdentity root_identity = boundary_identity(record.state);
+  const float root_value = direct_teacher_value(
+      analysis.stats, record.state.to_move, options.max_tree_nodes);
+  const std::vector<ActionGroupSuccessor> successors =
+      action_group_successors(record, analysis);
+
+  out << "{\"schema\":" << json_string(kCompleteTurnActionGroupSchema)
+      << ",\"feature_schema\":"
+      << json_string(ps::JacekReplayBfmBot::feature_schema())
+      << ",\"source_bundle_body_sha256\":"
+      << json_string(options.source_bundle_body_sha256)
+      << ",\"teacher\":{\"kind\":\"jacek_replay_bfm_search\""
+      << ",\"artifact_sha256\":" << json_string(model_sha256)
+      << ",\"payload_sha256\":" << json_string(payload_sha256)
+      << ",\"feature_schema_sha256\":"
+      << json_string(ps::JacekReplayBfmBot::feature_schema_sha256())
+      << ",\"source_sha256\":"
+      << json_string(PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256)
+      << "},\"ranking\":{\"complete_turn_boundaries\":true"
+      << ",\"teacher_value_frame\":\"explicit-mover-relative\""
+      << ",\"successor_aliases\":\"canonical-boundary-state\""
+      << ",\"best_tie_break\":\"successor-id-ascending\"}"
+      << ",\"split\":" << json_string(record.split)
+      << ",\"group\":{\"group_id\":"
+      << json_string(root_identity.sha256)
+      << ",\"parent_identity\":" << json_string(root_identity.sha256)
+      << ",\"identity_algorithm\":"
+      << json_string(kBoundaryIdentityAlgorithm)
+      << ",\"parent_mover\":" << record.mover
+      << ",\"root_value\":"
+      << std::setprecision(std::numeric_limits<float>::max_digits10)
+      << root_value << ",\"root_solved\":";
+  write_bool(out, analysis.stats.root_solved);
+  out << ",\"proven_winner\":";
+  write_optional_player(out, analysis.stats.proven_winner);
+  out << ",\"termination_reason\":"
+      << json_string(ps::jacek_replay_bfm_search_termination_name(
+             analysis.stats.termination))
+      << ",\"successors_exhaustive\":";
+  write_bool(out, analysis.successors_exhaustive);
+  out << ",\"work_budget\":{\"seed\":" << seed
+      << ",\"max_time_ms\":" << options.max_time_ms
+      << ",\"max_tree_nodes\":" << options.max_tree_nodes
+      << ",\"max_actions\":" << options.max_actions
+      << ",\"max_partial_paths\":" << options.max_partial_paths
+      << ",\"exploration\":"
+      << std::setprecision(std::numeric_limits<double>::max_digits10)
+      << options.exploration << ",\"fpu\":" << options.fpu
+      << ",\"teacher_ranking_profile\":"
+      << json_string(options.teacher_ranking_profile) << '}'
+      << ",\"source_binding\":{\"campaign_id\":"
+      << json_string(options.campaign_id)
+      << ",\"position_id\":" << json_string(record.position_id)
+      << ",\"root_group_id\":" << json_string(record.root_group_id)
+      << ",\"group_id\":" << json_string(record.group_id)
+      << ",\"source\":" << json_string(record.source)
+      << ",\"split\":" << json_string(record.split)
+      << ",\"winner\":" << record.winner << ",\"prefix\":";
+  write_prefix(out, record);
+  out << "},\"successors\":[";
+  for (std::size_t index = 0; index < successors.size(); ++index) {
+    if (index != 0U) out << ',';
+    const ActionGroupSuccessor &successor = successors[index];
+    out << "{\"successor_id\":" << json_string(successor.successor_id)
+        << ",\"active\":";
+    write_active(out, successor.active);
+    out << ",\"transcript\":" << json_string(successor.transcript)
+        << ",\"teacher_value\":"
+        << std::setprecision(std::numeric_limits<float>::max_digits10)
+        << successor.teacher_value << ",\"value_mover\":"
+        << player_id(successor.value_mover)
+        << ",\"proof\":{\"solved\":";
+    write_bool(out, successor.solved);
+    out << ",\"proven_winner\":";
+    write_optional_player(out, successor.proven_winner);
+    out << "},\"termination\":{\"reason\":"
+        << json_string(successor.solved
+                           ? "subtree-solved"
+                           : ps::jacek_replay_bfm_search_termination_name(
+                                 analysis.stats.termination))
+        << ",\"value_status\":"
+        << json_string(successor.solved
+                           ? "exact-sign"
+                           : "backed-up-at-root-termination")
+        << "},\"visits\":" << successor.visits
+        << ",\"selection_visits\":" << successor.selection_visits << '}';
+  }
+  out << "]}}\n";
+}
+
 }  // namespace
 
 std::uint64_t derive_search_seed(std::string_view campaign_id,
@@ -658,6 +982,44 @@ float direct_teacher_value(const ps::JacekReplayBfmSearchStats &stats,
   return stats.root_value;
 }
 
+float direct_action_teacher_value(
+    const ps::JacekReplayBfmRootActionAnalysis &action, ps::Player mover) {
+  if (action.action.empty() || action.canonical_transcript.empty() ||
+      action.visits == 0U || !std::isfinite(action.backed_up_value)) {
+    throw std::runtime_error(
+        "search teacher action is missing deterministic backed-up evidence");
+  }
+  if (action.solved) {
+    if (!action.proven_winner.has_value()) {
+      throw std::runtime_error(
+          "solved search teacher action is missing its proven winner");
+    }
+    const float expected = *action.proven_winner == mover ? 1.0F : -1.0F;
+    if ((expected > 0.0F && action.backed_up_value <= 0.0F) ||
+        (expected < 0.0F && action.backed_up_value >= 0.0F)) {
+      throw std::runtime_error(
+          "solved search teacher action contradicts its proven winner");
+    }
+    return expected;
+  }
+  if (action.proven_winner.has_value()) {
+    throw std::runtime_error(
+        "unsolved search teacher action has a proven winner");
+  }
+  if (action.backed_up_value < -1.0F || action.backed_up_value > 1.0F) {
+    throw std::runtime_error(
+        "unsolved search teacher action value is outside [-1,1]");
+  }
+  return action.backed_up_value;
+}
+
+float successor_frame_teacher_value(
+    const ps::JacekReplayBfmRootActionAnalysis &action,
+    ps::Player parent_mover, ps::Player successor_mover) {
+  const float parent_value = direct_action_teacher_value(action, parent_mover);
+  return successor_mover == parent_mover ? parent_value : -parent_value;
+}
+
 int run(int argc, char **argv, std::istream &input, std::ostream &output) {
   if (!is_lower_sha256(
           PAPERSOCCER_JACEK_REPLAY_SEARCH_TEACHER_SOURCE_SHA256)) {
@@ -673,6 +1035,7 @@ int run(int argc, char **argv, std::istream &input, std::ostream &output) {
   config.max_partial_paths = options.max_partial_paths;
   config.exploration = options.exploration;
   config.fpu = options.fpu;
+  config.offline_exhaustive_root_actions = options.emit_action_groups;
   ps::JacekReplayBfmBot bot(std::move(config));
   validate_model_identity(bot.model_sha256(), options.model_sha256);
   std::vector<PositionRecord> records = read_records(input);
@@ -689,6 +1052,25 @@ int run(int argc, char **argv, std::istream &input, std::ostream &output) {
         if (!output) {
           throw std::runtime_error(
               "could not write search-termination audit row");
+        }
+      } catch (const std::exception &error) {
+        throw std::runtime_error(record.position_id + ": " + error.what());
+      }
+    }
+    return 0;
+  }
+  if (options.emit_action_groups) {
+    for (const PositionRecord &record : records) {
+      try {
+        const std::uint64_t seed = derive_search_seed(
+            options.campaign_id, record.position_id, options.max_tree_nodes);
+        const ps::JacekReplayBfmPositionAnalysis analysis =
+            bot.analyze_position_actions(record.state, seed);
+        write_action_group(output, options, record, seed, analysis,
+                           bot.model_sha256(), bot.model_payload_sha256());
+        output.flush();
+        if (!output) {
+          throw std::runtime_error("could not write action-group row");
         }
       } catch (const std::exception &error) {
         throw std::runtime_error(record.position_id + ": " + error.what());

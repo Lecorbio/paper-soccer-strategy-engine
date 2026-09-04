@@ -2,9 +2,12 @@
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ps = papersoccer;
 namespace teacher = papersoccer::jacek_replay_search_teacher;
@@ -179,6 +182,119 @@ void position_seed_is_repeatable_and_budget_bound() {
       "The production partial-frontier regression seed changed.");
 }
 
+void complete_turn_action_values_are_explicit_and_fail_closed() {
+  require(teacher::kCompleteTurnActionGroupSchema ==
+              "papersoccer.jacek-replay-complete-turn-action-group.v1",
+          "The complete-turn action-group schema changed.");
+
+  ps::JacekReplayBfmRootActionAnalysis unresolved;
+  unresolved.action = {ps::Move{{4, 5}}};
+  unresolved.canonical_transcript = "0";
+  unresolved.backed_up_value = 0.375F;
+  unresolved.visits = 3U;
+  require(teacher::direct_action_teacher_value(
+              unresolved, ps::Player::One) == 0.375F,
+          "An unresolved action value was not kept in the parent mover frame.");
+  require(teacher::successor_frame_teacher_value(
+              unresolved, ps::Player::One, ps::Player::Two) == -0.375F &&
+              teacher::successor_frame_teacher_value(
+                  unresolved, ps::Player::One, ps::Player::One) == 0.375F,
+          "A Player-One handoff did not flip into the successor mover frame.");
+
+  ps::JacekReplayBfmRootActionAnalysis solved = unresolved;
+  solved.solved = true;
+  solved.backed_up_value = 9'980.0F;
+  solved.proven_winner = ps::Player::Two;
+  require(teacher::direct_action_teacher_value(solved, ps::Player::Two) ==
+              1.0F &&
+              teacher::successor_frame_teacher_value(
+                  solved, ps::Player::Two, ps::Player::Two) == 1.0F,
+          "A solved action did not map to an exact mover-relative sign.");
+  ps::JacekReplayBfmRootActionAnalysis lost = solved;
+  lost.backed_up_value = -9'980.0F;
+  require(teacher::direct_action_teacher_value(lost, ps::Player::One) ==
+              -1.0F,
+          "A solved loss did not map to an exact mover-relative sign.");
+
+  solved.proven_winner.reset();
+  require_rejected(
+      [&] {
+        teacher::direct_action_teacher_value(solved, ps::Player::One);
+      },
+      "A solved action without proof identity was accepted.");
+  unresolved.backed_up_value = 1.01F;
+  require_rejected(
+      [&] {
+        teacher::direct_action_teacher_value(unresolved, ps::Player::One);
+      },
+      "An unresolved action outside [-1,1] was accepted.");
+  unresolved.backed_up_value = 0.0F;
+  unresolved.visits = 0U;
+  require_rejected(
+      [&] {
+        teacher::direct_action_teacher_value(unresolved, ps::Player::One);
+      },
+      "An unvisited action was accepted as backed-up evidence.");
+}
+
+std::string run_action_group_fixture() {
+  const std::filesystem::path model =
+      std::filesystem::path(PAPERSOCCER_SOURCE_DIR) /
+      "models/jacek_replay_bfm_bootstrap.runtime";
+  std::vector<std::string> arguments{
+      "papersoccer_jacek_replay_search_teacher",
+      "--model",
+      model.string(),
+      "--model-sha256",
+      "02c7757443285cf6d10e971f25dee0869339d76e1d09bb9616ce5b83966cabf7",
+      "--campaign-id",
+      "action-group-contract-fixture",
+      "--tree-nodes",
+      "64",
+      "--max-actions",
+      "32",
+      "--max-partial-paths",
+      "256",
+      "--emit-action-groups",
+      "--source-bundle-body-sha256",
+      std::string(64U, 'a'),
+  };
+  std::vector<char *> argv;
+  argv.reserve(arguments.size());
+  for (std::string &argument : arguments) argv.push_back(argument.data());
+  std::istringstream input(
+      "position_id\troot_group_id\tgroup_id\tsource\tsplit\twinner\tmover\tprefix\n"
+      "position:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t"
+      "root:fixture\tcontinuation:fixture\tfixture\ttrain\t0\t0\t\n");
+  std::ostringstream output;
+  require(teacher::run(static_cast<int>(argv.size()), argv.data(), input,
+                       output) == 0,
+          "The complete-turn action-group producer failed.");
+  return output.str();
+}
+
+void complete_turn_action_group_output_is_deterministic_and_bound() {
+  const std::string first = run_action_group_fixture();
+  const std::string second = run_action_group_fixture();
+  require(first == second,
+          "Equal action-group searches did not produce identical bytes.");
+  require(first.find(
+              "\"schema\":\"papersoccer.jacek-replay-complete-turn-action-group.v1\"")
+                  != std::string::npos &&
+              first.find("\"source_bundle_body_sha256\":\"" +
+                         std::string(64U, 'a') + "\"") != std::string::npos &&
+              first.find("\"artifact_sha256\":\"02c7757443285cf6d10e971f25dee0869339d76e1d09bb9616ce5b83966cabf7\"")
+                  != std::string::npos &&
+              first.find("\"payload_sha256\":\"71856d2c3ae577ba83ae8efc6ebbbd1b574d0a7c207651148febe4e9257d08b8\"")
+                  != std::string::npos &&
+              first.find("\"parent_identity\":") != std::string::npos &&
+              first.find("\"successors_exhaustive\":") != std::string::npos &&
+              first.find("\"teacher_ranking_profile\":\"standard-v1\"") !=
+                  std::string::npos &&
+              first.find("\"successors\":[{") != std::string::npos,
+          "The action-group row omitted an immutable binding or successor set.");
+}
+
 }  // namespace
 
 int main() {
@@ -186,6 +302,8 @@ int main() {
     direct_value_contract_is_mover_relative_and_proof_explicit();
     invalid_work_and_identity_fail_closed();
     position_seed_is_repeatable_and_budget_bound();
+    complete_turn_action_values_are_explicit_and_fail_closed();
+    complete_turn_action_group_output_is_deterministic_and_bound();
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "jacek replay search teacher contract test: "

@@ -1023,6 +1023,25 @@ void nonexhaustive_root_progressively_widens_to_a_valid_label() {
           "A non-exhaustive root whose sampled actions all close must widen "
           "deterministically until it has an explicit proof or fixed-work cap.");
 
+  ps::JacekReplayBfmConfig offline_config = config;
+  offline_config.offline_exhaustive_root_actions = true;
+  ps::JacekReplayBfmBot offline(offline_config);
+  const ps::JacekReplayBfmPositionAnalysis offline_actions =
+      offline.analyze_position_actions(state, seed);
+  require(offline_actions.successors_exhaustive &&
+              offline_actions.successors.size() > config.max_actions &&
+              std::all_of(
+                  offline_actions.successors.begin(),
+                  offline_actions.successors.end(),
+                  [](const ps::JacekReplayBfmRootActionAnalysis &action) {
+                    return !action.action.empty() &&
+                           !action.canonical_transcript.empty() &&
+                           action.visits > 0U &&
+                           std::isfinite(action.backed_up_value);
+                  }),
+          "Offline action-label analysis must exhaust and value a root with "
+          "more than the deployed 250-action page.");
+
   ps::JacekReplayBfmConfig narrow_config = config;
   narrow_config.max_tree_nodes = 200U;
   narrow_config.max_actions = 1U;

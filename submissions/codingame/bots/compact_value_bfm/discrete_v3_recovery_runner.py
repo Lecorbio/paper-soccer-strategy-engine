@@ -1168,6 +1168,7 @@ class DiscreteV3RecoveryRunner:
                 path,
                 expected_bank_sha256=self.banks[job.stage].sha256,
                 expected_candidate_sha256=self.candidate.source_sha256,
+                allow_legacy_attempt_zero=True,
             )
         except Exception as error:
             raise RecoveryRunnerError(
@@ -1193,7 +1194,8 @@ class DiscreteV3RecoveryRunner:
         }
         if (
             document.get("bindings") != expected_bindings
-            or document.get("config") != job.request["expected_configuration"]
+            or maintained.gate_support.legacy_standard_configuration(document)
+            != job.request["expected_configuration"]
         ):
             raise RecoveryRunnerError("recovery gate binding/configuration changed")
         return document

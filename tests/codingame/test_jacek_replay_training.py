@@ -536,17 +536,27 @@ class JacekReplayTrainingTests(unittest.TestCase):
         rank4_v2_policy = corpus.target_policy_for_schema(
             corpus.RANK4_TEACHER_SCHEMA
         )
+        action_group_policy = corpus.target_policy_for_schema(
+            corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA
+        )
         manifests = [
             {"provenance": {"target_policy": search_policy}},
             {"provenance": {"target_policy": rank4_policy}},
             {"provenance": {"target_policy": rank4_v2_policy}},
+            {"provenance": {"target_policy": action_group_policy}},
             {"provenance": {}},
         ]
         metadata = training.target_metadata_from_shard_provenance(
             manifests,
-            ("new", "anchor", "rank4-new", "selection-validation"),
+            (
+                "new",
+                "anchor",
+                "rank4-new",
+                "complete-turn-ranking",
+                "selection-validation",
+            ),
         )
-        self.assertEqual(len(metadata["declared_policies"]), 3)
+        self.assertEqual(len(metadata["declared_policies"]), 4)
         self.assertEqual(metadata["undeclared_roles"], ["selection-validation"])
         policies = {
             row["policy"]["teacher_schema"]: row["roles"]
@@ -556,6 +566,10 @@ class JacekReplayTrainingTests(unittest.TestCase):
         self.assertEqual(policies[corpus.TEACHER_SCHEMA], ["anchor"])
         self.assertEqual(
             policies[corpus.RANK4_TEACHER_SCHEMA], ["rank4-new"]
+        )
+        self.assertEqual(
+            policies[corpus.COMPLETE_TURN_ACTION_GROUP_SCHEMA],
+            ["complete-turn-ranking"],
         )
 
     def test_metrics_streams_bounded_batches(self):

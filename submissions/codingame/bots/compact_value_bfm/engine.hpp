@@ -9,6 +9,13 @@
 #include <string_view>
 #include <vector>
 
+#if defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1) && defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1)
+#error "state-evaluation-cache-v1 and progressive-widening-v1 are independent profiles"
+#endif
+#if defined(COMPACT_VALUE_BFM_SUBTREE_REUSE_V1) && (defined(COMPACT_VALUE_BFM_STATE_EVALUATION_CACHE_V1) || defined(COMPACT_VALUE_BFM_PROGRESSIVE_WIDENING_V1))
+#error "subtree-reuse-v1 is an independent search profile"
+#endif
+
 namespace compact_value_bfm {
 
 inline constexpr int kVertexCount = 105;
@@ -225,6 +232,18 @@ struct SearchStats {
   std::uint64_t generated_children{};
   std::uint64_t evaluated_children{};
   std::uint64_t tactical_children{};
+  std::uint64_t cache_probes{};
+  std::uint64_t cache_hits{};
+  std::uint64_t cache_misses{};
+  std::uint64_t widening_probes{};
+  std::uint64_t widening_restrictions{};
+  std::uint64_t widening_eligible{};
+  std::uint64_t widening_deferred{};
+  std::uint64_t reuse_probes{};
+  std::uint64_t reuse_hits{};
+  std::uint64_t reuse_misses{};
+  std::uint64_t reuse_rejections{};
+  std::uint64_t reused_children{};
   std::uint64_t generator_partial_paths{};
   std::uint64_t generator_proof_paths{};
   std::uint64_t duplicate_boundaries{};

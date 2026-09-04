@@ -1786,6 +1786,7 @@ def adapt_gate_result(raw: Any, *, plan: Mapping[str, Any],
     document = gate_support.validate_result(
         path, expected_bank_sha256=bank["gate_bank"]["sha256"],
         expected_candidate_sha256=plan["inputs"]["candidate"]["sha256"],
+        allow_legacy_attempt_zero=True,
     )
     runtime_path = pathlib.Path(plan["inputs"]["runtime"]["path"])
     if _record(runtime_path, ascii_required=True) != plan["inputs"]["runtime"]:
@@ -1796,7 +1797,8 @@ def adapt_gate_result(raw: Any, *, plan: Mapping[str, Any],
         != runtime.get("body_sha256")
         or document.get("bindings", {}).get("candidate_payload_sha256")
         != runtime.get("quantization", {}).get("payload_sha256")
-        or document.get("config") != _expected_gate_configuration(
+        or gate_support.legacy_standard_configuration(document)
+        != _expected_gate_configuration(
             plan, pair_offset=index * 5, pair_count=5
         )
     ):

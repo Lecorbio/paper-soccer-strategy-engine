@@ -688,6 +688,7 @@ def _forensic_result(
         raw_path,
         expected_bank_sha256=ORIGINAL_CONFIRMATION_GATE_SHA256,
         expected_candidate_sha256=original_plan["candidate"]["generated_source"]["sha256"],
+        allow_legacy_attempt_zero=True,
     )
     if qualification.sha256_bytes(qualification.canonical_json_bytes(gate)) != FORENSIC_RESULT_OBJECT_SHA256:
         raise RecoveryError("c0.80 forensic result object identity changed")

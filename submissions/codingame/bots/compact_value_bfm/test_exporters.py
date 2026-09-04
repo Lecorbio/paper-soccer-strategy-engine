@@ -71,9 +71,56 @@ class CompactExporterTests(unittest.TestCase):
                 self.assertEqual(metadata["architecture"]["dimensions"],
                                  [6301, *shape, 1])
                 _, source = export_submission.render(model_header=header)
-                self.assertLessEqual(len(source), 95_000)
+                self.assertLess(len(source), 95_000)
+                if shape == (12, 8):
+                    self.assertLessEqual(len(source), 93_000)
                 sizes.append(len(source))
             self.assertGreater(sizes[-1], sizes[0])
+
+    def test_cpp_compaction_preserves_literals_and_token_boundaries(self):
+        source = '''
+#if defined(TEST)
+int value = left + +right; // remove this comment
+const char *message = "spaces ; // stay";
+char newline = '\\n';
+value = value - -right;
+#endif
+'''
+        compacted = export_submission.compact_cpp_code(source)
+        self.assertEqual(compacted, (
+            "#if defined(TEST)\n"
+            'int value=left+ +right;const char*message="spaces ; // stay";'
+            "char newline='\\n';value=value- -right;\n"
+            "#endif\n"
+        ))
+
+    def test_cpp_compaction_rejects_unterminated_constructs(self):
+        with self.assertRaisesRegex(ValueError, "unterminated C\\+\\+ literal"):
+            export_submission.compact_cpp_code('const char *value = "broken;')
+        with self.assertRaisesRegex(ValueError, "unterminated C\\+\\+ block comment"):
+            export_submission.compact_cpp_code("int value; /* broken")
+
+    def test_private_identifier_minification_preserves_literals(self):
+        source = 'int config_; const char *text = "config_ nodes_"; int nodes_;\n'
+        self.assertEqual(
+            export_submission.minify_private_identifiers(source),
+            'int zA; const char *text = "config_ nodes_"; int zB;\n',
+        )
+
+    def test_truncated_search_dead_ends_close_before_single_pass_selection(self):
+        source = (HERE / "engine.cpp").read_text()
+        self.assertIn("return solved || all_children_closed;", source)
+        self.assertIn(
+            "node.closed = traversal_closed(node.solved, all_closed);", source
+        )
+        self.assertIn("BFM open tree has no selectable descendant", source)
+        optimized = source[
+            source.index("#else\n    const double parent_log"):
+            source.index("#endif\n  }\n\n  std::optional", source.index(
+                "#else\n    const double parent_log"
+            ))
+        ]
+        self.assertNotIn("while (true)", optimized)
 
     def test_exporter_rejects_name_scale_code_and_padding(self):
         with tempfile.TemporaryDirectory() as directory:

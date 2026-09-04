@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import secrets
 import stat
 from collections.abc import Mapping, Sequence
@@ -182,6 +183,107 @@ def _replacement_pairs(configuration: Mapping[str, Any]) -> tuple[tuple[bytes, b
     )
 
 
+def _replacement_slots(
+    configuration: Mapping[str, Any], *, deployed: bool,
+) -> tuple[tuple[re.Pattern[bytes], bytes, bytes], ...]:
+    """Return strict token-aware declaration slots.
+
+    Historical attempt-zero sources retain spaces around ``=`` while the
+    deterministic source compactor removes them.  Both spellings have the
+    same C++ token stream.  Match only horizontal whitespace between the exact
+    declaration tokens, and replace only the literal, so no other byte or
+    formatting choice can change.
+    """
+
+    selected_tuple = configuration["tuple"]
+    declarations = (
+        (
+            rb"inline[ \t]+constexpr[ \t]+std::size_t[ \t]+"
+            rb"kRootPartialPaths[ \t]*=[ \t]*",
+            b"4'000",
+            _size_literal(configuration["candidate_root_partial_paths"]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"inline[ \t]+constexpr[ \t]+std::size_t[ \t]+"
+            rb"kNonrootPartialPaths[ \t]*=[ \t]*",
+            b"512",
+            _size_literal(configuration["candidate_nonroot_partial_paths"]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"inline[ \t]+constexpr[ \t]+std::size_t[ \t]+"
+            rb"kProductionTreeNodes[ \t]*=[ \t]*",
+            b"80'000",
+            _size_literal(configuration["candidate_nodes"]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"inline[ \t]+constexpr[ \t]+double[ \t]+"
+            rb"kExploration[ \t]*=[ \t]*",
+            b"0.95",
+            _double_literal(selected_tuple[0]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"inline[ \t]+constexpr[ \t]+double[ \t]+"
+            rb"kFirstPlayUrgency[ \t]*=[ \t]*",
+            b"0.5",
+            _double_literal(selected_tuple[1]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"inline[ \t]+constexpr[ \t]+double[ \t]+"
+            rb"kFinalVisitWeight[ \t]*=[ \t]*",
+            b"1.0",
+            _double_literal(selected_tuple[2]).encode("ascii"),
+            rb"[ \t]*;",
+        ),
+        (
+            rb"std::uint64_t[ \t]+shuffle_seed[ \t]*\{[ \t]*",
+            b"0x6a09e667f3bcc909ULL",
+            b"1ULL",
+            rb"[ \t]*\}[ \t]*;",
+        ),
+    )
+    slots = []
+    for prefix, original, replacement, suffix in declarations:
+        source_value = replacement if deployed else original
+        target_value = original if deployed else replacement
+        pattern = re.compile(
+            b"(" + prefix + b")(?P<value>" + re.escape(source_value)
+            + b")(" + suffix + b")"
+        )
+        slots.append((pattern, source_value, target_value))
+    return tuple(slots)
+
+
+def _replace_slots(
+    source: bytes, configuration: Mapping[str, Any], *, deployed: bool,
+) -> bytes:
+    result = source
+    # Count against the original input for each exact declaration.  This
+    # catches duplicates even when an earlier replacement happens to produce
+    # a later slot's configured literal.
+    for pattern, _source_value, target_value in _replacement_slots(
+        configuration, deployed=deployed
+    ):
+        matches = list(pattern.finditer(source))
+        if len(matches) != 1:
+            label = "configured" if deployed else "frozen default"
+            raise DeploymentSourceError(
+                f"source does not contain exactly one {label} declaration"
+            )
+        result, count = pattern.subn(
+            lambda match: match.group(1) + target_value + match.group(3),
+            result,
+            count=1,
+        )
+        if count != 1:
+            raise DeploymentSourceError("deployment declaration replacement changed")
+    return result
+
+
 def derive_source(
     generated_source: bytes, *, search_tuple: Sequence[Any], profile: Any,
     work: Mapping[str, Any],
@@ -192,13 +294,7 @@ def derive_source(
         raise DeploymentSourceError("generated deployment source is empty or not bytes")
     _source_record(generated_source)
     configuration = deployment_configuration(search_tuple, profile, work)
-    result = generated_source
-    for original, replacement in _replacement_pairs(configuration):
-        if generated_source.count(original) != 1:
-            raise DeploymentSourceError(
-                "generated source does not contain exactly one frozen default declaration"
-            )
-        result = result.replace(original, replacement, 1)
+    result = _replace_slots(generated_source, configuration, deployed=False)
     if not 0 < len(result) < SOURCE_LIMIT_EXCLUSIVE:
         raise DeploymentSourceError(
             "derived deployment source is not strictly below 95,000 bytes"
@@ -242,14 +338,7 @@ def recover_generated_source(
         raise DeploymentSourceError("candidate deployment source is empty or not bytes")
     _source_record(candidate_source)
     configuration = deployment_configuration(search_tuple, profile, work)
-    result = candidate_source
-    for original, replacement in _replacement_pairs(configuration):
-        if candidate_source.count(replacement) != 1:
-            raise DeploymentSourceError(
-                "candidate source does not contain exactly one configured declaration"
-            )
-        result = result.replace(replacement, original, 1)
-    return result
+    return _replace_slots(candidate_source, configuration, deployed=True)
 
 
 def _manifest_body(derivation: Mapping[str, Any]) -> dict[str, Any]:

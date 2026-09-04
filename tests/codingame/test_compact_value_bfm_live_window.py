@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -7,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -432,6 +434,285 @@ class GenericManifestTest(unittest.TestCase):
                     ).hexdigest(),
                     expected_game_ids=list(range(1, 91)),
                 )
+
+
+class TrustedFingerprintExtractionTest(unittest.TestCase):
+    TRANSCRIPT = "4/7/5/2/23/1/7/61/2/7"
+
+    def archive(self, root: pathlib.Path, transform=None):
+        fixture = Fixture(root)
+        identity = fixture.identity()
+        data_root = root / "archive"
+        data_root.mkdir()
+        actions = self.TRANSCRIPT.split("/")
+        records = []
+        for game_id in range(1, 91):
+            turns = [
+                {"action": action, "player_id": index % 2}
+                for index, action in enumerate(actions)
+            ]
+            records.append({
+                "schema": live.GENERIC_GAME_SCHEMA,
+                "status": "accepted",
+                "game_id": game_id,
+                "source_sha256": fixture.source_sha,
+                "focus": {
+                    "agent_id": AGENT_ID,
+                    "submission_id": SUBMISSION_ID,
+                    "result": "loss",
+                },
+                "operational": {
+                    "classification": "operationally-terminated",
+                    "focus_status": "timeout",
+                    "opponent_status": "ok",
+                },
+                "replay": {
+                    "valid_transcript": self.TRANSCRIPT,
+                    "valid_turns": turns,
+                    "rules_validation": {
+                        "status": "incomplete",
+                        "reason": "transcript is incomplete under game rules",
+                        "terminal_winner_player_id": None,
+                        "valid_turn_count": len(turns),
+                        "valid_turns": copy.deepcopy(turns),
+                    },
+                },
+            })
+        if transform is not None:
+            transform(records)
+        game_ids = list(range(1, 91))
+        manifest = {
+            "schema": live.GENERIC_BATCH_SCHEMA,
+            "collector_sha256": "a" * 64,
+            "coverage": {
+                "expected_games": 90,
+                "battle_window_games": 90,
+                "accepted_games": 90,
+                "full_window_accounted": True,
+            },
+            "binding": {
+                "schema": live.GENERIC_BINDING_SCHEMA,
+                "agent_id": AGENT_ID,
+                "asserted_submission_id": SUBMISSION_ID,
+                "repository_commit": COMMIT,
+                "source": {
+                    "sha256": fixture.source_sha,
+                    "bytes": fixture.source.stat().st_size,
+                },
+            },
+            "exclusion_registry": {
+                "sha256": hashlib.sha256(
+                    fixture.registry.read_bytes()
+                ).hexdigest(),
+            },
+            "games": [{"record": copy.deepcopy(record)} for record in records],
+        }
+        manifest_bytes = live.canonical_json_bytes(manifest)
+        manifest_sha = live.sha256_bytes(manifest_bytes)
+        manifest_path = data_root / "manifests" / f"{manifest_sha}.json"
+        live.write_once(manifest_path, manifest_bytes)
+        receipt_path, receipt = live.write_content_addressed(
+            data_root / "window-receipts",
+            {
+                "schema": live.WINDOW_RECEIPT_SCHEMA,
+                "namespace": live.NAMESPACE,
+                "identity": live.identity_record(identity),
+                "submission_attestation": live.artifact_reference(
+                    fixture.attestation, qualification.UPLOAD_EVENT_SCHEMA
+                ),
+                "exclusion_binding": live.artifact_reference(
+                    fixture.exclusion_binding, live.EXCLUSION_BINDING_SCHEMA
+                ),
+                "collector_manifest": {
+                    "path": live.logical_path(manifest_path),
+                    "sha256": manifest_sha,
+                },
+                "exact_games": 90,
+                "game_ids": game_ids,
+                "summary": {
+                    "status": "complete-rejected-focus-operational-failure",
+                    "opponent_failure_games_counted_as_strength_wins": 0,
+                },
+                "diagnostic_only": True,
+                "training_eligible": False,
+                "training_forbidden": True,
+                "rollback_authorized": False,
+                "second_upload_authorized": False,
+                "rank1_claim": False,
+                "collection_continued_after_focus_failure": True,
+            },
+        )
+        reference_path = data_root / "live-window.reference.json"
+        reference = live.write_sealed(reference_path, {
+            "schema": live.WINDOW_REFERENCE_SCHEMA,
+            "namespace": live.NAMESPACE,
+            "receipt": {
+                "path": live.logical_path(receipt_path),
+                "sha256": live.sha256_file(receipt_path),
+                "body_sha256": receipt["body_sha256"],
+            },
+            "status": "complete-rejected-focus-operational-failure",
+            "exact_games": 90,
+            "training_eligible": False,
+            "rollback_authorized": False,
+            "second_upload_authorized": False,
+        })
+        verified = {
+            "manifest": manifest,
+            "manifest_path": manifest_path.resolve(),
+            "manifest_sha256": manifest_sha,
+            "records": sorted(records, key=lambda row: row["game_id"]),
+        }
+        return {
+            "fixture": fixture,
+            "identity": identity,
+            "data_root": data_root,
+            "reference_path": reference_path,
+            "reference": reference,
+            "receipt_path": receipt_path,
+            "manifest_path": manifest_path,
+            "verified": verified,
+        }
+
+    def extract(self, archive, *, verified=None):
+        full = mock.Mock(return_value=archive["reference"])
+        collector = mock.Mock(return_value=(
+            archive["verified"] if verified is None else verified
+        ))
+        with mock.patch.object(
+            live, "verify_window_reference", full
+        ), mock.patch.object(live, "verify_generic_result", collector):
+            result = live.extract_verified_live_fingerprints(
+                archive["reference_path"], data_root=archive["data_root"]
+            )
+        full.assert_called_once_with(
+            archive["reference_path"], data_root=archive["data_root"]
+        )
+        self.assertEqual(collector.call_count, 1)
+        return result
+
+    def test_exact_90_records_yield_sealed_unique_canonical_boundaries(self):
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw))
+            evidence = self.extract(archive)
+            live.validate_seal(
+                evidence, live.LIVE_FINGERPRINT_EVIDENCE_SCHEMA,
+                "trusted live fingerprints",
+            )
+            self.assertEqual(evidence["exact_games"], 90)
+            self.assertEqual(evidence["game_ids"], list(range(1, 91)))
+            self.assertEqual(evidence["boundary_count"], 990)
+            self.assertEqual(evidence["fingerprint_count"], 11)
+            self.assertEqual(
+                evidence["fingerprints"], sorted(set(evidence["fingerprints"]))
+            )
+            self.assertEqual(
+                evidence["source_identity"]["source_sha256"],
+                archive["fixture"].source_sha,
+            )
+            self.assertFalse(evidence["contains_transcripts"])
+            self.assertFalse(evidence["contains_metrics"])
+            self.assertFalse(evidence["contains_labels"])
+            self.assertFalse(evidence["training_eligible"])
+
+    def test_terminal_state_is_not_emitted_as_a_boundary(self):
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = Fixture(pathlib.Path(raw))
+            identity = fixture.identity()
+            actions = "0/0/3/0/61/0/07".split("/")
+            turns = [
+                {"action": action, "player_id": index % 2}
+                for index, action in enumerate(actions)
+            ]
+            record = {
+                "schema": live.GENERIC_GAME_SCHEMA,
+                "status": "accepted", "game_id": 1,
+                "source_sha256": fixture.source_sha,
+                "focus": {
+                    "agent_id": AGENT_ID, "submission_id": SUBMISSION_ID,
+                },
+                "operational": {"classification": "clean"},
+                "replay": {
+                    "valid_transcript": "/".join(actions),
+                    "valid_turns": turns,
+                    "rules_validation": {
+                        "status": "terminal-valid",
+                        "terminal_winner_player_id": 0,
+                        "valid_turn_count": len(turns),
+                        "valid_turns": copy.deepcopy(turns),
+                    },
+                },
+            }
+            boundaries = live._canonical_live_boundaries(
+                record, identity=identity
+            )
+            self.assertEqual(len(boundaries), 7)
+
+    def test_manifest_tamper_and_record_omission_are_rejected(self):
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw))
+            archive["manifest_path"].write_bytes(
+                archive["manifest_path"].read_bytes() + b" "
+            )
+            with self.assertRaisesRegex(live.LiveWindowError, "manifest changed"):
+                self.extract(archive)
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw))
+            verified = {**archive["verified"], "records": archive["verified"]["records"][:-1]}
+            with self.assertRaisesRegex(live.LiveWindowError, "verification is incomplete"):
+                self.extract(archive, verified=verified)
+
+    def test_wrong_game_or_source_identity_is_rejected(self):
+        def wrong_game(records):
+            records[0]["game_id"] = 999
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw), wrong_game)
+            with self.assertRaisesRegex(live.LiveWindowError, "record roster"):
+                self.extract(archive)
+
+        def wrong_source(records):
+            records[0]["source_sha256"] = "f" * 64
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw), wrong_source)
+            with self.assertRaisesRegex(live.LiveWindowError, "source identity"):
+                self.extract(archive)
+
+    def test_incomplete_complete_turn_and_valid_turn_tamper_are_rejected(self):
+        def missing_transcript(records):
+            records[0]["replay"].pop("valid_transcript")
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw), missing_transcript)
+            with self.assertRaisesRegex(
+                live.LiveWindowError, "no complete validated transcript"
+            ):
+                self.extract(archive)
+
+        def incomplete_turn(records):
+            turn = records[0]["replay"]["valid_turns"][4]
+            turn["action"] = "2"
+            rules = records[0]["replay"]["rules_validation"]
+            rules["valid_turns"] = copy.deepcopy(records[0]["replay"]["valid_turns"])
+            records[0]["replay"]["valid_transcript"] = "/".join(
+                row["action"] for row in records[0]["replay"]["valid_turns"]
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw), incomplete_turn)
+            with self.assertRaisesRegex(live.LiveWindowError, "incomplete or illegal"):
+                self.extract(archive)
+
+        def mismatched_turns(records):
+            records[0]["replay"]["rules_validation"]["valid_turns"][0][
+                "action"
+            ] = "0"
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.archive(pathlib.Path(raw), mismatched_turns)
+            with self.assertRaisesRegex(live.LiveWindowError, "validated transcript"):
+                self.extract(archive)
 
 
 if __name__ == "__main__":

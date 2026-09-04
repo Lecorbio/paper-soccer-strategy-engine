@@ -285,7 +285,7 @@ class FakeCampaign:
         rank4_engine = engine_summary(len(games), 1.0)
         actual = spec["stage"] == "actual_clock"
         return {
-            "schema": runner.gate_support.RESULT_SCHEMA,
+            "schema": runner.gate_support.LEGACY_RESULT_SCHEMA,
             "bindings": {
                 "candidate_source_sha256": candidate.source_sha256,
                 "candidate_source_bytes": candidate.source_bytes,

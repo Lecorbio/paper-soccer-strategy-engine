@@ -196,6 +196,9 @@ void features_match_the_independent_teacher() {
   cv::State initial = cv::initial_state();
   const auto features = cv::active_features(initial);
   require(features.count == 105, "initial active feature count changed");
+  require(std::is_sorted(features.indices.begin(),
+                         features.indices.begin() + features.count),
+          "initial active features are not already canonical-sorted");
   require(feature_sha(features) ==
               "1ee1c7cf987fb1ca8d2bc707c4511b93fdf96216e6cf2a7917a18da6a2bec4d4",
           "initial features differ from independent Python teacher");
@@ -204,6 +207,9 @@ void features_match_the_independent_teacher() {
   require(after.count == 106 && feature_sha(after) ==
               "4b39d1752979d5c819cd8d4c4a022f56a0a0eb3227bd658c9fadf190dedf719f",
           "Player Two features differ from independent Python teacher");
+  require(std::is_sorted(after.indices.begin(),
+                         after.indices.begin() + after.count),
+          "moved-state active features are not canonical-sorted");
   const cv::State rotated = cv::rotate_and_swap(initial);
   require(cv::active_features(initial) == cv::active_features(rotated),
           "mover-relative feature rotation changed");
@@ -269,6 +275,13 @@ void generator_is_complete_tactical_and_deterministic() {
     require(cv::apply_action(replay, first.actions[index].action) &&
                 cv::same_boundary(replay, first.actions[index].result),
             "generated action does not reproduce its boundary");
+    for (const std::uint8_t perspective : {std::uint8_t{0}, std::uint8_t{1}}) {
+      const auto child_features = cv::active_features(replay, perspective);
+      require(std::is_sorted(child_features.indices.begin(),
+                             child_features.indices.begin() +
+                                 child_features.count),
+              "generated-state active features are not canonical-sorted");
+    }
   }
 
   cv::GeneratorConfig bounded = config;
@@ -353,9 +366,25 @@ void minimax_formulas_and_deadline_fallback_are_literal() {
 
   const cv::SearchResult fixed = cv::search(
       state, std::chrono::steady_clock::time_point::max(), config, &emergency);
+  const cv::SearchResult repeated = cv::search(
+      state, std::chrono::steady_clock::time_point::max(), config, &emergency);
   replay = state;
   require(fixed.action.length != 0 && cv::apply_action(replay, fixed.action),
           "fixed-work BFM returned an illegal complete turn");
+  require(fixed.action == repeated.action && fixed.value == repeated.value &&
+              fixed.root_actions.size() == repeated.root_actions.size(),
+          "fixed-work descendant selection is not deterministic");
+  for (std::size_t index = 0; index < fixed.root_actions.size(); ++index) {
+    const auto &left = fixed.root_actions[index];
+    const auto &right = repeated.root_actions[index];
+    require(left.action == right.action && left.tactical == right.tactical &&
+                left.value == right.value &&
+                left.initial_value == right.initial_value &&
+                left.visits == right.visits &&
+                left.selection_visits == right.selection_visits &&
+                left.solved == right.solved && left.order == right.order,
+            "fixed-work root statistics are not deterministic");
+  }
   require(fixed.stats.evaluated_children + fixed.stats.tactical_children ==
               fixed.stats.generated_children,
           "a generated nonsolved child escaped evaluation");

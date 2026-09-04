@@ -76,6 +76,38 @@ the authoritative rules engine and cached one edge at a time for the public
 `Bot` interface. The configured time is a total decision budget; the search
 reserves up to 25 ms of it for tree destruction, validation, and cache setup.
 
+### Complete-turn successor labels
+
+The search teacher keeps its existing
+`papersoccer.jacek-replay-search-teacher.v4` scalar row as the default. The
+opt-in `--emit-action-groups --source-bundle-body-sha256 HEX` mode instead
+emits `papersoccer.jacek-replay-complete-turn-action-group.v1` JSONL. A row
+binds the canonical root identity and scalar value, exact teacher artifact,
+payload, feature schema, source closure and input-bundle identities, the fixed
+work budget, and every canonical-boundary root successor retained by that
+search. Successors are ordered by identity then canonical transcript; a
+single-successor group remains valid.
+
+Each successor records its 6,301 active inputs, canonical complete-turn
+transcript, proof and termination status, visits, and backed-up value in the
+**successor state's actual mover frame**. A normal handoff therefore negates
+the root-mover action value; a terminal successor uses the terminal state's
+unchanged mover. `successors_exhaustive=false` is preserved rather than
+silently discarded, but such a capped roster must not define an action-ranking
+loss.
+
+`jacek_replay_corpus.validate_complete_turn_action_group` independently replays
+every transcript, recomputes active inputs and mover-canonical boundary
+identities, and rejects mixed or malformed bindings. The corpus aggregator
+sorts validated groups into train and validation splits without changing any
+teacher value and publishes the body-hashed
+`papersoccer.compact-value-bfm-complete-turn-successor-labels.v1` artifact.
+The same row remains usable by the existing scalar corpus path: it derives the
+normal 75% root-value plus 25% terminal-outcome target and preserves reflection
+and root lineage. `merge_complete_turn_action_groups` deterministically replaces
+a strict subset of shallow rows with higher-node deep rows by canonical group
+identity, so root and successor labels come from one search rather than two.
+
 ## Reproducible replay pipeline
 
 Install the pinned research dependency and build the Rank-4 teacher:

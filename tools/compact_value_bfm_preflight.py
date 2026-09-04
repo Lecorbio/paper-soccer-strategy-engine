@@ -82,6 +82,13 @@ SOURCE_CLOSURE = (
     BOT_RELATIVE / "feature_probe.cpp",
     BOT_RELATIVE / "inference_probe.cpp",
     BOT_RELATIVE / "feature_parity.py",
+    BOT_RELATIVE / "search_trace_probe.cpp",
+    BOT_RELATIVE / "search_variant_parity.py",
+    BOT_RELATIVE / "state_evaluation_cache_parity.py",
+    BOT_RELATIVE / "progressive_widening_invariance.py",
+    BOT_RELATIVE / "subtree_reuse_invariance.py",
+    BOT_RELATIVE / "search_profile_exclusion.py",
+    BOT_RELATIVE / "source_compaction_parity.py",
     BOT_RELATIVE / "rank4_gate.cpp",
     BOT_RELATIVE / "rank4_gate_support.py",
     BOT_RELATIVE / "test_rank4_gate_support.py",
@@ -93,6 +100,40 @@ SOURCE_CLOSURE = (
     RANK4_RELATIVE,
 )
 
+SEARCH_TRACE_BASES = (
+    "baseline",
+    "no_feature_sort_only",
+    "single_pass_selection_only",
+    "combined",
+)
+SEARCH_TRACE_PROFILES = (
+    "state_evaluation_cache_v1",
+    "progressive_widening_v1",
+    "subtree_reuse_v1",
+)
+SEARCH_TRACE_TARGETS = tuple(
+    "papersoccer_codingame_compact_value_bfm_search_trace_" + suffix
+    for base in SEARCH_TRACE_BASES
+    for suffix in (
+        base,
+        *(f"{base}_{profile}" for profile in SEARCH_TRACE_PROFILES),
+    )
+) + ("papersoccer_codingame_compact_value_bfm_search_trace_modular",)
+SEARCH_PARITY_TESTS = (
+    "papersoccer_codingame_compact_value_bfm_search_variant_parity",
+    *(
+        f"papersoccer_codingame_compact_value_bfm_{kind}_{base}"
+        for base in SEARCH_TRACE_BASES
+        for kind in (
+            "state_evaluation_cache_parity",
+            "progressive_widening_invariance",
+            "subtree_reuse_invariance",
+        )
+    ),
+    "papersoccer_codingame_compact_value_bfm_profile_exclusion",
+    "papersoccer_codingame_compact_value_bfm_source_compaction_parity",
+)
+
 BUILD_TARGETS = (
     "papersoccer_codingame_compact_value_bfm_submission",
     "papersoccer_codingame_compact_value_bfm_submission_test",
@@ -101,7 +142,7 @@ BUILD_TARGETS = (
     "papersoccer_codingame_compact_value_bfm_feature_probe",
     "papersoccer_codingame_compact_value_bfm_inference_probe",
     "papersoccer_codingame_compact_value_bfm_rank4_gate",
-)
+) + SEARCH_TRACE_TARGETS
 RELEASE_TESTS = (
     "papersoccer_codingame_compact_value_bfm_submission_test",
     "papersoccer_codingame_compact_value_bfm_timing_probe",
@@ -113,7 +154,7 @@ RELEASE_TESTS = (
     "papersoccer_codingame_compact_value_bfm_protocol_smoke_test",
     "papersoccer_codingame_compact_value_bfm_rank4_gate_self_test",
     "papersoccer_codingame_compact_value_bfm_rank4_gate_support_tests",
-)
+) + SEARCH_PARITY_TESTS
 SANITIZER_TESTS = tuple(
     test for test in RELEASE_TESTS if "timing_probe" not in test
 )
