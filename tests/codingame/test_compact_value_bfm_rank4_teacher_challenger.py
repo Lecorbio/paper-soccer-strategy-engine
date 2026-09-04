@@ -25,14 +25,8 @@ q = challenger.qualification
 class ChallengerCliForwardingTests(unittest.TestCase):
     def test_direct_entrypoints_use_path_bound_lazy_imports(self):
         entrypoints = (
-            (
-                pathlib.Path(challenger.__file__),
-                "rank4_teacher_challenger_release_bridge",
-            ),
-            (
-                challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
-                "rank4_teacher_dual_final_release",
-            ),
+            pathlib.Path(challenger.__file__),
+            challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
         )
         for path in entrypoints:
             with self.subTest(entrypoint=path.name):
@@ -45,8 +39,14 @@ class ChallengerCliForwardingTests(unittest.TestCase):
 
     def test_isolated_entrypoints_can_load_release_without_package_path(self):
         entrypoints = (
-            pathlib.Path(challenger.__file__),
-            challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+            (
+                pathlib.Path(challenger.__file__),
+                "rank4_teacher_challenger_release_bridge",
+            ),
+            (
+                challenger.HERE / "compact_value_bfm_rank4_teacher_dual_final.py",
+                "rank4_teacher_dual_final_release",
+            ),
         )
         program = """
 import importlib.util
