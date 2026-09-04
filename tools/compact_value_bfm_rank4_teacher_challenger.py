@@ -9220,13 +9220,17 @@ def _validate_final_gate_evidence(
             raise ChallengerError("deep final-gate summary changed")
     elif production:
         raise ChallengerError("production final gate lacks deep maintained evidence")
+    expected_dual_final_plan = (
+        qualification.artifact_reference(dual_path, DUAL_FINAL_SCHEMA)
+        if bridge_schema is not None
+        else _sealed_record(dual_path, DUAL_FINAL_SCHEMA)
+    )
     if (
         value.get("campaign_id") != CAMPAIGN_ID
         or value.get("attempt") != dual["attempt"]
         or value.get("gate_id") != gate["gate_id"]
         or value.get("status") != "complete"
-        or value.get("dual_final_plan")
-        != _sealed_record(dual_path, DUAL_FINAL_SCHEMA)
+        or value.get("dual_final_plan") != expected_dual_final_plan
         or value.get("candidate") != {
             "runtime_sha256": candidate["runtime"]["sha256"],
             "source_sha256": candidate["source"]["sha256"],

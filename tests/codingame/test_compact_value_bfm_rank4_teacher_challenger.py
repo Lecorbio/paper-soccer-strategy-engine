@@ -3172,6 +3172,127 @@ class ChallengerCampaignTests(unittest.TestCase):
                     allow_injected_test_evidence=True,
                 )
 
+    def _minimal_final_gate_evidence_contract(self, root):
+        dual_path = root / "dual-final-plan.json"
+        q.write_sealed(dual_path, {
+            "schema": challenger.DUAL_FINAL_SCHEMA,
+            "fixture": "final-gate-evidence-contract",
+        })
+        summary = passing_summary()
+        candidate = {
+            "runtime": {"sha256": "a" * 64},
+            "source": {"sha256": "b" * 64},
+        }
+        bank = {"sha256": "c" * 64, "bytes": 123}
+        aggregate_path = root / "governance-aggregate.json"
+        q.write_sealed(aggregate_path, {
+            "schema": "papersoccer.fixture-final-aggregate.v1",
+            "candidate_source_sha256": candidate["source"]["sha256"],
+            "bank_sha256": bank["sha256"],
+            "workers": 4,
+            "summary": summary,
+        })
+        dual = {
+            "attempt": 0,
+            "campaign_plan": {"path": str(root / "campaign-plan.json")},
+            "candidate": candidate,
+        }
+        gate = {"gate_id": "gate-a", "bank": bank}
+        evidence = {
+            "schema": challenger.FINAL_GATE_EVIDENCE_SCHEMA,
+            "campaign_id": challenger.CAMPAIGN_ID,
+            "attempt": 0,
+            "gate_id": "gate-a",
+            "status": "complete",
+            "candidate": {
+                "runtime_sha256": candidate["runtime"]["sha256"],
+                "source_sha256": candidate["source"]["sha256"],
+            },
+            "bank": bank,
+            "pairs": 500,
+            "games": 1_000,
+            "workers": 4,
+            "threads_per_worker": 1,
+            "all_shards_complete": True,
+            "summary": summary,
+            "aggregate": challenger._regular(aggregate_path),
+        }
+        return dual_path, dual, gate, evidence
+
+    def test_deep_final_gate_bridge_accepts_thin_dual_plan_reference(self):
+        from tools import compact_value_bfm_rank4_teacher_dual_final as dual_runner
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            dual_path, dual, gate, evidence = (
+                self._minimal_final_gate_evidence_contract(root)
+            )
+            evidence.update({
+                "bridge_schema": dual_runner.DEEP_GATE_EVIDENCE_SCHEMA,
+                "dual_final_plan": q.artifact_reference(
+                    dual_path, challenger.DUAL_FINAL_SCHEMA
+                ),
+            })
+            evidence_path = root / "deep-evidence.json"
+            q.write_sealed(evidence_path, evidence)
+            campaign = {"inputs": {"production_allowlist_enforced": True}}
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=campaign,
+            ), mock.patch.object(
+                dual_runner, "validate_governance_evidence",
+                return_value={"summary": evidence["summary"]},
+            ) as validate_deep:
+                checked = challenger._validate_final_gate_evidence(
+                    evidence_path, dual=dual, dual_path=dual_path, gate=gate
+                )
+            self.assertEqual(
+                checked["dual_final_plan"],
+                q.artifact_reference(dual_path, challenger.DUAL_FINAL_SCHEMA),
+            )
+            validate_deep.assert_called_once_with(
+                evidence_path,
+                campaign_plan_path=pathlib.Path(dual["campaign_plan"]["path"]),
+                dual_reference=dual_path.parent / "dual-final-reference.json",
+            )
+
+    def test_legacy_final_gate_evidence_still_requires_sealed_dual_plan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            dual_path, dual, gate, evidence = (
+                self._minimal_final_gate_evidence_contract(root)
+            )
+            evidence["dual_final_plan"] = q.artifact_reference(
+                dual_path, challenger.DUAL_FINAL_SCHEMA
+            )
+            thin_path = root / "legacy-thin-evidence.json"
+            q.write_sealed(thin_path, evidence)
+            campaign = {"inputs": {"production_allowlist_enforced": False}}
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=campaign,
+            ), self.assertRaisesRegex(
+                challenger.ChallengerError,
+                "final gate evidence is not candidate/bank/aggregate bound",
+            ):
+                challenger._validate_final_gate_evidence(
+                    thin_path, dual=dual, dual_path=dual_path, gate=gate
+                )
+
+            evidence["dual_final_plan"] = challenger._sealed_record(
+                dual_path, challenger.DUAL_FINAL_SCHEMA
+            )
+            sealed_path = root / "legacy-sealed-evidence.json"
+            q.write_sealed(sealed_path, evidence)
+            with mock.patch.object(
+                challenger, "validate_campaign", return_value=campaign,
+            ):
+                checked = challenger._validate_final_gate_evidence(
+                    sealed_path, dual=dual, dual_path=dual_path, gate=gate
+                )
+            self.assertEqual(
+                checked["dual_final_plan"],
+                challenger._sealed_record(dual_path, challenger.DUAL_FINAL_SCHEMA),
+            )
+
     def test_two_independent_passing_gates_require_unchanged_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(pathlib.Path(temporary))
