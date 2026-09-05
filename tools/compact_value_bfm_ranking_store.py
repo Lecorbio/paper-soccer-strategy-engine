@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import os
+import gzip
 from pathlib import Path
 import tempfile
 import sys
@@ -42,7 +43,8 @@ def build_store(sources: Sequence[Path], output: Path, bundle):
         temporary=Path(temporary)
         with (temporary/'indices').open('wb') as indices, (temporary/'successors').open('wb') as successors, (temporary/'transcripts').open('wb') as transcripts:
             for source in sources:
-                with Path(source).open('r',encoding='utf-8') as stream:
+                opener=gzip.open if Path(source).suffix=='.gz' else open
+                with opener(source,'rt',encoding='utf-8') as stream:
                     for line_number,line in enumerate(stream,1):
                         row=corpus.validate_complete_turn_action_group(json.loads(line))
                         group=row['group']

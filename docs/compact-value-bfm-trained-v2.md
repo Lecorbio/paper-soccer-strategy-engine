@@ -154,3 +154,19 @@ original float initialization, all three approved seeds, and its own admission
 evidence. `compact_value_bfm_pilot_v2.py --root CAMPAIGN games` freezes that
 pilot's context and runs the native generation stage while preserving smoke
 exclusions and the campaign-global heavy-stage lock.
+
+## Streaming pilot execution
+
+`compact_value_bfm_stream_v2.py` checks positions in per-game process workers,
+with a complete validation barrier before training-root checks. Validation
+fingerprints use read-only binary indexes, and each completed game has an
+immutable receipt and compressed successor census. The phase index retains
+lightweight metadata rather than every successor dictionary.
+
+`compact_value_bfm_labels_v2.py` runs source-bound native label chunks, uses the
+maintained rich validators, checks the full preflight successor census, and
+preserves canonical rich rows in deterministic gzip files. Source identities
+are independently reconstructed in CMake's declared order. Hard selection is
+global; incomplete shallow groups are mandatory deep replacements, and no
+incomplete group can reach training. Final merging is streamed, and the mapped
+ranking store accepts both plain and compressed rich input.

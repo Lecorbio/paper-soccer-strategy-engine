@@ -44,6 +44,20 @@ class RankingStoreTests(unittest.TestCase):
             for row,group in zip(rows,(loaded.train[0],loaded.validation[0])):
                 self.assertEqual(store.scalar_samples(group),corpus.sample_from_teacher_row(row))
 
+    def test_gzip_source_preserves_all_successors(self):
+        from tools.compact_value_bfm_stream_v2 import write_gzip
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp);rows,bundle,index=self.fixture(root)
+            compressed=root/'labels.jsonl.gz';write_gzip(compressed,rows)
+            other=store.build_store([compressed],root/'compressed-store',bundle)
+            a=store.RankingStore(index,bundle).labels();b=store.RankingStore(other,bundle).labels()
+            for left,right in zip((*a.train,*a.validation),(*b.train,*b.validation)):
+                self.assertEqual(len(left.successors),len(right.successors))
+                for l,r in zip(left.successors,right.successors):
+                    self.assertEqual(l.evidence,r.evidence)
+                    self.assertTrue(np.array_equal(l.active,r.active))
+                    self.assertEqual(l.teacher_value,r.teacher_value)
+
     def test_tampered_cache_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             rows,bundle,index=self.fixture(pathlib.Path(tmp))
