@@ -407,6 +407,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_stream_v2
               tests.codingame.test_compact_value_bfm_labels_v2
               tests.codingame.test_compact_value_bfm_pilot_selection_v2
+              tests.codingame.test_compact_value_bfm_pilot_gate_v2
               tests.codingame.test_compact_value_bfm_opponent_evaluation)
     set_tests_properties(
       papersoccer_compact_value_bfm_campaign_v2_unit_tests PROPERTIES

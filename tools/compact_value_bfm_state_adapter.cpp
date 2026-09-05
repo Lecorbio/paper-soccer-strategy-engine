@@ -150,7 +150,9 @@ void play(const std::string &id, const MatchState &root, int candidate_player,
     const bool candidate=state.compact.to_move==candidate_player;
     const unsigned actor=candidate ? 0 : 1;
     const bool first=decisions[actor]++==0;
-    const unsigned budget=first ? first_ms : later_ms;
+    const bool production_clocks=first_ms==800 && later_ms==155;
+    const unsigned budget=candidate || !production_clocks ? (first ? first_ms : later_ms)
+        : (first ? opponent::kFirstSearchTimeMs : opponent::kLaterSearchTimeMs);
     const auto started=Clock::now();
     std::string action;
     try {
@@ -189,6 +191,8 @@ void play(const std::string &id, const MatchState &root, int candidate_player,
     << ",\"root_transcript\":\"" << root.transcript << "\""
     << ",\"root_edges\":" << root.compact.ply << ",\"candidate_max_ms\":" << maximum_ms
     << ",\"first_budget_ms\":" << first_ms << ",\"later_budget_ms\":" << later_ms
+    << ",\"opponent_first_budget_ms\":" << (first_ms==800 && later_ms==155 ? opponent::kFirstSearchTimeMs : first_ms)
+    << ",\"opponent_later_budget_ms\":" << (first_ms==800 && later_ms==155 ? opponent::kLaterSearchTimeMs : later_ms)
     << ",\"generated_successors\":" << generated << ",\"evaluated_successors\":" << evaluated
     << ",\"nodes\":" << nodes << ",\"candidate_latency_ms\":[";
   for (std::size_t i=0;i<latencies.size();++i) { if (i) std::cout << ','; std::cout << latencies[i]; }

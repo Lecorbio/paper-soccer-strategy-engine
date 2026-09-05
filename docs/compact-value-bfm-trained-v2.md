@@ -183,3 +183,16 @@ conditional on a separate 105/200, zero-failure Rank-4 screen.
 it waits on the shared campaign lock, verifies completed labels, runs all nine
 trainings, and freezes offline model selection. It is not a recurring
 monitor and does not claim pilot admission or live success.
+
+The pilot screen bridge generates its bank only after offline model selection,
+filters candidate roots against prior and current campaign fingerprints, and
+uses the unchanged historical Rank-4 gate format. The exact source/runtime,
+compiler, bank, command, native result, and color roster are bound together.
+An interrupted claimed screen is spent, and offline selection alone cannot
+admit a pilot. `--wait-for-selection UPSTREAM_PID` provides a one-shot dependency
+wait that exits if upstream training stops without completing selection.
+
+For multi-opponent qualification, the state adapter preserves each frozen
+opponent's own source clock constants. Candidate clocks remain800/155 ms.
+Reduced-clock structural checks remain explicitly ineligible as strength
+measurements.
