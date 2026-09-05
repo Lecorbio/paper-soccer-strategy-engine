@@ -116,5 +116,16 @@ class OpponentSuiteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'compiler input path'):
                 suite.validate_build(campaign.record(other/'build.json'),{},campaign.record(candidate),'rank_4',{})
 
+    def test_resume_isolation_rejects_played_search_states(self):
+        root=root_row();domain=campaign.legacy.STATE_FINGERPRINT_DOMAIN
+        with tempfile.TemporaryDirectory() as temporary:
+            context=Path(temporary).resolve()
+            campaign.seal(context/'campaign.json',{'exclusions':[]})
+            bank={'stage':'screen','rows':{'rank_4':[root]}}
+            empty={key:set() for key in root['fingerprints']}
+            with patch.object(suite,'_current_collisions',return_value=empty),patch.object(suite,'search_boundaries',return_value=iter([{domain:root['fingerprints'][domain]}])):
+                with self.assertRaisesRegex(ValueError,'played evaluation states'):
+                    suite.validate_bank_isolation(context,'phase',bank,{})
+
 
 if __name__ == '__main__': unittest.main()

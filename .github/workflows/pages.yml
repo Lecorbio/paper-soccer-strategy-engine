@@ -15,6 +15,12 @@ permissions:
 # runner compilation to avoid memory-pressure kills while preserving coverage.
 env:
   PAPERSOCCER_BUILD_JOBS: "2"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY: "1"
 
 concurrency:
   group: pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}

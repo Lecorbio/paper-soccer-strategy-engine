@@ -30,6 +30,8 @@ constexpr std::string_view kSchema =
     "papersoccer.compact-value-bfm-rank4-gate.v2";
 constexpr std::string_view kBankSchema =
     "papersoccer.compact-value-bfm-opening-bank.v1";
+constexpr std::string_view kTrajectorySchema =
+    "papersoccer.compact-value-bfm-rank4-trajectories.v1";
 constexpr std::string_view kRank4Sha256 =
     "5c7ebbb38e3b08940eb26ca8cd7585dc5cbce5ad949dfd595bfb0eaab1de53c9";
 constexpr double kFirstHardMs = 1000.0;
@@ -128,6 +130,7 @@ struct Config {
   int minimum_wins{-1};
   int minimum_per_color{-1};
   bool self_test{};
+  bool include_trajectories{};
 };
 
 struct MatchState {
@@ -192,6 +195,8 @@ struct GameResult {
   std::string failure_detail;
   EngineSummary candidate;
   EngineSummary rank4;
+  std::string root_transcript;
+  std::string transcript;
 };
 
 struct GateSummary {
@@ -710,6 +715,7 @@ GameResult play(const Opening &opening, std::size_t pair_index,
   result.pair_index = pair_index;
   result.candidate_player = candidate_player;
   result.turns = static_cast<int>(opening.complete_turns);
+  if (config.include_trajectories) result.root_transcript = opening.transcript;
   std::array<int, 2> responses{};
   while (!ps::is_terminal(state.core) && result.turns < config.max_turns) {
     verify_lockstep(state.core, state.compact);
@@ -724,6 +730,9 @@ GameResult play(const Opening &opening, std::size_t pair_index,
     if (!invocation.failure.empty()) {
       result.failure = invocation.failure;
       result.failure_detail = invocation.failure_detail;
+      // A late, malformed or illegal response is not an accepted turn, even
+      // when the invocation inspected/applied its action before classifying it.
+      if (config.include_trajectories) result.transcript = state.transcript;
       return result;
     }
     append_transcript(state.transcript, invocation.action);
@@ -735,6 +744,7 @@ GameResult play(const Opening &opening, std::size_t pair_index,
   } else {
     result.failure = "unfinished";
   }
+  if (config.include_trajectories) result.transcript = state.transcript;
   return result;
 }
 
@@ -857,7 +867,7 @@ std::string engine_json(const EngineSummary &engine,
   return output.str();
 }
 
-std::string game_json(const GameResult &game) {
+std::string game_json(const GameResult &game, bool include_trajectories = false) {
   std::ostringstream output;
   output << "{\"opening_id\":" << json_string(game.opening_id)
          << ",\"pair_index\":" << game.pair_index
@@ -870,7 +880,15 @@ std::string game_json(const GameResult &game) {
          << (game.failure_detail.empty() ? "null"
                                          : json_string(game.failure_detail))
          << ",\"candidate\":" << engine_json(game.candidate, true)
-         << ",\"rank4\":" << engine_json(game.rank4, false) << '}';
+         << ",\"rank4\":" << engine_json(game.rank4, false);
+  if (include_trajectories) {
+    const auto *data = reinterpret_cast<const std::uint8_t *>(game.transcript.data());
+    output << ",\"root_transcript\":" << json_string(game.root_transcript)
+           << ",\"transcript\":" << json_string(game.transcript)
+           << ",\"transcript_sha256\":" << json_string(cv::sha256_hex(
+                  std::span<const std::uint8_t>(data, game.transcript.size())));
+  }
+  output << '}';
   return output.str();
 }
 
@@ -918,12 +936,14 @@ std::string render(const Config &config, const Bank &bank,
          << ",\"rank4_clocks_ms\":[800,165]"
          << ",\"max_turns\":" << config.max_turns
          << ",\"minimum_candidate_wins\":" << config.minimum_wins
-         << ",\"minimum_wins_per_color\":" << config.minimum_per_color
-         << "}"
-         << ",\"games\":[";
+         << ",\"minimum_wins_per_color\":" << config.minimum_per_color;
+  if (config.include_trajectories) {
+    output << ",\"trajectory_schema\":" << json_string(kTrajectorySchema);
+  }
+  output << "}" << ",\"games\":[";
   for (std::size_t index = 0; index < games.size(); ++index) {
     if (index != 0) output << ',';
-    output << game_json(games[index]);
+    output << game_json(games[index], config.include_trajectories);
   }
   output << "]"
          << ",\"result\":{\"games\":" << summary.games
@@ -955,6 +975,10 @@ Config arguments(int argc, char **argv) {
     const std::string_view argument = argv[index];
     if (argument == "--self-test") {
       config.self_test = true;
+      continue;
+    }
+    if (argument == "--include-trajectories") {
+      config.include_trajectories = true;
       continue;
     }
     if (index + 1 >= argc) {
@@ -1075,6 +1099,14 @@ int main(int argc, char **argv) {
       throw std::invalid_argument("candidate source SHA-256 mismatch");
     }
     const Bank bank = load_bank(config);
+    // Preserve finished games if the enclosing unprotected run is interrupted.
+    // Partial progress is not a complete gate result and cannot qualify a model.
+    std::ofstream trajectory_progress;
+    if (config.include_trajectories && !config.output.empty()) {
+      trajectory_progress.open(config.output.string() + ".trajectories.jsonl",
+                               std::ios::binary | std::ios::trunc);
+      if (!trajectory_progress) throw std::runtime_error("cannot open trajectory progress");
+    }
     std::vector<GameResult> games;
     games.reserve(config.pair_count * 2U);
     for (std::size_t pair = 0; pair < config.pair_count; ++pair) {
@@ -1082,6 +1114,18 @@ int main(int argc, char **argv) {
       for (int candidate_player = 0; candidate_player < 2; ++candidate_player) {
         games.push_back(play(bank.openings[bank_index], bank_index,
                              candidate_player, config));
+        if (trajectory_progress.is_open()) {
+          trajectory_progress
+              << "{\"schema\":\"papersoccer.compact-value-bfm-rank4-trajectory-progress.v1\""
+              << ",\"candidate_source_sha256\":" << json_string(candidate_sha)
+              << ",\"candidate_runtime_body_sha256\":" << json_string(cv::model::kRuntimeBodySha256)
+              << ",\"candidate_payload_sha256\":" << json_string(cv::model::kPayloadSha256)
+              << ",\"rank4_source_sha256\":" << json_string(rank4_sha)
+              << ",\"bank_sha256\":" << json_string(bank.sha256)
+              << ",\"game\":" << game_json(games.back(), true) << "}\n";
+          trajectory_progress.flush();
+          if (!trajectory_progress) throw std::runtime_error("cannot write trajectory progress");
+        }
       }
     }
     const GateSummary summary = summarize(games, config);

@@ -417,6 +417,10 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_pilot_v2
               tests.codingame.test_compact_value_bfm_full_v2
               tests.codingame.test_compact_value_bfm_full_selection_v2
+              tests.codingame.test_compact_value_bfm_search_v2
+              tests.codingame.test_compact_value_bfm_search_strength_v2
+              tests.codingame.test_compact_value_bfm_development_v2
+              tests.codingame.test_compact_value_bfm_ci_v2
               tests.codingame.test_compact_value_bfm_opponent_evaluation
               tests.codingame.test_compact_value_bfm_opponent_suite_v2)
     set_tests_properties(
@@ -979,6 +983,10 @@ if(NOT EMSCRIPTEN)
     submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp)
   add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_self_test
     COMMAND papersoccer_codingame_compact_value_bfm_rank4_gate --self-test)
+  add_executable(papersoccer_codingame_compact_value_bfm_rank4_trajectory_gate
+    submissions/codingame/bots/compact_value_bfm/rank4_gate_trajectories.cpp)
+  add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_trajectory_gate_self_test
+    COMMAND papersoccer_codingame_compact_value_bfm_rank4_trajectory_gate --self-test)
 
   if(Python3_Interpreter_FOUND)
     add_test(NAME papersoccer_codingame_compact_value_bfm_exporter_tests

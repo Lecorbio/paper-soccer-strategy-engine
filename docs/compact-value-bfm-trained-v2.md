@@ -229,12 +229,14 @@ the existing paired bootstrap assessment. A four-worker execution limit and
 claimed interrupted suite is spent. Reduced-clock adapter checks are explicitly
 ineligible as strength evidence.
 
-The suite currently accepts the full selector's exact exported source. A changed
-search variant still needs a source-bound ablation/selection bridge before it can
-enter qualification. Profiling, development qualification, protected gates, and
-live evaluation remain separate required stages.
+The suite requires a validated `search/search-selection.json`, including the
+source-specific ablation and profiling evidence, even when the baseline wins.
+Search-strength trajectories from every variant are excluded before suite roots
+are chosen. Resumed and completed banks recheck isolation against the immutable
+corpus and all earlier played states.
 
-The native Rank4 gate now offers `--include-trajectories`. Its opt-in output
+The separate native `rank4_gate_trajectories.cpp` offers `--include-trajectories`.
+The historical `rank4_gate.cpp` retains its exact release-pinned bytes. The new output
 contains each actual root and accepted complete-turn trajectory, and a sidecar
 preserves finished games if the process is interrupted. The maintained default
 output is unchanged. V2 screens require independent trajectory validation and
@@ -252,3 +254,41 @@ fail closed pending their required outcome or unprotected attribution integratio
 These commands resume from source-bound artifacts. Optional scheduling is a
 separate user-authorized task follow-up; it does not alter the frozen experiment
 policy or substitute for successful stage evidence.
+
+## Search, development, and CI bridges
+
+`compact_value_bfm_search_v2.py` freezes the maintained 2×2 feature-construction
+and descendant-selection variants from the same full-trained payload. It runs
+three sequential fixed-work/clocked profiling passes on a frozen unprotected root
+corpus. Standard fixed-work traces, complete root-action legality, and full/delta
+inference must agree. Each retained optimization needs at least 10% throughput
+gain, at most 5% p95 regression, and independently supported actual-clock strength.
+The historical upload/maintained-source comparison is not used as a speed A/B.
+
+`compact_value_bfm_search_strength_v2.py` supplies the full-round actual-clock
+comparison: all variants use one newly isolated 500-pair bank, one worker, explicit
+shuffle seed1, and complete played trajectories. Native configuration is checked
+before deployment of the runner; a mismatched seed cannot silently spend the
+whole A/B batch. Claims bind compiler, source, bank, exact command and output paths.
+Claimed or orphaned native output cannot be rerun automatically.
+
+Native timing-category instrumentation is still required. Until its producer and
+validator exist, search assessment writes `search-assessment-incomplete.json`
+with no selected source; it does not emit a qualifying source-selection receipt.
+Optional cache/widening/reuse treatments also remain disabled for selection until
+their separate source-bound native invariant evidence is integrated.
+
+`compact_value_bfm_development_v2.py` follows actual passing screen and confirmation
+results. It freezes 500 fresh canonical pairs, runs four disjoint 125-pair native
+shards, and requires 550 wins, 265 per color, a paired 95% lower win-rate bound
+above 50%, and zero failures. All played search, suite and development states
+remain in fingerprint-only exclusions. A passing development result still awaits
+exact-source preflight/CI and two independent protected gates.
+
+`compact_value_bfm_ci_v2.py` binds a validated selected source to clean committed
+bytes and an actual GitHub workflow run on the experimental branch. Its supported
+publication path is the maintained `compact_value_bfm/submission.cpp`, which the
+stock native build and tests compile. It preserves the raw GitHub response and
+requires all five distinct jobs to succeed for the exact commit. An arbitrary
+tracked C++ copy is insufficient, and green repository CI alone never qualifies
+a candidate. Historical fixed-branch CI validators remain unchanged.

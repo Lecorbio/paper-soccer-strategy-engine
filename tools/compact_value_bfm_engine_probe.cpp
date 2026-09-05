@@ -1,4 +1,5 @@
-// Version-comparison diagnostic; this is not a strength gate or a pure speed A/B.
+// Source-bound diagnostic. Version comparisons are not pure speed A/B tests;
+// identical-model macro variants can additionally compare their fixed traces.
 #define COMPACT_VALUE_BFM_NO_MAIN
 #ifndef COMPACT_ENGINE_SOURCE
 #error "COMPACT_ENGINE_SOURCE must identify the exact standalone source"
@@ -13,10 +14,30 @@
 namespace cv = compact_value_bfm;
 using Clock = std::chrono::steady_clock;
 struct Row {
-  std::string id, action;
+  std::string id, action, trace;
   double ms{};
   std::uint64_t generated{}, evaluated{}, nodes{}, expansions{};
 };
+std::string trace(const cv::SearchResult &result) {
+  std::ostringstream out;
+  const auto &s=result.stats;
+  out << std::bit_cast<std::uint32_t>(result.value) << ':' << result.solved;
+  for (auto value : {s.expansions,s.generated_children,s.evaluated_children,
+      s.tactical_children,s.cache_probes,s.cache_hits,s.cache_misses,
+      s.widening_probes,s.widening_restrictions,s.widening_eligible,s.widening_deferred,
+      s.reuse_probes,s.reuse_hits,s.reuse_misses,s.reuse_rejections,s.reused_children,
+      s.generator_partial_paths,s.generator_proof_paths,s.duplicate_boundaries,
+      s.fifo_extractions,s.lifo_extractions,static_cast<std::uint64_t>(s.tree_nodes),
+      static_cast<std::uint64_t>(s.max_depth),static_cast<std::uint64_t>(s.deadline_reached),
+      static_cast<std::uint64_t>(s.tree_cap_reached),static_cast<std::uint64_t>(s.expansion_cap_reached)})
+    out << ':' << value;
+  for (const auto &root:result.root_actions)
+    out << ';' << root.action.text() << ':' << static_cast<int>(root.tactical)
+        << ':' << std::bit_cast<std::uint32_t>(root.value)
+        << ':' << std::bit_cast<std::uint32_t>(root.initial_value)
+        << ':' << root.visits << ':' << root.selection_visits << ':' << root.solved << ':' << root.order;
+  return out.str();
+}
 cv::Action action(const std::string &text) {
   cv::Action result;
   for (char value:text) {
@@ -65,19 +86,28 @@ int main(int argc,char **argv) {
       if (std::bit_cast<std::uint32_t>(model.evaluate(features))!=
           std::bit_cast<std::uint32_t>(model.evaluate_delta(base,features)))
         throw std::runtime_error("actual-model full/delta mismatch");
-      rows.push_back({line.substr(0,tab),encoded,ms,result.stats.generated_children,
+      for (const auto &root:result.root_actions) {
+        auto successor=state;
+        if (!cv::apply_action(successor,root.action)) throw std::runtime_error("illegal root action");
+        const auto active=cv::active_features(successor);
+        if (std::bit_cast<std::uint32_t>(model.evaluate(active))!=
+            std::bit_cast<std::uint32_t>(model.evaluate_delta(base,active)))
+          throw std::runtime_error("root-action full/delta mismatch");
+      }
+      rows.push_back({line.substr(0,tab),encoded,trace(result),ms,result.stats.generated_children,
           result.stats.evaluated_children,result.stats.tree_nodes,result.stats.expansions});
     }
     std::cout << std::setprecision(17)
       << "{\"schema\":\"papersoccer.compact-engine-version-probe.v2\",\"mode\":\"" << mode
       << "\",\"payload_sha256\":\"" << cv::deployment_model().payload_sha256()
-      << "\",\"all_actions_legal\":true,\"actual_model_full_delta_bit_exact\":true,\"rows\":[";
+      << "\",\"all_actions_legal\":true,\"all_root_actions_legal\":true,"
+      << "\"actual_model_full_delta_bit_exact\":true,\"all_root_actions_full_delta_bit_exact\":true,\"rows\":[";
     for (std::size_t i=0;i<rows.size();++i) {
       const auto &r=rows[i];if (i) std::cout << ',';
       std::cout << "{\"id\":\"" << r.id << "\",\"action\":\"" << r.action
         << "\",\"milliseconds\":" << r.ms << ",\"generated_successors\":" << r.generated
         << ",\"evaluated_successors\":" << r.evaluated << ",\"nodes\":" << r.nodes
-        << ",\"expansions\":" << r.expansions << '}';
+        << ",\"expansions\":" << r.expansions << ",\"fixed_trace\":\"" << r.trace << "\"}";
     }
     std::cout << "]}\n";return 0;
   } catch (const std::exception &error) { std::cerr << error.what() << '\n';return 1; }

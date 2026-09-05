@@ -130,7 +130,7 @@ def run_screen(root,context,phase):
     if claim.exists() or raw.exists():raise ValueError('claimed screen is spent; seal its interruption and use a fresh isolated attempt')
     compiler=Path('/opt/homebrew/bin/g++-15').resolve()
     if campaign.sha(compiler)!=contract['compiler']['sha256']:raise ValueError('compiler differs from frozen identity')
-    source=campaign.REPO/'submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp'
+    source=campaign.REPO/'submissions/codingame/bots/compact_value_bfm/rank4_gate_trajectories.cpp'
     compiled_rank4=source.parent.parent/'rank_4/submission.cpp'
     if campaign.sha(compiled_rank4)!=campaign.sha(rank4):raise ValueError('compiled Rank4 source differs from frozen opponent')
     binary=directory/'gate.bin';command=[str(compiler),'-std=c++20','-O3',f'-DCOMPACT_VALUE_BFM_CANDIDATE_SOURCE="{candidate}"',str(source),'-o',str(binary)]

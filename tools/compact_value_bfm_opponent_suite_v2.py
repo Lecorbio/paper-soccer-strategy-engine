@@ -39,6 +39,33 @@ POLICY = {'schema': campaign.ID + '.opponent-suite-policy.v2',
     'empty_games_require_process_referee': True, 'proxy_opponents': True}
 
 
+def source_selection(context, phase):
+    from tools import compact_value_bfm_search_v2 as search
+    from tools import compact_value_bfm_train as trainer
+    context=Path(context).resolve()
+    contract=campaign.read(context/'campaign.json')
+    root=campaign.verify(contract['parent_campaign']).parent
+    with trainer.native_thread_execution_scope():
+        selected=search.validate_selection(root,context,phase)
+    if selected.get('required_ablation_complete') is not True or selected.get('eligible_for_multi_opponent') is not True:
+        raise ValueError('opponent suite requires completed source-bound search selection')
+    return selected,search.directory(context,phase)/'search-selection.json'
+
+
+def search_boundaries(selection):
+    """Every played search variant remains excluded, including rejected arms."""
+    strength=campaign.read(campaign.verify(selection['strength']))
+    for record in strength['executions'].values():
+        execution=campaign.read(campaign.verify(record))
+        raw=json.loads(campaign.verify(execution['raw']).read_bytes())
+        for game in raw['games']:
+            state=campaign.features.ReplayState();prefix=len(game['root_transcript'].split('/'))
+            for turn,action in enumerate(game['transcript'].split('/')):
+                if turn>=prefix:yield campaign.fingerprints(state)
+                campaign.features.apply_complete_turn(state,state.to_move,action)
+            yield campaign.fingerprints(state)
+
+
 def replay(transcript):
     state = campaign.features.ReplayState()
     for action in transcript.split('/'):
@@ -125,7 +152,8 @@ def _completed_suite(directory):
     seed = campaign.read(campaign.verify(bank['claim']))
     context=directory.parents[2];phase=directory.parents[1].name
     expected_inputs={'context':campaign.record(context/'campaign.json'),
-        'selection':campaign.record(context/phase/'full-model-selection.json'),
+        'selection':campaign.record(context/phase/'search/search-selection.json'),
+        'full_model_selection':campaign.record(context/phase/'full-model-selection.json'),
         'positions':campaign.record(context/phase/'positions.json'),'games':campaign.record(context/phase/'games.json')}
     if directory.name=='confirmation':expected_inputs['screen']=campaign.record(directory.parent/'screen/assessment.json')
     if seed['inputs']!=expected_inputs or Path(bank['claim']['path'])!=directory/'seed-claim.json':
@@ -137,10 +165,14 @@ def _completed_suite(directory):
     contract = campaign.read(campaign.verify(seed['inputs']['context']))
     parent = campaign.read(campaign.verify(contract['parent_campaign']))
     selection = campaign.read(campaign.verify(claim['selection']))
+    validated,selection_path=source_selection(context,phase)
+    if selection!=validated or claim['selection']!=campaign.record(selection_path) or selection['full_model_selection']!=expected_inputs['full_model_selection']:
+        raise ValueError('suite source is not the measured and strength-tested search selection')
     expected_sources = {'candidate': selection['selected']['source'], 'control': parent['inputs']['discrete_v3_deployment.cpp']}
     if selection.get('eligible_for_multi_opponent') is not True or claim['sources'] != expected_sources:
         raise ValueError('suite candidate or frozen deployed control changed')
     validate_bank_rows(bank['rows'], PAIRS[bank['stage']])
+    validate_bank_isolation(context,phase,bank,selection)
     arms = {arm: {name: {} for name in campaign.OPPONENTS} for arm in ('candidate', 'control')}
     if set(manifest['builds']) != {arm + ':' + name for arm in arms for name in campaign.OPPONENTS}:
         raise ValueError('suite adapter roster changed')
@@ -207,16 +239,53 @@ def _current_collisions(context, phase, target):
     return collided
 
 
+def validate_bank_isolation(context,phase,bank,selection,previous=None):
+    """Recheck exact retained states against immutable corpus and played games."""
+    target={}
+    excluded=campaign.exclusion_sets(campaign.read(Path(context)/'campaign.json'))
+    for rows in bank['rows'].values():
+        for row in rows:
+            if campaign.rejection(replay(row['transcript']),'validation',excluded):
+                raise ValueError('suite root overlaps an excluded prior state')
+            for domain,value in row['fingerprints'].items():target.setdefault(domain,set()).add(value)
+    collided=_current_collisions(Path(context),phase,target)
+    for fps in search_boundaries(selection):
+        for domain,value in fps.items():
+            if value in target[domain]:collided[domain].add(value)
+    if bank['stage']=='confirmation':
+        previous=previous or _completed_suite(Path(context)/phase/'multi-opponent/screen')
+        if not previous[0]['passed'] or previous[1]['selection']!=bank['selection']:
+            raise ValueError('confirmation bank changed its screened source')
+        for record in previous[2]['pairs']:
+            receipt=campaign.read(campaign.verify(record))
+            for arm in ('candidate','control'):
+                for game in evaluation.load_games(campaign.verify(receipt['arms'][arm]['output'])).values():
+                    state=campaign.features.ReplayState();prefix=len(game['root_transcript'].split('/'))
+                    for turn,action in enumerate(game['trajectory'].split('/')):
+                        if turn>=prefix:
+                            for domain,value in campaign.fingerprints(state).items():
+                                if value in target[domain]:collided[domain].add(value)
+                        campaign.features.apply_complete_turn(state,state.to_move,action)
+                    for domain,value in campaign.fingerprints(state).items():
+                        if value in target[domain]:collided[domain].add(value)
+    if any(collided.values()):raise ValueError('suite root overlaps current corpus or played evaluation states')
+    return True
+
+
 def prepare_bank(context, phase, stage, selection_path, prior=None):
     context=Path(context).resolve();selection_path=Path(selection_path).resolve()
     directory = context / phase / 'multi-opponent' / stage
     selection = campaign.read(selection_path)
+    validated,expected_selection_path=source_selection(context,phase)
+    if selection!=validated or selection_path!=expected_selection_path:
+        raise ValueError('suite root seed precedes validated source selection')
     if selection.get('eligible_for_multi_opponent') is not True or not selection.get('selected'):
         raise ValueError('full candidate must be selected before suite roots')
     selected = selection['selected']
     campaign.verify(selected['source']); campaign.verify(selected['runtime'])
     contract = campaign.read(context / 'campaign.json')
     inputs = {'selection': campaign.record(selection_path), 'context': campaign.record(context / 'campaign.json'),
+        'full_model_selection':selection['full_model_selection'],
         'positions': campaign.record(context / phase / 'positions.json'), 'games': campaign.record(context / phase / 'games.json')}
     previous = None
     if stage == 'confirmation':
@@ -239,6 +308,7 @@ def prepare_bank(context, phase, stage, selection_path, prior=None):
             raise ValueError('resumed suite bank inputs changed')
         validate_bank_rows(bank['rows'], pairs)
         for item in bank['tsvs'].values(): campaign.verify(item)
+        validate_bank_isolation(context,phase,bank,selection,previous)
         return bank
     excluded = campaign.exclusion_sets(contract)
     seen = {}; proposals = {name: [] for name in campaign.OPPONENTS}
@@ -260,6 +330,9 @@ def prepare_bank(context, phase, stage, selection_path, prior=None):
             proposals[name].extend(pool)
     target = {domain: set(values) for domain, values in seen.items()}
     collided = _current_collisions(context, phase, target)
+    for fps in search_boundaries(selection):
+        for domain,value in fps.items():
+            if value in target[domain]:collided[domain].add(value)
     if previous:
         # Fresh confirmation excludes both screen roots and all played boundaries.
         for record in previous[2]['pairs']:
@@ -408,12 +481,7 @@ def execute_pair(directory, name, row, ordinal, bank, builds):
 
 
 def run(root, context, phase, stage):
-    from tools import compact_value_bfm_full_selection_v2 as full_selection
-    from tools import compact_value_bfm_train as trainer
-    with trainer.native_thread_execution_scope():
-        full_selection.assess(root, context, phase)
-    selection_path = context / phase / 'full-model-selection.json'
-    selected = campaign.read(selection_path)
+    selected,selection_path=source_selection(context,phase)
     directory = context / phase / 'multi-opponent' / stage
     if (directory / 'assessment.json').exists(): return _completed_suite(directory)[0]
     if (directory / 'execution-claim.json').exists():
