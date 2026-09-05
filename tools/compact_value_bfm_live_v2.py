@@ -13,9 +13,11 @@ import datetime as dt
 from decimal import Decimal
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
+import time
 from urllib.parse import urlparse
 
 if __name__ == '__main__':
@@ -309,7 +311,7 @@ def freeze_roster(output,submission,snapshot,payload):
         'snapshot':snapshot,'game_ids':ids,'selection':'first observed exact90 matching IDs; no result-based selection'})
 
 
-def watch(root,source_sha,timeout_seconds=3600):
+def _collect_window(root,source_sha,timeout_seconds):
     auth,submission=validate_submission(root,source_sha);output=directory(root,source_sha)
     collector_submission(output,auth,submission)
     freeze_roster(output,submission,submission['after_battles'],response(submission['after_battles'],BATTLES_SERVICE,[submission['agent_id'],None]))
@@ -324,6 +326,36 @@ def watch(root,source_sha,timeout_seconds=3600):
     return collector.watch_window(submission_attestation_path=output/'collector-submission.json',
         exclusion_binding_path=Path(auth['exclusion_binding']['path']),data_root=output/'window',
         poll_seconds=10,timeout_seconds=timeout_seconds,maximum_workers=2,fetch_battles=battles)
+
+
+def watch(root,source_sha,timeout_seconds=3600):
+    """Collect exact90, freeze the first complete calibration, and assess it."""
+    if type(timeout_seconds) not in (int,float) or not math.isfinite(timeout_seconds) or timeout_seconds<0:
+        raise ValueError('live watch timeout must be finite and nonnegative')
+    started=time.monotonic()
+    collected=_collect_window(root,source_sha,timeout_seconds)
+    if collected.get('schema')==collector.WAIT_SNAPSHOT_SCHEMA and collected.get('timed_out') is True:
+        return collected
+    if collected.get('schema')!=collector.WINDOW_REFERENCE_SCHEMA or collected.get('exact_games')!=90:
+        raise ValueError('live watcher did not complete its exact90 source-bound window')
+    # Capture immediately after collection. Existing complete-calibration
+    # observations are immutable and capture_score never refreshes them.
+    observation=capture_score(root,source_sha)
+    def waiting():
+        return {'schema':campaign.ID+'.live-watch-status.v2','status':'awaiting-source-calibration',
+            'exact_games':90,'calibration_complete':False,'timed_out':True,
+            'last_score_observation':observation,'campaign_success':False}
+    while True:
+        if observation.get('calibration_complete') is True:
+            with campaign.lease(Path(root).resolve()):
+                return assess(root,source_sha)
+        remaining=timeout_seconds-(time.monotonic()-started)
+        if remaining<=0:
+            return waiting()
+        time.sleep(min(10,remaining))
+        if time.monotonic()-started>=timeout_seconds:
+            return waiting()
+        observation=capture_score(root,source_sha)
 
 
 def live_window(root,source_sha):

@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import json
 from pathlib import Path
 import tempfile
@@ -150,6 +151,74 @@ class LiveTests(unittest.TestCase):
             second=live.capture_score(self.root,self.source_sha)
         self.assertEqual(first,second);self.assertEqual(fetch.call_count,1)
 
+    def test_watch_captures_calibration_immediately_and_assesses_under_the_lease(self):
+        events=[]
+        window={'schema':live.collector.WINDOW_REFERENCE_SCHEMA,'exact_games':90}
+        @contextlib.contextmanager
+        def lease(_root):
+            events.append('lease-enter')
+            yield
+            events.append('lease-exit')
+        def score(*_args):
+            events.append('capture-score')
+            return {'calibration_complete':True}
+        def assess(*_args):
+            events.append('assess')
+            return {'status':'campaign-success','campaign_success':True}
+        with mock.patch.object(live,'_collect_window',return_value=window), \
+                mock.patch.object(live,'capture_score',side_effect=score), \
+                mock.patch.object(live,'assess',side_effect=assess), \
+                mock.patch.object(campaign,'lease',side_effect=lease), \
+                mock.patch.object(live.time,'sleep',side_effect=AssertionError('complete calibration must not wait')):
+            result=live.watch(self.root,self.source_sha)
+        self.assertTrue(result['campaign_success'])
+        self.assertEqual(events,['capture-score','lease-enter','assess','lease-exit'])
+
+    def test_watch_waits_for_calibration_without_recollecting_or_selecting_a_new_score(self):
+        window={'schema':live.collector.WINDOW_REFERENCE_SCHEMA,'exact_games':90}
+        with mock.patch.object(live,'_collect_window',return_value=window) as collect, \
+                mock.patch.object(live,'capture_score',side_effect=[{'calibration_complete':False},{'calibration_complete':True}]) as score, \
+                mock.patch.object(live,'assess',return_value={'status':'score-precision-inconclusive','campaign_success':False}) as assess, \
+                mock.patch.object(campaign,'lease',return_value=contextlib.nullcontext()), \
+                mock.patch.object(live.time,'monotonic',side_effect=[0,1,11]), \
+                mock.patch.object(live.time,'sleep') as sleep:
+            result=live.watch(self.root,self.source_sha,timeout_seconds=20)
+        self.assertEqual(result['status'],'score-precision-inconclusive')
+        self.assertEqual(collect.call_count,1);self.assertEqual(score.call_count,2);self.assertEqual(assess.call_count,1)
+        sleep.assert_called_once_with(10)
+
+    def test_watch_timeout_preserves_incomplete_calibration_without_assessment(self):
+        window={'schema':live.collector.WINDOW_REFERENCE_SCHEMA,'exact_games':90}
+        with mock.patch.object(live,'_collect_window',return_value=window), \
+                mock.patch.object(live,'capture_score',return_value={'calibration_complete':False}), \
+                mock.patch.object(live,'assess',side_effect=AssertionError('incomplete calibration')), \
+                mock.patch.object(live.time,'monotonic',side_effect=[0,20]), \
+                mock.patch.object(live.time,'sleep',side_effect=AssertionError('deadline already elapsed')):
+            result=live.watch(self.root,self.source_sha,timeout_seconds=20)
+        self.assertEqual(result['status'],'awaiting-source-calibration')
+        self.assertFalse(result['campaign_success']);self.assertTrue(result['timed_out'])
+
+    def test_watch_does_not_start_another_score_request_at_the_deadline(self):
+        window={'schema':live.collector.WINDOW_REFERENCE_SCHEMA,'exact_games':90}
+        with mock.patch.object(live,'_collect_window',return_value=window), \
+                mock.patch.object(live,'capture_score',return_value={'calibration_complete':False}) as score, \
+                mock.patch.object(live,'assess',side_effect=AssertionError('incomplete calibration')), \
+                mock.patch.object(live.time,'monotonic',side_effect=[0,19,20]), \
+                mock.patch.object(live.time,'sleep') as sleep:
+            result=live.watch(self.root,self.source_sha,timeout_seconds=20)
+        self.assertEqual(result['status'],'awaiting-source-calibration')
+        self.assertEqual(score.call_count,1);sleep.assert_called_once_with(1)
+
+    def test_watch_incomplete_collection_never_fetches_score(self):
+        waiting={'schema':live.collector.WAIT_SNAPSHOT_SCHEMA,'timed_out':True}
+        with mock.patch.object(live,'_collect_window',return_value=waiting), \
+                mock.patch.object(live,'capture_score',side_effect=AssertionError('collection incomplete')):
+            self.assertEqual(live.watch(self.root,self.source_sha),waiting)
+        for value in (True,-1,float('nan'),float('inf')):
+            with self.subTest(value=value),mock.patch.object(live,'_collect_window') as collect:
+                with self.assertRaises(ValueError):live.watch(self.root,self.source_sha,value)
+                collect.assert_not_called()
+
     def test_submit_rechecks_actual_protected_source_before_network(self):
         auth=self.authorize()
         captured=self.root/'capture.cpp';captured.write_bytes(Path(auth['source']['path']).read_bytes())
@@ -179,6 +248,17 @@ class LiveTests(unittest.TestCase):
         self.assertTrue((self.root/'success.json').exists())
         self.assertEqual(result['rank'],7)
         self.assertTrue(result['rank_is_separate_from_success'])
+
+    def test_watch_resume_reuses_frozen_calibration_without_network(self):
+        value=self.completed_window(45)
+        window={'schema':live.collector.WINDOW_REFERENCE_SCHEMA,'exact_games':90}
+        with mock.patch.object(live,'_collect_window',return_value=window), \
+                mock.patch.object(live,'live_window',return_value=value), \
+                mock.patch.object(live,'fetch',side_effect=AssertionError('frozen score must not refresh')), \
+                mock.patch.object(campaign,'lease',return_value=contextlib.nullcontext()):
+            result=live.watch(self.root,self.source_sha)
+        self.assertTrue(result['campaign_success'])
+        self.assertTrue((self.root/'success.json').exists())
 
     def test_near_threshold_does_not_finalize_failure_or_success(self):
         value=self.completed_window(44.30)

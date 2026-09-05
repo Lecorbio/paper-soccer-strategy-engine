@@ -354,7 +354,12 @@ inconsistent observations. Ambiguity permits observation, never another click.
 
 Start its durable `watch` command immediately after attestation. The first exact
 90 matching game IDs are frozen before filtering any later metadata. Every game
-and replay session must agree with that identity. The final check requires 90
+and replay session must agree with that identity. Once collection completes,
+the same watcher immediately captures calibration, polls while it remains
+incomplete, and runs the final source-bound assessment under the campaign lease.
+Its timeout covers collection and calibration together. A timed-out run resumes
+the same frozen window; completed score observations are never refreshed.
+The final check requires 90
 operationally clean games and completed calibration (`percentage=100`,
 `inProgress=false`). Opponent forfeits are not clean strength evidence. Rank is
 reported separately.
@@ -383,8 +388,10 @@ own concrete experiment integration; attempt four remains unavailable.
 or a completed calibrated live rejection. It keeps terminal proof separate from
 the unprotected metrics used for attribution, and carries fingerprints from the
 protected proposals, played games, release preflight and live replays. An
-interrupted gate, ambiguous submission or precision-inconclusive score cannot
-count as a completed failed attempt.
+interrupted gate, ambiguous submission or clean window with an inconclusive
+score cannot count as a completed failed attempt. A completed calibrated window
+with operational failures already misses the clean-game requirement and can
+close irrespective of score precision.
 
 Future training phases may explicitly freeze `training_executor` as
 `{"mode":"spawn-v2","maximum_workers":2}` through pilot preparation's
@@ -397,3 +404,21 @@ anchor filtering. Standard phases keep the existing thread executor. Production
 activation still requires a real smoke equivalence run and memory/performance
 measurement when campaign training slots are free; synthetic checks alone do
 not establish production equivalence or a speedup.
+
+`compact_value_bfm_seed_process_check_v2.py prepare --root ROOT --output OUTPUT`
+freezes that experiment without reconstructing the large core datasets or
+starting training. `OUTPUT` must be a fresh child of
+`ROOT/diagnostics/seed-process-equivalence`. Prepare and execute from the same
+immutable source snapshot; `inspect --plan OUTPUT/plan.json` verifies the plan.
+The harness preserves the historical smoke's separate prepared and retained
+position files and reproduces its exact input binding.
+
+Once the campaign lease is free, `run --plan OUTPUT/plan.json` trains all three
+recipes with two seeds each, first through threads and then through two spawned
+processes. Those stages run sequentially and compare complete deterministic
+receipts, scale trials, metrics, float checkpoints, runtimes and source exports.
+The report includes process-tree memory samples, per-process resource records
+and elapsed times. Its single fixed order is explicit; an observed elapsed ratio
+does not establish an order-independent speedup. Both children and complete
+memory observations are required before considering production activation.
+No result qualifies a model or enables the production executor automatically.
