@@ -323,3 +323,52 @@ CI configuration uses `trained_v2_candidate.cpp` when that committed file exists
 The candidate targets have been exercised with a real smoke-trained source:
 native unit checks, 4,096-state feature parity, and 4,096-state runtime inference
 parity passed. These establish the execution path, not candidate qualification.
+
+## Final release and live evidence
+
+`compact_value_bfm_release_v2.py` stages only an actually development-qualified
+source. Publication binds clean committed bytes and exact green CI. Its fresh
+local preflight builds GCC, Clang and sanitizer panels, verifies native tests,
+4,096-state feature/scalar/full-delta parity and decoded model identity, then
+checks sequential timing and both-color empty-board process-referee games.
+The resulting `release/freeze.json` binds the source, runtime, commit, CI,
+development result, toolchain and complete preflight evidence.
+
+`compact_value_bfm_protected_v2.py` materializes no protected roots before that
+freeze validates. Each independent OS-generated 256-bit seed produces 500 pairs.
+The two gates run sequentially, each as 100 five-pair shards on four single-thread
+workers. Gate B excludes Gate A proposals and played boundaries irrespective of
+the score. Each gate needs 527 wins, 260 per color and zero failures. Completed
+shards revalidate before reuse; an incomplete claimed shard cannot retry.
+
+`compact_value_bfm_live_v2.py` provides the normal qualified-release path. It
+creates a new v2 authorization and explicit identity-only compatibility records
+for the maintained exact-90 collector, preserving every historical authorization.
+An editor copyback must match the frozen source. `start-submit` revalidates actual
+protected qualification and claims at most one UI submission for that source;
+the command itself does not click Submit. After the UI action, attestation binds
+the new server agent/submission/session to the same owner and rejects stale or
+inconsistent observations. Ambiguity permits observation, never another click.
+
+Start its durable `watch` command immediately after attestation. The first exact
+90 matching game IDs are frozen before filtering any later metadata. Every game
+and replay session must agree with that identity. The final check requires 90
+operationally clean games and completed calibration (`percentage=100`,
+`inProgress=false`). Opponent forfeits are not clean strength evidence. Rank is
+reported separately.
+
+Public leaderboard scores are rounded. The current adapter uses a conservative
+plus/minus 0.01 interval and requires its lower bound to exceed
+44.29750553418035. Values too close to resolve, such as a displayed 44.30, remain
+precision-inconclusive pending authoritative finer-precision evidence; they do
+not finalize success or failure. The first completed-calibration observation is
+immutable, so later favorable score fluctuations cannot replace it. Useful
+diagnostic uploads retain their existing user authorization, but their separate
+experiment-specific adapter is not supplied by this qualified-release CLI.
+
+After two verified completed unsuccessful trained attempts,
+`compact_value_bfm_attribution_v2.py` freezes only unprotected diagnostics and one
+recommended intervention category. Pilot and full training count together. It
+does not itself launch attempt three or invent a training configuration; concrete
+profile/attempt integration and protected/live terminal-outcome continuation
+remain required for those failure routes.

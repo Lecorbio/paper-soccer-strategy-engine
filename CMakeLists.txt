@@ -424,6 +424,10 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_timing_instrumentation_v2
               tests.codingame.test_compact_value_bfm_category_profile_v2
               tests.codingame.test_compact_value_bfm_full_outcome_v2
+              tests.codingame.test_compact_value_bfm_attribution_v2
+              tests.codingame.test_compact_value_bfm_release_v2
+              tests.codingame.test_compact_value_bfm_protected_v2
+              tests.codingame.test_compact_value_bfm_live_v2
               tests.codingame.test_compact_value_bfm_opponent_evaluation
               tests.codingame.test_compact_value_bfm_opponent_suite_v2)
     set_tests_properties(
