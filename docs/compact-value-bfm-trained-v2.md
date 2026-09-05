@@ -466,3 +466,35 @@ the resource authorization alone records worker capacity and does not certify
 equivalence. Representative full-size memory observations remain necessary; this
 smoke experiment does not establish full-size memory headroom or qualify a
 candidate.
+
+Prepare an actual corpus for a capacity check before starting any seeds:
+
+```sh
+python tools/compact_value_bfm_campaign_v2.py --root PHASE_CONTEXT \
+  prepare-training-inputs --phase PHASE
+```
+
+This uses the ordinary campaign lease and the same preparation helper as
+training. It builds or verifies the ranking store, deduplicated scalar shards,
+anchor filtering and sealed input audit. It does not load model initialization,
+measure baseline models or train seeds. Preparation-only samples and deduplication
+sets are released before subsequent seed work; array contents and ordering stay
+unchanged.
+
+From one immutable source snapshot, use
+`compact_value_bfm_training_capacity_v2.py prepare --root ROOT --context
+PHASE_CONTEXT --phase PHASE --output OUTPUT` to freeze a load-only measurement
+under `ROOT/diagnostics/training-capacity`. Preparation binds the already audited
+corpus, source files, Python runtime and explicit four-worker authorization.
+`run --plan OUTPUT/plan.json` requires the ordinary heavy-stage lease. It holds
+the coordinator's reconstructed inputs and four independent spawned children's
+inputs together while collecting process memory observations. Numerical runtimes
+remain limited to one thread. No seed, optimizer step or candidate artifact is
+created; a spent execution cannot silently retry.
+
+The report distinguishes mapped file extent from sampled resident memory.
+Mappings are not pinned or guaranteed fully prefaulted, and shared pages may
+appear in several RSS totals. This load-only probe does not measure preparation
+temporaries or peak training-batch workspaces. Review those additional costs for
+the actual corpus before enabling four-worker production; the report never
+grants automatic activation or model qualification.

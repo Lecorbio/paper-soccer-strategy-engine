@@ -675,22 +675,19 @@ def label_positions(root,phase,workers):
     event(root,'labels-completed',{'labels':record(output)}); return result
 
 
-def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_profile=None):
-    if tuple(sorted(set(ranking_weights)))!=tuple(ranking_weights) or 0.0 not in ranking_weights or not set(ranking_weights)<={0.0,.10,.25}:
-        raise ValueError('invalid ranking recipe roster')
+def prepare_training_inputs(root,phase,*,smoke=False):
+    """Prepare the unchanged audited arrays without loading or training a seed.
+
+    Callers own the ordinary campaign heavy-stage lease. Preparation-only sample
+    lists, deduplication sets, and the fresh scalar validation dataset are released
+    when this helper returns; the training arrays and sealed audit stay unchanged.
+    """
     from tools import compact_value_bfm_train as trainer
     from tools import compact_value_bfm_teacher_training as adapter
     from tools import compact_value_bfm_seed_process_v2 as seed_process
-    from tools import compact_value_bfm_training_resources_v2 as resources
-    from tools import compact_value_bfm_intervention_v2 as intervention
     from tools import jacek_replay_train as packer
+    root=Path(root)
     plan=read(root/'campaign.json')
-    mode=seed_process.executor_mode(plan)
-    seed_workers=resources.expected_workers(plan)
-    frozen_profile=intervention.expected_qat_profile(plan)
-    profile=trainer.resolve_qat_profile(frozen_profile if qat_profile is None else qat_profile)
-    if profile.name!=frozen_profile:
-        raise ValueError('QAT profile differs from frozen phase')
     labels=read(root/phase/'labels.json')
     bundle=trainer.FrozenBundle.load(verify(plan['bundle']))
     from tools import compact_value_bfm_ranking_store as ranking_store
@@ -727,6 +724,28 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_prof
         canonical_validation=validation,source_routes={**routes,'new':(shard_records['train']['manifest']['path'],)},
         paired_row_validation={'external_source_bound':True},split_isolation={'closure_audit':audit['body_sha256']},
         input_audit=audit,successor_rankings=rankings)
+    return {'plan':plan,'bundle':bundle,'inputs':inputs,'anchor_filter':anchor_filter,'audit':audit}
+
+
+def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_profile=None):
+    if tuple(sorted(set(ranking_weights)))!=tuple(ranking_weights) or 0.0 not in ranking_weights or not set(ranking_weights)<={0.0,.10,.25}:
+        raise ValueError('invalid ranking recipe roster')
+    from tools import compact_value_bfm_train as trainer
+    from tools import compact_value_bfm_teacher_training as adapter
+    from tools import compact_value_bfm_seed_process_v2 as seed_process
+    from tools import compact_value_bfm_training_resources_v2 as resources
+    from tools import compact_value_bfm_intervention_v2 as intervention
+    plan=read(root/'campaign.json')
+    mode=seed_process.executor_mode(plan)
+    seed_workers=resources.expected_workers(plan)
+    frozen_profile=intervention.expected_qat_profile(plan)
+    profile=trainer.resolve_qat_profile(frozen_profile if qat_profile is None else qat_profile)
+    if profile.name!=frozen_profile:
+        raise ValueError('QAT profile differs from frozen phase')
+    prepared=prepare_training_inputs(root,phase,smoke=smoke)
+    if prepared['plan']!=plan:
+        raise ValueError('training phase changed during input preparation')
+    bundle=prepared['bundle']; inputs=prepared['inputs']; anchor_filter=prepared['anchor_filter']
     architecture=trainer.ARCHITECTURES['capacity-12x8']; arm=trainer.ARMS['search-target']
     initial=verify(plan['inputs']['attempt_one_initial_checkpoint'])
     params=trainer.load_float_checkpoint(initial,architecture)
@@ -812,7 +831,27 @@ def main():
     g=sub.add_parser('games'); g.add_argument('--phase',default='smoke-064'); g.add_argument('--games',type=int,default=64); g.add_argument('--workers',type=int,default=8)
     for stage in ('positions','labels','anchor-exclusions','train-smoke'):
         g=sub.add_parser(stage); g.add_argument('--phase',default='smoke-064'); g.add_argument('--workers',type=int,default=8)
+    preparation=sub.add_parser('prepare-training-inputs',
+        help='prepare audited production inputs; --root is the phase context directory')
+    preparation.add_argument('--phase',required=True)
+    preparation.add_argument('--smoke',action='store_true')
     a=parser.parse_args(); root=a.root.resolve()
+    if a.command=='prepare-training-inputs':
+        import gc
+        with lease(root):
+            prepared=prepare_training_inputs(root,a.phase,smoke=a.smoke)
+            inputs=prepared['inputs']; audit=prepared['audit']
+            summary={'command':a.command,'body_sha256':audit['body_sha256'],
+                'input_audit':record(root/a.phase/'training-input-audit.json'),
+                'ranking_store':audit['ranking_store'],'shards':audit['shards'],
+                'samples':{name:len(getattr(inputs,name)) for name in
+                           ('new','anchor','common_adjudicator','canonical_validation')},
+                'ranking_groups':{split:len(getattr(inputs.successor_rankings,split)) for split in ('train','validation')},
+                'seed_initialization_started':False,'real_training_started':False,'qualification_passed':False}
+            del prepared,inputs,audit
+            gc.collect()
+        print(json.dumps(summary,sort_keys=True))
+        return
     if a.command=='freeze': result=freeze(root,a.previous.resolve(),a.build.resolve())
     elif a.command=='games':
         if not 1<=a.workers<=8: raise ValueError('workers must be 1..8')
