@@ -60,6 +60,34 @@ def output_path(root, output):
     return output
 
 
+def historical_seed_results(directory, training):
+    """Reopen original smoke completions as comparisons, never new executions."""
+    rows = []
+    for row in sorted(training['results'], key=lambda item: item['weight']):
+        output = directory / 'training' / f'lambda-{row["weight"]:.2f}'
+        reference = trainer._seed_reference_path(output, trainer.ARCHITECTURES['capacity-12x8'],
+            trainer.ARMS['search-target'], row['seed'])
+        if reference.resolve() != reference.absolute():
+            raise ValueError('historical seed reference changed its canonical output path')
+        reference_record = campaign.record(reference)
+        bound(reference_record, reference)
+        receipt = trainer._load_seed_receipt_from_reference(output, reference, row['seed_receipt']['binding'])
+        if receipt != row['seed_receipt']:
+            raise ValueError('historical smoke row differs from its completed seed reference')
+        artifacts = {}
+        for original, key in (('float_checkpoint', 'float_checkpoint'), ('runtime', 'quantized_runtime')):
+            expected = trainer._output_artifact(output, receipt[key]['path'],
+                expected_sha256=receipt[key]['sha256'], label=key)
+            bound(row[original], expected)
+            artifacts[key] = row[original]
+        source = bound(row['source'], output / f'seed-{row["seed"]}.cpp')
+        if source.read_bytes() != adapter._runtime_source(Path(artifacts['quantized_runtime']['path'])):
+            raise ValueError('historical smoke source does not reproduce its runtime')
+        rows.append({'weight': row['weight'], 'seed': row['seed'], 'reference': reference_record,
+            'receipt': receipt, 'source': row['source'], **artifacts})
+    return rows
+
+
 def smoke_inputs_metadata(root):
     """Verify historical routing without allocating the million-row anchor."""
     root = Path(root).resolve()
@@ -114,7 +142,8 @@ def smoke_inputs_metadata(root):
         'eligible_positions_used_for_anchor_filter': labels['positions'],
         'initial_checkpoint': plan['inputs']['attempt_one_initial_checkpoint'],
         'expected_base_binding': base, 'expected_datasets': base['datasets'],
-        'expected_anchor_rows_removed': 2, 'retained_groups': 994}
+        'expected_anchor_rows_removed': 2, 'retained_groups': 994,
+        'historical_seed_results': historical_seed_results(directory, training)}
 
 
 def prepare(root, output):
@@ -128,6 +157,7 @@ def prepare(root, output):
         'maximum_active_real_seeds': 2, 'numerical_threads_per_seed': 1,
         'spawn_start_method': 'spawn', 'full_maintained_seed_and_qat_execution': True,
         'historical_receipts_reused_as_execution_results': False,
+        'historical_seed_equivalence_required': True,
         'real_core_inputs_reconstructed_during_prepare': False,
         'global_heavy_stage_lease_required': True, 'qualification_eligible': False,
         'automatic_production_opt_in': False, 'real_training_started': False,
@@ -144,6 +174,8 @@ def validate_plan(path):
             or plan['stage_order'] != list(STAGES) or plan['maximum_active_real_seeds'] != 2
             or plan['numerical_threads_per_seed'] != 1 or plan['spawn_start_method'] != 'spawn'
             or plan['qualification_eligible'] is not False or plan['automatic_production_opt_in'] is not False
+            or plan.get('historical_seed_equivalence_required') is not True
+            or plan.get('historical_receipts_reused_as_execution_results') is not False
             or plan['real_training_started'] is not False
             or plan['python'] != {'executable': str(Path(sys.executable).resolve()), 'version': sys.version}
             or plan['sources'] != sources()):
@@ -372,6 +404,34 @@ def run_stage(plan_path, stage):
         'process_evidence': process_evidence, 'qualification_eligible': False})
 
 
+def compare_seed_results(left, right):
+    """Compare numerical execution and exact artifacts, separating provenance."""
+    if (left['weight'], left['seed']) != (right['weight'], right['seed']):
+        raise ValueError('executor comparison seed identity changed')
+    for row in (left, right):
+        trainer.validate_native_thread_execution(row['receipt']['native_thread_execution'])
+    def deterministic(receipt):
+        return {key: value for key, value in receipt.items()
+            if key not in ('native_thread_execution', 'body_sha256')}
+    equal = deterministic(left['receipt']) == deterministic(right['receipt'])
+    artifacts = {key: (left[key]['sha256'], left[key]['bytes']) == (right[key]['sha256'], right[key]['bytes'])
+        for key in ('float_checkpoint', 'quantized_runtime', 'source')}
+    if not equal or not all(artifacts.values()):
+        raise ValueError(f'full maintained seed differs for lambda={left["weight"]}, seed={left["seed"]}')
+    return {'weight': left['weight'], 'seed': left['seed'],
+        'all_deterministic_receipt_fields_equal': equal, 'artifact_bytes_equal': artifacts,
+        'native_execution_contracts_validated': True,
+        'native_execution_records_equal': left['receipt']['native_thread_execution'] == right['receipt']['native_thread_execution']}
+
+
+def compare_historical_results(historical, threaded):
+    expected = [(weight, SEEDS[0]) for weight in WEIGHTS]
+    current = [row for row in threaded['results'] if row['seed'] == SEEDS[0]]
+    if any([(row['weight'], row['seed']) for row in rows] != expected for rows in (historical, current)):
+        raise ValueError('historical equivalence requires all three original smoke recipes')
+    return [compare_seed_results(left, right) for left, right in zip(historical, current, strict=True)]
+
+
 def compare_stage_results(threaded, spawned):
     if (threaded['stage'], spawned['stage']) != STAGES or threaded['plan'] != spawned['plan']:
         raise ValueError('executor results belong to different experiments or stages')
@@ -389,20 +449,7 @@ def compare_stage_results(threaded, spawned):
         # The deterministic receipts include all scale trials, selected scales, QAT
         # trajectories, float/quantized metrics, gradients' update evidence,
         # parity checks, and exact training bindings. PID/timing is separate.
-        for row in (left, right):
-            trainer.validate_native_thread_execution(row['receipt']['native_thread_execution'])
-        def deterministic(receipt):
-            return {key: value for key, value in receipt.items()
-                if key not in ('native_thread_execution', 'body_sha256')}
-        equal = deterministic(left['receipt']) == deterministic(right['receipt'])
-        artifacts = {key: (left[key]['sha256'], left[key]['bytes']) == (right[key]['sha256'], right[key]['bytes'])
-            for key in ('float_checkpoint', 'quantized_runtime', 'source')}
-        if not equal or not all(artifacts.values()):
-            raise ValueError(f'full maintained seed differs for lambda={left["weight"]}, seed={left["seed"]}')
-        checks.append({'weight': left['weight'], 'seed': left['seed'],
-            'all_deterministic_receipt_fields_equal': equal, 'artifact_bytes_equal': artifacts,
-            'native_execution_contracts_validated': True,
-            'native_execution_records_equal': left['receipt']['native_thread_execution'] == right['receipt']['native_thread_execution']})
+        checks.append(compare_seed_results(left, right))
     workers = sorted({row['process']['pid'] for row in spawned['process_evidence']})
     complete_memory = all(row['memory']['samples'] > 0 and not row['memory']['errors']
         and row['memory'].get('process_tree_peak_rss', 0) > 0
@@ -527,9 +574,12 @@ def validate_result(plan_path):
     plan = validate_plan(plan_path)
     stages = [validated_stage(plan_path, stage) for stage in STAGES]
     comparison = compare_stage_results(*stages)
+    historical_checks = compare_historical_results(plan['smoke']['historical_seed_results'], stages[0])
     receipt_path = Path(plan['output']) / 'comparison.json'
     body = {'schema': SCHEMA + '.comparison', 'plan': campaign.record(plan_path),
-        'stages': [campaign.record(Path(plan['output']) / stage / 'result.json') for stage in STAGES], **comparison}
+        'stages': [campaign.record(Path(plan['output']) / stage / 'result.json') for stage in STAGES],
+        'historical_seed_equivalence_passed': True, 'historical_seed_checks': historical_checks,
+        'historical_receipts_reused_as_execution_results': False, **comparison}
     campaign.seal(receipt_path, body)
     return body
 

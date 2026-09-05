@@ -393,6 +393,12 @@ score cannot count as a completed failed attempt. A completed calibrated window
 with operational failures already misses the clean-game requirement and can
 close irrespective of score precision.
 
+Training backpropagation skips first-layer scatter rows whose computed gradient
+is exactly zero. Dense reductions and the order and multiplicity of every
+retained scatter remain unchanged. Bitwise gradient and optimizer checks cover
+signed zeros, duplicate features and float/QAT batches. Existing active training
+continues from its immutable earlier snapshot.
+
 Future training phases may explicitly freeze `training_executor` as
 `{"mode":"spawn-v2","maximum_workers":2}` through pilot preparation's
 `--training-executor spawn-v2` option. An already frozen phase cannot change
@@ -417,6 +423,9 @@ Once the campaign lease is free, `run --plan OUTPUT/plan.json` trains all three
 recipes with two seeds each, first through threads and then through two spawned
 processes. Those stages run sequentially and compare complete deterministic
 receipts, scale trials, metrics, float checkpoints, runtimes and source exports.
+For the first seed of each recipe, the new thread execution must also match the
+original completed smoke receipt and artifacts. Historical results supply that
+comparison baseline while both new executor stages perform fresh training.
 The report includes process-tree memory samples, per-process resource records
 and elapsed times. Its single fixed order is explicit; an observed elapsed ratio
 does not establish an order-independent speedup. Both children and complete

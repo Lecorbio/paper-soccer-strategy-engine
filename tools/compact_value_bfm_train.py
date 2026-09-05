@@ -3268,8 +3268,11 @@ def _network_gradients(
         first_gradient * first_activation_derivative(first_pre)
     )
     gradients["w1"] = np.zeros_like(parameters["w1"], dtype=np.float32)
-    for row, indices in enumerate(active):
-        np.add.at(gradients["w1"], indices, first_pre_gradient[row])
+    # This helper expects active/cache from the same forward call, which has
+    # already accessed every row. Preserve all dense reductions and retained
+    # scatter order; omit only exact zeros. NaN/Inf rows remain selected.
+    for row in np.flatnonzero(np.any(first_pre_gradient != 0, axis=1)):
+        np.add.at(gradients["w1"], active[row], first_pre_gradient[row])
     return gradients
 
 

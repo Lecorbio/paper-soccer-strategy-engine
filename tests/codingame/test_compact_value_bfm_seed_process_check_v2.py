@@ -34,6 +34,7 @@ class SeedProcessCheckTests(unittest.TestCase):
                 self.assertFalse(plan['real_training_started'])
                 self.assertFalse(plan['qualification_eligible'])
                 self.assertFalse(plan['automatic_production_opt_in'])
+                self.assertTrue(plan['historical_seed_equivalence_required'])
                 reconstruction.assert_not_called()
                 training.assert_not_called()
                 with mock.patch.object(check, 'sources', return_value=[{'changed': True}]):
@@ -157,6 +158,50 @@ class SeedProcessCheckTests(unittest.TestCase):
         self.assertFalse(result['memory_measurements_complete'])
         self.assertFalse(result['executor_ready_for_review'])
         self.assertFalse(result['automatic_production_opt_in'])
+
+    def test_agreeing_new_executors_must_also_match_original_smoke_training(self):
+        thread, spawn = self.stage_pair()
+        historical = copy.deepcopy([row for row in thread['results'] if row['seed'] == check.SEEDS[0]])
+        self.assertEqual(len(check.compare_historical_results(historical, thread)), 3)
+        for stage in (thread, spawn):
+            stage['results'][0]['receipt']['float_training']['gradient_updates'] = 'same-new-drift'
+        self.assertTrue(check.compare_stage_results(thread, spawn)['exact_equivalence_passed'])
+        with self.assertRaisesRegex(ValueError, 'full maintained seed differs'):
+            check.compare_historical_results(historical, thread)
+        with self.assertRaisesRegex(ValueError, 'three original smoke recipes'):
+            check.compare_historical_results(historical[:-1], thread)
+
+    def test_historical_rows_reopen_original_references_and_canonical_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            output = directory / 'training/lambda-0.10'
+            receipt = {'binding': {'frozen': True}}
+            for key in ('float_checkpoint', 'quantized_runtime'):
+                path = output / (key + '.bin'); campaign.once(path, key.encode())
+                receipt[key] = {'path': path.name, 'sha256': campaign.sha(path)}
+            reference = trainer._seed_reference_path(output, trainer.ARCHITECTURES['capacity-12x8'],
+                trainer.ARMS['search-target'], check.SEEDS[0])
+            campaign.once(reference, b'fixture reference')
+            source = output / f'seed-{check.SEEDS[0]}.cpp'; campaign.once(source, b'fixture source')
+            row = {'weight': .1, 'seed': check.SEEDS[0], 'seed_receipt': receipt,
+                'float_checkpoint': campaign.record(output / receipt['float_checkpoint']['path']),
+                'runtime': campaign.record(output / receipt['quantized_runtime']['path']),
+                'source': campaign.record(source)}
+            with mock.patch.object(trainer, '_load_seed_receipt_from_reference', return_value=receipt) as load, \
+                    mock.patch.object(check.adapter, '_runtime_source', return_value=b'fixture source'):
+                checked = check.historical_seed_results(directory, {'results': [row]})
+                load.assert_called_once_with(output, reference, receipt['binding'])
+                self.assertEqual(checked[0]['reference'], campaign.record(reference))
+                replacement = directory / 'other-source.cpp'; campaign.once(replacement, source.read_bytes())
+                row['source'] = campaign.record(replacement)
+                with self.assertRaisesRegex(ValueError, 'canonical output path'):
+                    check.historical_seed_results(directory, {'results': [row]})
+                row['source'] = campaign.record(source)
+                external = directory / 'external-reference.json'; campaign.once(external, reference.read_bytes())
+                reference.unlink(); reference.symlink_to(external)
+                load.side_effect = AssertionError('redirected reference must reject before loading')
+                with self.assertRaisesRegex(ValueError, 'canonical output path'):
+                    check.historical_seed_results(directory, {'results': [row]})
 
     def test_elapsed_times_must_be_finite_positive_before_ratio(self):
         thread, spawn = self.stage_pair()
