@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -413,12 +414,37 @@ void require_process_gone(pid_t pid, std::string_view message) {
   throw std::runtime_error(std::string(message));
 }
 
-void require_file_appears(const fs::path &path, std::string_view message) {
+pid_t require_published_pid(const fs::path &path, std::string_view message) {
   for (int attempt = 0; attempt < 200; ++attempt) {
-    if (fs::exists(path)) return;
+    std::ifstream input(path);
+    std::string line;
+    // Opening the output file precedes writing/flushing its PID. A partial
+    // numeric prefix must not be mistaken for the completed child's identity.
+    if (std::getline(input, line) && !input.eof()) {
+      pid_t pid = -1;
+      const auto parsed = std::from_chars(line.data(), line.data() + line.size(), pid);
+      if (parsed.ec == std::errc{} && parsed.ptr == line.data() + line.size() && pid > 0) {
+        return pid;
+      }
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   throw std::runtime_error(std::string(message));
+}
+
+void pid_readiness_waits_for_complete_numeric_contents() {
+  TempDirectory directory;
+  const fs::path path = directory.path() / "publication.pid";
+  std::ofstream(path).close();
+  std::jthread writer([&path] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::ofstream output(path);
+    output << "12" << std::flush;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    output << "345\n";
+  });
+  const pid_t pid = require_published_pid(path, "PID publication must finish");
+  require(pid == 12345, "PID readiness must ignore empty files and partial numeric prefixes");
 }
 
 void direct_exit_is_detected_while_descendant_holds_pipes() {
@@ -525,18 +551,16 @@ void referee_death_triggers_sentinel_tree_cleanup() {
   }
 
   const fs::path pid_path = directory.path() / "grandchild.pid";
+  pid_t grandchild = -1;
   try {
-    require_file_appears(pid_path,
-                         "hanging process tree must record its grandchild");
+    grandchild = require_published_pid(
+        pid_path, "hanging fixture must publish a complete valid grandchild pid");
   } catch (...) {
     (void)::kill(referee, SIGKILL);
-    (void)::waitpid(referee, nullptr, 0);
+    while (::waitpid(referee, nullptr, 0) < 0 && errno == EINTR) {
+    }
     throw;
   }
-  std::ifstream pid_input(pid_path);
-  pid_t grandchild = -1;
-  pid_input >> grandchild;
-  require(grandchild > 0, "hanging fixture must record a valid grandchild pid");
 
   (void)::kill(referee, SIGKILL);
   while (::waitpid(referee, nullptr, 0) < 0 && errno == EINTR) {
@@ -601,6 +625,8 @@ int main() {
        launch_failure_reaps_all_started_supervisors},
       {"match cleanup terminates bot descendants",
        match_cleanup_terminates_bot_descendants},
+      {"PID readiness waits for complete numeric contents",
+       pid_readiness_waits_for_complete_numeric_contents},
       {"referee death triggers sentinel tree cleanup",
        referee_death_triggers_sentinel_tree_cleanup},
   };
