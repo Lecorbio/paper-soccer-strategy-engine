@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Bind experimental-branch CI to an actually selected, committed source.
 
-Only the maintained compact_value_bfm/submission.cpp route is supported: the
-stock native build compiles it and submission_test.cpp includes it. Merely
-committing another C++ file does not establish source-specific CI coverage.
+The maintained submission.cpp and optional trained_v2_candidate.cpp routes have
+explicit native CI coverage. Merely committing another C++ file does not
+establish source-specific CI coverage.
 These receipts establish CI evidence, never protected or live qualification.
 No command publishes a source, dispatches a workflow, or edits a candidate.
 """
@@ -30,9 +30,14 @@ from tools import compact_value_bfm_upload as maintained
 PUBLICATION_SCHEMA = campaign.ID + '.ci-source-publication.v2'
 CI_SCHEMA = campaign.ID + '.github-ci-evidence.v2'
 SUPPORTED_SOURCE = 'submissions/codingame/bots/compact_value_bfm/submission.cpp'
+RELEASE_SOURCE = 'submissions/codingame/bots/compact_value_bfm/trained_v2_candidate.cpp'
+SUPPORTED_SOURCES = (SUPPORTED_SOURCE, RELEASE_SOURCE)
 COVERAGE_PATHS = ('.github/workflows/' + maintained.WORKFLOW_FILE, 'CMakeLists.txt',
                   'scripts/build-and-test.sh',
                   'submissions/codingame/bots/compact_value_bfm/submission_test.cpp')
+RELEASE_COVERAGE_PATHS = ('cmake/CompactCandidateChecks.cmake',
+    'submissions/codingame/bots/compact_value_bfm/feature_probe.cpp',
+    'submissions/codingame/bots/compact_value_bfm/inference_probe.cpp')
 COMMIT_RE = re.compile(r'[0-9a-f]{40}')
 SHA_RE = re.compile(r'[0-9a-f]{64}')
 
@@ -114,10 +119,10 @@ def _selection_identity(root, context, phase, path):
             'payload_sha256': payload}
 
 
-def _coverage(repository, commit):
+def _coverage(repository, commit, source_path=SUPPORTED_SOURCE):
     records = []
     documents = {}
-    for relative in COVERAGE_PATHS:
+    for relative in COVERAGE_PATHS + (RELEASE_COVERAGE_PATHS if source_path == RELEASE_SOURCE else ()):
         data, record = _committed_blob(repository, commit, relative)
         documents[relative] = data.decode('utf-8')
         records.append(record)
@@ -135,6 +140,16 @@ def _coverage(repository, commit):
             or workflow.count('run: ./scripts/build-and-test.sh') != 3
             or '#include "submission.cpp"' not in documents[COVERAGE_PATHS[3]]):
         raise ValueError('committed workflow no longer has the supported source compile coverage')
+    if source_path == RELEASE_SOURCE:
+        helper=documents[RELEASE_COVERAGE_PATHS[0]]
+        if ('include(cmake/CompactCandidateChecks.cmake)' not in cmake
+                or '${CMAKE_CURRENT_SOURCE_DIR}/' + RELEASE_SOURCE not in helper
+                or 'add_executable(papersoccer_codingame_compact_value_bfm_release_submission "${candidate}")' not in helper
+                or 'foreach(harness submission_test feature_probe inference_probe)' not in helper
+                or 'NAME papersoccer_codingame_compact_value_bfm_release_submission_test' not in helper
+                or 'NAME papersoccer_codingame_compact_value_bfm_release_feature_parity' not in helper
+                or any('#include "submission.cpp"' not in documents[path] for path in RELEASE_COVERAGE_PATHS[1:])):
+            raise ValueError('committed release candidate compile coverage is incomplete')
     return records
 
 
@@ -142,15 +157,17 @@ def freeze_publication(output, *, repository, source, source_selection, root, co
     repository = _repository(repository)
     branch, commit = _clean_head(repository)
     source = Path(source)
-    if source.is_symlink() or source.resolve() != repository / SUPPORTED_SOURCE:
-        raise ValueError('CI publication supports only the compiled maintained submission.cpp route')
+    try:relative=source.resolve().relative_to(repository).as_posix()
+    except ValueError:relative=None
+    if source.is_symlink() or relative not in SUPPORTED_SOURCES:
+        raise ValueError('CI publication supports only explicitly compiled standalone source routes')
     identity = _selection_identity(root, context, phase, source_selection)
-    committed, blob = _committed_blob(repository, commit, SUPPORTED_SOURCE)
+    committed, blob = _committed_blob(repository, commit, relative)
     if (source.read_bytes() != committed or hashlib.sha256(committed).hexdigest()
             != identity['selected_source']['sha256']):
         raise ValueError('committed publication is not the exact selected source')
     committed.decode('ascii')
-    coverage = _coverage(repository, commit)
+    coverage = _coverage(repository, commit, relative)
     if _clean_head(repository) != (branch, commit):
         raise ValueError('Git publication changed while freezing source identity')
     return campaign.seal(output, {
@@ -169,7 +186,7 @@ def validate_publication(path):
             or publication.get('clean_at_publication') is not True
             or publication.get('qualification_passed') is not False
             or publication.get('campaign_success') is not False
-            or publication.get('source', {}).get('path') != SUPPORTED_SOURCE):
+            or publication.get('source', {}).get('path') not in SUPPORTED_SOURCES):
         raise ValueError('source publication contract changed')
     repository = _repository(publication['repository_path'])
     _git(repository, 'check-ref-format', '--branch', publication['branch'])
@@ -177,10 +194,10 @@ def validate_publication(path):
                                    campaign.verify(publication['source_selection']))
     if any(publication.get(key) != value for key, value in identity.items()):
         raise ValueError('publication lost its selected source/runtime identity')
-    data, blob = _committed_blob(repository, publication['commit'], SUPPORTED_SOURCE)
+    data, blob = _committed_blob(repository, publication['commit'], publication['source']['path'])
     if blob != publication['source'] or hashlib.sha256(data).hexdigest() != identity['selected_source']['sha256']:
         raise ValueError('publication source differs from the committed selected bytes')
-    if _coverage(repository, publication['commit']) != publication['compile_coverage']:
+    if _coverage(repository, publication['commit'], publication['source']['path']) != publication['compile_coverage']:
         raise ValueError('publication compile coverage changed')
     return publication
 

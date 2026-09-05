@@ -99,7 +99,7 @@ def prepare(root,attempt):
     parent=campaign.read(root/'campaign.json');smoke=validate_smoke(root)
     baseline=campaign.read(root/'baseline-engine-comparison.json')
     if not baseline['same_weights'] or not baseline['all_checks_passed']: raise ValueError('engine-version baseline is incomplete')
-    previous=attempts.failed_pilot(root,attempt-1) if attempt==2 else None
+    previous=attempts.failed_attempt(root,attempt-1) if attempt==2 else None
     context.mkdir(parents=True,exist_ok=True)
     path=context/'campaign.json'
     if path.exists():
@@ -123,7 +123,7 @@ def prepare(root,attempt):
     previous_bindings=[]
     if previous is not None:
         for item in previous['contract']['exclusions']:campaign.verify(item)
-        carried,index=attempts.carry_failed_pilot(root,previous,context)
+        carried,index=attempts.carry_failed_attempt(root,previous,context)
         exclusions+=previous['contract']['exclusions']+carried
         previous_bindings.append({'attempt':previous['attempt'],'outcome':previous['outcome'],
             'training':previous['training'],'selection':previous['selection'],'carry':index})

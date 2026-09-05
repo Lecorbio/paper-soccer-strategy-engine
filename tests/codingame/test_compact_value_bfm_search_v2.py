@@ -222,8 +222,20 @@ class SourceSelectionTests(unittest.TestCase):
     def test_asserted_category_receipt_cannot_replace_missing_native_instrumentation(self):
         self.assertFalse(search.category_profile_status(self.plan, self.output)['complete'])
         campaign.seal(self.output / 'category-profile.json', {'passed': True, 'complete': True})
-        with self.assertRaisesRegex(ValueError, 'producer/validator is not implemented'):
+        with self.assertRaisesRegex(ValueError, 'source-bound native execution receipt'):
             search.category_profile_status(self.plan, self.output)
+
+    def test_final_selection_preserves_existing_incomplete_receipt(self):
+        incomplete = self.body(category_complete=False)
+        with mock.patch.object(search, 'selection_body', return_value=incomplete):
+            search.assess(self.root, self.context, self.phase)
+        path = self.output / 'search-assessment-incomplete.json'
+        original = path.read_bytes()
+        complete = self.body(category_complete=True)
+        with mock.patch.object(search, 'selection_body', return_value=complete):
+            search.assess(self.root, self.context, self.phase)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(campaign.read(self.output / 'search-selection.json')['required_profiling_complete'])
 
     def test_independent_profiles_have_one_treatment_macro_each_and_stay_default_off(self):
         self.assertEqual(search.POLICY['default_throughput_profile'], 'standard-v1')

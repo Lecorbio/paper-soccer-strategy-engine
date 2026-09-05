@@ -1,8 +1,7 @@
 """Validate a completed failed pilot and carry its isolation evidence forward.
 
-Only the existing offline and completed Rank4 rejection receipts close an
-attempt here. Full-stage outcomes and interrupted screens need their own
-source-bound outcome integration before another attempt may start.
+Completed full-stage failures use the separate full outcome validator. Missing
+or interrupted stages never count as completed unsuccessful trained attempts.
 """
 from __future__ import annotations
 
@@ -170,7 +169,7 @@ def validate_selection(document, training, context, phase, contract):
     return winner
 
 
-def validate_screen(directory, outcome, selected):
+def validate_screen(directory, outcome, selected, *, admitted=False):
     execution = bound(outcome['screen'], directory / 'rank4-screen/execution.json')
     claim = bound(execution['claim'], directory / 'rank4-screen/execution-claim.json')
     bank = bound(claim['bank'], directory / 'rank4-screen/bank.json')
@@ -205,8 +204,8 @@ def validate_screen(directory, outcome, selected):
     result = raw['result']
     if (outcome['selected'] != selected or outcome['games'] != 200 or result['games'] != 200
             or outcome['wins'] != result['candidate_wins'] or outcome['failures'] != result['failures']
-            or (result['candidate_wins'] >= 105 and result['failures'] == 0)):
-        raise ValueError('prior pilot is not a completed failed screen')
+            or (result['candidate_wins'] >= 105 and result['failures'] == 0) is not admitted):
+        raise ValueError('prior pilot is not a completed ' + ('passing' if admitted else 'failed') + ' screen')
     validate_played_exclusions(directory, outcome, bank, raw)
     return bank, raw
 
@@ -240,7 +239,7 @@ def validate_played_exclusions(directory, outcome, bank, raw):
 
 
 def failed_pilot(root, attempt):
-    if attempt not in (1, 2):
+    if isinstance(attempt, bool) or attempt not in (1, 2):
         raise ValueError('only the first two standard trained attempts are supported')
     phase = f'attempt-{attempt:03d}-pilot'; context = root / 'phases' / phase
     contract = campaign.read(context / 'campaign.json'); parent = bound(contract['parent_campaign'], root / 'campaign.json')
@@ -289,7 +288,7 @@ def trajectory_fingerprints(transcript, prefix_turns):
     return result, state
 
 
-def collect_fingerprints(previous):
+def collect_fingerprints(previous, *, expected_games=2000):
     context, phase = previous['context'], previous['phase']; directory = context / phase
     positions = campaign.read(directory / 'positions.json'); games = campaign.read(directory / 'games.json')
     plan = bound(positions['plan'], directory / 'positions-plan.json')
@@ -298,7 +297,7 @@ def collect_fingerprints(previous):
     if [row['output'] for row in chunks] != positions['census_files']:
         raise ValueError('prior census lost its validated position chunk binding')
     game_rows = {row['ordinal']: row for row in games['rows']}
-    if len(game_rows) != games['games'] or games['games'] != 2000 or len(chunks) != len(game_rows):
+    if len(game_rows) != games['games'] or games['games'] != expected_games or len(chunks) != len(game_rows):
         raise ValueError('prior pilot generation or census coverage is incomplete')
     if {chunk['inputs']['game']['ordinal'] for chunk in chunks} != set(game_rows):
         raise ValueError('prior pilot census omits or duplicates generated games')
@@ -317,7 +316,7 @@ def collect_fingerprints(previous):
     schedule = campaign.read(directory / 'schedule.json')
     schedule_record = campaign.record(directory / 'schedule.json')
     bound(schedule['contract'], context / 'campaign.json')
-    if schedule['games'] != 2000 or len(schedule['rows']) != 2000:
+    if schedule['games'] != expected_games or len(schedule['rows']) != expected_games:
         raise ValueError('prior pilot schedule is incomplete')
     for item in games['rows']:
         scheduled = schedule['rows'][item['ordinal']]
@@ -380,3 +379,21 @@ def carry_failed_pilot(root, previous, destination):
         'new_teacher_labels_required': True, 'early_training_exception_unchanged': True,
         'validation_never_exempt': True, 'terminal_feature_boundaries_included': True})
     return artifacts, campaign.record(path)
+
+
+def failed_attempt(root, attempt):
+    """Choose the actual terminal branch; never bypass an existing full stage."""
+    root = Path(root).resolve()
+    if isinstance(attempt, bool) or attempt not in (1, 2):
+        raise ValueError('after two unsuccessful trained attempts an intervention binding is required')
+    if (root / 'phases' / f'attempt-{attempt:03d}-full').exists():
+        from tools import compact_value_bfm_full_outcome_v2 as full_outcome
+        return full_outcome.failed_full(root, attempt)
+    return failed_pilot(root, attempt)
+
+
+def carry_failed_attempt(root, previous, destination):
+    if previous.get('stage') == 'full':
+        from tools import compact_value_bfm_full_outcome_v2 as full_outcome
+        return full_outcome.carry_failed_full(root, previous, destination)
+    return carry_failed_pilot(root, previous, destination)

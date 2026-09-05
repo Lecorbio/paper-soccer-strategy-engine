@@ -245,11 +245,16 @@ into full training and subsequent attempts.
 
 `compact_value_bfm_pilot_v2.py --root CAMPAIGN --attempt 2 games` may start a
 second isolated pilot only after a verified completed rejection of the first
-trained pilot. The closure reopens all nine seed references, reproduces canonical
-retention and early metrics, and carries exhaustive censuses and played states.
-Smoke does not count as an unsuccessful production attempt. Incomplete screens,
-full-stage histories without a terminal outcome bridge, and attempts after two
-fail closed pending their required outcome or unprotected attribution integration.
+trained attempt. Pilot closure reopens all nine seed references, reproduces
+canonical retention and early metrics, and carries exhaustive censuses and played
+states. A full-round rejection additionally requires
+`compact_value_bfm_full_outcome_v2.py --root CAMPAIGN --attempt 1 record`.
+That bridge revalidates actual pilot admission, all six full-round seeds, and the
+completed rejecting search, suite, or development evidence. Pilot plus full
+training count as one attempt; both corpora and all unprotected trajectories are
+carried forward. Incomplete stages never count as completed model failures.
+Smoke does not count, and attempts after two still require the approved
+unprotected attribution and intervention binding.
 
 These commands resume from source-bound artifacts. Optional scheduling is a
 separate user-authorized task follow-up; it does not alter the frozen experiment
@@ -272,9 +277,24 @@ before deployment of the runner; a mismatched seed cannot silently spend the
 whole A/B batch. Claims bind compiler, source, bank, exact command and output paths.
 Claimed or orphaned native output cannot be rerun automatically.
 
-Native timing-category instrumentation is still required. Until its producer and
-validator exist, search assessment writes `search-assessment-incomplete.json`
-with no selected source; it does not emit a qualifying source-selection receipt.
+`compact_value_bfm_category_profile_v2.py` supplies native category attribution
+after ordinary profiling, also available through the search command
+`category-profile`. It instruments diagnostic derivatives of the four exact
+sources and repeats every frozen fixed-work run. Seven exclusive categories
+reconcile to the full instrumented interval: feature construction, first layer,
+dense evaluation, complete-turn generation, tree traversal, state application,
+and residual search. Derivative bytes, function anchors, and model identity are
+reconstructed during validation. Decisions, complete traces and counters must
+match the corresponding original run exactly.
+
+The report includes observed instrumentation overhead and timing variation.
+Instrumented times are attribution evidence only; the 10% throughput and 5% p95
+gates continue to use original source measurements. Missing or invalid category
+evidence keeps search assessment incomplete. Successful validation permits final
+source selection without rewriting any earlier incomplete receipt.
+Two fresh structural roots have verified native derivative/original trace,
+decision, counter and inference parity. Campaign profiling still requires the
+actual admitted full model and its complete frozen workload.
 Optional cache/widening/reuse treatments also remain disabled for selection until
 their separate source-bound native invariant evidence is integrated.
 
@@ -287,8 +307,19 @@ exact-source preflight/CI and two independent protected gates.
 
 `compact_value_bfm_ci_v2.py` binds a validated selected source to clean committed
 bytes and an actual GitHub workflow run on the experimental branch. Its supported
-publication path is the maintained `compact_value_bfm/submission.cpp`, which the
-stock native build and tests compile. It preserves the raw GitHub response and
+publication paths are the maintained `compact_value_bfm/submission.cpp` and a
+separate `compact_value_bfm/trained_v2_candidate.cpp`. The latter receives explicit
+native executable, unit-test, feature-parity and inference-probe targets when
+present. Harnesses are copied with only their standalone source include changed;
+historical release-pinned harness bytes and deployment artifacts remain intact.
+The helper verifies the committed CMake mapping and preserves the raw GitHub response. It
 requires all five distinct jobs to succeed for the exact commit. An arbitrary
 tracked C++ copy is insufficient, and green repository CI alone never qualifies
 a candidate. Historical fixed-branch CI validators remain unchanged.
+
+For an isolated local check of a source before publication, configure
+`PAPERSOCCER_COMPACT_VALUE_BFM_RELEASE_SOURCE` to its absolute path. The normal
+CI configuration uses `trained_v2_candidate.cpp` when that committed file exists.
+The candidate targets have been exercised with a real smoke-trained source:
+native unit checks, 4,096-state feature parity, and 4,096-state runtime inference
+parity passed. These establish the execution path, not candidate qualification.

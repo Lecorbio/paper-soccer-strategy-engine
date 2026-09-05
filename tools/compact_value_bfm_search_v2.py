@@ -46,7 +46,7 @@ POLICY = {
     'workers': 1, 'threads_per_worker': 1, 'repetitions': 3,
     'profiling_depths': [8, 12, 20, 40], 'profiling_roots_per_depth': 8,
     'profiling_roots': 'first-canonical-full-training-position-per-depth',
-    'timing_category_shares': 'unavailable;source-has-counters-but-no-category-timers',
+    'timing_category_shares': 'source-bound-exclusive-native-timers;diagnostic-time-excluded-from-retention',
     'source_bound_category_profile_required': True,
     'qualification_passed': False, 'campaign_success': False,
 }
@@ -441,16 +441,16 @@ def validate_strength(plan, output):
 
 
 def category_profile_status(plan, output):
-    """Do not convert uninstrumented total timings into category timing shares.
-
-    An actual source-bound native instrumentation producer and its validator
-    are still required. A file asserting completion cannot substitute for that
-    missing implementation. The separate 2x2 evidence remains useful meanwhile.
-    """
-    if (output / 'category-profile.json').exists():
-        raise ValueError('category profiling producer/validator is not implemented; supplied receipt cannot authorize advancement')
-    return {'complete': False, 'receipt': None,
-            'reason': 'source-bound native category timing shares have not been produced or validated'}
+    """Only reconstructed native attribution evidence completes profiling."""
+    path = output / 'category-profile.json'
+    if not path.exists():
+        return {'complete': False, 'receipt': None,
+                'reason': 'source-bound native category timing shares have not been produced or validated'}
+    from tools import compact_value_bfm_category_profile_v2 as categories
+    value = categories.validate(plan, output)
+    return {'complete': True, 'receipt': campaign.record(path),
+            'variants': value['variants'], 'timing_retention_input': False,
+            'reason': 'exclusive native category times reconcile and reproduce the ordinary fixed-work traces'}
 
 
 def selection_body(root, context, phase):
@@ -522,10 +522,12 @@ def main():
     parser.add_argument('--context', type=Path, required=True)
     parser.add_argument('--phase', required=True)
     parser.add_argument('--profile', choices=maintained.SEARCH_THROUGHPUT_PROFILE_ORDER, default='standard-v1')
-    parser.add_argument('command', choices=('prepare', 'measure', 'assess', 'validate'))
+    parser.add_argument('command', choices=('prepare', 'measure', 'category-profile', 'assess', 'validate'))
     args = parser.parse_args()
     with campaign.lease(args.root):
-        command = {'prepare': prepare, 'measure': measure, 'assess': assess, 'validate': validate_selection}[args.command]
+        from tools import compact_value_bfm_category_profile_v2 as categories
+        command = {'prepare': prepare, 'measure': measure, 'category-profile': categories.produce,
+                   'assess': assess, 'validate': validate_selection}[args.command]
         if args.command == 'prepare':
             result = command(args.root, args.context, args.phase, args.profile)
         else:

@@ -421,6 +421,9 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_search_strength_v2
               tests.codingame.test_compact_value_bfm_development_v2
               tests.codingame.test_compact_value_bfm_ci_v2
+              tests.codingame.test_compact_value_bfm_timing_instrumentation_v2
+              tests.codingame.test_compact_value_bfm_category_profile_v2
+              tests.codingame.test_compact_value_bfm_full_outcome_v2
               tests.codingame.test_compact_value_bfm_opponent_evaluation
               tests.codingame.test_compact_value_bfm_opponent_suite_v2)
     set_tests_properties(
@@ -922,6 +925,7 @@ if(NOT EMSCRIPTEN)
     submissions/codingame/bots/compact_value_bfm/feature_probe.cpp)
   add_executable(papersoccer_codingame_compact_value_bfm_inference_probe
     submissions/codingame/bots/compact_value_bfm/inference_probe.cpp)
+  include(cmake/CompactCandidateChecks.cmake)
   set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_SOURCE
     submissions/codingame/bots/compact_value_bfm/search_trace_probe.cpp)
   set(PAPERSOCCER_COMPACT_VALUE_BFM_SEARCH_TRACE_BASES

@@ -114,8 +114,33 @@ class CiSourceTests(unittest.TestCase):
         other.write_bytes(self.source.read_bytes())
         self.git('add', '.')
         self.commit()
-        with self.assertRaisesRegex(ValueError, 'compiled maintained'):
+        with self.assertRaisesRegex(ValueError, 'explicitly compiled'):
             self.freeze(other)
+
+    def test_exact_release_candidate_has_explicit_ci_coverage(self):
+        for relative in ci.RELEASE_COVERAGE_PATHS:
+            campaign.once(self.repository / relative, (ROOT / relative).read_bytes())
+        release=self.repository/ci.RELEASE_SOURCE
+        release.write_bytes(self.source.read_bytes())
+        self.git('add','.')
+        self.commit()
+        publication=self.freeze(release)
+        self.assertEqual(publication['source']['path'],ci.RELEASE_SOURCE)
+        self.assertEqual(len(publication['compile_coverage']),7)
+        path,_=self.record(publication)
+        self.assertTrue(ci.validate_ci(path)['source_specific_ci_passed'])
+        self.assertEqual((self.repository/ci.SUPPORTED_SOURCE).read_bytes(),self.selected_source.read_bytes())
+
+    def test_release_candidate_requires_committed_harness_mapping(self):
+        for relative in ci.RELEASE_COVERAGE_PATHS:
+            campaign.once(self.repository / relative, (ROOT / relative).read_bytes())
+        release=self.repository/ci.RELEASE_SOURCE
+        release.write_bytes(self.source.read_bytes())
+        (self.repository/ci.RELEASE_COVERAGE_PATHS[0]).write_text('# no source checks\n')
+        self.git('add','.')
+        self.commit()
+        with self.assertRaisesRegex(ValueError,'release candidate compile coverage'):
+            self.freeze(release)
 
     def test_selected_source_must_equal_committed_compiled_source(self):
         self.selected_source.write_text('int main() { return 1; }\n')
