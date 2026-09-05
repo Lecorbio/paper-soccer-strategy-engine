@@ -26,4 +26,25 @@ class PilotGateTests(unittest.TestCase):
                 gate.prepare_bank(context,'pilot',{'selected':None,'status':'offline-rejected'})
             self.assertFalse((context/'pilot/rank4-screen').exists())
 
+    def test_screen_carry_includes_played_boundaries_and_terminal_features(self):
+        campaign=gate.campaign
+        with tempfile.TemporaryDirectory() as tmp:
+            context=pathlib.Path(tmp);directory=context/'pilot/rank4-screen';directory.mkdir(parents=True)
+            execution=directory/'execution.json';campaign.seal(execution,{'fixture':True})
+            checked={'config':{'trajectory_schema':'papersoccer.compact-value-bfm-rank4-trajectories.v1'},
+                'games':[{'root_transcript':'0/0','transcript':'0/0/0/0/0/0'}]}
+            records=gate.played_exclusions(context,'pilot',execution,checked,{'exclusions':[],'tsv':{'sha256':'a'*64}})
+            documents=[campaign.read(campaign.verify(item)) for item in records]
+            values={doc['domain']:set(doc['fingerprints']) for doc in documents}
+            state=campaign.features.ReplayState()
+            campaign.features.apply_complete_turn(state,state.to_move,'0')
+            before=campaign.fingerprints(state)
+            self.assertTrue(all(value not in values[domain] for domain,value in before.items()))
+            for _ in range(5):
+                campaign.features.apply_complete_turn(state,state.to_move,'0')
+                self.assertTrue(all(value in values[domain] for domain,value in campaign.fingerprints(state).items()))
+            self.assertIsNotNone(state.winner)
+            self.assertTrue(all(doc['includes_terminal_features'] and doc['role']=='mixed-development' for doc in documents))
+            self.assertEqual(records,gate.played_exclusions(context,'pilot',execution,checked,{'exclusions':[],'tsv':{'sha256':'a'*64}}))
+
 if __name__=='__main__':unittest.main()

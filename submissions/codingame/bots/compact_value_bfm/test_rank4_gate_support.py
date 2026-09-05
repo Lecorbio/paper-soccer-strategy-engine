@@ -41,6 +41,95 @@ def engine(decisions=0, *, candidate=False, counters=None):
 
 
 class Rank4GateSupportTests(unittest.TestCase):
+    def trajectory_document(self, bank, *, failure=False):
+        from tools import compact_value_bfm_openings as openings
+        from tools import jacek_replay_features as features
+        state = features.ReplayState()
+        for action in TRANSCRIPT.split('/'):
+            features.apply_complete_turn(state, state.to_move, action)
+        root_mover = state.to_move
+        moves = []
+        if not failure:
+            while state.winner is None:
+                mover = state.to_move
+                action = ''
+                while state.winner is None and state.to_move == mover:
+                    direction = openings.legal_directions(state)[0]
+                    features.apply_primitive(state, direction)
+                    action += str(direction)
+                moves.append((mover, action))
+        transcript = '/'.join([TRANSCRIPT, *(action for _, action in moves)])
+        document = self.document()
+        document['bindings']['bank_sha256'] = support.sha256(bank)
+        document['bindings']['bank_bytes'] = bank.stat().st_size
+        document['config']['pair_offset'] = 0
+        document['config']['trajectory_schema'] = support.TRAJECTORY_SCHEMA
+        for game in document['games']:
+            color = game['candidate_player']
+            actor = 'candidate' if root_mover == color else 'rank4'
+            game.update({'pair_index': 0, 'winner': -1 if failure else state.winner,
+                'turns': len(transcript.split('/')), 'root_transcript': TRANSCRIPT,
+                'transcript': transcript, 'transcript_sha256': hashlib.sha256(transcript.encode()).hexdigest(),
+                'failure': actor + '_illegal' if failure else None,
+                'candidate': engine(int(failure and actor == 'candidate') + sum(p == color for p, _ in moves), candidate=True),
+                'rank4': engine(int(failure and actor == 'rank4') + sum(p != color for p, _ in moves))})
+        document['result'].update({'candidate_wins': 0 if failure else 1, 'rank4_wins': 0 if failure else 1,
+            'candidate_wins_player0': int(not failure and state.winner == 0),
+            'candidate_wins_player1': int(not failure and state.winner == 1),
+            'failures': 2 if failure else 0, 'failure_categories': {'candidate_illegal': 1, 'rank4_illegal': 1} if failure else {},
+            'passed': not failure,
+            'candidate': support._merge_engines([g['candidate'] for g in document['games']], candidate=True),
+            'rank4': support._merge_engines([g['rank4'] for g in document['games']], candidate=False)})
+        return document
+
+    def test_optional_trajectories_replay_root_success_and_failed_actor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            bank = root / 'bank.tsv'
+            bank.write_text('opening_id\ttranscript\nfirst\t' + TRANSCRIPT + '\n')
+            path = root / 'result.json'
+            for failure in (False, True):
+                document = self.trajectory_document(bank, failure=failure)
+                path.write_text(json.dumps(document))
+                support.validate_result(path, require_trajectories=True, trajectory_bank=bank)
+                for field, replacement in (('root_transcript', TRANSCRIPT + '/0'),
+                                           ('transcript_sha256', '0' * 64), ('turns', 0),
+                                           ('winner', 1 if failure else -1)):
+                    changed = deepcopy(document)
+                    changed['games'][0][field] = replacement
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(ValueError):
+                        support.validate_result(path, require_trajectories=True, trajectory_bank=bank)
+            document = self.trajectory_document(bank)
+            document['games'][0].update({'transcript': TRANSCRIPT + '/3',
+                'transcript_sha256': hashlib.sha256((TRANSCRIPT + '/3').encode()).hexdigest(),
+                'turns': len(TRANSCRIPT.split('/')) + 1})
+            path.write_text(json.dumps(document))
+            # Direction 3 reverses the final drawn 7 edge: a matching digest
+            # and root prefix do not make this a legal continuation.
+            with self.assertRaises(ValueError):
+                support.validate_result(path, require_trajectories=True, trajectory_bank=bank)
+            document = self.trajectory_document(bank)
+            document['games'][0]['candidate']['decisions'] += 1
+            document['games'][0]['candidate']['times_ms'].append(0.0)
+            document['result']['candidate'] = support._merge_engines(
+                [g['candidate'] for g in document['games']], candidate=True)
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, 'actor decisions'):
+                support.validate_result(path, require_trajectories=True, trajectory_bank=bank)
+
+    def test_trajectory_validation_cannot_be_implied_for_old_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / 'result.json'; path.write_text(json.dumps(self.document()))
+            support.validate_result(path)
+            with self.assertRaisesRegex(ValueError, 'requires the executed bank'):
+                support.validate_result(path, require_trajectories=True)
+            bank = root / 'bank.tsv'
+            bank.write_text('opening_id\ttranscript\nfirst\t' + TRANSCRIPT + '\n')
+            with self.assertRaisesRegex(ValueError, 'did not request'):
+                support.validate_result(path, require_trajectories=True, trajectory_bank=bank)
+
     def test_bank_requires_canonical_rows_unique_ids_and_twelve_plies(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

@@ -205,3 +205,50 @@ training keeps the original float initialization, the admitted ranking weight,
 a scalar control, and all three seeds. The streamed 10,000-game workflow still
 ends awaiting search/evaluation and final qualification; it does not authorize
 live success from training alone.
+
+## Source-bound continuation and evaluation
+
+`compact_value_bfm_full_selection_v2.py` selects the scalar control and admitted
+ranking recipe from all six completed full-round seeds. It reopens actual pilot
+admission, original initialization, input audits, seed references, tensor updates,
+and exact exports. Canonical retention and source reserve remain mandatory.
+Full-round regret and flip measurements are diagnostics; the pilot admission
+threshold is not imposed a second time. The result is
+`CONTEXT/PHASE/full-model-selection.json`, not a strength qualification.
+
+`compact_value_bfm_opponent_suite_v2.py` executes the paired six-opponent screen
+or confirmation against the immutable deployed upload. Each opponent receives
+32 screen pairs or 100 confirmation pairs, equally divided among 8, 12, 20, and
+40 drawn-edge roots. Canonical states are distinct across opponents. Candidate
+and control share every root and both colors; confirmation excludes screen roots
+and all played continuation boundaries. Each suite binds its selection, bank,
+compiler, complete source dependencies, binaries, commands, and raw games.
+Independent replay checks winner, root progress, and both actors' clocks before
+the existing paired bootstrap assessment. A four-worker execution limit and
+180-second native process watchdog preserve partial evidence on failure. A
+claimed interrupted suite is spent. Reduced-clock adapter checks are explicitly
+ineligible as strength evidence.
+
+The suite currently accepts the full selector's exact exported source. A changed
+search variant still needs a source-bound ablation/selection bridge before it can
+enter qualification. Profiling, development qualification, protected gates, and
+live evaluation remain separate required stages.
+
+The native Rank4 gate now offers `--include-trajectories`. Its opt-in output
+contains each actual root and accepted complete-turn trajectory, and a sidecar
+preserves finished games if the process is interrupted. The maintained default
+output is unchanged. V2 screens require independent trajectory validation and
+carry every played postroot boundary, including terminal feature fingerprints,
+into full training and subsequent attempts.
+
+`compact_value_bfm_pilot_v2.py --root CAMPAIGN --attempt 2 games` may start a
+second isolated pilot only after a verified completed rejection of the first
+trained pilot. The closure reopens all nine seed references, reproduces canonical
+retention and early metrics, and carries exhaustive censuses and played states.
+Smoke does not count as an unsuccessful production attempt. Incomplete screens,
+full-stage histories without a terminal outcome bridge, and attempts after two
+fail closed pending their required outcome or unprotected attribution integration.
+
+These commands resume from source-bound artifacts. Optional scheduling is a
+separate user-authorized task follow-up; it does not alter the frozen experiment
+policy or substitute for successful stage evidence.

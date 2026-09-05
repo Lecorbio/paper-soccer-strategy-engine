@@ -16,6 +16,7 @@ from typing import Any
 BANK_SCHEMA = "papersoccer.compact-value-bfm-opening-bank.v1"
 LEGACY_RESULT_SCHEMA = "papersoccer.compact-value-bfm-rank4-gate.v1"
 RESULT_SCHEMA = "papersoccer.compact-value-bfm-rank4-gate.v2"
+TRAJECTORY_SCHEMA = "papersoccer.compact-value-bfm-rank4-trajectories.v1"
 SEARCH_PROFILE_ACTIVATION_SCHEMA = (
     "papersoccer.compact-value-bfm-search-profile-activation.v1"
 )
@@ -427,10 +428,73 @@ def legacy_standard_configuration(document: object) -> dict[str, Any]:
     return result
 
 
+def _validate_trajectories(document: dict[str, Any], bank_path: pathlib.Path) -> None:
+    """Replay only accepted turns, retaining the pre-response state on failure."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[4]))
+    from tools import jacek_replay_features as features
+
+    if (document['schema'] != RESULT_SCHEMA
+            or document['config'].get('trajectory_schema') != TRAJECTORY_SCHEMA):
+        raise ValueError('gate did not request source-bound trajectories')
+    bank = validate_bank(bank_path)
+    if (bank['sha256'] != document['bindings']['bank_sha256']
+            or bank['bytes'] != document['bindings']['bank_bytes']):
+        raise ValueError('trajectory bank differs from the executed bank')
+    for game in document['games']:
+        index = game['pair_index']
+        if not 0 <= index < len(bank['openings']):
+            raise ValueError('trajectory opening index exceeds the bank')
+        root = bank['openings'][index]
+        transcript = game.get('transcript')
+        if (game.get('opening_id') != root['opening_id']
+                or game.get('root_transcript') != root['transcript']
+                or not isinstance(transcript, str)
+                or not re.fullmatch(r'[0-7]+(?:/[0-7]+)*', transcript)):
+            raise ValueError('trajectory lost its exact frozen root or encoding')
+        if hashlib.sha256(transcript.encode('ascii')).hexdigest() != game.get('transcript_sha256'):
+            raise ValueError('trajectory transcript SHA-256 differs')
+        actions = transcript.split('/')
+        prefix = root['transcript'].split('/')
+        if (actions[:len(prefix)] != prefix or isinstance(game['turns'], bool)
+                or not isinstance(game['turns'], int) or len(actions) != game['turns']):
+            raise ValueError('trajectory prefix or complete-turn count differs')
+        state = features.ReplayState()
+        decisions = {'candidate': 0, 'rank4': 0}
+        for turn, action in enumerate(actions):
+            if turn == len(prefix) and state.winner is not None:
+                raise ValueError('trajectory root is terminal')
+            if turn >= len(prefix):
+                actor = 'candidate' if state.to_move == game['candidate_player'] else 'rank4'
+                decisions[actor] += 1
+            features.apply_complete_turn(state, state.to_move, action)
+        if len(actions) == len(prefix) and state.winner is not None:
+            raise ValueError('trajectory root is terminal')
+        winner = state.winner if state.winner is not None else -1
+        if game.get('winner') != winner:
+            raise ValueError('trajectory winner differs from legal replay')
+        failure = game['failure']
+        if failure is None:
+            if winner not in (0, 1):
+                raise ValueError('successful trajectory is not terminal')
+        else:
+            if winner != -1:
+                raise ValueError('failed trajectory contains an unaccepted terminal action')
+            if failure != 'unfinished':
+                actor = 'candidate' if state.to_move == game['candidate_player'] else 'rank4'
+                if failure != 'lockstep_mismatch' and not failure.startswith(actor + '_'):
+                    raise ValueError('trajectory failure belongs to a different actor')
+                decisions[actor] += 1
+        if any(game[actor]['decisions'] != count for actor, count in decisions.items()):
+            raise ValueError('trajectory actor decisions do not reproduce the result')
+
+
 def validate_result(path: pathlib.Path, *, expected_bank_sha256: str | None = None,
                     expected_candidate_sha256: str | None = None,
                     expected_candidate_search_profile: str | None = None,
-                    allow_legacy_attempt_zero: bool = False) -> dict[str, Any]:
+                    allow_legacy_attempt_zero: bool = False,
+                    require_trajectories: bool = False,
+                    trajectory_bank: pathlib.Path | None = None) -> dict[str, Any]:
     document = json.loads(path.read_bytes())
     if not isinstance(document, dict) or document.get("schema") not in {
         LEGACY_RESULT_SCHEMA, RESULT_SCHEMA
@@ -578,6 +642,12 @@ def validate_result(path: pathlib.Path, *, expected_bank_sha256: str | None = No
         expected_passed = expected_passed and min(wins_by_color) >= minimum_per_color
     if result.get("passed") is not expected_passed:
         raise ValueError("gate pass/fail decision does not match configured thresholds")
+    if require_trajectories:
+        if trajectory_bank is None:
+            raise ValueError('trajectory validation requires the executed bank')
+        _validate_trajectories(document, trajectory_bank)
+    elif trajectory_bank is not None:
+        raise ValueError('trajectory bank requires explicit trajectory validation')
     return document
 
 
@@ -591,6 +661,8 @@ def main() -> int:
     result_parser.add_argument("--expected-bank-sha256")
     result_parser.add_argument("--expected-candidate-sha256")
     result_parser.add_argument("--expected-candidate-search-profile")
+    result_parser.add_argument("--require-trajectories", action="store_true")
+    result_parser.add_argument("--trajectory-bank", type=pathlib.Path)
     result_parser.add_argument(
         "--allow-legacy-attempt-zero", action="store_true")
     arguments = parser.parse_args()
@@ -605,6 +677,8 @@ def main() -> int:
                 arguments.expected_candidate_search_profile
             ),
             allow_legacy_attempt_zero=arguments.allow_legacy_attempt_zero,
+            require_trajectories=arguments.require_trajectories,
+            trajectory_bank=arguments.trajectory_bank,
         )
     print(json.dumps(value, indent=2, sort_keys=True))
     return 0

@@ -29,7 +29,7 @@ def assess(candidate,control,*,replicates=10000,seed=20260909):
     import numpy as np
     if set(candidate)!=set(campaign.OPPONENTS) or set(control)!=set(candidate):
         raise ValueError('six-opponent roster must be complete')
-    differences=[]; opponents={}; failures=[]; all_roots=set()
+    differences=[]; opponents={}; failures=[]; all_roots=set(); stage_pairs=None
     for name in campaign.OPPONENTS:
         left,right=candidate[name],control[name]
         if set(left)!=set(right): raise ValueError('candidate/control schedules differ')
@@ -38,6 +38,8 @@ def assess(candidate,control,*,replicates=10000,seed=20260909):
         if all_roots.intersection(roots): raise ValueError('root reused across opponents; requires joint-cluster bootstrap')
         all_roots.update(roots)
         if len(roots) not in (32,100): raise ValueError('only admitted screen/confirmation sizes are accepted')
+        if stage_pairs is not None and len(roots)!=stage_pairs: raise ValueError('opponents use different stage sizes')
+        stage_pairs=len(roots)
         if any((root,color) not in left for root in roots for color in (0,1)): raise ValueError('missing color')
         scores=[[],[]]
         for index,arm in enumerate((left,right)):
@@ -57,6 +59,10 @@ def assess(candidate,control,*,replicates=10000,seed=20260909):
                or left[root,color].get('root_transcript')!=right[root,color].get('root_transcript')
                for root in roots for color in (0,1)):
             raise ValueError('root progress changed across arms')
+        if any(arm[root,0]['root_edges']!=arm[root,1]['root_edges'] or
+               arm[root,0].get('root_transcript')!=arm[root,1].get('root_transcript')
+               for arm in (left,right) for root in roots):
+            raise ValueError('color pair does not share one root')
         early=sum(8<=left[root,0]['root_edges']<=12 for root in roots)
         if early!=len(roots)//2 or any(left[root,0]['root_edges']<8 for root in roots):
             raise ValueError('early/later root marginals changed')

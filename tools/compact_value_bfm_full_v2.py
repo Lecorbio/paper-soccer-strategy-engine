@@ -31,7 +31,8 @@ def admitted_pilot(context,phase):
     bank=campaign.read(campaign.verify(claim['bank']));campaign.verify(bank['tsv'])
     raw=campaign.verify(execution['raw'])
     result=rank4_gate_support.validate_result(raw,expected_bank_sha256=bank['tsv']['sha256'],
-        expected_candidate_sha256=selected['source']['sha256'],expected_candidate_search_profile='standard-v1')
+        expected_candidate_sha256=selected['source']['sha256'],expected_candidate_search_profile='standard-v1',
+        require_trajectories=True,trajectory_bank=campaign.verify(bank['tsv']))
     runtime=campaign.read(campaign.verify(selected['runtime']))
     if (result['bindings']['candidate_runtime_body_sha256']!=runtime['body_sha256']
             or result['bindings']['candidate_payload_sha256']!=runtime['quantization']['payload_sha256']):
@@ -43,6 +44,9 @@ def admitted_pilot(context,phase):
     if (result['result']!=execution['result'] or result['result']['candidate_wins']!=outcome['wins']
             or result['result']['games']!=200 or result['result']['failures']!=0):
         raise ValueError('pilot admission does not reproduce its actual screen')
+    expected_exclusions=gate.played_exclusions(context,phase,campaign.verify(outcome['screen']),result,bank)
+    if outcome.get('played_trajectory_closure_preserved') is not True or outcome['development_exclusions']!=expected_exclusions:
+        raise ValueError('pilot admission lost its played-state isolation closure')
     return outcome
 
 

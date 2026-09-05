@@ -15,11 +15,12 @@ if __name__=='__main__':
     os.environ['PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY']='1'
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from tools import compact_value_bfm_campaign_v2 as campaign
+from tools import compact_value_bfm_attempt_v2 as attempts
 
 
 def context_root(root,attempt):
     if attempt<1: raise ValueError('attempt zero is forbidden')
-    if attempt!=1: raise ValueError('later attempts require frozen outcome and accumulated-exclusion integration')
+    if attempt>2: raise ValueError('after two unsuccessful trained attempts, a validated unprotected attribution intervention is required')
     return root/'phases'/f'attempt-{attempt:03d}-pilot'
 
 
@@ -94,13 +95,38 @@ def smoke_exclusions(root):
 
 
 def prepare(root,attempt):
+    context=context_root(root,attempt)
     parent=campaign.read(root/'campaign.json');smoke=validate_smoke(root)
     baseline=campaign.read(root/'baseline-engine-comparison.json')
     if not baseline['same_weights'] or not baseline['all_checks_passed']: raise ValueError('engine-version baseline is incomplete')
-    context=context_root(root,attempt);context.mkdir(parents=True,exist_ok=True)
+    previous=attempts.failed_pilot(root,attempt-1) if attempt==2 else None
+    context.mkdir(parents=True,exist_ok=True)
     path=context/'campaign.json'
-    if path.exists(): return campaign.read(path)
+    if path.exists():
+        frozen=campaign.read(path)
+        if (frozen['attempt']!=attempt or frozen['parent_campaign']!=campaign.record(root/'campaign.json')
+                or any(frozen['inputs'][key]!=parent['inputs'][key] for key in
+                    ('attempt_one_initial_checkpoint','teacher_runtime','attempt_zero_runtime'))):
+            raise ValueError('pilot resume lineage changed')
+        if previous is not None:
+            closure=frozen['previous_failed_attempts']
+            if len(closure)!=1 or closure[0]['outcome']!=previous['outcome'] or closure[0]['training']!=previous['training']:
+                raise ValueError('pilot resume prior-attempt outcome changed')
+            carry=campaign.read(campaign.verify(closure[0]['carry']))
+            for item in carry['artifacts']:campaign.verify(item)
+            required=previous['contract']['exclusions']+carry['artifacts']
+            if any(item not in frozen['exclusions'] for item in required):
+                raise ValueError('pilot resume dropped accumulated isolation exclusions')
+        for item in frozen['exclusions']:campaign.verify(item)
+        return frozen
     exclusions=list(parent['exclusions'])+smoke_exclusions(root)+baseline['exclusions']
+    previous_bindings=[]
+    if previous is not None:
+        for item in previous['contract']['exclusions']:campaign.verify(item)
+        carried,index=attempts.carry_failed_pilot(root,previous,context)
+        exclusions+=previous['contract']['exclusions']+carried
+        previous_bindings.append({'attempt':previous['attempt'],'outcome':previous['outcome'],
+            'training':previous['training'],'selection':previous['selection'],'carry':index})
     anchors=campaign.read(root/'exclusions/anchor-derived.json')
     for role,values in anchors['fingerprints'].items():
         out=root/'exclusions'/f'pilot-anchor-{role}.json'
@@ -108,6 +134,7 @@ def prepare(root,attempt):
             'domain':anchors['domain'],'fingerprints':values,'source':campaign.record(root/'exclusions/anchor-derived.json')})
         exclusions.append(campaign.record(out))
     exclusions.append(campaign.record(root/'exclusions/prior-search-validation.json'))
+    exclusions=list({item['path']:item for item in exclusions}.values())
     # Reuse immutable feature indexes; their artifact paths stay within this campaign.
     for name in ('anchor-derived.json','prior-search-validation.json'):
         campaign.copy_checked(root/'exclusions'/name,context/'exclusions'/name)
@@ -116,10 +143,13 @@ def prepare(root,attempt):
         'baseline_engine_comparison':campaign.record(root/'baseline-engine-comparison.json'),
         'execution_sources':{name:campaign.copy_checked(Path(module.__file__),context/'source-closure'/f'{name}.py') for name,module in (('campaign',campaign),('features',campaign.features),('corpus',campaign.corpus),('openings',campaign.openings))},
         'attempt':attempt,'phase':'pilot','exclusions':exclusions,'heavy_stage_root':str(root),
+        'previous_failed_attempts':previous_bindings,'completed_unsuccessful_trained_attempts':len(previous_bindings),
         'candidate_lineage':{'mandatory_training':True,'initial_float':parent['inputs']['attempt_one_initial_checkpoint'],
             'generation_student':parent['inputs']['attempt_zero_runtime'],'smoke_weights_reused':False},
         'pilot_games':2000,'pilot_training_roster':{'lambdas':[0,.1,.25],'seeds':[20260907,20260908,20260909]},
         'execution_source':campaign.copy_checked(Path(__file__),context/'pilot-driver.py')})
+    if previous is not None:
+        body['attempt_closure_driver']=campaign.copy_checked(Path(attempts.__file__),context/'attempt-closure-driver.py')
     result=campaign.seal(path,body)
     campaign.event(root,'pilot-context-frozen',{'context':campaign.record(path),'attempt':attempt})
     return result

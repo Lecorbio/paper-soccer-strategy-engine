@@ -26,6 +26,9 @@ namespace opponent = papersoccer::campaign_opponent;
 namespace cv = compact_value_bfm;
 using Clock = std::chrono::steady_clock;
 namespace {
+struct AdapterMismatch : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 struct MatchState { ps::GameState core; cv::State compact; std::string transcript; };
 ps::RulesConfig codingame_rules() {
   ps::RulesConfig rules;
@@ -74,11 +77,11 @@ void verify_lockstep(const ps::GameState &core, const cv::State &compact) {
       player_id(core.to_move) != compact.to_move ||
       ps::is_terminal(core) != compact.terminal() ||
       core.used_segments.size() != compact.ply) {
-    throw std::runtime_error("core/compact dynamic-state mismatch");
+    throw AdapterMismatch("core/compact dynamic-state mismatch");
   }
   const std::optional<ps::Player> winner = ps::winner(core);
   if ((winner.has_value() ? player_id(*winner) : -1) != compact.winner) {
-    throw std::runtime_error("core/compact winner mismatch");
+    throw AdapterMismatch("core/compact winner mismatch");
   }
   std::size_t compact_edges = 0;
   for (int edge = 0; edge < cv::kEdgeCount; ++edge) {
@@ -86,11 +89,11 @@ void verify_lockstep(const ps::GameState &core, const cv::State &compact) {
     ++compact_edges;
     const auto [first, second] = compact_edge_points(edge);
     if (!core.used_segments.contains(ps::Segment{first, second})) {
-      throw std::runtime_error("core/compact used-edge mismatch");
+      throw AdapterMismatch("core/compact used-edge mismatch");
     }
   }
   if (compact_edges != core.used_segments.size()) {
-    throw std::runtime_error("core/compact used-edge count mismatch");
+    throw AdapterMismatch("core/compact used-edge count mismatch");
   }
   for (int vertex = 0; vertex < cv::kVertexCount; ++vertex) {
     const ps::Point point{topology.x(vertex), topology.y(vertex)};
@@ -102,7 +105,7 @@ void verify_lockstep(const ps::GameState &core, const cv::State &compact) {
         (compact.ball == vertex &&
          (topology.north_goal(vertex) || topology.south_goal(vertex)));
     if (compact_visited != core_visited) {
-      throw std::runtime_error("core/compact visited-vertex mismatch");
+      throw AdapterMismatch("core/compact visited-vertex mismatch");
     }
   }
 }
@@ -117,7 +120,7 @@ void apply_both(MatchState &state, std::string_view encoded) {
   cv::State next_compact = state.compact;
   opponent::apply_encoded_turn(next_core, encoded);
   if (!cv::apply_action(next_compact, compact_action(encoded))) {
-    throw std::invalid_argument("compact engine rejected core-legal action");
+    throw AdapterMismatch("compact engine rejected core-legal action");
   }
   verify_lockstep(next_core, next_compact);
   state.core = std::move(next_core);
@@ -179,6 +182,9 @@ void play(const std::string &id, const MatchState &root, int candidate_player,
       apply_both(state,action);
       append_transcript(state.transcript,action);
       ++turns;
+    } catch (const AdapterMismatch &) {
+      failure="adapter-state-mismatch";
+      break;
     } catch (const std::exception &) {
       failure=candidate ? "candidate-exception-or-illegal" : "opponent-exception-or-illegal";
       break;

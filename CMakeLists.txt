@@ -401,6 +401,12 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
       NAME papersoccer_compact_value_bfm_campaign_v2_unit_tests
       COMMAND ${CMAKE_COMMAND} -E env
               PYTHONDONTWRITEBYTECODE=1
+              MKL_NUM_THREADS=1
+              NUMEXPR_NUM_THREADS=1
+              OMP_NUM_THREADS=1
+              OPENBLAS_NUM_THREADS=1
+              VECLIB_MAXIMUM_THREADS=1
+              PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY=1
               ${Python3_EXECUTABLE} -m unittest
               tests.codingame.test_compact_value_bfm_campaign_v2
               tests.codingame.test_compact_value_bfm_ranking_store
@@ -408,8 +414,11 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_labels_v2
               tests.codingame.test_compact_value_bfm_pilot_selection_v2
               tests.codingame.test_compact_value_bfm_pilot_gate_v2
+              tests.codingame.test_compact_value_bfm_pilot_v2
               tests.codingame.test_compact_value_bfm_full_v2
-              tests.codingame.test_compact_value_bfm_opponent_evaluation)
+              tests.codingame.test_compact_value_bfm_full_selection_v2
+              tests.codingame.test_compact_value_bfm_opponent_evaluation
+              tests.codingame.test_compact_value_bfm_opponent_suite_v2)
     set_tests_properties(
       papersoccer_compact_value_bfm_campaign_v2_unit_tests PROPERTIES
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

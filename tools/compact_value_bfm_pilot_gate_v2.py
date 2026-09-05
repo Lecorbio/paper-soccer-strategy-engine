@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from collections import defaultdict
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from tools import compact_value_bfm_campaign_v2 as campaign
@@ -78,6 +79,30 @@ def prepare_bank(context,phase,selection):
         'proposed_roots':1024,'filtered_from_frozen_training_states':True})
 
 
+def played_exclusions(context,phase,execution,checked,bank):
+    """Carry every actually played screen boundary, without labels or scores."""
+    directory=context/phase/'rank4-screen';values=defaultdict(set)
+    if checked['config'].get('trajectory_schema')!='papersoccer.compact-value-bfm-rank4-trajectories.v1':
+        raise ValueError('pilot screen must retain source-bound played trajectories')
+    for game in checked['games']:
+        state=campaign.features.ReplayState();prefix_turns=len(game['root_transcript'].split('/'))
+        for turn,action in enumerate(game['transcript'].split('/')):
+            if turn>=prefix_turns:
+                for domain,value in campaign.fingerprints(state).items():values[domain].add(value)
+            campaign.features.apply_complete_turn(state,state.to_move,action)
+        for domain,value in campaign.fingerprints(state).items():values[domain].add(value)
+    result=list(bank['exclusions'])
+    for ordinal,(domain,fingerprints) in enumerate(sorted(values.items())):
+        path=directory/f'played-exclusion-{ordinal}.json'
+        campaign.seal(path,{'schema':campaign.ID+'.pilot-screen-played-exclusions.v2',
+            'role':'mixed-development','domain':domain,'fingerprints':sorted(fingerprints),
+            'execution':campaign.record(execution),'bank_sha256':bank['tsv']['sha256'],
+            'contains_transcripts':False,'contains_labels':False,'contains_metrics':False,
+            'includes_all_played_postroot_boundaries':True,'includes_terminal_features':True})
+        result.append(campaign.record(path))
+    return result
+
+
 def run_screen(root,context,phase):
     selection_path=context/phase/'model-selection.json';selection=campaign.read(selection_path)
     if selection.get('pilot_admitted') is not False:raise ValueError('unexpected pre-screen admission state')
@@ -112,7 +137,8 @@ def run_screen(root,context,phase):
     with (directory/'build.log').open('wb') as log:subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,check=True)
     gate_command=[str(binary),'--bank',bank['tsv']['path'],'--candidate-source',str(candidate),'--rank4-source',str(rank4),
         '--output',str(raw),'--expected-bank-sha256',bank['tsv']['sha256'],'--expected-candidate-sha256',campaign.sha(candidate),
-        '--pair-offset','0','--pair-count','100','--mode','actual-clock','--minimum-candidate-wins','105']
+        '--pair-offset','0','--pair-count','100','--mode','actual-clock','--minimum-candidate-wins','105',
+        '--include-trajectories']
     if os.getpriority(os.PRIO_PROCESS,0)!=0:raise ValueError('actual-clock screen requires nice zero')
     campaign.seal(claim,{'schema':campaign.ID+'.pilot-screen-execution-claim.v2','candidate':selected['source'],
         'runtime':selected['runtime'],'bank':campaign.record(directory/'bank.json'),'binary':campaign.record(binary),
@@ -123,7 +149,8 @@ def run_screen(root,context,phase):
         finished=subprocess.run(gate_command,stdout=out,stderr=err,env={**os.environ,**campaign.THREADS})
     if finished.returncode not in (0,2) or not raw.exists():raise ValueError('screen process failed without a complete valid result')
     checked=rank4_gate_support.validate_result(raw,expected_bank_sha256=bank['tsv']['sha256'],
-        expected_candidate_sha256=campaign.sha(candidate),expected_candidate_search_profile='standard-v1')
+        expected_candidate_sha256=campaign.sha(candidate),expected_candidate_search_profile='standard-v1',
+        require_trajectories=True,trajectory_bank=campaign.verify(bank['tsv']))
     runtime_document=campaign.read(runtime)
     if (checked['bindings']['candidate_runtime_body_sha256']!=runtime_document['body_sha256']
             or checked['bindings']['candidate_payload_sha256']!=runtime_document['quantization']['payload_sha256']):
@@ -133,11 +160,12 @@ def run_screen(root,context,phase):
     result=checked['result'];admitted=result['games']==200 and result['candidate_wins']>=105 and result['failures']==0
     campaign.seal(execution,{'schema':campaign.ID+'.pilot-screen-execution.v2','claim':campaign.record(claim),
         'raw':campaign.record(raw),'elapsed_seconds':time.monotonic()-started,'returncode':finished.returncode,'result':result})
+    exclusions=played_exclusions(context,phase,execution,checked,bank)
     outcome=campaign.seal(context/phase/'pilot-outcome.json',{'schema':campaign.ID+'.pilot-outcome.v2',
         'selection':campaign.record(selection_path),'screen':campaign.record(execution),'selected':selected,
         'status':'pilot-admitted' if admitted else 'rank4-screen-rejected','admitted':admitted,
         'wins':result['candidate_wins'],'games':result['games'],'failures':result['failures'],
-        'development_exclusions':bank['exclusions'],'campaign_success':False})
+        'development_exclusions':exclusions,'played_trajectory_closure_preserved':True,'campaign_success':False})
     return outcome
 
 
