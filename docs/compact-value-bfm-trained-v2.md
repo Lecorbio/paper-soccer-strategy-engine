@@ -170,3 +170,16 @@ are independently reconstructed in CMake's declared order. Hard selection is
 global; incomplete shallow groups are mandatory deep replacements, and no
 incomplete group can reach training. Final merging is streamed, and the mapped
 ranking store accepts both plain and compressed rich input.
+
+Pilot model selection is frozen before training. Seed selection reuses the
+maintained validation key, and both overall and early strata must have at
+least 100 comparable groups with at least 80% coverage. Each ranking candidate
+must reduce regret by 10% in both strata, stay within the action-flip margin,
+preserve canonical accuracy, and retain the source reserve. Selection remains
+conditional on a separate 105/200, zero-failure Rank-4 screen.
+
+`compact_value_bfm_pilot_selection_v2.py --root CAMPAIGN --context CONTEXT
+--phase PHASE --wait-for-labels train` is a one-shot sequential continuation:
+it waits on the shared campaign lock, verifies completed labels, runs all nine
+trainings, and freezes offline model selection. It is not a recurring
+monitor and does not claim pilot admission or live success.
