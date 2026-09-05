@@ -675,14 +675,21 @@ def label_positions(root,phase,workers):
     event(root,'labels-completed',{'labels':record(output)}); return result
 
 
-def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25)):
+def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_profile=None):
     if tuple(sorted(set(ranking_weights)))!=tuple(ranking_weights) or 0.0 not in ranking_weights or not set(ranking_weights)<={0.0,.10,.25}:
         raise ValueError('invalid ranking recipe roster')
     from tools import compact_value_bfm_train as trainer
     from tools import compact_value_bfm_teacher_training as adapter
+    from tools import compact_value_bfm_seed_process_v2 as seed_process
+    from tools import compact_value_bfm_intervention_v2 as intervention
     from tools import jacek_replay_train as packer
-    import numpy as np
-    plan=read(root/'campaign.json'); labels=read(root/phase/'labels.json')
+    plan=read(root/'campaign.json')
+    mode=seed_process.executor_mode(plan)
+    frozen_profile=intervention.expected_qat_profile(plan)
+    profile=trainer.resolve_qat_profile(frozen_profile if qat_profile is None else qat_profile)
+    if profile.name!=frozen_profile:
+        raise ValueError('QAT profile differs from frozen phase')
+    labels=read(root/phase/'labels.json')
     bundle=trainer.FrozenBundle.load(verify(plan['bundle']))
     from tools import compact_value_bfm_ranking_store as ranking_store
     store_index=ranking_store.build_store([verify(labels['merged'])],root/phase/'ranking-store',bundle)
@@ -706,32 +713,12 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25)):
     anchor,common,validation,routes=adapter._load_core_inputs(bundle)
     # Rows shared under the narrow early exception receive the new teacher label
     # only once: drop matching old anchor rows from the mixed-batch anchor pool.
-    early=[r for r in positions['rows'] if r['split']=='train' and r['drawn_edges']<=6]
-    early_active=set()
-    for r in early:
-        state=features.ReplayState()
-        if r['prefix']:
-            for action in r['prefix'].split('/'): features.apply_complete_turn(state,state.to_move,action)
-        for rotate in (False,True):
-            for reflect in (False,True):
-                early_active.add(tuple(features.encode_active(openings.transform_state(state,rotate=rotate,reflect=reflect))))
-    del positions,early
-    removed=[]
-    if early_active:
-        keep=[]
-        for i in range(len(anchor)):
-            if tuple(anchor.active_row(i)) in early_active: removed.append(i)
-            else: keep.append(i)
-        if removed:
-            active=[anchor.active_row(i) for i in keep]; indptr=np.zeros(len(active)+1,dtype=np.int64)
-            indptr[1:]=np.cumsum([len(a) for a in active])
-            anchor=trainer.Dataset(indptr,np.concatenate(active),anchor.targets[keep],anchor.weights[keep],
-                anchor.group_ids[keep],anchor.split,anchor.source_manifest_sha256,anchor.source_npz_sha256,
-                anchor.source_route)
+    anchor,anchor_filter=seed_process.filter_early_anchor(anchor,positions['rows'])
+    del positions
     audit={'schema':ID+'.training-input-audit.v2','bundle':plan['bundle'],
         'exclusion_index':record(root/'exclusions/anchor-derived.json'),
         'position_closure':record(root/phase/'positions.json'),'labels':record(root/phase/'labels.json'),'ranking_store':record(store_index),
-        'shards':shard_records,'anchor_duplicates_removed':len(removed),
+        'shards':shard_records,'anchor_duplicates_removed':anchor_filter['removed_rows'],
         'smoke_qualification_eligible':False if smoke else None,'protected_tests_opened':False}
     audit=seal(root/phase/'training-input-audit.json',audit)
     inputs=trainer.TrainingInputs(new=datasets['train'],anchor=anchor,common_adjudicator=common,
@@ -754,15 +741,25 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25)):
     started=time.monotonic(); results=[]
     # Smoke exercises all loss recipes; one seed bounds its training cost.
     seeds=trainer.FIXED_SEEDS[:1] if smoke else trainer.FIXED_SEEDS
-    with trainer.native_thread_execution_scope() as execution:
+    process_spec=None;process_evidence=None
+    with contextlib.ExitStack() as scopes:
+        if mode=='spawn-v2':
+            process_spec=seed_process.freeze_spec(root,phase,bundle,inputs,anchor_filter,
+                ranking_weights,seeds,qat_profile=profile.name)
+            process_executor=scopes.enter_context(seed_process.SpawnSeedExecutor(process_spec))
+        else:
+            execution=scopes.enter_context(trainer.native_thread_execution_scope())
         for weight in ranking_weights:
             directory=root/phase/'training'/f'lambda-{weight:.2f}'
             def run(seed):
                 return trainer.train_seed_candidate(bundle,inputs,architecture,arm,seed,directory,
-                    ranking_weight=weight,initial_checkpoint=initial,resume=True,
+                    ranking_weight=weight,initial_checkpoint=initial,qat_profile=profile.name,resume=True,
                     _native_thread_execution=execution)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                receipts=list(pool.map(run,seeds))
+            if mode=='spawn-v2':
+                receipts=process_executor.run_weight(weight)
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    receipts=list(pool.map(run,seeds))
             for receipt in receipts:
                 checkpoint=directory/receipt['float_checkpoint']['path']
                 updated=trainer.load_float_checkpoint(checkpoint,architecture)
@@ -784,10 +781,19 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25)):
                     'source':record(output),'float_checkpoint':record(checkpoint),
                     'master_updates':update,'quantized_changes_vs_initialization':changes,
                     'source_reserve':95000-len(source),'seed_receipt':receipt})
+        if mode=='spawn-v2':
+            evidence={'schema':ID+'.seed-process-execution.v2',
+                'specification':record(process_spec),'start_method':'spawn','maximum_workers':2,
+                'per_child_seed_threads':1,'numerical_threads_per_seed':1,
+                'lambda_order':list(ranking_weights),'results':process_executor.evidence}
+            process_evidence=root/phase/'seed-process-executions'/(hashlib.sha256(raw(evidence)).hexdigest()+'.json')
+            seal(process_evidence,evidence)
+    executor_evidence={} if process_spec is None else {'seed_process_spec':record(process_spec),
+        'seed_process_execution':record(process_evidence)}
     result=seal(result_path,{'schema':ID+'.training.v2','results':results,
         'input_audit':record(root/phase/'training-input-audit.json'),'elapsed_seconds':time.monotonic()-started,
         'smoke':smoke,'mandatory_training_verified':True,'qualification_passed':False,
-        'producer':execution_source(root)})
+        'producer':execution_source(root),**executor_evidence})
     event(root,'training-completed',{'training':record(result_path)}); return result
 
 

@@ -340,6 +340,8 @@ The two gates run sequentially, each as 100 five-pair shards on four single-thre
 workers. Gate B excludes Gate A proposals and played boundaries irrespective of
 the score. Each gate needs 527 wins, 260 per color and zero failures. Completed
 shards revalidate before reuse; an incomplete claimed shard cannot retry.
+Both release preflight games also contribute their initial, played and terminal
+state fingerprints before protected roots are generated.
 
 `compact_value_bfm_live_v2.py` provides the normal qualified-release path. It
 creates a new v2 authorization and explicit identity-only compatibility records
@@ -369,6 +371,29 @@ experiment-specific adapter is not supplied by this qualified-release CLI.
 After two verified completed unsuccessful trained attempts,
 `compact_value_bfm_attribution_v2.py` freezes only unprotected diagnostics and one
 recommended intervention category. Pilot and full training count together. It
-does not itself launch attempt three or invent a training configuration; concrete
-profile/attempt integration and protected/live terminal-outcome continuation
-remain required for those failure routes.
+does not itself launch attempt three. `compact_value_bfm_intervention_v2.py`
+can bind the existing `refined-adaptive-scales-v1` recipe only when the verified
+recommendation is QAT/scales. A fresh third pilot must carry both failed attempts'
+exclusions and retain the original float initialization, teacher, architecture,
+one warmup epoch and four QAT epochs. Any admitted full phase inherits the same
+exact recipe. Teacher-ranking and search recommendations still require their
+own concrete experiment integration; attempt four remains unavailable.
+
+`compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
+or a completed calibrated live rejection. It keeps terminal proof separate from
+the unprotected metrics used for attribution, and carries fingerprints from the
+protected proposals, played games, release preflight and live replays. An
+interrupted gate, ambiguous submission or precision-inconclusive score cannot
+count as a completed failed attempt.
+
+Future training phases may explicitly freeze `training_executor` as
+`{"mode":"spawn-v2","maximum_workers":2}` through pilot preparation's
+`--training-executor spawn-v2` option. An already frozen phase cannot change
+executor on resume. This uses two persistent spawned
+processes, each with one seed thread and a separately enforced numerical thread
+limit. The coordinator retains exports and aggregate receipts. Worker input
+identities and seed bindings must reproduce the audited training corpus and
+anchor filtering. Standard phases keep the existing thread executor. Production
+activation still requires a real smoke equivalence run and memory/performance
+measurement when campaign training slots are free; synthetic checks alone do
+not establish production equivalence or a speedup.

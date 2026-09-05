@@ -110,6 +110,12 @@ class FullContextTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'admitted ranking recipe'):
                 self.validate()
 
+    def test_standard_attempt_cannot_substitute_a_registered_intervention_profile(self):
+        self.contract['qat_profile'] = 'refined-adaptive-scales-v1'
+        self.contract['qat_profile_contract'] = trainer.qat_profile_contract(self.contract['qat_profile'])
+        with self.assertRaises(ValueError):
+            self.validate()
+
 
 class FullRosterAndSelectionTests(unittest.TestCase):
     def roster(self):
@@ -139,6 +145,12 @@ class FullRosterAndSelectionTests(unittest.TestCase):
                                 'new_loss_share': .25, 'anchor_loss_share': .75, 'qat_epochs': 4,
                                 'qat_profile': trainer.STANDARD_QAT_PROFILE}}
         full_selection.validate_seed_corpus_binding(binding, audit)
+        changed_profile = copy.deepcopy(binding)
+        changed_profile['settings']['qat_profile'] = 'refined-adaptive-scales-v1'
+        with self.assertRaisesRegex(ValueError, 'batch/QAT'):
+            full_selection.validate_seed_corpus_binding(changed_profile, audit)
+        full_selection.validate_seed_corpus_binding(changed_profile, audit,
+                                                    qat_profile='refined-adaptive-scales-v1')
         binding['datasets']['new']['source_npz_sha256'] = 'valid-pilot-npz'
         with self.assertRaisesRegex(ValueError, 'new-shard'):
             full_selection.validate_seed_corpus_binding(binding, audit)

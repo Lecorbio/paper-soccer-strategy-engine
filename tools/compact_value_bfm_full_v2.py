@@ -18,6 +18,7 @@ from tools import compact_value_bfm_campaign_v2 as campaign
 from tools import compact_value_bfm_stream_v2 as positions
 from tools import compact_value_bfm_labels_v2 as labels
 from tools import compact_value_bfm_pilot_gate_v2 as gate
+from tools import compact_value_bfm_intervention_v2 as intervention
 from submissions.codingame.bots.compact_value_bfm import rank4_gate_support
 
 
@@ -85,9 +86,16 @@ def pilot_fingerprints(root,context,phase):
 def prepare(root,pilot_context,pilot_phase):
     pilot=admitted_pilot(pilot_context,pilot_phase)
     parent=campaign.read(pilot_context/'campaign.json');attempt=parent['attempt']
+    profile=intervention.expected_qat_profile(parent)
     context=root/'phases'/f'attempt-{attempt:03d}-full';phase=f'attempt-{attempt:03d}-full'
     path=context/'campaign.json'
-    if path.exists():return context,phase,campaign.read(path)
+    if path.exists():
+        frozen=campaign.read(path)
+        if (intervention.expected_qat_profile(frozen)!=profile
+                or any(frozen.get(key)!=parent.get(key) for key in
+                    ('qat_profile','qat_profile_contract','intervention','training_executor'))):
+            raise ValueError('full training changed its admitted pilot intervention')
+        return context,phase,frozen
     selected=pilot['selected'];weight=selected['lambda']
     if weight not in (.1,.25):raise ValueError('pilot did not admit a ranking recipe')
     body={key:value for key,value in parent.items() if key!='body_sha256'}

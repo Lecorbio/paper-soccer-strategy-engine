@@ -51,7 +51,7 @@ def validate_full_selection(root, context, phase):
     for weight in weights:
         maintained._validate_seed_roster(
             [row['seed_receipt'] for row in sorted(records, key=lambda row: row['seed']) if row['weight'] == weight],
-            ranking_weight=weight, qat_profile=trainer.STANDARD_QAT_PROFILE,
+            ranking_weight=weight, qat_profile=full_selection.intervention.expected_qat_profile(contract),
             teacher_ranking_profile=maintained.pipeline.STANDARD_TEACHER_RANKING_PROFILE)
     campaign.verify(training['producer'])
     bundle = trainer.FrozenBundle.load(campaign.verify(contract['bundle']))
@@ -156,7 +156,7 @@ def completed_rejection(root, context, phase, model):
 
 def validated_evidence(root, attempt):
     root = Path(root).resolve()
-    if isinstance(attempt, bool) or attempt not in (1, 2):
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
         raise ValueError('after two unsuccessful trained attempts an intervention binding is required')
     phase = f'attempt-{attempt:03d}-full'
     context = root / 'phases' / phase
@@ -241,7 +241,7 @@ def collect_fingerprints(previous):
 
 def carry_failed_full(root, previous, destination):
     """Create a new-context isolation closure; previous evidence stays sealed."""
-    if previous.get('stage') != 'full' or previous['attempt'] not in (1, 2):
+    if previous.get('stage') != 'full' or previous['attempt'] not in (1, 2, 3):
         raise ValueError('a verified failed full attempt is required')
     values = collect_fingerprints(previous)
     directory = Path(destination) / 'exclusions' / f'failed-attempt-{previous["attempt"]:03d}'
@@ -268,7 +268,7 @@ def carry_failed_full(root, previous, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2))
+    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2, 3))
     parser.add_argument('command', choices=('record', 'validate'))
     args = parser.parse_args()
     root = args.root.resolve()

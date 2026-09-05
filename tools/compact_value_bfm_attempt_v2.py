@@ -62,6 +62,8 @@ def validate_training(context, phase, contract):
         for item in shard.values():
             campaign.verify(item)
     architecture = trainer.ARCHITECTURES['capacity-12x8']
+    from tools import compact_value_bfm_intervention_v2 as interventions
+    expected_profile = interventions.expected_qat_profile(contract)
     initial_record = contract['inputs']['attempt_one_initial_checkpoint']
     initial = trainer.load_float_checkpoint(campaign.verify(initial_record), architecture)
     for row in training['results']:
@@ -70,7 +72,8 @@ def validate_training(context, phase, contract):
                 or binding['architecture']['name'] != architecture.name
                 or binding['architecture']['dimensions'] != [6301, 12, 8, 1]
                 or binding['architecture']['biases'] is not False
-                or binding['settings']['qat_profile'] != 'standard-v1'
+                or binding['settings']['qat_profile'] != expected_profile
+                or binding['settings']['qat_profile_contract'] != trainer.qat_profile_contract(expected_profile)
                 or ranking['initial_checkpoint']['sha256'] != initial_record['sha256']
                 or ranking['artifact_sha256'] != audit['ranking_store']['sha256']
                 or ranking['body_sha256'] != store['body_sha256']
@@ -239,10 +242,13 @@ def validate_played_exclusions(directory, outcome, bank, raw):
 
 
 def failed_pilot(root, attempt):
-    if isinstance(attempt, bool) or attempt not in (1, 2):
-        raise ValueError('only the first two standard trained attempts are supported')
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
+        raise ValueError('only the three source-bound trained attempts are supported')
     phase = f'attempt-{attempt:03d}-pilot'; context = root / 'phases' / phase
     contract = campaign.read(context / 'campaign.json'); parent = bound(contract['parent_campaign'], root / 'campaign.json')
+    if attempt == 3:
+        from tools import compact_value_bfm_intervention_v2 as intervention
+        intervention.expected_qat_profile(contract)
     if (contract['attempt'] != attempt or contract['phase'] != 'pilot' or contract['policy'] != campaign.POLICY
             or any(contract['inputs'][key] != parent['inputs'][key] for key in
                 ('attempt_one_initial_checkpoint', 'teacher_runtime', 'attempt_zero_runtime'))):
@@ -384,15 +390,29 @@ def carry_failed_pilot(root, previous, destination):
 def failed_attempt(root, attempt):
     """Choose the actual terminal branch; never bypass an existing full stage."""
     root = Path(root).resolve()
-    if isinstance(attempt, bool) or attempt not in (1, 2):
-        raise ValueError('after two unsuccessful trained attempts an intervention binding is required')
-    if (root / 'phases' / f'attempt-{attempt:03d}-full').exists():
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
+        raise ValueError('after three trained attempts another intervention binding is required')
+    context = root / 'phases' / f'attempt-{attempt:03d}-full'
+    if attempt == 3:
+        contract_path = (context if context.exists() else root / 'phases' / 'attempt-003-pilot') / 'campaign.json'
+        if not contract_path.is_file():
+            raise ValueError('attempt three requires its source-bound intervention binding')
+        from tools import compact_value_bfm_intervention_v2 as intervention
+        intervention.expected_qat_profile(campaign.read(contract_path))
+    if context.exists():
         from tools import compact_value_bfm_full_outcome_v2 as full_outcome
+        from tools import compact_value_bfm_terminal_outcome_v2 as terminal
+        path = context / context.name / 'attempt-outcome.json'
+        if path.exists() and campaign.read(path).get('schema') == terminal.SCHEMA:
+            return terminal.failed_terminal(root, attempt)
         return full_outcome.failed_full(root, attempt)
     return failed_pilot(root, attempt)
 
 
 def carry_failed_attempt(root, previous, destination):
+    if previous.get('terminal_outcome') is True:
+        from tools import compact_value_bfm_terminal_outcome_v2 as terminal
+        return terminal.carry_failed_terminal(root, previous, destination)
     if previous.get('stage') == 'full':
         from tools import compact_value_bfm_full_outcome_v2 as full_outcome
         return full_outcome.carry_failed_full(root, previous, destination)

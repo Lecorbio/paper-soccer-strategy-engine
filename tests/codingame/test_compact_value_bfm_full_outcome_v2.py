@@ -32,6 +32,7 @@ class FullSelectionReopeningTests(unittest.TestCase):
         self.record = campaign.record(artifact)
         campaign.seal(self.root / 'campaign.json', {'frozen': True})
         self.contract = campaign.seal(self.context / 'campaign.json', {
+            'attempt': 1,
             'parent_campaign': campaign.record(self.root / 'campaign.json'),
             'admitted_pilot': self.record, 'bundle': self.record,
             'inputs': {'attempt_one_initial_checkpoint': self.record},

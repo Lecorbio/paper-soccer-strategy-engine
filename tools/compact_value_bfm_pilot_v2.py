@@ -18,9 +18,13 @@ from tools import compact_value_bfm_campaign_v2 as campaign
 from tools import compact_value_bfm_attempt_v2 as attempts
 
 
-def context_root(root,attempt):
+def context_root(root,attempt,*,intervention=None):
+    if isinstance(attempt,bool) or not isinstance(attempt,int): raise ValueError('attempt must be an integer')
     if attempt<1: raise ValueError('attempt zero is forbidden')
-    if attempt>2: raise ValueError('after two unsuccessful trained attempts, a validated unprotected attribution intervention is required')
+    if attempt>3 or (attempt==3 and intervention is None):
+        raise ValueError('after two unsuccessful trained attempts, a validated unprotected attribution intervention is required')
+    if attempt==3 and (intervention.get('attempt')!=3 or intervention.get('category')!='qat-and-scales'):
+        raise ValueError('third pilot requires the concrete QAT/scales intervention')
     return root/'phases'/f'attempt-{attempt:03d}-pilot'
 
 
@@ -94,39 +98,62 @@ def smoke_exclusions(root):
     return artifacts
 
 
-def prepare(root,attempt):
-    context=context_root(root,attempt)
+def prepare(root,attempt,*,training_executor=None):
+    from tools import compact_value_bfm_intervention_v2 as interventions
+    from tools import compact_value_bfm_seed_process_v2 as seed_process
+    if isinstance(attempt,bool) or not isinstance(attempt,int): raise ValueError('attempt must be an integer')
+    if training_executor not in (None,'threads','spawn-v2'):
+        raise ValueError('training executor must be threads or spawn-v2')
+    intervention=interventions.prepare(root) if attempt==3 else None
+    context=context_root(root,attempt,intervention=intervention)
     parent=campaign.read(root/'campaign.json');smoke=validate_smoke(root)
     baseline=campaign.read(root/'baseline-engine-comparison.json')
     if not baseline['same_weights'] or not baseline['all_checks_passed']: raise ValueError('engine-version baseline is incomplete')
-    previous=attempts.failed_attempt(root,attempt-1) if attempt==2 else None
+    previous=[attempts.failed_attempt(root,number) for number in range(1,attempt)]
+    if intervention is not None:
+        identities=[{key:row[key] for key in ('attempt','outcome','training','selection')} for row in previous]
+        if identities!=intervention['previous_failed_attempts']:
+            raise ValueError('third pilot prior attempts differ from the frozen unprotected attribution')
     context.mkdir(parents=True,exist_ok=True)
     path=context/'campaign.json'
     if path.exists():
         frozen=campaign.read(path)
+        frozen_executor=seed_process.executor_mode(frozen)
+        if training_executor is not None and training_executor!=frozen_executor:
+            raise ValueError('pilot resume cannot change its frozen training executor')
         if (frozen['attempt']!=attempt or frozen['parent_campaign']!=campaign.record(root/'campaign.json')
                 or any(frozen['inputs'][key]!=parent['inputs'][key] for key in
                     ('attempt_one_initial_checkpoint','teacher_runtime','attempt_zero_runtime'))):
             raise ValueError('pilot resume lineage changed')
-        if previous is not None:
+        if previous:
             closure=frozen['previous_failed_attempts']
-            if len(closure)!=1 or closure[0]['outcome']!=previous['outcome'] or closure[0]['training']!=previous['training']:
+            if len(closure)!=len(previous):
                 raise ValueError('pilot resume prior-attempt outcome changed')
-            carry=campaign.read(campaign.verify(closure[0]['carry']))
-            for item in carry['artifacts']:campaign.verify(item)
-            required=previous['contract']['exclusions']+carry['artifacts']
-            if any(item not in frozen['exclusions'] for item in required):
-                raise ValueError('pilot resume dropped accumulated isolation exclusions')
+            for binding,prior in zip(closure,previous):
+                if any(binding.get(key)!=prior[key] for key in ('attempt','outcome','training','selection')):
+                    raise ValueError('pilot resume prior-attempt outcome changed')
+                carry=campaign.read(campaign.verify(binding['carry']))
+                for item in carry['artifacts']:campaign.verify(item)
+                if attempt==3:
+                    carried,index=attempts.carry_failed_attempt(root,prior,context)
+                    if binding['carry']!=index or carry['artifacts']!=carried:
+                        raise ValueError('third pilot carry does not reproduce both prior attempt closures')
+                required=prior['contract']['exclusions']+carry['artifacts']
+                if any(item not in frozen['exclusions'] for item in required):
+                    raise ValueError('pilot resume dropped accumulated isolation exclusions')
+        if intervention is not None and frozen.get('intervention')!=campaign.record(interventions.path(root)):
+            raise ValueError('third pilot resume changed its frozen intervention')
+        interventions.expected_qat_profile(frozen)
         for item in frozen['exclusions']:campaign.verify(item)
         return frozen
     exclusions=list(parent['exclusions'])+smoke_exclusions(root)+baseline['exclusions']
     previous_bindings=[]
-    if previous is not None:
-        for item in previous['contract']['exclusions']:campaign.verify(item)
-        carried,index=attempts.carry_failed_attempt(root,previous,context)
-        exclusions+=previous['contract']['exclusions']+carried
-        previous_bindings.append({'attempt':previous['attempt'],'outcome':previous['outcome'],
-            'training':previous['training'],'selection':previous['selection'],'carry':index})
+    for prior in previous:
+        for item in prior['contract']['exclusions']:campaign.verify(item)
+        carried,index=attempts.carry_failed_attempt(root,prior,context)
+        exclusions+=prior['contract']['exclusions']+carried
+        previous_bindings.append({'attempt':prior['attempt'],'outcome':prior['outcome'],
+            'training':prior['training'],'selection':prior['selection'],'carry':index})
     anchors=campaign.read(root/'exclusions/anchor-derived.json')
     for role,values in anchors['fingerprints'].items():
         out=root/'exclusions'/f'pilot-anchor-{role}.json'
@@ -139,6 +166,8 @@ def prepare(root,attempt):
     for name in ('anchor-derived.json','prior-search-validation.json'):
         campaign.copy_checked(root/'exclusions'/name,context/'exclusions'/name)
     body={k:v for k,v in parent.items() if k!='body_sha256'}
+    body.pop('training_executor',None)
+    if training_executor=='spawn-v2':body['training_executor']=dict(seed_process.MODE)
     body.update({'parent_campaign':campaign.record(root/'campaign.json'),'smoke_completion':smoke,
         'baseline_engine_comparison':campaign.record(root/'baseline-engine-comparison.json'),
         'execution_sources':{name:campaign.copy_checked(Path(module.__file__),context/'source-closure'/f'{name}.py') for name,module in (('campaign',campaign),('features',campaign.features),('corpus',campaign.corpus),('openings',campaign.openings))},
@@ -148,8 +177,13 @@ def prepare(root,attempt):
             'generation_student':parent['inputs']['attempt_zero_runtime'],'smoke_weights_reused':False},
         'pilot_games':2000,'pilot_training_roster':{'lambdas':[0,.1,.25],'seeds':[20260907,20260908,20260909]},
         'execution_source':campaign.copy_checked(Path(__file__),context/'pilot-driver.py')})
-    if previous is not None:
+    if previous:
         body['attempt_closure_driver']=campaign.copy_checked(Path(attempts.__file__),context/'attempt-closure-driver.py')
+    if intervention is not None:
+        body.update({'qat_profile':intervention['qat_profile'],'qat_profile_contract':intervention['qat_profile_contract'],
+            'intervention':campaign.record(interventions.path(root)),
+            'intervention_driver':campaign.copy_checked(Path(interventions.__file__),context/'intervention-driver.py')})
+    interventions.expected_qat_profile(body)
     result=campaign.seal(path,body)
     campaign.event(root,'pilot-context-frozen',{'context':campaign.record(path),'attempt':attempt})
     return result
@@ -157,12 +191,14 @@ def prepare(root,attempt):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',type=Path,required=True)
+    parser.add_argument('--training-executor',choices=('threads','spawn-v2'))
     parser.add_argument('--attempt',type=int,default=1);parser.add_argument('command',choices=('prepare','games'))
     args=parser.parse_args();root=args.root.resolve();os.environ.update(campaign.THREADS)
     with campaign.lease(root):
-        prepare(root,args.attempt)
+        contract=prepare(root,args.attempt,training_executor=args.training_executor)
         if args.command=='games':
-            context=context_root(root,args.attempt)
+            bound_intervention=campaign.read(campaign.verify(contract['intervention'])) if args.attempt==3 else None
+            context=context_root(root,args.attempt,intervention=bound_intervention)
             result=campaign.run_games(context,f'attempt-{args.attempt:03d}-pilot',2000,8)
             campaign.event(root,'pilot-games-completed',{'attempt':args.attempt,
                 'games':campaign.record(context/f'attempt-{args.attempt:03d}-pilot/games.json'),'count':result['games']})

@@ -139,6 +139,7 @@ def _current_fingerprints(context, phase):
 
 def _prepare_exclusions(context, phase, ready, *, create):
     """Freeze hashes only; never open any historical protected trajectory file."""
+    from tools import compact_value_bfm_release_v2 as release
     contract, _, frozen, assessment = ready
     directory = _directory(context, phase)
     path = directory / 'exclusions.json'
@@ -154,7 +155,11 @@ def _prepare_exclusions(context, phase, ready, *, create):
     # deterministic writer verifies an existing export on independent validation.
     if not create and not current_path.exists():
         raise ValueError('protected exclusion export is missing')
-    stream.write_gzip(current_path, _current_fingerprints(context, phase))
+    def current_boundaries():
+        yield from _current_fingerprints(context, phase)
+        root = campaign.verify(contract['parent_campaign']).parent
+        yield from release.preflight_boundaries(root, context, phase)
+    stream.write_gzip(current_path, current_boundaries())
     return _seal_or_validate(path, {'schema': campaign.ID + '.protected-exclusions.v2',
         'inputs': inputs, 'fragments': fragments, 'current': campaign.record(current_path),
         'contains_transcripts': False, 'contains_labels': False, 'contains_metrics': False}, create=create)

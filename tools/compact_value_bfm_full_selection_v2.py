@@ -23,6 +23,7 @@ if __name__ == '__main__':
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import compact_value_bfm_campaign_v2 as campaign
 from tools import compact_value_bfm_full_v2 as full
+from tools import compact_value_bfm_intervention_v2 as intervention
 from tools import compact_value_bfm_pilot_selection_v2 as pilot_selection
 from tools import compact_value_bfm_ranking_store as storage
 from tools import compact_value_bfm_teacher_training as selection
@@ -39,7 +40,7 @@ def validate_context(root, context, phase):
     parent = campaign.read(parent_path)
     attempt = contract['attempt']
     expected_phase = f'attempt-{attempt:03d}-full'
-    if (isinstance(attempt, bool) or attempt < 1 or phase != expected_phase
+    if (isinstance(attempt, bool) or attempt not in (1, 2, 3) or phase != expected_phase
             or context != root / 'phases' / expected_phase or contract.get('phase') != 'full'
             or contract.get('full_games') != 10000 or contract.get('policy') != parent['policy']
             or parent['policy'] != campaign.POLICY):
@@ -52,6 +53,10 @@ def validate_context(root, context, phase):
             or pilot_contract.get('attempt') != attempt or pilot_contract.get('phase') != 'pilot'
             or pilot_contract.get('parent_campaign') != contract['parent_campaign']):
         raise ValueError('full selection pilot context changed')
+    if (intervention.expected_qat_profile(contract) != intervention.expected_qat_profile(pilot_contract)
+            or any(contract.get(key) != pilot_contract.get(key) for key in
+                   ('qat_profile', 'qat_profile_contract', 'intervention', 'training_executor'))):
+        raise ValueError('full selection changed its admitted pilot intervention')
     outcome_path = campaign.verify(contract['admitted_pilot'])
     if outcome_path.resolve() != pilot_context / pilot_phase / 'pilot-outcome.json':
         raise ValueError('full selection admitted pilot path changed')
@@ -104,7 +109,7 @@ def policy(contract):
 
 def prepare_policy(context, phase, contract):
     """Bind the selector, its validators and the exact maintained source exporter."""
-    modules = (campaign, full, pilot_selection, storage, selection, trainer,
+    modules = (campaign, full, intervention, pilot_selection, storage, selection, trainer,
                selection.model_exporter, selection.source_exporter)
     files = {Path(__file__).resolve(), *(Path(module.__file__).resolve() for module in modules)}
     exporter = selection.source_exporter
@@ -154,14 +159,14 @@ def verify_master_updates(row, initial, parameters, architecture, quantized):
         raise ValueError('full seed quantized initialization was reused or changed')
 
 
-def validate_seed_corpus_binding(binding, audit):
+def validate_seed_corpus_binding(binding, audit, *, qat_profile=trainer.STANDARD_QAT_PROFILE):
     new = binding.get('datasets', {}).get('new', {})
     shard = audit['shards']['train']
     settings = binding.get('settings', {})
     expected_settings = {'seeds': list(trainer.FIXED_SEEDS), 'batch_size': 256,
                          'new_rows_per_batch': 64, 'anchor_rows_per_batch': 192,
                          'new_loss_share': .25, 'anchor_loss_share': .75, 'qat_epochs': 4,
-                         'qat_profile': trainer.STANDARD_QAT_PROFILE}
+                         'qat_profile': trainer.resolve_qat_profile(qat_profile).name}
     if (new.get('source_manifest_sha256') != shard['manifest']['sha256']
             or new.get('source_npz_sha256') != shard['npz']['sha256']
             or binding.get('source_routes', {}).get('new') != [shard['manifest']['path']]
@@ -225,7 +230,7 @@ def validate_seed(context, phase, row, contract, audit, rankings, bundle, initia
     architecture = trainer.ARCHITECTURES['capacity-12x8']
     arm = trainer.ARMS['search-target']
     ranking = binding.get('successor_ranking', {})
-    validate_seed_corpus_binding(binding, audit)
+    validate_seed_corpus_binding(binding, audit, qat_profile=intervention.expected_qat_profile(contract))
     initial_identity = trainer._parameter_identity(initial, architecture)
     if (binding.get('source_bundle_body_sha256') != bundle.body_sha256
             or binding.get('seed') != row['seed'] or binding.get('architecture') != {
@@ -333,7 +338,7 @@ def assess(root, context, phase):
     for weight in contract['full_training_roster']['lambdas']:
         selection._validate_seed_roster(
             [row['seed_receipt'] for row in sorted(records, key=lambda row: row['seed']) if row['weight'] == weight],
-            ranking_weight=weight, qat_profile=trainer.STANDARD_QAT_PROFILE,
+            ranking_weight=weight, qat_profile=intervention.expected_qat_profile(contract),
             teacher_ranking_profile=selection.pipeline.STANDARD_TEACHER_RANKING_PROFILE)
     campaign.verify(training['producer'])
     bundle = trainer.FrozenBundle.load(campaign.verify(contract['bundle']))

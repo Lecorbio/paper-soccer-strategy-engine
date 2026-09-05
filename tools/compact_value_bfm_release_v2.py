@@ -576,6 +576,26 @@ def validate(root, context, phase):
     return _same(frozen, _freeze_body(root, context, phase), 'release freeze differs from completed source-bound checks')
 
 
+def preflight_boundaries(root, context, phase):
+    """Yield fingerprint-only isolation evidence for both verified release games."""
+    frozen = validate(root, context, phase)
+    output = directory(context, phase)
+    preflight = campaign.read(campaign.verify(frozen['preflight']))
+    for color in (0, 1):
+        execution_path = output / 'steps' / f'empty-{color}' / 'execution.json'
+        if campaign.record(execution_path) not in preflight['executions']:
+            raise ValueError('release empty game is absent from the frozen preflight')
+        execution = campaign.read(execution_path)
+        raw = campaign.verify(execution['stdout']).read_bytes()
+        validate_empty(raw, color)
+        game = ci._json_payload(raw)
+        state = campaign.features.ReplayState()
+        yield campaign.fingerprints(state)
+        for row in game['actions']:
+            campaign.features.apply_complete_turn(state, state.to_move, row['action'])
+            yield campaign.fingerprints(state)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('stage', 'publication', 'prepare', 'run', 'validate', '_inference'))

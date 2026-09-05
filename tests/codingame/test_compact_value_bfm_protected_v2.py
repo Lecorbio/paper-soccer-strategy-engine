@@ -164,6 +164,26 @@ class ProtectedTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'fingerprint changed'):
                 protected._collision_sets({'fragments': [], 'current': campaign.record(current)}, target)
 
+    def test_protected_bank_excludes_release_preflight_game_boundaries(self):
+        from tools import compact_value_bfm_release_v2 as release
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(); context = root / 'context'; phase = 'full'
+            campaign.seal(root / 'campaign.json', {'fixture': 'parent'})
+            contract = campaign.seal(context / 'campaign.json', {
+                'parent_campaign': campaign.record(root / 'campaign.json'), 'exclusions': []})
+            for name in ('positions.json', 'games.json', 'development/assessment.json'):
+                campaign.seal(context / phase / name, {'fixture': name})
+            current = {domain: 'a' * 64 for domain in protected.DOMAINS}
+            preflight = {domain: 'b' * 64 for domain in protected.DOMAINS}
+            ready = (contract, {}, {}, {'development_exclusions': []})
+            with patch.object(protected, '_current_fingerprints', return_value=iter([current])), \
+                    patch.object(release, 'preflight_boundaries', return_value=iter([preflight])) as played:
+                result = protected._prepare_exclusions(context, phase, ready, create=True)
+            played.assert_called_once_with(root, context, phase)
+            self.assertEqual(list(protected.stream.read_gzip(campaign.verify(result['current']))),
+                             [current, preflight])
+            self.assertFalse(result['contains_transcripts'])
+
     def test_shards_cover_disjoint_five_pair_slices_and_actual_clocks(self):
         directory = Path('/protected/gate-a')
         bank = {'tsv': {'path': '/bank', 'sha256': 'bank'}}

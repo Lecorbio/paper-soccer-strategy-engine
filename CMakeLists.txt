@@ -409,6 +409,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY=1
               ${Python3_EXECUTABLE} -m unittest
               tests.codingame.test_compact_value_bfm_campaign_v2
+              tests.codingame.test_compact_value_bfm_seed_process_v2
               tests.codingame.test_compact_value_bfm_ranking_store
               tests.codingame.test_compact_value_bfm_stream_v2
               tests.codingame.test_compact_value_bfm_labels_v2
@@ -425,6 +426,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_category_profile_v2
               tests.codingame.test_compact_value_bfm_full_outcome_v2
               tests.codingame.test_compact_value_bfm_attribution_v2
+              tests.codingame.test_compact_value_bfm_intervention_v2
+              tests.codingame.test_compact_value_bfm_terminal_outcome_v2
               tests.codingame.test_compact_value_bfm_release_v2
               tests.codingame.test_compact_value_bfm_protected_v2
               tests.codingame.test_compact_value_bfm_live_v2

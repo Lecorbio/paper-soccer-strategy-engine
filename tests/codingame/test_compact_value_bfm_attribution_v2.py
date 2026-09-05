@@ -271,6 +271,23 @@ class AttributionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'differs from verified'):
                     attribution.validate(root)
 
+    def test_resume_keeps_verified_historical_producer_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [fixture(root, n, quantized_sign=.86) for n in (1, 2)]
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: rows[n - 1]):
+                report = attribution.produce(root)
+                original = report['producers']['driver']
+                copied = campaign.copy_checked(campaign.verify(original), root / 'snapshot/attribution.py')
+                path = root / 'attribution/after-two-attempts.json'
+                rewrite(campaign.record(path), lambda document: document['producers'].update({'driver': copied}))
+                historical = campaign.read(path)
+                self.assertEqual(historical, attribution.validate(root))
+                self.assertEqual(historical, attribution.produce(root))
+                Path(copied['path']).write_bytes(b'changed producer')
+                with self.assertRaisesRegex(ValueError, 'changed artifact'):
+                    attribution.validate(root)
+
     def test_menu_uses_existing_profiles_without_changing_schedule_or_combining_search(self):
         menu = attribution.profile_menu()
         refined = menu['qat_and_scales']['refined-adaptive-scales-v1']

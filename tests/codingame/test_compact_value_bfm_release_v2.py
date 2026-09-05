@@ -291,6 +291,34 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     release.validate_empty(json.dumps(changed).encode(), color)
 
+    def test_release_exclusions_include_both_initial_and_terminal_boundaries(self):
+        executions = []
+        games = []
+        for color in (0, 1):
+            game = self.empty_fixture(color); games.append(game)
+            output = self.output / 'steps' / f'empty-{color}'
+            campaign.once(output / 'stdout.log', json.dumps(game).encode())
+            campaign.seal(output / 'execution.json', {'stdout': campaign.record(output / 'stdout.log')})
+            executions.append(campaign.record(output / 'execution.json'))
+        campaign.seal(self.output / 'preflight.json', {'executions': executions})
+        frozen = {'preflight': campaign.record(self.output / 'preflight.json')}
+        with mock.patch.object(release, 'validate', return_value=frozen) as validate:
+            boundaries = list(release.preflight_boundaries(self.root, self.context, self.phase))
+        validate.assert_called_once_with(self.root, self.context, self.phase)
+        self.assertEqual(len(boundaries), sum(len(game['actions']) + 1 for game in games))
+        initial = campaign.fingerprints(campaign.features.ReplayState())
+        self.assertEqual(boundaries[0], initial)
+        self.assertEqual(boundaries[len(games[0]['actions']) + 1], initial)
+        final = campaign.features.ReplayState()
+        for row in games[-1]['actions']:
+            campaign.features.apply_complete_turn(final, final.to_move, row['action'])
+        self.assertIn(final.winner, (0, 1))
+        self.assertEqual(boundaries[-1], campaign.fingerprints(final))
+        campaign.once(self.output / 'incomplete.json', b'{}')
+        with mock.patch.object(release, 'validate', return_value={'preflight': campaign.record(self.output / 'incomplete.json')}):
+            with self.assertRaises((KeyError, ValueError)):
+                list(release.preflight_boundaries(self.root, self.context, self.phase))
+
     def test_cmake_evidence_requires_exact_harness_compiler_and_sanitizers(self):
         plan, repository = self.plan_fixture()
         candidate = repository / release.ci.RELEASE_SOURCE

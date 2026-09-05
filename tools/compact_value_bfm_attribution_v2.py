@@ -306,13 +306,24 @@ def body(root):
 
 def produce(root):
     root = Path(root).resolve()
+    if (root / 'attribution/after-two-attempts.json').exists():
+        return validate(root)
     return campaign.seal(root / 'attribution/after-two-attempts.json', body(root))
 
 
 def validate(root):
     root = Path(root).resolve()
     document = campaign.read(root / 'attribution/after-two-attempts.json')
-    if {key: value for key, value in document.items() if key != 'body_sha256'} != body(root):
+    expected = body(root)
+    if set(document['producers']) != set(expected['producers']):
+        raise ValueError('attribution source closure is incomplete')
+    for record in document['producers'].values():
+        campaign.verify(record)
+    # Reproduce all decisions with current validators while retaining the actual
+    # historical producer paths from the immutable execution snapshot.
+    excluded = {'body_sha256', 'producers'}
+    if ({key: value for key, value in document.items() if key not in excluded}
+            != {key: value for key, value in expected.items() if key not in excluded}):
         raise ValueError('attribution differs from verified unprotected attempt evidence')
     return document
 
