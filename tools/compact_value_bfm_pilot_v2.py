@@ -24,7 +24,9 @@ def context_root(root,attempt):
 
 
 def validate_smoke(root):
-    path=root/'smoke-064/smoke-completion.json';smoke=campaign.read(path)
+    path=root/'smoke-064/smoke-completion-corrected.json'
+    if not path.exists(): path=root/'smoke-064/smoke-completion.json'
+    smoke=campaign.read(path)
     if (smoke.get('status')!='native-smoke-complete-not-qualified'
             or smoke.get('new_training_verified') is not True
             or smoke.get('qualification_eligible') is not False

@@ -130,8 +130,8 @@ The first 64-game smoke completed generation, independent isolation preflight,
 large-teacher labeling, real training, export, and native checks. It retained
 994 groups (829 train, 165 validation) and replaced 249 groups at the deeper
 budget. All 64 generated trajectories were distinct; 18 short completed games
-were retained. There were 148 comparable validation groups, but only three
-comparable early groups. The smoke supports no early-regret conclusion.
+were retained. There were 148 comparable validation groups, including 12 early groups. That early sample is small, and the smoke
+supports no pilot-admission conclusion.
 
 Each loss recipe ran one float warm-up and four QAT epochs from the frozen
 initialization. All three master tensors changed with finite nonzero norms.
