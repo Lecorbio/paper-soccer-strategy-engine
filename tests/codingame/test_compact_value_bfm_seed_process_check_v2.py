@@ -3,6 +3,7 @@ import copy
 import os
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -40,6 +41,73 @@ class SeedProcessCheckTests(unittest.TestCase):
                 with mock.patch.object(check, 'sources', return_value=[{'changed': True}]):
                     with self.assertRaisesRegex(ValueError, 'source/runtime changed'):
                         check.validate_plan(record['path'])
+
+    def test_four_worker_plan_has_nine_fresh_jobs_and_requires_authority(self):
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            output = root / 'diagnostics/seed-process-equivalence/four-workers'
+            auth = {'path': str(root / 'authorization.json'), 'sha256': 'a' * 64, 'bytes': 1}
+            with (mock.patch.object(check, 'smoke_inputs_metadata', return_value={'historical': True}),
+                  mock.patch.object(check, 'sources', return_value=[]),
+                  mock.patch.object(resources, 'validate_authorization', return_value={}) as validation):
+                with self.assertRaisesRegex(ValueError, 'source-bound resource authorization'):
+                    check.prepare(root, output, executor=process.MODE4)
+                validation.assert_not_called()
+                record = check.prepare(root, output, executor=process.MODE4,
+                    training_resource_authorization=auth)
+                plan = check.validate_plan(record['path'])
+                self.assertEqual(check.plan_seeds(plan), trainer.FIXED_SEEDS)
+                self.assertEqual(plan['seeds'], list(trainer.FIXED_SEEDS))
+                self.assertEqual(plan['maximum_active_real_seeds'], 4)
+                self.assertEqual(plan['training_resource_authorization'], auth)
+                self.assertTrue(plan['global_heavy_stage_lease_required'])
+                self.assertTrue(plan['historical_seed_equivalence_required'])
+                self.assertEqual(validation.call_args.args, (auth, root))
+
+    def test_global_lock_cannot_be_removed_without_authorized_concurrent_context(self):
+        for executor in (process.MODE2, process.MODE4):
+            with self.subTest(executor=executor):
+                plan = {'root': '/fixture', 'executor': executor,
+                    'global_heavy_stage_lease_required': False}
+                if executor == process.MODE4:
+                    plan['training_resource_authorization'] = {'frozen': True}
+                from tools import compact_value_bfm_training_resources_v2 as resources
+                with mock.patch.object(resources, 'validate_authorization', return_value={}):
+                    with self.assertRaisesRegex(ValueError, 'global heavy-stage lease'):
+                        check.validate_execution_authority(plan)
+
+    def test_explicit_concurrent_context_delegates_locking_and_disables_speedup_claim(self):
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            output = root / 'diagnostics/seed-process-equivalence/concurrent-four'
+            auth = {'path': str(root / 'auth.json')}
+            context_record = {'path': str(root / 'context.json')}
+            context = {'root': str(root), 'output': str(output),
+                'training_resource_authorization': auth, 'validation_lock': str(root / '.training-validation.lock')}
+            module = types.ModuleType('tools.compact_value_bfm_training_acceleration_v2')
+            module.validate_context = mock.Mock(return_value=context)
+            module.run = mock.Mock(return_value={'controller': 'owns validation lock'})
+            with (mock.patch.object(check, '_concurrency_controller', return_value=module),
+                  mock.patch.object(resources, 'validate_authorization', return_value={}),
+                  mock.patch.object(check, 'smoke_inputs_metadata', return_value={'historical': True}),
+                  mock.patch.object(check, 'sources', return_value=[])):
+                record = check.prepare(root, output, executor=process.MODE4,
+                    training_resource_authorization=auth, concurrent_context=context_record)
+                plan = check.validate_plan(record['path'])
+                self.assertFalse(plan['global_heavy_stage_lease_required'])
+                self.assertEqual(plan['execution_timing'], 'contended-equivalence-only')
+                self.assertFalse(plan['speedup_qualification_allowed'])
+                with mock.patch.object(campaign, 'lease', side_effect=AssertionError('controller owns separate lock')):
+                    self.assertEqual(check.run(Path(record['path'])), {'controller': 'owns validation lock'})
+                module.run.assert_called_once_with(context_record, Path(record['path']))
+                invalid = {**plan, 'speedup_qualification_allowed': True}
+                with self.assertRaisesRegex(ValueError, 'speedup qualification'):
+                    check.validate_execution_authority(invalid)
+                module.validate_context.return_value = {**context, 'output': str(root / 'other')}
+                with self.assertRaisesRegex(ValueError, 'output or resource authorization'):
+                    check.validate_execution_authority(plan)
 
     def test_outputs_cannot_enter_any_campaign_phase(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -109,7 +177,9 @@ class SeedProcessCheckTests(unittest.TestCase):
             self.assertIs(binding.call_args.args[1], inputs)
             self.assertFalse(inputs.anchor.targets.flags.writeable)
 
-    def stage_pair(self):
+    def stage_pair(self, workers=2):
+        executor = process.MODE4 if workers == 4 else process.MODE2
+        seeds = trainer.FIXED_SEEDS if workers == 4 else check.SEEDS
         with trainer.native_thread_execution_scope() as execution:
             rows = [{'weight': weight, 'seed': seed,
                 'receipt': {'seed': seed, 'native_thread_execution': execution,
@@ -118,14 +188,48 @@ class SeedProcessCheckTests(unittest.TestCase):
                     'quantized_validation': {'loss': .13}},
                 **{key: {'sha256': key, 'bytes': 100} for key in
                    ('float_checkpoint', 'quantized_runtime', 'source')}}
-                for weight in check.WEIGHTS for seed in check.SEEDS]
+                for weight in check.WEIGHTS for seed in seeds]
         thread = {'stage': 'threads', 'plan': {'frozen': True}, 'reconstruction': {'digest': 'same'},
             'results': rows, 'elapsed_seconds': 20, 'memory': {'samples': 2, 'errors': [],
                 'process_tree_peak_rss': 200, 'per_pid_peak_rss': {'100': 80, '101': 50, '102': 60}},
             'process_evidence': []}
         spawn = {**copy.deepcopy(thread), 'stage': 'spawn', 'elapsed_seconds': 10,
             'process_evidence': [{'process': {'pid': 101}}, {'process': {'pid': 102}}]}
+        if workers == 4:
+            thread['executor'] = executor
+            spawn['executor'] = executor
+            spawn['process_evidence'] += [{'process': {'pid': 103}}, {'process': {'pid': 104}}]
+            spawn['memory']['per_pid_peak_rss'].update({'103': 50, '104': 60})
         return thread, spawn
+
+    def test_four_worker_comparison_requires_all_nine_jobs_and_four_observed_children(self):
+        thread, spawn = self.stage_pair(4)
+        result = check.compare_stage_results(thread, spawn)
+        self.assertEqual(len(result['checks']), 9)
+        self.assertTrue(result['four_spawn_children_observed'])
+        self.assertTrue(result['requested_spawn_children_observed'])
+        self.assertTrue(result['executor_ready_for_review'])
+        historical = [row for row in thread['results'] if row['seed'] == check.SEEDS[0]]
+        self.assertEqual(len(check.compare_historical_results(historical, thread)), 3)
+        incomplete = copy.deepcopy(spawn)
+        incomplete['results'].pop()
+        with self.assertRaisesRegex(ValueError, 'incomplete seed roster'):
+            check.compare_stage_results(thread, incomplete)
+        spawn['process_evidence'].pop()
+        result = check.compare_stage_results(thread, spawn)
+        self.assertFalse(result['four_spawn_children_observed'])
+        self.assertFalse(result['executor_ready_for_review'])
+
+    def test_contended_equivalence_records_no_elapsed_speedup_ratio(self):
+        thread, spawn = self.stage_pair(4)
+        for stage in (thread, spawn):
+            stage.update({'concurrent_equivalence_context': {'frozen': True},
+                'execution_timing': 'contended-equivalence-only', 'speedup_qualification_allowed': False})
+        result = check.compare_stage_results(thread, spawn)
+        self.assertTrue(result['exact_equivalence_passed'])
+        self.assertTrue(result['executor_ready_for_review'])
+        self.assertIsNone(result['observed_thread_over_spawn_elapsed_ratio'])
+        self.assertFalse(result['speedup_qualification_allowed'])
 
     def test_comparison_requires_full_receipts_scales_and_export_equality(self):
         thread, spawn = self.stage_pair()

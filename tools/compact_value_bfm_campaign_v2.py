@@ -681,10 +681,12 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_prof
     from tools import compact_value_bfm_train as trainer
     from tools import compact_value_bfm_teacher_training as adapter
     from tools import compact_value_bfm_seed_process_v2 as seed_process
+    from tools import compact_value_bfm_training_resources_v2 as resources
     from tools import compact_value_bfm_intervention_v2 as intervention
     from tools import jacek_replay_train as packer
     plan=read(root/'campaign.json')
     mode=seed_process.executor_mode(plan)
+    seed_workers=resources.expected_workers(plan)
     frozen_profile=intervention.expected_qat_profile(plan)
     profile=trainer.resolve_qat_profile(frozen_profile if qat_profile is None else qat_profile)
     if profile.name!=frozen_profile:
@@ -747,16 +749,22 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_prof
             process_spec=seed_process.freeze_spec(root,phase,bundle,inputs,anchor_filter,
                 ranking_weights,seeds,qat_profile=profile.name)
             process_executor=scopes.enter_context(seed_process.SpawnSeedExecutor(process_spec))
+            flat_receipts=process_executor.run_roster() if seed_workers==4 else None
+            if flat_receipts is not None and [
+                (receipt['successor_ranking']['loss_weight'],receipt['seed']) for receipt in flat_receipts
+            ]!=[(weight,seed) for weight in ranking_weights for seed in seeds]:
+                raise ValueError('four-worker training changed the frozen lambda/seed roster')
         else:
             execution=scopes.enter_context(trainer.native_thread_execution_scope())
-        for weight in ranking_weights:
+        for weight_index,weight in enumerate(ranking_weights):
             directory=root/phase/'training'/f'lambda-{weight:.2f}'
             def run(seed):
                 return trainer.train_seed_candidate(bundle,inputs,architecture,arm,seed,directory,
                     ranking_weight=weight,initial_checkpoint=initial,qat_profile=profile.name,resume=True,
                     _native_thread_execution=execution)
             if mode=='spawn-v2':
-                receipts=process_executor.run_weight(weight)
+                receipts=(flat_receipts[weight_index*len(seeds):(weight_index+1)*len(seeds)]
+                          if flat_receipts is not None else process_executor.run_weight(weight))
             else:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                     receipts=list(pool.map(run,seeds))
@@ -783,7 +791,7 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_prof
                     'source_reserve':95000-len(source),'seed_receipt':receipt})
         if mode=='spawn-v2':
             evidence={'schema':ID+'.seed-process-execution.v2',
-                'specification':record(process_spec),'start_method':'spawn','maximum_workers':2,
+                'specification':record(process_spec),'start_method':'spawn','maximum_workers':seed_workers,
                 'per_child_seed_threads':1,'numerical_threads_per_seed':1,
                 'lambda_order':list(ranking_weights),'results':process_executor.evidence}
             process_evidence=root/phase/'seed-process-executions'/(hashlib.sha256(raw(evidence)).hexdigest()+'.json')

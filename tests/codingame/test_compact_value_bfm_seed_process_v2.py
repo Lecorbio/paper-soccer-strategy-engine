@@ -6,6 +6,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -120,6 +121,160 @@ class SeedProcessV2Tests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'frozen training executor'):
                 process.executor_mode({'training_executor': setting})
 
+    def test_four_workers_require_explicit_source_bound_authority(self):
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        self.assertEqual(process.MODE, process.MODE2)
+        self.assertEqual(process.normalize_executor(process.MODE4)['maximum_workers'], 4)
+        with self.assertRaisesRegex(ValueError, 'frozen parent campaign'):
+            process.executor_mode({'training_executor': process.MODE4})
+        plan = {'training_executor': process.MODE4, 'training_resource_authorization': {'frozen': True}}
+        with mock.patch.object(resources, 'expected_workers', return_value=4) as authority:
+            self.assertEqual(process.executor_mode(plan), 'spawn-v2')
+            authority.assert_called_once_with(plan)
+        with mock.patch.object(resources, 'expected_workers', side_effect=ValueError('changed authority')):
+            with self.assertRaisesRegex(ValueError, 'changed authority'):
+                process.executor_mode(plan)
+        for workers in (True, 4.0, 3, 5):
+            with self.assertRaisesRegex(ValueError, 'frozen training executor'):
+                process.normalize_executor({'mode': 'spawn-v2', 'maximum_workers': workers})
+
+    def test_four_worker_roster_dispatches_across_lambdas_and_keeps_receipt_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'spec.json'
+            jobs = [{'weight': weight, 'seed': seed} for weight in (0., .1, .25) for seed in trainer.FIXED_SEEDS]
+            campaign.seal(path, {'executor': process.MODE4, 'ranking_weights': [0., .1, .25], 'jobs': jobs})
+            executor = process.SpawnSeedExecutor(path)
+            barrier = threading.Barrier(4)
+            started = []
+            lock = threading.Lock()
+            def bounded_worker(job):
+                with lock:
+                    started.append((job['weight'], job['seed']))
+                    ordinal = len(started)
+                if ordinal <= 4:
+                    barrier.wait(timeout=3)
+                return (job['weight'], job['seed'])
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                executor.pool = pool
+                with (mock.patch.object(process, '_run', side_effect=bounded_worker),
+                      mock.patch.object(executor, '_collect', side_effect=lambda _jobs, returned: returned)):
+                    result = executor.run_roster()
+                self.assertEqual(result, [(row['weight'], row['seed']) for row in jobs])
+                self.assertEqual(set(started[:4]), {(row['weight'], row['seed']) for row in jobs[:4]})
+                self.assertIn(.1, {weight for weight, _seed in started[:4]})
+                with self.assertRaisesRegex(ValueError, 'exactly once'):
+                    executor.run_roster()
+                with self.assertRaisesRegex(ValueError, 'flattened run_roster'):
+                    executor.run_weight(0.)
+
+    def test_four_worker_pool_is_created_only_after_phase_authority_validation(self):
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            authorization = root / 'authorization.json'
+            campaign.seal(authorization, {'frozen': True})
+            auth = campaign.record(authorization)
+            phase_path = root / 'campaign.json'
+            campaign.seal(phase_path, {'training_executor': process.MODE4,
+                'training_resource_authorization': auth})
+            spec = root / 'spec.json'
+            campaign.seal(spec, {'executor': process.MODE4, 'phase_contract': campaign.record(phase_path),
+                'training_resource_authorization': auth})
+            with (mock.patch.object(resources, 'expected_workers', return_value=4),
+                  mock.patch.object(process.concurrent.futures, 'ProcessPoolExecutor') as pool):
+                with process.SpawnSeedExecutor(spec):
+                    self.assertEqual(pool.call_args.kwargs['max_workers'], 4)
+                    self.assertEqual(pool.call_args.kwargs['mp_context'].get_start_method(), 'spawn')
+                pool.return_value.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
+            with (mock.patch.object(resources, 'expected_workers', side_effect=ValueError('changed authority')),
+                  mock.patch.object(process.concurrent.futures, 'ProcessPoolExecutor') as pool):
+                with self.assertRaisesRegex(ValueError, 'changed authority'):
+                    process.SpawnSeedExecutor(spec).__enter__()
+                pool.assert_not_called()
+
+    def test_four_worker_spec_and_initializer_rebind_the_phase_authorization(self):
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(root)
+            phase = campaign.read(root / 'campaign.json')
+            phase.pop('body_sha256')
+            authorization = root / 'authorization.json'
+            campaign.seal(authorization, {'synthetic': True})
+            phase.update({'training_executor': process.MODE4,
+                'training_resource_authorization': campaign.record(authorization)})
+            (root / 'campaign.json').unlink()
+            campaign.seal(root / 'campaign.json', phase)
+            with (reconstruction_fixture(root),
+                  mock.patch.object(resources, 'expected_workers', return_value=4),
+                  mock.patch.object(process, 'source_closure', return_value=[])):
+                bundle, inputs, identity = process.reconstruct_inputs(root, 'pilot')
+                path = process.freeze_spec(root, 'pilot', bundle, inputs, identity['anchor_filter'],
+                    (0., .1, .25), trainer.FIXED_SEEDS)
+                spec = campaign.read(path)
+                self.assertEqual(spec['executor'], process.MODE4)
+                self.assertEqual(spec['training_resource_authorization'], phase['training_resource_authorization'])
+                self.assertEqual(len(spec['jobs']), 9)
+                process._initialize(str(path))
+                changed = {key: value for key, value in spec.items() if key != 'body_sha256'}
+                changed['training_resource_authorization'] = {'changed': True}
+                invalid = root / 'changed-spec.json'
+                campaign.seal(invalid, changed)
+                with self.assertRaisesRegex(ValueError, 'resource authorization changed'):
+                    process._initialize(str(invalid))
+            process._WORKER = None
+
+    def test_real_collector_preserves_multi_weight_receipts_and_process_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            jobs, returned, receipts = [], [], []
+            with trainer.native_thread_execution_scope() as execution:
+                for weight in (0., .1, .25):
+                    directory = root / f'lambda-{weight:.2f}'
+                    for seed in trainer.FIXED_SEEDS:
+                        binding = trainer.body_hashed({'weight': weight, 'seed': seed})
+                        job = {'weight': weight, 'seed': seed, 'directory': str(directory), 'binding': binding}
+                        reference = trainer._seed_reference_path(directory,
+                            trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target'], seed)
+                        campaign.once(reference, campaign.raw({'synthetic': True, 'weight': weight, 'seed': seed}))
+                        jobs.append(job)
+                        receipts.append({'seed': seed, 'binding': binding, 'native_thread_execution': execution})
+                        returned.append({'reference': campaign.record(reference),
+                            'binding_sha256': binding['body_sha256'], 'native_thread_execution': execution,
+                            'process': {'pid': 101 + len(jobs) % 4}})
+            by_identity = {(job['weight'], job['seed']): (job, result, receipt)
+                for job, result, receipt in zip(jobs, returned, receipts, strict=True)}
+            def load_reference(directory, reference, binding):
+                job, result, receipt = by_identity[binding['weight'], binding['seed']]
+                self.assertEqual(directory, Path(job['directory']))
+                self.assertEqual(reference, Path(result['reference']['path']))
+                self.assertEqual(binding, job['binding'])
+                return receipt
+            for mode in (process.MODE2, process.MODE4):
+                with self.subTest(mode=mode):
+                    path = root / f'spec-{mode["maximum_workers"]}.json'
+                    campaign.seal(path, {'executor': mode, 'ranking_weights': [0., .1, .25], 'jobs': jobs})
+                    executor = process.SpawnSeedExecutor(path)
+                    executor.pool = mock.Mock()
+                    executor.pool.map.side_effect = lambda _worker, roster: [
+                        by_identity[job['weight'], job['seed']][1] for job in roster]
+                    with mock.patch.object(trainer, '_load_seed_receipt_from_reference', side_effect=load_reference) as loader:
+                        actual = executor.run_roster() if mode == process.MODE4 else [
+                            receipt for weight in (0., .1, .25) for receipt in executor.run_weight(weight)]
+                    self.assertEqual(actual, receipts)
+                    self.assertEqual(loader.call_count, 9)
+                    self.assertEqual(executor.pool.map.call_count, 1 if mode == process.MODE4 else 3)
+                    self.assertEqual(executor.evidence, [
+                        {'weight': job['weight'], 'seed': job['seed'], **result}
+                        for job, result in zip(jobs, returned, strict=True)])
+                    invalid = [{**returned[0], 'binding_sha256': 'wrong'}]
+                    with self.assertRaisesRegex(ValueError, 'seed reference changed'):
+                        executor._collect(jobs[:1], invalid)
+                    invalid = [{**returned[0], 'native_thread_execution': {'wrong': True}}]
+                    with mock.patch.object(trainer, '_load_seed_receipt_from_reference', side_effect=load_reference):
+                        with self.assertRaisesRegex(ValueError, 'numerical limiter evidence changed'):
+                            executor._collect(jobs[:1], invalid)
+
     def test_phase_profile_is_validated_before_training_inputs_are_opened(self):
         for plan, override in (({'attempt': 1, 'qat_profile': 'refined-adaptive-scales-v1'}, None),
                 ({'attempt': 1}, 'refined-adaptive-scales-v1')):
@@ -214,6 +369,32 @@ class SeedProcessV2Tests(unittest.TestCase):
                     process.freeze_spec(root, 'pilot', bundle, inputs, identity['anchor_filter'],
                         (0.0,), trainer.FIXED_SEEDS[:1], qat_profile='refined-adaptive-scales-v1')
             process._WORKER = None
+
+    def test_integer_zero_full_roster_matches_maintained_float_normalized_bindings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(root)
+            with reconstruction_fixture(root), mock.patch.object(process, 'source_closure', return_value=[]):
+                bundle, inputs, identity = process.reconstruct_inputs(root, 'pilot')
+                initial = Path(campaign.read(root / 'campaign.json')['inputs']['attempt_one_initial_checkpoint']['path'])
+                architecture, arm = trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target']
+                # Full phases use [0, admitted_weight], whose scalar entry is
+                # an integer even though maintained bindings normalize floats.
+                spec_path = process.freeze_spec(root, 'pilot', bundle, inputs,
+                    identity['anchor_filter'], (0, .1), trainer.FIXED_SEEDS)
+                spec = campaign.read(spec_path)
+                self.assertEqual(len(spec['jobs']), 6)
+                for job in spec['jobs']:
+                    expected = trainer.training_binding(bundle, inputs, architecture, arm, job['seed'],
+                        None, job['weight'], initial, trainer.STANDARD_QAT_PROFILE)
+                    self.assertEqual(job['binding'], expected)
+                    self.assertEqual(job['binding']['body_sha256'], expected['body_sha256'])
+                    self.assertIs(type(job['binding']['successor_ranking']['loss_weight']), float)
+                base = spec['jobs'][0]['binding']
+                self.assertEqual(process.roster_binding(base, trainer.FIXED_SEEDS[0], 0),
+                    process.roster_binding(base, trainer.FIXED_SEEDS[0], 0.0))
+                with self.assertRaisesRegex(trainer.TrainingError, 'weight is not numeric'):
+                    process.roster_binding(base, trainer.FIXED_SEEDS[0], False)
 
     def test_shutdown_waits_and_does_not_replace_failed_children(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -70,9 +70,11 @@ python tools/compact_value_bfm_campaign_v2.py --root CAMPAIGN train-smoke \
 Completed native commands are reused only when their command, input bindings,
 and output hashes match. Unprotected producer work without a completion receipt
 may restart deterministically; this policy does not apply to protected gates.
-A nonblocking file lock excludes concurrent heavy campaign stages. Maximum
-workers are eight for generation/labels, two for training seeds, and one for
-uncontended timing. Numerical runtimes use one thread each.
+A nonblocking file lock excludes concurrent heavy campaign stages. The original
+worker limits are eight for generation/labels, two for training seeds, and one
+for uncontended timing. A separate explicit authorization can raise future
+training and permit the bounded concurrent equivalence experiment described
+below. Numerical runtimes use one thread each.
 
 Smoke runs all three loss recipes with one seed and the actual warm-up plus
 four-epoch QAT producer. Production pilot training requires all three approved
@@ -431,3 +433,36 @@ and elapsed times. Its single fixed order is explicit; an observed elapsed ratio
 does not establish an order-independent speedup. Both children and complete
 memory observations are required before considering production activation.
 No result qualifies a model or enables the production executor automatically.
+
+An explicit user authorization can raise future training to four spawned seed
+workers without changing the historical campaign policy or existing phase
+receipts. New pilot and full contexts select this with
+`--training-executor spawn-v2 --training-workers 4` and
+`--training-resource-authorization AUTHORIZATION`. Each process keeps one
+numerical thread. The four-worker scheduler dispatches the complete recipe/seed
+roster together, then collects receipts and exports in the frozen roster order.
+Full training may select four workers after a pilot trained with the original
+executor. Existing contexts reject an executor or resource change on resume.
+
+`compact_value_bfm_training_acceleration_v2.py prepare` binds a separate
+four-worker equivalence experiment to the explicit authorization, immutable
+source snapshot and exact identities of the running pilot and its two unspent
+continuation waiters. Preparation starts no training. Retire those waiters
+before running the prepared context: timed matches, qualification and full
+training must remain paused throughout validation. The controller uses a
+separate training-validation lock and supervises only its own child process
+group; it preserves the existing pilot and stops validation if its guards fail.
+The temporary ceiling is two existing pilot workers plus four validation
+workers, each with one numerical thread.
+
+The four-worker experiment runs all three fixed seeds for each of the three
+recipes through fresh thread and spawn stages, retaining the three historical
+first-seed comparisons. Concurrent elapsed times are explicitly contended and
+cannot establish a speedup. Failed or interrupted stages keep their claims and
+cannot silently retry. After verified equivalence, restore source-bound
+campaign continuation and select four workers only for newly frozen training
+contexts. The campaign operator or heartbeat enforces that activation review;
+the resource authorization alone records worker capacity and does not certify
+equivalence. Representative full-size memory observations remain necessary; this
+smoke experiment does not establish full-size memory headroom or qualify a
+candidate.

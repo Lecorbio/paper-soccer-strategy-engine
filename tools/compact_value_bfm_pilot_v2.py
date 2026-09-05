@@ -98,9 +98,9 @@ def smoke_exclusions(root):
     return artifacts
 
 
-def prepare(root,attempt,*,training_executor=None):
+def prepare(root,attempt,*,training_executor=None,training_workers=None,training_resource_authorization=None):
     from tools import compact_value_bfm_intervention_v2 as interventions
-    from tools import compact_value_bfm_seed_process_v2 as seed_process
+    from tools import compact_value_bfm_training_resources_v2 as resources
     if isinstance(attempt,bool) or not isinstance(attempt,int): raise ValueError('attempt must be an integer')
     if training_executor not in (None,'threads','spawn-v2'):
         raise ValueError('training executor must be threads or spawn-v2')
@@ -114,13 +114,11 @@ def prepare(root,attempt,*,training_executor=None):
         identities=[{key:row[key] for key in ('attempt','outcome','training','selection')} for row in previous]
         if identities!=intervention['previous_failed_attempts']:
             raise ValueError('third pilot prior attempts differ from the frozen unprotected attribution')
-    context.mkdir(parents=True,exist_ok=True)
     path=context/'campaign.json'
     if path.exists():
         frozen=campaign.read(path)
-        frozen_executor=seed_process.executor_mode(frozen)
-        if training_executor is not None and training_executor!=frozen_executor:
-            raise ValueError('pilot resume cannot change its frozen training executor')
+        resources.check_resume(frozen,root,training_executor=training_executor,training_workers=training_workers,
+                               training_resource_authorization=training_resource_authorization)
         if (frozen['attempt']!=attempt or frozen['parent_campaign']!=campaign.record(root/'campaign.json')
                 or any(frozen['inputs'][key]!=parent['inputs'][key] for key in
                     ('attempt_one_initial_checkpoint','teacher_runtime','attempt_zero_runtime'))):
@@ -146,6 +144,9 @@ def prepare(root,attempt,*,training_executor=None):
         interventions.expected_qat_profile(frozen)
         for item in frozen['exclusions']:campaign.verify(item)
         return frozen
+    resource_fields=resources.execution_fields(root,training_executor=training_executor,training_workers=training_workers,
+                                               training_resource_authorization=training_resource_authorization)
+    context.mkdir(parents=True,exist_ok=True)
     exclusions=list(parent['exclusions'])+smoke_exclusions(root)+baseline['exclusions']
     previous_bindings=[]
     for prior in previous:
@@ -166,8 +167,8 @@ def prepare(root,attempt,*,training_executor=None):
     for name in ('anchor-derived.json','prior-search-validation.json'):
         campaign.copy_checked(root/'exclusions'/name,context/'exclusions'/name)
     body={k:v for k,v in parent.items() if k!='body_sha256'}
-    body.pop('training_executor',None)
-    if training_executor=='spawn-v2':body['training_executor']=dict(seed_process.MODE)
+    for key in ('training_executor','training_resource_authorization'):body.pop(key,None)
+    body.update(resource_fields)
     body.update({'parent_campaign':campaign.record(root/'campaign.json'),'smoke_completion':smoke,
         'baseline_engine_comparison':campaign.record(root/'baseline-engine-comparison.json'),
         'execution_sources':{name:campaign.copy_checked(Path(module.__file__),context/'source-closure'/f'{name}.py') for name,module in (('campaign',campaign),('features',campaign.features),('corpus',campaign.corpus),('openings',campaign.openings))},
@@ -184,6 +185,7 @@ def prepare(root,attempt,*,training_executor=None):
             'intervention':campaign.record(interventions.path(root)),
             'intervention_driver':campaign.copy_checked(Path(interventions.__file__),context/'intervention-driver.py')})
     interventions.expected_qat_profile(body)
+    resources.expected_workers(body)
     result=campaign.seal(path,body)
     campaign.event(root,'pilot-context-frozen',{'context':campaign.record(path),'attempt':attempt})
     return result
@@ -192,10 +194,13 @@ def prepare(root,attempt,*,training_executor=None):
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',type=Path,required=True)
     parser.add_argument('--training-executor',choices=('threads','spawn-v2'))
+    parser.add_argument('--training-workers',type=int,choices=(2,4))
+    parser.add_argument('--training-resource-authorization',type=Path)
     parser.add_argument('--attempt',type=int,default=1);parser.add_argument('command',choices=('prepare','games'))
     args=parser.parse_args();root=args.root.resolve();os.environ.update(campaign.THREADS)
     with campaign.lease(root):
-        contract=prepare(root,args.attempt,training_executor=args.training_executor)
+        contract=prepare(root,args.attempt,training_executor=args.training_executor,training_workers=args.training_workers,
+                         training_resource_authorization=args.training_resource_authorization)
         if args.command=='games':
             bound_intervention=campaign.read(campaign.verify(contract['intervention'])) if args.attempt==3 else None
             context=context_root(root,args.attempt,intervention=bound_intervention)

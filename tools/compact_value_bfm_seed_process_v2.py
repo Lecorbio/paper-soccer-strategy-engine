@@ -22,6 +22,8 @@ ENVIRONMENT = {name: '1' for name in ('MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
     'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS')}
 MARKER = 'PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY'
 MODE = {'mode': 'spawn-v2', 'maximum_workers': 2}
+MODE2 = MODE
+MODE4 = {'mode': 'spawn-v2', 'maximum_workers': 4}
 _WORKER = None
 
 
@@ -31,12 +33,21 @@ def _modules():
     return campaign, trainer
 
 
+def normalize_executor(setting):
+    if not isinstance(setting, dict) or type(setting.get('maximum_workers')) is not int or setting not in (MODE2, MODE4):
+        raise ValueError('unrecognized frozen training executor')
+    return dict(setting)
+
+
 def executor_mode(plan):
     setting = plan.get('training_executor')
     if setting is None:
         return 'threads'
-    if setting != MODE:
-        raise ValueError('unrecognized frozen training executor')
+    setting = normalize_executor(setting)
+    if setting == MODE4:
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        if resources.expected_workers(plan) != 4:
+            raise ValueError('four training workers lack their source-bound resource authorization')
     return 'spawn-v2'
 
 
@@ -163,10 +174,11 @@ def roster_binding(base, seed, weight):
     each actual seed still recomputes its full binding in the unchanged trainer.
     """
     _campaign, trainer = _modules()
+    weight = trainer._ranking_weight(weight)
     body = copy.deepcopy(base)
     body.pop('body_sha256')
     if (body['schema'] != 'papersoccer.compact-value-bfm-training-binding.v1'
-            or seed not in trainer.FIXED_SEEDS or weight not in trainer.RANKING_LOSS_WEIGHTS):
+            or seed not in trainer.FIXED_SEEDS):
         raise ValueError('spawn binding roster changed')
     body['seed'] = seed
     body['successor_ranking']['loss_weight'] = weight
@@ -182,6 +194,7 @@ def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, see
     if executor_mode(plan) != 'spawn-v2':
         raise ValueError('spawn execution was not frozen in this phase')
     profile = trainer.resolve_qat_profile(qat_profile)
+    executor = normalize_executor(plan['training_executor'])
     if profile.name != intervention.expected_qat_profile(plan):
         raise ValueError('spawn QAT profile differs from frozen phase')
     if (tuple(ranking_weights) != tuple(sorted(set(ranking_weights)))
@@ -199,14 +212,16 @@ def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, see
                 'directory': str(root / phase / 'training' / f'lambda-{weight:.2f}'),
                 'binding': roster_binding(base, seed, weight)})
     path = root / phase / 'seed-process-spec.json'
+    resource_binding = {} if executor == MODE2 else {
+        'training_resource_authorization': plan['training_resource_authorization']}
     campaign.seal(path, {'schema': campaign.ID + '.seed-process-spec.v2',
         'phase_contract': campaign.record(root / 'campaign.json'), 'phase': phase,
         'input_audit': campaign.record(root / phase / 'training-input-audit.json'),
-        'initial_checkpoint': campaign.record(initial), 'executor': MODE,
+        'initial_checkpoint': campaign.record(initial), 'executor': executor,
         'qat_profile': profile.name, 'qat_profile_contract': trainer.qat_profile_contract(profile),
         'sources': source_closure(), 'python': {'executable': str(Path(sys.executable).resolve()),
             'version': sys.version}, 'reconstruction': input_identity(inputs, anchor_filter),
-        'ranking_weights': list(ranking_weights), 'seeds': list(seeds), 'jobs': jobs})
+        'ranking_weights': list(ranking_weights), 'seeds': list(seeds), 'jobs': jobs, **resource_binding})
     return path
 
 
@@ -223,16 +238,19 @@ def _initialize(spec_path):
     campaign, trainer = _modules()
     from tools import compact_value_bfm_intervention_v2 as intervention
     spec = campaign.read(spec_path)
-    if spec['schema'] != campaign.ID + '.seed-process-spec.v2' or spec['executor'] != MODE:
+    if spec['schema'] != campaign.ID + '.seed-process-spec.v2':
         raise ValueError('spawn worker specification changed')
+    executor = normalize_executor(spec['executor'])
     if source_closure() != spec['sources']:
         raise ValueError('spawn worker source closure changed')
     if spec['python'] != {'executable': str(Path(sys.executable).resolve()), 'version': sys.version}:
         raise ValueError('spawn worker Python runtime changed')
     root = campaign.verify(spec['phase_contract']).parent
     plan = campaign.read(root / 'campaign.json')
-    if executor_mode(plan) != 'spawn-v2':
+    if executor_mode(plan) != 'spawn-v2' or normalize_executor(plan['training_executor']) != executor:
         raise ValueError('spawn worker phase contract changed')
+    if executor == MODE4 and spec.get('training_resource_authorization') != plan['training_resource_authorization']:
+        raise ValueError('spawn worker resource authorization changed')
     if campaign.verify(spec['input_audit']) != root / spec['phase'] / 'training-input-audit.json':
         raise ValueError('spawn worker audit route changed')
     trainer.validate_qat_profile_contract(spec['qat_profile_contract'], expected_name=spec['qat_profile'])
@@ -287,7 +305,7 @@ def _run(job):
 
 
 class SpawnSeedExecutor:
-    """Two persistent spawn children, one lambda at a time; no child replacement."""
+    """Persistent spawn children with a frozen roster; no child replacement."""
     def __init__(self, spec_path):
         campaign, _trainer = _modules()
         self.path = Path(spec_path)
@@ -296,22 +314,48 @@ class SpawnSeedExecutor:
         self.ordinal = 0
         self.evidence = []
 
+    @property
+    def settings(self):
+        return normalize_executor(self.spec.get('executor', MODE2))
+
     def __enter__(self):
+        campaign, _trainer = _modules()
+        if self.settings == MODE4:
+            plan = campaign.read(campaign.verify(self.spec['phase_contract']))
+            if executor_mode(plan) != 'spawn-v2' or plan['training_executor'] != MODE4:
+                raise ValueError('four-worker roster does not match its authorized phase')
+            if self.spec.get('training_resource_authorization') != plan['training_resource_authorization']:
+                raise ValueError('four-worker roster resource authorization changed')
         # Spawn imports __main__ before initializer; set these before start.
         os.environ.update(ENVIRONMENT)
         os.environ[MARKER] = '1'
-        self.pool = concurrent.futures.ProcessPoolExecutor(max_workers=2,
+        self.pool = concurrent.futures.ProcessPoolExecutor(max_workers=self.settings['maximum_workers'],
             mp_context=multiprocessing.get_context('spawn'), initializer=_initialize,
             initargs=(str(self.path),))
         return self
 
     def run_weight(self, weight):
-        campaign, trainer = _modules()
+        if self.settings != MODE2:
+            raise ValueError('four-worker execution requires the flattened run_roster entry point')
         if (self.ordinal >= len(self.spec['ranking_weights'])
                 or weight != self.spec['ranking_weights'][self.ordinal]):
             raise ValueError('spawn lambda execution order changed')
         jobs = [job for job in self.spec['jobs'] if job['weight'] == weight]
         returned = list(self.pool.map(_run, jobs))
+        receipts = self._collect(jobs, returned)
+        self.ordinal += 1
+        return receipts
+
+    def run_roster(self):
+        if self.settings != MODE4 or self.ordinal != 0:
+            raise ValueError('flattened four-worker roster can execute exactly once')
+        self.ordinal = len(self.spec['ranking_weights'])
+        jobs = self.spec['jobs']
+        returned = list(self.pool.map(_run, jobs))
+        return self._collect(jobs, returned)
+
+    def _collect(self, jobs, returned):
+        campaign, trainer = _modules()
         receipts = []
         for job, result in zip(jobs, returned, strict=True):
             reference = campaign.verify(result['reference'])
@@ -323,8 +367,7 @@ class SpawnSeedExecutor:
             if receipt['native_thread_execution'] != result['native_thread_execution']:
                 raise ValueError('spawn result numerical limiter evidence changed')
             receipts.append(receipt)
-            self.evidence.append({'weight': weight, 'seed': job['seed'], **result})
-        self.ordinal += 1
+            self.evidence.append({'weight': job['weight'], 'seed': job['seed'], **result})
         return receipts
 
     def __exit__(self, *_exception):

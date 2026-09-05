@@ -83,7 +83,8 @@ def pilot_fingerprints(root,context,phase):
     return artifacts
 
 
-def prepare(root,pilot_context,pilot_phase):
+def prepare(root,pilot_context,pilot_phase,*,training_executor=None,training_workers=None,training_resource_authorization=None):
+    from tools import compact_value_bfm_training_resources_v2 as resources
     pilot=admitted_pilot(pilot_context,pilot_phase)
     parent=campaign.read(pilot_context/'campaign.json');attempt=parent['attempt']
     profile=intervention.expected_qat_profile(parent)
@@ -93,12 +94,18 @@ def prepare(root,pilot_context,pilot_phase):
         frozen=campaign.read(path)
         if (intervention.expected_qat_profile(frozen)!=profile
                 or any(frozen.get(key)!=parent.get(key) for key in
-                    ('qat_profile','qat_profile_contract','intervention','training_executor'))):
+                    ('qat_profile','qat_profile_contract','intervention'))):
             raise ValueError('full training changed its admitted pilot intervention')
+        resources.check_resume(frozen,root,training_executor=training_executor,training_workers=training_workers,
+                               training_resource_authorization=training_resource_authorization)
         return context,phase,frozen
     selected=pilot['selected'];weight=selected['lambda']
     if weight not in (.1,.25):raise ValueError('pilot did not admit a ranking recipe')
     body={key:value for key,value in parent.items() if key!='body_sha256'}
+    resource_fields=resources.execution_fields(root,training_executor=training_executor,training_workers=training_workers,
+        training_resource_authorization=training_resource_authorization,inherited=parent)
+    for key in ('training_executor','training_resource_authorization'):body.pop(key,None)
+    body.update(resource_fields)
     body.pop('pilot_games',None);body.pop('pilot_training_roster',None)
     body['inputs']=dict(parent['inputs']);body['inputs']['attempt_zero_runtime']=selected['runtime']
     body.update({'phase':'full','full_games':10000,'admitted_pilot':campaign.record(pilot_context/pilot_phase/'pilot-outcome.json'),
@@ -110,6 +117,7 @@ def prepare(root,pilot_context,pilot_phase):
         'full_driver':campaign.copy_checked(Path(__file__),context/'full-driver.py')})
     for name in ('anchor-derived.json','prior-search-validation.json'):
         campaign.copy_checked(root/'exclusions'/name,context/'exclusions'/name)
+    resources.expected_workers(body)
     result=campaign.seal(path,body)
     campaign.event(root,'full-context-frozen',{'context':campaign.record(path),'admitted_pilot':body['admitted_pilot']})
     return context,phase,result
@@ -119,6 +127,9 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',type=Path,required=True)
     parser.add_argument('--pilot-context',type=Path,required=True);parser.add_argument('--pilot-phase',required=True)
     parser.add_argument('--wait-for-pilot',type=int,metavar='UPSTREAM_PID')
+    parser.add_argument('--training-executor',choices=('threads','spawn-v2'))
+    parser.add_argument('--training-workers',type=int,choices=(2,4))
+    parser.add_argument('--training-resource-authorization',type=Path)
     parser.add_argument('command',choices=('prepare','run'));args=parser.parse_args()
     root=args.root.resolve();pilot_context=args.pilot_context.resolve()
     if args.wait_for_pilot:
@@ -130,7 +141,8 @@ def main():
         print('full stage not admitted; a fresh isolated attempt is required',flush=True);return
     with (root/'.heavy-stage.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX if args.wait_for_pilot else fcntl.LOCK_EX|fcntl.LOCK_NB)
-        context,phase,contract=prepare(root,pilot_context,args.pilot_phase)
+        context,phase,contract=prepare(root,pilot_context,args.pilot_phase,training_executor=args.training_executor,
+            training_workers=args.training_workers,training_resource_authorization=args.training_resource_authorization)
         if args.command=='prepare':return
         campaign.run_games(context,phase,10000,8)
         campaign.event(root,'full-games-completed',{'games':campaign.record(context/phase/'games.json')})

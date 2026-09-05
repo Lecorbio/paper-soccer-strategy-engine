@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import compact_value_bfm_campaign_v2 as campaign
 from tools import compact_value_bfm_full_v2 as full
 from tools import compact_value_bfm_intervention_v2 as intervention
+from tools import compact_value_bfm_training_resources_v2 as resources
 from tools import compact_value_bfm_pilot_selection_v2 as pilot_selection
 from tools import compact_value_bfm_ranking_store as storage
 from tools import compact_value_bfm_teacher_training as selection
@@ -55,8 +56,10 @@ def validate_context(root, context, phase):
         raise ValueError('full selection pilot context changed')
     if (intervention.expected_qat_profile(contract) != intervention.expected_qat_profile(pilot_contract)
             or any(contract.get(key) != pilot_contract.get(key) for key in
-                   ('qat_profile', 'qat_profile_contract', 'intervention', 'training_executor'))):
+                   ('qat_profile', 'qat_profile_contract', 'intervention'))):
         raise ValueError('full selection changed its admitted pilot intervention')
+    resources.expected_workers(pilot_contract)
+    resources.expected_workers(contract)
     outcome_path = campaign.verify(contract['admitted_pilot'])
     if outcome_path.resolve() != pilot_context / pilot_phase / 'pilot-outcome.json':
         raise ValueError('full selection admitted pilot path changed')
@@ -109,7 +112,7 @@ def policy(contract):
 
 def prepare_policy(context, phase, contract):
     """Bind the selector, its validators and the exact maintained source exporter."""
-    modules = (campaign, full, intervention, pilot_selection, storage, selection, trainer,
+    modules = (campaign, full, intervention, resources, pilot_selection, storage, selection, trainer,
                selection.model_exporter, selection.source_exporter)
     files = {Path(__file__).resolve(), *(Path(module.__file__).resolve() for module in modules)}
     exporter = selection.source_exporter

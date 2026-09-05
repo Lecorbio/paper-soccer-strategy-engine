@@ -39,6 +39,47 @@ SEEDS = trainer.FIXED_SEEDS[:2]
 STAGES = ('threads', 'spawn')
 
 
+def plan_executor(plan):
+    return process.normalize_executor(plan.get('executor', process.MODE2))
+
+
+def plan_seeds(plan):
+    return trainer.FIXED_SEEDS if plan_executor(plan) == process.MODE4 else SEEDS
+
+
+def _concurrency_controller():
+    from tools import compact_value_bfm_training_acceleration_v2 as acceleration
+    return acceleration
+
+
+def validate_execution_authority(plan, *, plan_path=None):
+    executor = plan_executor(plan)
+    authorization = plan.get('training_resource_authorization')
+    if executor == process.MODE4:
+        from tools import compact_value_bfm_training_resources_v2 as resources
+        if not isinstance(authorization, dict):
+            raise ValueError('four-worker benchmark needs source-bound resource authorization')
+        resources.validate_authorization(authorization, Path(plan['root']))
+    elif authorization is not None:
+        raise ValueError('two-worker benchmark cannot add a four-worker authorization')
+    context_record = plan.get('concurrent_equivalence_context')
+    if context_record is None:
+        if plan.get('global_heavy_stage_lease_required') is not True:
+            raise ValueError('benchmark requires the global heavy-stage lease unless concurrency is authorized')
+        if plan.get('execution_timing') == 'contended-equivalence-only':
+            raise ValueError('contended timing requires an explicit concurrent context')
+        return None
+    if (executor != process.MODE4 or plan.get('global_heavy_stage_lease_required') is not False
+            or plan.get('execution_timing') != 'contended-equivalence-only'
+            or plan.get('speedup_qualification_allowed') is not False):
+        raise ValueError('concurrent equivalence cannot claim uncontended timing or speedup qualification')
+    context = _concurrency_controller().validate_context(context_record, root=Path(plan['root']), plan_path=plan_path)
+    if (context['output'] != plan['output']
+            or context['training_resource_authorization'] != authorization):
+        raise ValueError('concurrent equivalence context changed its output or resource authorization')
+    return context
+
+
 def sources():
     exporter = adapter.source_exporter
     files = {Path(item['path']) for item in process.source_closure()}
@@ -146,22 +187,34 @@ def smoke_inputs_metadata(root):
         'historical_seed_results': historical_seed_results(directory, training)}
 
 
-def prepare(root, output):
+def prepare(root, output, *, executor=process.MODE2, training_resource_authorization=None, concurrent_context=None):
     root = Path(root).resolve()
     output = output_path(root, output)
+    executor = process.normalize_executor(executor)
+    execution_fields = {} if executor == process.MODE2 else {'executor': executor,
+        'training_resource_authorization': training_resource_authorization}
+    if executor == process.MODE2 and training_resource_authorization is not None:
+        raise ValueError('two-worker benchmark cannot add a four-worker authorization')
+    if concurrent_context is not None:
+        execution_fields.update({'concurrent_equivalence_context': concurrent_context,
+            'execution_timing': 'contended-equivalence-only', 'speedup_qualification_allowed': False})
+    authority = {'root': str(root), 'output': str(output),
+        'global_heavy_stage_lease_required': concurrent_context is None, **execution_fields}
+    validate_execution_authority(authority)
     metadata = smoke_inputs_metadata(root)
     body = {'schema': SCHEMA, 'root': str(root), 'output': str(output),
         'smoke': metadata, 'sources': sources(),
         'python': {'executable': str(Path(sys.executable).resolve()), 'version': sys.version},
-        'weights': list(WEIGHTS), 'seeds': list(SEEDS), 'stage_order': list(STAGES),
-        'maximum_active_real_seeds': 2, 'numerical_threads_per_seed': 1,
+        'weights': list(WEIGHTS), 'seeds': list(plan_seeds(authority)), 'stage_order': list(STAGES),
+        'maximum_active_real_seeds': executor['maximum_workers'], 'numerical_threads_per_seed': 1,
         'spawn_start_method': 'spawn', 'full_maintained_seed_and_qat_execution': True,
         'historical_receipts_reused_as_execution_results': False,
         'historical_seed_equivalence_required': True,
         'real_core_inputs_reconstructed_during_prepare': False,
-        'global_heavy_stage_lease_required': True, 'qualification_eligible': False,
+        'global_heavy_stage_lease_required': concurrent_context is None, 'qualification_eligible': False,
         'automatic_production_opt_in': False, 'real_training_started': False,
-        'performance_interpretation': 'one ordered paired experiment; report cache/order effects; no automatic speed claim'}
+        'performance_interpretation': 'one ordered paired experiment; report cache/order effects; no automatic speed claim',
+        **execution_fields}
     campaign.seal(output / 'plan.json', body)
     return campaign.record(output / 'plan.json')
 
@@ -169,9 +222,10 @@ def prepare(root, output):
 def validate_plan(path):
     path = Path(path).resolve()
     plan = campaign.read(path)
+    executor = plan_executor(plan)
     if (plan['schema'] != SCHEMA or output_path(plan['root'], plan['output']) / 'plan.json' != path
-            or plan['weights'] != list(WEIGHTS) or plan['seeds'] != list(SEEDS)
-            or plan['stage_order'] != list(STAGES) or plan['maximum_active_real_seeds'] != 2
+            or plan['weights'] != list(WEIGHTS) or plan['seeds'] != list(plan_seeds(plan))
+            or plan['stage_order'] != list(STAGES) or plan['maximum_active_real_seeds'] != executor['maximum_workers']
             or plan['numerical_threads_per_seed'] != 1 or plan['spawn_start_method'] != 'spawn'
             or plan['qualification_eligible'] is not False or plan['automatic_production_opt_in'] is not False
             or plan.get('historical_seed_equivalence_required') is not True
@@ -180,6 +234,7 @@ def validate_plan(path):
             or plan['python'] != {'executable': str(Path(sys.executable).resolve()), 'version': sys.version}
             or plan['sources'] != sources()):
         raise ValueError('executor check plan/source/runtime changed')
+    validate_execution_authority(plan, plan_path=path)
     if plan['smoke'] != smoke_inputs_metadata(plan['root']):
         raise ValueError('executor check historical smoke binding changed')
     return plan
@@ -227,12 +282,17 @@ def expected_worker_spec(plan_path, stage, identity):
     directory = Path(plan['output']) / stage
     jobs = [{'weight': weight, 'seed': seed, 'directory': str(directory / f'lambda-{weight:.2f}'),
         'binding': process.roster_binding(plan['smoke']['expected_base_binding'], seed, weight)}
-        for weight in WEIGHTS for seed in SEEDS]
+        for weight in WEIGHTS for seed in plan_seeds(plan)]
+    extra = {} if plan_executor(plan) == process.MODE2 else {'executor': plan_executor(plan),
+        'training_resource_authorization': plan['training_resource_authorization']}
+    if plan.get('concurrent_equivalence_context') is not None:
+        extra.update({'concurrent_equivalence_context': plan['concurrent_equivalence_context'],
+            'execution_timing': 'contended-equivalence-only', 'speedup_qualification_allowed': False})
     return {'schema': SCHEMA + '.worker', 'plan': campaign.record(plan_path),
-        'stage': stage, 'ranking_weights': list(WEIGHTS), 'seeds': list(SEEDS),
+        'stage': stage, 'ranking_weights': list(WEIGHTS), 'seeds': list(plan_seeds(plan)),
         'jobs': jobs, 'qat_profile': trainer.STANDARD_QAT_PROFILE, 'reconstruction': identity,
         'historical_position_adapter_only': True, 'production_seed_execution_path': True,
-        'qualification_eligible': False}
+        'qualification_eligible': False, **extra}
 
 
 def execution_spec(plan_path, stage, identity):
@@ -243,9 +303,13 @@ def execution_spec(plan_path, stage, identity):
 
 
 def expected_claim(plan_path, stage):
+    plan = campaign.read(plan_path)
+    extra = {} if plan.get('concurrent_equivalence_context') is None else {
+        'concurrent_equivalence_context': plan['concurrent_equivalence_context'],
+        'global_heavy_stage_lease_required': False, 'speedup_qualification_allowed': False}
     return {'plan': campaign.record(plan_path), 'stage': stage,
-        'starts_real_smoke_training': True, 'maximum_active_seeds': 2,
-        'qualification_eligible': False, 'retry_allowed': False}
+        'starts_real_smoke_training': True, 'maximum_active_seeds': plan_executor(plan)['maximum_workers'],
+        'qualification_eligible': False, 'retry_allowed': False, **extra}
 
 
 def _initialize_smoke(spec_path):
@@ -268,9 +332,12 @@ def _initialize_smoke(spec_path):
 class SmokeSpawnExecutor(process.SpawnSeedExecutor):
     """Exercise production dispatch/result/shutdown with historical smoke inputs."""
     def __enter__(self):
+        plan = validate_plan(campaign.verify(self.spec['plan']))
+        if self.settings != plan_executor(plan):
+            raise ValueError('smoke worker capacity differs from its authorized plan')
         os.environ.update(process.ENVIRONMENT)
         os.environ[process.MARKER] = '1'
-        self.pool = concurrent.futures.ProcessPoolExecutor(max_workers=2,
+        self.pool = concurrent.futures.ProcessPoolExecutor(max_workers=self.settings['maximum_workers'],
             mp_context=multiprocessing.get_context('spawn'), initializer=_initialize_smoke,
             initargs=(str(self.path),))
         return self
@@ -368,6 +435,7 @@ def run_stage(plan_path, stage):
     started = time.monotonic()
     before = usage()
     results, process_evidence = [], []
+    executor_settings = plan_executor(plan)
     with MemorySampler() as memory:
         with trainer.native_thread_execution_scope():
             bundle, inputs, identity = reconstruct_smoke(plan)
@@ -382,26 +450,36 @@ def run_stage(plan_path, stage):
                         ranking_weight=job['weight'], initial_checkpoint=initial,
                         qat_profile=trainer.STANDARD_QAT_PROFILE, resume=False,
                         _native_thread_execution=execution)
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    for weight in WEIGHTS:
-                        jobs = [job for job in spec['jobs'] if job['weight'] == weight]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=executor_settings['maximum_workers']) as pool:
+                    rosters = [spec['jobs']] if executor_settings == process.MODE4 else [
+                        [job for job in spec['jobs'] if job['weight'] == weight] for weight in WEIGHTS]
+                    for jobs in rosters:
                         receipts = list(pool.map(run_job, jobs))
                         results.extend(export_result(job, receipt) for job, receipt in zip(jobs, receipts, strict=True))
         else:
             # Match the production coordinator, which retains its reconstructed
-            # inputs while the two children have their own ordinary arrays.
+            # inputs while the children have their own ordinary arrays.
             with SmokeSpawnExecutor(spec_path) as executor:
-                for weight in WEIGHTS:
-                    receipts = executor.run_weight(weight)
-                    jobs = [job for job in spec['jobs'] if job['weight'] == weight]
+                if executor_settings == process.MODE4:
+                    receipts = executor.run_roster()
+                    jobs = spec['jobs']
                     results.extend(export_result(job, receipt) for job, receipt in zip(jobs, receipts, strict=True))
+                else:
+                    for weight in WEIGHTS:
+                        receipts = executor.run_weight(weight)
+                        jobs = [job for job in spec['jobs'] if job['weight'] == weight]
+                        results.extend(export_result(job, receipt) for job, receipt in zip(jobs, receipts, strict=True))
                 process_evidence = executor.evidence
+    extra = {} if executor_settings == process.MODE2 else {'executor': executor_settings}
+    if plan.get('concurrent_equivalence_context') is not None:
+        extra.update({'concurrent_equivalence_context': plan['concurrent_equivalence_context'],
+            'execution_timing': 'contended-equivalence-only', 'speedup_qualification_allowed': False})
     return campaign.seal(result_path, {'schema': SCHEMA + '.stage', 'stage': stage,
         'plan': campaign.record(plan_path), 'specification': campaign.record(spec_path),
         'claim': campaign.record(directory / 'claim.json'),
         'reconstruction': identity, 'results': results, 'elapsed_seconds': time.monotonic() - started,
         'usage_before': before, 'usage_after': usage(), 'memory': memory.report(),
-        'process_evidence': process_evidence, 'qualification_eligible': False})
+        'process_evidence': process_evidence, 'qualification_eligible': False, **extra})
 
 
 def compare_seed_results(left, right):
@@ -437,7 +515,16 @@ def compare_stage_results(threaded, spawned):
         raise ValueError('executor results belong to different experiments or stages')
     if threaded['reconstruction'] != spawned['reconstruction']:
         raise ValueError('thread/spawn real-smoke reconstructed inputs differ')
-    expected = [(weight, seed) for weight in WEIGHTS for seed in SEEDS]
+    executor = plan_executor(threaded)
+    if executor != plan_executor(spawned):
+        raise ValueError('thread/spawn worker capacities differ')
+    context = threaded.get('concurrent_equivalence_context')
+    if context != spawned.get('concurrent_equivalence_context'):
+        raise ValueError('thread/spawn concurrent equivalence contexts differ')
+    if context is not None and any(stage.get('execution_timing') != 'contended-equivalence-only'
+            or stage.get('speedup_qualification_allowed') is not False for stage in (threaded, spawned)):
+        raise ValueError('concurrent equivalence cannot qualify a speedup')
+    expected = [(weight, seed) for weight in WEIGHTS for seed in plan_seeds(threaded)]
     if any([(row['weight'], row['seed']) for row in stage['results']] != expected for stage in (threaded, spawned)):
         raise ValueError('executor comparison has an incomplete seed roster')
     for stage in (threaded, spawned):
@@ -455,14 +542,21 @@ def compare_stage_results(threaded, spawned):
         and row['memory'].get('process_tree_peak_rss', 0) > 0
         and bool(row['memory'].get('per_pid_peak_rss')) for row in (threaded, spawned))
     complete_memory = complete_memory and all(str(pid) in spawned['memory']['per_pid_peak_rss'] for pid in workers)
+    requested_workers = executor['maximum_workers']
+    extra = {} if executor == process.MODE2 else {'executor': executor,
+        'requested_spawn_children_observed': len(workers) == requested_workers,
+        'four_spawn_children_observed': len(workers) == 4}
+    if context is not None:
+        extra.update({'concurrent_equivalence_context': context,
+            'execution_timing': 'contended-equivalence-only', 'speedup_qualification_allowed': False})
     return {'exact_equivalence_passed': True, 'checks': checks,
         'two_spawn_children_observed': len(workers) == 2, 'spawn_worker_pids': workers,
         'thread_seconds': threaded['elapsed_seconds'], 'spawn_seconds': spawned['elapsed_seconds'],
-        'observed_thread_over_spawn_elapsed_ratio': threaded['elapsed_seconds'] / spawned['elapsed_seconds'],
+        'observed_thread_over_spawn_elapsed_ratio': None if context is not None else threaded['elapsed_seconds'] / spawned['elapsed_seconds'],
         'memory_measurements_complete': complete_memory,
-        'executor_ready_for_review': len(workers) == 2 and complete_memory,
+        'executor_ready_for_review': len(workers) == requested_workers and complete_memory,
         'performance_is_single_ordered_experiment': True, 'qualification_eligible': False,
-        'automatic_production_opt_in': False}
+        'automatic_production_opt_in': False, **extra}
 
 
 def bound(record, path):
@@ -506,6 +600,9 @@ def validated_stage(plan_path, stage):
     if (result.get('schema') != SCHEMA + '.stage' or result.get('stage') != stage
             or result['plan'] != campaign.record(plan_path) or result['qualification_eligible'] is not False):
         raise ValueError('executor stage changed its plan')
+    for key in ('executor', 'concurrent_equivalence_context', 'execution_timing', 'speedup_qualification_allowed'):
+        if result.get(key) != plan.get(key):
+            raise ValueError('executor stage resource or timing authority changed')
     claim_path = bound(result['claim'], directory / 'claim.json')
     claim = campaign.read(claim_path)
     if {key: value for key, value in claim.items() if key != 'body_sha256'} != expected_claim(plan_path, stage):
@@ -560,8 +657,8 @@ def validated_stage(plan_path, stage):
                         ('peak_rss', 'minor_page_faults', 'major_page_faults'))):
                 raise ValueError('spawn process PID/resource observation is malformed')
             pids.add(values['pid'])
-        if not 1 <= len(pids) <= 2:
-            raise ValueError('spawn process roster exceeded the two-worker limit')
+        if not 1 <= len(pids) <= plan_executor(plan)['maximum_workers']:
+            raise ValueError('spawn process roster exceeded its authorized worker limit')
         if not result['memory']['errors'] and any(str(pid) not in result['memory']['per_pid_peak_rss'] for pid in pids):
             raise ValueError('spawn memory sampler did not observe its executing workers')
     elapsed = result['elapsed_seconds']
@@ -586,6 +683,8 @@ def validate_result(plan_path):
 
 def run(plan_path):
     plan = validate_plan(plan_path)
+    if plan.get('concurrent_equivalence_context') is not None:
+        return _concurrency_controller().run(plan['concurrent_equivalence_context'], plan_path)
     with campaign.lease(Path(plan['root'])):
         for stage in STAGES:
             run_stage(plan_path, stage)
@@ -598,17 +697,24 @@ def main():
     prepare_parser = sub.add_parser('prepare')
     prepare_parser.add_argument('--root', type=Path, required=True)
     prepare_parser.add_argument('--output', type=Path, required=True)
+    prepare_parser.add_argument('--workers', type=int, choices=(2, 4), default=2)
+    prepare_parser.add_argument('--training-resource-authorization', type=Path)
+    prepare_parser.add_argument('--concurrent-context', type=Path)
     for name in ('inspect', 'run', 'validate'):
         child = sub.add_parser(name)
         child.add_argument('--plan', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'prepare':
-        result = prepare(args.root, args.output)
+        result = prepare(args.root, args.output,
+            executor=process.MODE4 if args.workers == 4 else process.MODE2,
+            training_resource_authorization=None if args.training_resource_authorization is None else campaign.record(args.training_resource_authorization),
+            concurrent_context=None if args.concurrent_context is None else campaign.record(args.concurrent_context))
     elif args.command == 'inspect':
         plan = validate_plan(args.plan)
         result = {'plan': campaign.record(args.plan), 'real_training_started': False,
             'next_command': [sys.executable, str(Path(__file__).resolve()), 'run', '--plan', str(args.plan.resolve())],
-            'requires_available_global_heavy_stage_lease': True, 'qualification_eligible': False}
+            'requires_available_global_heavy_stage_lease': plan['global_heavy_stage_lease_required'],
+            'maximum_active_real_seeds': plan_executor(plan)['maximum_workers'], 'qualification_eligible': False}
     elif args.command == 'run':
         result = run(args.plan)
     else:
