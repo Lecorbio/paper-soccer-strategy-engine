@@ -675,7 +675,9 @@ def label_positions(root,phase,workers):
     event(root,'labels-completed',{'labels':record(output)}); return result
 
 
-def train_models(root,phase,*,smoke=False):
+def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25)):
+    if tuple(sorted(set(ranking_weights)))!=tuple(ranking_weights) or 0.0 not in ranking_weights or not set(ranking_weights)<={0.0,.10,.25}:
+        raise ValueError('invalid ranking recipe roster')
     from tools import compact_value_bfm_train as trainer
     from tools import compact_value_bfm_teacher_training as adapter
     from tools import jacek_replay_train as packer
@@ -753,7 +755,7 @@ def train_models(root,phase,*,smoke=False):
     # Smoke exercises all loss recipes; one seed bounds its training cost.
     seeds=trainer.FIXED_SEEDS[:1] if smoke else trainer.FIXED_SEEDS
     with trainer.native_thread_execution_scope() as execution:
-        for weight in (0.0,.10,.25):
+        for weight in ranking_weights:
             directory=root/phase/'training'/f'lambda-{weight:.2f}'
             def run(seed):
                 return trainer.train_seed_candidate(bundle,inputs,architecture,arm,seed,directory,

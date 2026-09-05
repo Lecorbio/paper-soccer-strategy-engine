@@ -196,3 +196,12 @@ For multi-opponent qualification, the state adapter preserves each frozen
 opponent's own source clock constants. Candidate clocks remain800/155 ms.
 Reduced-clock structural checks remain explicitly ineligible as strength
 measurements.
+
+`compact_value_bfm_full_v2.py` scales only an actually admitted pilot. It reopens
+the bound Rank-4 result, verifies the exact model payload and offline eligibility,
+and requires the real 105/200, zero-failure screen. Full data generation uses the
+admitted pilot student, fresh roots, and accumulated pilot fingerprints. Full
+training keeps the original float initialization, the admitted ranking weight,
+a scalar control, and all three seeds. The streamed 10,000-game workflow still
+ends awaiting search/evaluation and final qualification; it does not authorize
+live success from training alone.

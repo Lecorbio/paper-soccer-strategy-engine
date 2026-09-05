@@ -142,11 +142,11 @@ def run_screen(root,context,phase):
 
 
 
-def wait_for_selection(path,upstream_pid,phase):
+def wait_for_selection(path,upstream_pid,phase,expected_script="compact_value_bfm_pilot_selection_v2.py"):
     """One-shot dependency wait; a failed upstream process cannot hang forever."""
     while not path.exists():
         process=subprocess.run(['ps','-p',str(upstream_pid),'-o','args='],capture_output=True,text=True)
-        if process.returncode or 'compact_value_bfm_pilot_selection_v2.py' not in process.stdout or phase not in process.stdout:
+        if process.returncode or expected_script not in process.stdout or phase not in process.stdout:
             raise ValueError('upstream training ended without a completed model selection')
         if hasattr(select,'kqueue'):
             descriptor=os.open(path.parent,os.O_RDONLY)
