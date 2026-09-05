@@ -151,11 +151,13 @@ def wait_for_selection(path,upstream_pid,phase,expected_script="compact_value_bf
         if hasattr(select,'kqueue'):
             descriptor=os.open(path.parent,os.O_RDONLY)
             try:
-                with select.kqueue() as queue:
+                queue=select.kqueue()
+                try:
                     event=select.kevent(descriptor,filter=select.KQ_FILTER_VNODE,
                         flags=select.KQ_EV_ADD|select.KQ_EV_ENABLE|select.KQ_EV_ONESHOT,
                         fflags=select.KQ_NOTE_WRITE|select.KQ_NOTE_RENAME)
                     if not path.exists():queue.control([event],1,60)
+                finally:queue.close()
             finally:os.close(descriptor)
         else:
             time.sleep(10)
