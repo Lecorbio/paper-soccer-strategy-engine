@@ -511,3 +511,21 @@ array hashes. The validation barrier remains separate and unchanged. A frozen
 plan cannot change exclusion mode or producer on resume; active historical
 plans must continue with their original source. The opt-in does not alter
 teacher labels, training math, clocks or qualification thresholds.
+
+When load-only measurements leave batch memory uncertain,
+`compact_value_bfm_training_workspace_v2.py prepare --capacity-plan CAPACITY_PLAN
+--output OUTPUT` prepares a separate allocation probe. It uses the exact engine
+source bound by the completed capacity plan, with the newer probe source bound
+separately. The current probe supports the frozen `fa012e7` engine and rejects
+other engine versions. Run and validate it through its standalone CLI so an already
+loaded, different `tools` package cannot substitute for the frozen engine.
+
+The probe reconstructs the actual corpus and holds four workers' real mapped
+views and forward/backward buffers together using the existing capacity controls.
+It uses the original checkpoint and allocation-only gradients, starts no
+optimizer steps and writes no trained candidates. A scoped return hook may
+retain named backward arrays beyond their normal lifetime without modifying the
+numerical function. The report distinguishes that conservative retained overlap,
+individual process peaks, expression temporaries and file pages that were not
+touched. Such measurements inform resource review; they do not automatically
+authorize production or establish model quality.
