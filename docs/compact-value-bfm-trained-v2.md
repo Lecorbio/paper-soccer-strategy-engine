@@ -118,6 +118,37 @@ compare eager and mapped groups, scalar targets, losses, and gradients exactly;
 altered cache bytes are rejected. The smoke's 341,685 successors occupy about
 154 MB in this representation.
 
+`compact_value_bfm_parallel_store_v2.py` is an explicit opt-in converter for
+future, unstarted stores. The ordinary preparation/reconstruction path still
+uses the serial builder; this tool does not replace or resume an active, partial,
+or legacy store. It validates whole rich rows in spawned workers, then merges
+in source, line, and successor order with exact offset rebasing and global
+identity/duplicate checks. Fixtures establish byte-identical arrays and identical
+index semantics apart from declared producer provenance and artifact paths.
+
+After a corpus-specific memory review, invoke it from one immutable source:
+
+```sh
+python tools/compact_value_bfm_parallel_store_v2.py \
+  --root ROOT --output ROOT/FRESH_STORE --bundle-manifest BUNDLE_MANIFEST \
+  --source TRAIN_JSONL --source VALIDATION_JSONL_GZ --workers 4
+```
+
+The default is four workers, each with one numerical thread, and at most four
+pending chunks. The builder owns the global heavy-stage lease and rejects mixed
+source namespaces. Default limits are 8 MiB per ordinary chunk, 64 MiB per whole
+group, and 128 MiB per converted shard. Oversized input fails closed without
+splitting or dropping a group; an explicit larger limit requires operator review
+and a fresh output. Interrupted claims cannot retry in place.
+
+The worst-case pending scratch bound is 768 MiB at four workers and 1,536 MiB
+at eight. It excludes merged arrays, the corpus-sized group index/seen set, and
+parsed JSON expansion. Recorded worker peak RSS values are not simultaneous
+resident-memory measurements. Neither worker count is approved for a real corpus
+by the fixture tests: review actual memory for that corpus and worker count before
+use, and measure eight-worker capacity separately. No real-corpus conversion or
+speedup has been established by these tests.
+
 `compact_value_bfm_state_adapter.cpp` provides direct state initialization for
 all six local opponents. Empty-board games are explicitly routed to the process
 referee. Compile the four `turn_action_v2` opponents with
