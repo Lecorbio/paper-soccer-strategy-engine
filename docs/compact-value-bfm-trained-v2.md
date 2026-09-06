@@ -529,3 +529,35 @@ numerical function. The report distinguishes that conservative retained overlap,
 individual process peaks, expression temporaries and file pages that were not
 touched. Such measurements inform resource review; they do not automatically
 authorize production or establish model quality.
+
+## Reusing float decisions during scale search
+
+Scale selection evaluates many quantized candidates against the same float
+parameters. The trainer can reuse each validation group's exact float-best
+successor within one initial or adaptive scale-search invocation. Parent-frame
+conversion and successor-ID tie-breaking remain unchanged. Each invocation gets
+a fresh private cache; parameter contents, architecture, group order and backing
+arrays are checked before reuse. Mutable eager groups receive content checks.
+The cache retains decisions and small guards, not feature or prediction tensors.
+Quantized inference, teacher comparisons, reductions, candidate order, optimizer
+updates and numerical receipt fields retain their existing behavior.
+
+`compact_value_bfm_validation_cache_check_v2.py` supplies the separate real-data
+equivalence gate. Its `prepare` command accepts `--root`, an explicit immutable
+`--candidate-snapshot`, a fresh `--output` below
+`ROOT/diagnostics/validation-cache-equivalence`, and `--after-driver-launch` for
+the third-pilot data/workspace driver. Preparation binds the original native
+64-game smoke inputs without starting training. The reference engine remains
+the frozen `fa012e7` snapshot.
+
+After that data/workspace driver has completed and exited, `run --plan PLAN`
+holds the ordinary heavy-stage lease and executes fresh reference and candidate
+cohorts sequentially. Each uses at most four spawned processes, one numerical
+thread per seed, the refined adaptive profile, all three ranking weights and all
+three fixed seeds. Every complete training binding, deterministic receipt,
+trial report, checkpoint, runtime and generated source must match. A separately
+bound read-only observer must also show that the mapped cache was used and
+repeated float-ranking forwards decreased while other forward work stayed equal.
+Incomplete claimed runs cannot silently retry. These checks provide numerical
+equivalence evidence; they neither claim a wall-time speedup nor activate or
+qualify a production model. Existing active snapshots remain immutable.

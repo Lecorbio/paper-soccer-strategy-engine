@@ -33,6 +33,7 @@ import pathlib
 import struct
 import sys
 import tempfile
+import weakref
 import zipfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
@@ -3413,15 +3414,142 @@ def predict_dataset(
     return predictions
 
 
+def _float_ranking_group_structure(groups):
+    """Small guards for exact group order and immutable mapped backing arrays."""
+    result = []
+    stores = {}
+    owners = {}
+    containers = {}
+    for group in groups:
+        successors = group.successors
+        kind = type(successors)
+        if kind not in containers:
+            module = sys.modules.get(kind.__module__)
+            maintained = (
+                module is not None
+                and kind.__module__ in {
+                    "tools.compact_value_bfm_ranking_store", "compact_value_bfm_ranking_store"
+                }
+                and pathlib.Path(getattr(module, "__file__", "")).resolve()
+                    == TOOL_DIRECTORY / "compact_value_bfm_ranking_store.py"
+                and getattr(module, "MappedSuccessors", None) is kind
+            )
+            containers[kind] = module if maintained else None
+        module = containers[kind]
+        store = getattr(successors, "store", None)
+        mapped = (
+            module is not None
+            and getattr(module, "RankingStore", None) is type(store)
+        )
+        backing = None
+        if mapped:
+            store_id = id(store)
+            if store_id not in stores:
+                arrays = tuple(getattr(store, name) for name in ("metadata", "indices", "transcripts"))
+                readonly = all(isinstance(value, np.memmap) and value.mode == "r"
+                               and not value.flags.writeable for value in arrays)
+                signatures = tuple((id(value), repr(value.dtype.descr), value.shape, value.strides,
+                    bool(value.flags.writeable), getattr(value, "mode", None),
+                    str(getattr(value, "filename", "")), getattr(value, "offset", None),
+                    id(getattr(value, "_mmap", None)), int(value.ctypes.data)) for value in arrays)
+                stores[store_id] = (readonly, str(store.index), store.document.get("body_sha256"), signatures)
+                owners[store_id] = (weakref.ref(store), *(weakref.ref(value) for value in arrays))
+            mapped = stores[store_id][0]
+            backing = (store_id, successors.begin, successors.end, successors.root_termination)
+        result.append((group.group_id, group.parent_mover, group.successors_exhaustive,
+                       id(successors), len(successors), mapped, backing))
+    return tuple(result), stores, owners
+
+
+def _eager_float_ranking_group_content(group):
+    """Check mutable/eager content only after the normal comparability checks.
+
+    No feature or prediction tensors are retained. Production mapped labels use
+    the read-only backing-array guards instead of hashing every feature here.
+    """
+    digest = hashlib.sha256()
+    for successor in group.successors:
+        digest.update(canonical_json_bytes({
+            "successor_id": successor.successor_id,
+            "teacher_value": float(successor.teacher_value),
+            "value_mover": successor.value_mover,
+            "active_sha256": _array_identity(successor.active),
+        }))
+    return digest.hexdigest()
+
+
+class _FloatRankingDecisionCache:
+    """Private to one scale search with fixed parameters and immutable groups.
+
+    Store only exact best indices and small identity/content guards. Weak group
+    references prevent object-ID reuse without retaining feature/store objects.
+    """
+    __slots__ = ("architecture", "parameters", "groups", "structure", "owners", "best", "comparable", "content")
+
+    def __init__(self, parameters, architecture, groups):
+        self.architecture = architecture
+        self.parameters = _parameter_identity(parameters, architecture)
+        self.groups = tuple(weakref.ref(group) for group in groups)
+        structure, stores, self.owners = _float_ranking_group_structure(groups)
+        self.structure = structure, stores
+        self.best = [None] * len(groups)
+        self.comparable = [None] * len(groups)
+        self.content = [None] * len(groups)
+
+    def validate(self, parameters, architecture, groups):
+        structure, stores, owners = _float_ranking_group_structure(groups)
+        owners_changed = self.owners.keys() != owners.keys() or any(
+            old() is None or old() is not new()
+            for key in self.owners if key in owners
+            for old, new in zip(self.owners[key], owners[key])
+        )
+        if (architecture != self.architecture
+                or _parameter_identity(parameters, architecture) != self.parameters
+                or len(groups) != len(self.groups)
+                or any(reference() is not group for reference, group in zip(self.groups, groups))
+                or (structure, stores) != self.structure or owners_changed):
+            raise TrainingError("float-ranking cache parameters, architecture or group sequence changed")
+
+    @property
+    def immutable_mapped_groups(self):
+        return bool(self.groups) and all(row[5] for row in self.structure[0])
+
+    def skipped(self, index):
+        if self.comparable[index] is True:
+            raise TrainingError("float-ranking cache group comparability changed")
+        self.comparable[index] = False
+
+    def decision(self, index, group):
+        if self.comparable[index] is False:
+            raise TrainingError("float-ranking cache group comparability changed")
+        self.comparable[index] = True
+        if not self.structure[0][index][5]:
+            content = _eager_float_ranking_group_content(group)
+            if self.content[index] is not None and self.content[index] != content:
+                raise TrainingError("float-ranking cache eager group content changed")
+            self.content[index] = content
+        return self.best[index]
+
+
+def _new_float_ranking_decision_cache(parameters, architecture, inputs):
+    labels = getattr(inputs, "successor_rankings", None)
+    return None if labels is None else _FloatRankingDecisionCache(parameters, architecture, labels.validation)
+
+
 def successor_ranking_metrics(
     parameters: Mapping[str, np.ndarray],
     architecture: Architecture,
     groups: Sequence[CompleteTurnGroup],
     *,
     quantized: QuantizedWeights | None = None,
+    _float_best_cache: _FloatRankingDecisionCache | None = None,
 ) -> dict[str, float | int | bool]:
     if not groups:
         raise TrainingError("successor ranking metrics require nonempty groups")
+    if _float_best_cache is not None:
+        if quantized is None:
+            raise TrainingError("float-ranking decision cache requires quantized validation")
+        _float_best_cache.validate(parameters, architecture, groups)
     agreements = 0
     regrets = []
     losses = []
@@ -3431,33 +3559,46 @@ def successor_ranking_metrics(
     singleton_groups = 0
     skipped_nonexhaustive_groups = 0
     skipped_tied_groups = 0
-    for group in groups:
+    for group_index, group in enumerate(groups):
         if len(group.successors) == 1:
             singleton_groups += 1
         if not group.successors_exhaustive:
             skipped_nonexhaustive_groups += 1
+            if _float_best_cache is not None:
+                _float_best_cache.skipped(group_index)
             continue
         _best, alternatives, _gaps = _ranking_pairs(group)
         if not alternatives:
             skipped_tied_groups += int(len(group.successors) > 1)
+            if _float_best_cache is not None:
+                _float_best_cache.skipped(group_index)
             continue
         comparable_groups += 1
         active = tuple(successor.active for successor in group.successors)
-        float_raw, _float_cache = forward(
-            parameters, architecture, active, quantized=None
-        )
-        evaluated_raw = float_raw
+        cached_best = None if _float_best_cache is None else _float_best_cache.decision(group_index, group)
+        if cached_best is None:
+            float_raw, _float_cache = forward(
+                parameters, architecture, active, quantized=None
+            )
         if quantized is not None:
             evaluated_raw, _quantized_cache = forward(
                 parameters, architecture, active, quantized=quantized
             )
+        else:
+            evaluated_raw = float_raw
         teacher_parent = _teacher_parent_values(group)
-        float_parent, _float_signs = _parent_frame_values(group, float_raw)
+        if cached_best is None:
+            float_parent, _float_signs = _parent_frame_values(group, float_raw)
         evaluated_parent, _evaluated_signs = _parent_frame_values(
             group, evaluated_raw
         )
         teacher_best = _deterministic_best(group, teacher_parent)
-        float_best = _deterministic_best(group, float_parent)
+        if cached_best is None:
+            float_best = _deterministic_best(group, float_parent)
+            if _float_best_cache is not None:
+                _float_best_cache.best[group_index] = float_best
+        else:
+            float_best = cached_best
         evaluated_best = _deterministic_best(group, evaluated_parent)
         agreements += int(evaluated_best == teacher_best)
         flips += int(evaluated_best != float_best)
@@ -3554,8 +3695,11 @@ def evaluate_validation_pair(
     *,
     quantized: QuantizedWeights | None = None,
     ranking_weight: float = 0.0,
+    _float_best_cache: _FloatRankingDecisionCache | None = None,
 ) -> dict[str, dict[str, Any]]:
     ranking_weight = _ranking_weight(ranking_weight)
+    if _float_best_cache is not None and inputs.successor_rankings is None:
+        raise TrainingError("float-ranking decision cache requires successor groups")
     if ranking_weight > 0.0 and inputs.successor_rankings is None:
         raise TrainingError("successor ranking labels are required by the loss weight")
     if (
@@ -3593,6 +3737,7 @@ def evaluate_validation_pair(
                 architecture,
                 inputs.successor_rankings.validation,
                 quantized=quantized,
+                _float_best_cache=_float_best_cache,
             ),
             "loss_weight": ranking_weight,
         }
@@ -3949,6 +4094,8 @@ def select_fixed_scales(
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(qat_profile)
+    float_best_cache = _new_float_ranking_decision_cache(parameters, architecture, inputs)
+    cache_arguments = {} if float_best_cache is None else {"_float_best_cache": float_best_cache}
     candidates = {
         name: robust_scale_candidates(
             parameters[name], quantiles=profile.scale_quantiles
@@ -3971,6 +4118,7 @@ def select_fixed_scales(
                     arm,
                     quantized=quantized,
                     ranking_weight=ranking_weight,
+                    **cache_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile), float(candidate))
                 trials.append({
@@ -4005,6 +4153,7 @@ def select_fixed_scales(
                     arm,
                     quantized=quantized,
                     ranking_weight=ranking_weight,
+                    **cache_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile), float(candidate))
                 trials.append({
@@ -4031,6 +4180,7 @@ def select_fixed_scales(
         arm,
         quantized=selected,
         ranking_weight=ranking_weight,
+        **cache_arguments,
     )
     return selected, {
         "scheme": (
@@ -4079,6 +4229,10 @@ def _adapt_fixed_scales(
         raise TrainingError("fixed QAT profile cannot perform adaptive reselection")
     if not 1 <= qat_epoch <= QAT_EPOCHS:
         raise TrainingError("adaptive scale epoch is outside the QAT schedule")
+    # Each call follows a different QAT master state; never share decisions
+    # with the initial search, another epoch, or another seed.
+    float_best_cache = _new_float_ranking_decision_cache(parameters, architecture, inputs)
+    cache_arguments = {} if float_best_cache is None else {"_float_best_cache": float_best_cache}
     starting = quantize_fixed(parameters, architecture, starting_scales)
     requested = dict(starting.scales)
     named_quantiles = {
@@ -4112,6 +4266,7 @@ def _adapt_fixed_scales(
                     arm,
                     quantized=quantized,
                     ranking_weight=ranking_weight,
+                    **cache_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile), float(candidate))
                 trials.append({
@@ -4136,6 +4291,7 @@ def _adapt_fixed_scales(
         arm,
         quantized=selected,
         ranking_weight=ranking_weight,
+        **cache_arguments,
     )
     before = {
         name: float(np.float32(starting_scales[name]))

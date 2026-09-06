@@ -1172,6 +1172,281 @@ class QATProfileTests(unittest.TestCase):
                 )
 
 
+class FloatRankingDecisionCacheTests(unittest.TestCase):
+    class UnreadableFeatures:
+        def __array__(self, *_args, **_kwargs):
+            raise AssertionError("skipped group features must not be read")
+
+    def setUp(self):
+        self.architecture = trainer.ARCHITECTURES["capacity-12x8"]
+        self.arm = trainer.ARMS["search-target"]
+        self.seed = trainer.FIXED_SEEDS[0]
+        self.parameters = trainer.initialize_parameters(self.architecture, self.seed)
+        self.scales = {name: float(np.max(np.abs(value))) / 3 for name, value in self.parameters.items()}
+
+    def groups(self):
+        tied_features = active_row(1, 2)
+        tied_float = trainer.CompleteTurnGroup("float-tie", 0, tuple(
+            trainer.CompleteTurnSuccessor(f"{identity:064x}", tied_features, target, 0,
+                {"opaque": object(), "auxiliary_array": np.zeros(1)})
+            for identity, target in ((9, .8), (1, -.2), (5, -.5))))
+        perspectives = trainer.CompleteTurnGroup("terminal-perspectives", 1, tuple(
+            trainer.CompleteTurnSuccessor(f"{20 + index:064x}", active_row(index + 2, index + 3), value, mover,
+                {"proof": {"solved": abs(value) == 1, "proven_winner": mover if value == 1 else 1 - mover if value == -1 else None}})
+            for index, (value, mover) in enumerate(((1., 0), (-1., 1), (.3, 1), (-.4, 0)))))
+        unreadable = self.UnreadableFeatures()
+        def skipped(name, values, exhaustive=True):
+            return trainer.CompleteTurnGroup(name, 0, tuple(
+                trainer.CompleteTurnSuccessor(f"{100 + index:064x}", unreadable, value, 0, {})
+                for index, value in enumerate(values)), successors_exhaustive=exhaustive)
+        return (tied_float, perspectives, skipped("singleton", [1.]),
+                skipped("teacher-tied", [0., 0.]), skipped("nonexhaustive", [1., -1.], False))
+
+    def inputs(self, groups=None):
+        groups = self.groups() if groups is None else groups
+        labels = trainer.SuccessorRankingLabels(train=groups[:2], validation=groups,
+            teacher={"artifact_sha256": "1" * 64}, source_bundle_body_sha256="a" * 64,
+            artifact_sha256="b" * 64, body_sha256="c" * 64)
+        return trainer.TrainingInputs(
+            new=dataset([active_row(0, 1), active_row(1, 2), active_row(2, 3)], [.2, -.3, .8]),
+            anchor=dataset([active_row(3, 4), active_row(4, 5)], [-.7, .4]),
+            common_adjudicator=dataset([active_row(5, 6), active_row(6, 7)], [.7, -.8], split="validation"),
+            canonical_validation=dataset([active_row(7, 8), active_row(8, 9)], [-.4, .9], split="validation"),
+            source_routes={}, successor_rankings=labels)
+
+    def assert_json_equal(self, left, right):
+        self.assertEqual(trainer.canonical_json_bytes(left), trainer.canonical_json_bytes(right))
+
+    def assert_quantized_equal(self, left, right):
+        for name in ("w1", "w2", "w3"):
+            self.assertEqual(left.integer[name].tobytes(), right.integer[name].tobytes())
+            self.assertEqual(left.scales[name].tobytes(), right.scales[name].tobytes())
+        self.assertEqual(trainer.pack_signed_three_bit(trainer._flatten_quantized(left, self.architecture)),
+                         trainer.pack_signed_three_bit(trainer._flatten_quantized(right, self.architecture)))
+
+    def test_complete_metrics_are_identical_and_only_repeated_float_forwards_disappear(self):
+        inputs = self.inputs(); groups = inputs.successor_rankings.validation
+        quantized = [trainer.quantize_fixed(self.parameters, self.architecture,
+            {name: value * factor for name, value in self.scales.items()}) for factor in (1., .85, 1.1)]
+        for weight in (0., .1, .25):
+            with self.subTest(weight=weight), trainer.native_thread_execution_scope():
+                baseline = [trainer.evaluate_validation_pair(self.parameters, self.architecture, inputs, self.arm,
+                    quantized=value, ranking_weight=weight) for value in quantized]
+                cache = trainer._new_float_ranking_decision_cache(self.parameters, self.architecture, inputs)
+                original = trainer.forward
+                counts = {"float": 0, "quantized": 0}
+                def observed(*args, **kwargs):
+                    counts["float" if kwargs.get("quantized") is None else "quantized"] += 1
+                    return original(*args, **kwargs)
+                with mock.patch.object(trainer, "forward", side_effect=observed):
+                    actual = [trainer.evaluate_validation_pair(self.parameters, self.architecture, inputs, self.arm,
+                        quantized=value, ranking_weight=weight, _float_best_cache=cache) for value in quantized]
+                self.assert_json_equal(actual, baseline)
+                self.assertEqual(counts["float"], 2)
+                self.assertEqual(counts["quantized"], 12)  # Two scalar sets plus two comparable groups per trial.
+                self.assertEqual(cache.best[0], 1)  # ID-ascending tie, not first-index argmax.
+                raw, _ = original(self.parameters, self.architecture,
+                    tuple(s.active for s in groups[1].successors))
+                parent, _ = trainer._parent_frame_values(groups[1], raw)
+                self.assertEqual(cache.best[1], trainer._deterministic_best(groups[1], parent))
+                self.assertEqual(cache.best[2:], [None, None, None])
+                self.assertEqual(cache.comparable, [True, True, False, False, False])
+                with self.assertRaisesRegex(trainer.TrainingError, "requires quantized validation"):
+                    trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, _float_best_cache=cache)
+
+    def test_stale_parameters_architecture_order_and_eager_content_are_rejected(self):
+        quantized = trainer.quantize_fixed(self.parameters, self.architecture, self.scales)
+        groups = self.groups()
+        cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+        trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+        self.parameters["w3"][0] += np.float32(.125)
+        with self.assertRaisesRegex(trainer.TrainingError, "parameters, architecture or group sequence changed"):
+            cache.validate(self.parameters, self.architecture, groups)
+        self.parameters = trainer.initialize_parameters(self.architecture, self.seed)
+        with self.assertRaisesRegex(trainer.TrainingError, "parameters, architecture or group sequence changed"):
+            cache.validate(self.parameters, dataclasses.replace(self.architecture, name="other"), groups)
+        with self.assertRaisesRegex(trainer.TrainingError, "group sequence changed"):
+            cache.validate(self.parameters, self.architecture, tuple(reversed(groups)))
+        groups[0].successors[0].active[0] = 4
+        with self.assertRaisesRegex(trainer.TrainingError, "eager group content changed"):
+            trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+        for field, value in (("successor_id", "0" * 64), ("value_mover", 1), ("teacher_value", .6)):
+            groups = self.groups()
+            mutable = list(groups[0].successors)
+            groups = (dataclasses.replace(groups[0], successors=mutable), *groups[1:])
+            cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+            trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+            mutable[0] = dataclasses.replace(mutable[0], **{field: value})
+            with self.subTest(field=field), self.assertRaisesRegex(trainer.TrainingError, "eager group content changed"):
+                trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+
+    def test_comparability_changes_never_reuse_skipped_or_previously_live_entries(self):
+        quantized = trainer.quantize_fixed(self.parameters, self.architecture, self.scales)
+        for initially_tied in (True, False):
+            groups = self.groups(); mutable = list(groups[0].successors)
+            if initially_tied:
+                mutable[:] = [dataclasses.replace(s, teacher_value=0.) for s in mutable]
+            groups = (dataclasses.replace(groups[0], successors=mutable),)
+            cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+            trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+            mutable[:] = [dataclasses.replace(s, teacher_value=(1. if index == 0 else -1.) if initially_tied else 0.)
+                          for index, s in enumerate(mutable)]
+            with self.subTest(initially_tied=initially_tied), self.assertRaisesRegex(trainer.TrainingError, "comparability changed"):
+                trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized, _float_best_cache=cache)
+
+    def test_standard_and_refined_search_and_adaptation_reports_are_byte_identical(self):
+        inputs = self.inputs()
+        for profile_name in (trainer.STANDARD_QAT_PROFILE, trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE):
+            for weight in (0., .1, .25):
+                arguments = (self.parameters, self.architecture, inputs, self.arm)
+                with self.subTest(profile=profile_name, weight=weight), trainer.native_thread_execution_scope():
+                    with mock.patch.object(trainer, "_new_float_ranking_decision_cache", return_value=None):
+                        before, before_report = trainer.select_fixed_scales(*arguments, ranking_weight=weight, qat_profile=profile_name)
+                    after, after_report = trainer.select_fixed_scales(*arguments, ranking_weight=weight, qat_profile=profile_name)
+                    self.assert_json_equal(before_report, after_report)
+                    self.assert_quantized_equal(before, after)
+                    if profile_name == trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE:
+                        profile = trainer.resolve_qat_profile(profile_name)
+                        with mock.patch.object(trainer, "_new_float_ranking_decision_cache", return_value=None):
+                            old, old_report = trainer._adapt_fixed_scales(*arguments, before.scales, profile, qat_epoch=1, ranking_weight=weight)
+                        new, new_report = trainer._adapt_fixed_scales(*arguments, before.scales, profile, qat_epoch=1, ranking_weight=weight)
+                        self.assert_json_equal(old_report, new_report)
+                        self.assert_quantized_equal(old, new)
+
+    def test_each_search_and_adaptive_epoch_gets_a_fresh_cache(self):
+        inputs = self.inputs(); observed = []
+        factory = trainer._new_float_ranking_decision_cache
+        def capture(*args):
+            result = factory(*args); observed.append(result); return result
+        profile = trainer.resolve_qat_profile(trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE)
+        with trainer.native_thread_execution_scope(), mock.patch.object(trainer, "_new_float_ranking_decision_cache", side_effect=capture):
+            trainer.select_fixed_scales(self.parameters, self.architecture, inputs, self.arm)
+            for epoch in (1, 2):
+                self.parameters["w3"] *= np.float32(-1)
+                trainer._adapt_fixed_scales(self.parameters, self.architecture, inputs, self.arm,
+                    self.scales, profile, qat_epoch=epoch, ranking_weight=.1)
+        self.assertEqual(len({id(value) for value in observed}), 3)
+        self.assertNotEqual(observed[0].parameters, observed[1].parameters)
+        self.assertNotEqual(observed[1].parameters, observed[2].parameters)
+
+    def test_bounded_real_warmup_and_all_refined_qat_epochs_are_unchanged(self):
+        inputs = self.inputs(); weight = .1
+        with trainer.native_thread_execution_scope():
+            floating = trainer.train_float_seed(inputs, self.architecture, self.arm, self.seed,
+                maximum_epochs=1, patience=1, learning_rate=trainer.RANKING_FLOAT_LEARNING_RATE,
+                ranking_weight=weight, initial_parameters=self.parameters)
+            with mock.patch.object(trainer, "_new_float_ranking_decision_cache", return_value=None):
+                old = trainer.run_fixed_scale_qat(floating, inputs, self.architecture, self.arm, self.seed,
+                    ranking_weight=weight, qat_profile=trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE)
+            new = trainer.run_fixed_scale_qat(floating, inputs, self.architecture, self.arm, self.seed,
+                ranking_weight=weight, qat_profile=trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE)
+        self.assert_json_equal(old.report, new.report)
+        self.assert_json_equal(old.metrics, new.metrics)
+        self.assert_quantized_equal(old.quantized, new.quantized)
+        self.assertEqual(new.report["executed_qat_epochs"], [1, 2, 3, 4])
+        self.assertEqual(new.report["optimizer_steps"], 4)
+
+    def test_cache_retains_no_feature_or_prediction_arrays(self):
+        import gc
+        import weakref
+        active = active_row(2, 4)
+        group = trainer.CompleteTurnGroup("temporary", 0, (
+            trainer.CompleteTurnSuccessor("a" * 64, active, 1., 0, {}),
+            trainer.CompleteTurnSuccessor("b" * 64, active, -1., 0, {})))
+        groups = (group,); group_ref = weakref.ref(group); active_ref = weakref.ref(active)
+        cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+        trainer.successor_ranking_metrics(self.parameters, self.architecture, groups,
+            quantized=trainer.quantize_fixed(self.parameters, self.architecture, self.scales), _float_best_cache=cache)
+        del active, group, groups
+        gc.collect()
+        self.assertIsNone(group_ref()); self.assertIsNone(active_ref())
+        self.assertTrue(all(value is None or type(value) is int for value in cache.best))
+
+    def test_mapped_backing_identity_ranges_and_readonly_guards(self):
+        from tools import compact_value_bfm_ranking_store as store
+        from tests.codingame import test_compact_value_bfm_ranking_store as fixtures
+        with tempfile.TemporaryDirectory() as temporary:
+            _rows, bundle, index = fixtures.RankingStoreTests().fixture(pathlib.Path(temporary))
+            labels = store.RankingStore(index, bundle).labels(); groups = labels.validation
+            cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+            self.assertTrue(cache.immutable_mapped_groups)
+            mapped = groups[0].successors; original_begin, original_end = mapped.begin, mapped.end
+            mapped.begin += 1; mapped.end += 1
+            with self.assertRaisesRegex(trainer.TrainingError, "group sequence changed"):
+                cache.validate(self.parameters, self.architecture, groups)
+            mapped.begin, mapped.end = original_begin, original_end
+            original_store = mapped.store
+            mapped.store = store.RankingStore(index, bundle)
+            with self.assertRaisesRegex(trainer.TrainingError, "group sequence changed"):
+                cache.validate(self.parameters, self.architecture, groups)
+            mapped.store = original_store
+            for name in ("indices", "metadata", "transcripts"):
+                original = getattr(mapped.store, name)
+                replacement = np.asarray(original).copy(); replacement.flags.writeable = False
+                setattr(mapped.store, name, replacement)
+                with self.subTest(array=name), self.assertRaisesRegex(trainer.TrainingError, "group sequence changed"):
+                    cache.validate(self.parameters, self.architecture, groups)
+                setattr(mapped.store, name, original)
+            cache.validate(self.parameters, self.architecture, groups)
+
+    def test_actual_mapped_decisions_use_fastpath_and_custom_sequences_cannot_spoof_it(self):
+        import types
+        from tools import compact_value_bfm_ranking_store as store
+        from tests.codingame import test_jacek_replay_corpus as fixtures
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            row = fixtures.JacekReplayCorpusTests.complete_turn_action_group_row(split="validation")
+            row["source_bundle_body_sha256"] = "a" * 64
+            state = fixtures.features.ReplayState()
+            fixtures.features.apply_complete_turn(state, 0, "0")
+            fixtures.features.apply_complete_turn(state, 1, "2")
+            extra = copy.deepcopy(row["group"]["successors"][0])
+            extra.update({"successor_id": fixtures.corpus._mover_canonical_position_identity(state),
+                "active": list(fixtures.features.encode_active(state)), "transcript": "6",
+                "teacher_value": .7, "value_mover": state.to_move})
+            row["group"]["successors"].append(extra)
+            row["group"]["successors"].sort(key=lambda successor: successor["successor_id"])
+            source = root / "labels.jsonl"; source.write_bytes(fixtures.corpus.canonical_json_bytes(row))
+            bundle = bundle_fixture(root)
+            index = store.build_store([source], root / "store", bundle)
+            labels = store.RankingStore(index, bundle).labels(); groups = labels.validation
+            cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, groups)
+            self.assertTrue(cache.immutable_mapped_groups)
+            quantized = trainer.quantize_fixed(self.parameters, self.architecture, self.scales)
+            expected = trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, quantized=quantized)
+            original = trainer.forward
+            with (mock.patch.object(trainer, "_eager_float_ranking_group_content", side_effect=AssertionError("mapped content must not be rehashed")),
+                  mock.patch.object(trainer, "forward", wraps=original) as forward):
+                for _ in range(2):
+                    actual = trainer.successor_ranking_metrics(self.parameters, self.architecture, groups,
+                        quantized=quantized, _float_best_cache=cache)
+                    self.assert_json_equal(actual, expected)
+            self.assertEqual(sum(call.kwargs.get("quantized") is None for call in forward.call_args_list), 1)
+            self.assertEqual(sum(call.kwargs.get("quantized") is not None for call in forward.call_args_list), 2)
+
+            class SpoofedMappedSuccessors:
+                def __init__(self, wrapped):
+                    self.wrapped = wrapped; self.store = wrapped.store
+                    self.begin = wrapped.begin; self.end = wrapped.end; self.root_termination = wrapped.root_termination
+                def __len__(self): return len(self.wrapped)
+                def __getitem__(self, item): return self.wrapped[item]
+
+            spoof = types.ModuleType("mutable_ranking_cache_fixture")
+            SpoofedMappedSuccessors.__module__ = spoof.__name__
+            spoof.MappedSuccessors = SpoofedMappedSuccessors
+            spoof.RankingStore = type(groups[0].successors.store)
+            changed = (dataclasses.replace(groups[0], successors=SpoofedMappedSuccessors(groups[0].successors)),)
+            with mock.patch.dict(sys.modules, {spoof.__name__: spoof}):
+                cache = trainer._FloatRankingDecisionCache(self.parameters, self.architecture, changed)
+                self.assertFalse(cache.immutable_mapped_groups)
+                with mock.patch.object(trainer, "_eager_float_ranking_group_content", wraps=trainer._eager_float_ranking_group_content) as content:
+                    for _ in range(2):
+                        actual = trainer.successor_ranking_metrics(self.parameters, self.architecture, changed,
+                            quantized=quantized, _float_best_cache=cache)
+                        self.assert_json_equal(actual, expected)
+                    self.assertEqual(content.call_count, 2)
+
+
 class SeedWorkerOrchestrationTests(unittest.TestCase):
     @staticmethod
     def inputs(*, successor_mode: bool):
