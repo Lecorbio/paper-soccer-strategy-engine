@@ -413,6 +413,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_seed_process_check_v2
               tests.codingame.test_compact_value_bfm_validation_cache_check_v2
               tests.codingame.test_compact_value_bfm_training
+              tests.codingame.test_compact_value_bfm_deterministic_best
               tests.codingame.test_compact_value_bfm_training_resources_v2
               tests.codingame.test_compact_value_bfm_training_acceleration_v2
               tests.codingame.test_compact_value_bfm_training_capacity_v2

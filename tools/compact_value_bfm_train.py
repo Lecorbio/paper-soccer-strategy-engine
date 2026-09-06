@@ -2869,12 +2869,13 @@ def _deterministic_best(group: CompleteTurnGroup, values: np.ndarray) -> int:
     values = np.asarray(values, dtype=np.float32)
     if values.shape != (len(group.successors),) or not np.all(np.isfinite(values)):
         raise TrainingError("successor ranking best-action values are invalid")
-    return min(
-        range(len(group.successors)),
-        key=lambda index: (
-            -float(values[index]), group.successors[index].successor_id
-        ),
-    )
+    # Inspect IDs only for exact maxima. Ascending indices retain the original
+    # first-index decision when IDs also tie; empty input still reaches min().
+    maxima = np.flatnonzero(values == np.max(values)) if values.size else ()
+    return int(min(
+        maxima,
+        key=lambda index: group.successors[int(index)].successor_id,
+    ))
 
 
 def _ranking_pairs(

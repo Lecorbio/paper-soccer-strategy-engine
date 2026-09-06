@@ -561,6 +561,24 @@ individual process peaks, expression temporaries and file pages that were not
 touched. Such measurements inform resource review; they do not automatically
 authorize production or establish model quality.
 
+## Comparing ranking scores
+
+Best-action selection first validates and normalizes scores to float32, finds
+their exact maximum, and fetches successor IDs only for tied maxima. It preserves
+the existing ID ordering and first-index rule for duplicate IDs, including
+float32 rounding ties and signed zero. Shape, finite-value and empty-input errors
+retain their earlier behavior. This avoids constructing every mapped successor
+solely for an ID comparison; all-tied groups still require every ID.
+
+The temporary maximum mask and index array require at most about nine bytes per
+successor on the supported 64-bit runtime, plus fixed array metadata. Nothing is
+retained between calls. Tests compare the original selector, complete validation
+metrics and scale reports, gradients and Adam updates, with randomized and mapped
+fixtures. This establishes fixture equivalence and reduced ID access, not a
+measured runtime speedup. Existing immutable campaign sources remain unchanged;
+using this new source in a campaign requires separate whole-seed equivalence and
+resource review before activation.
+
 ## Reusing float decisions during scale search
 
 Scale selection evaluates many quantized candidates against the same float
