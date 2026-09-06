@@ -1226,33 +1226,54 @@ class FloatRankingDecisionCacheTests(unittest.TestCase):
 
     def test_complete_metrics_are_identical_and_only_repeated_float_forwards_disappear(self):
         inputs = self.inputs(); groups = inputs.successor_rankings.validation
-        quantized = [trainer.quantize_fixed(self.parameters, self.architecture,
-            {name: value * factor for name, value in self.scales.items()}) for factor in (1., .85, 1.1)]
-        for weight in (0., .1, .25):
-            with self.subTest(weight=weight), trainer.native_thread_execution_scope():
-                baseline = [trainer.evaluate_validation_pair(self.parameters, self.architecture, inputs, self.arm,
-                    quantized=value, ranking_weight=weight) for value in quantized]
-                cache = trainer._new_float_ranking_decision_cache(self.parameters, self.architecture, inputs)
-                original = trainer.forward
-                counts = {"float": 0, "quantized": 0}
-                def observed(*args, **kwargs):
-                    counts["float" if kwargs.get("quantized") is None else "quantized"] += 1
-                    return original(*args, **kwargs)
-                with mock.patch.object(trainer, "forward", side_effect=observed):
-                    actual = [trainer.evaluate_validation_pair(self.parameters, self.architecture, inputs, self.arm,
-                        quantized=value, ranking_weight=weight, _float_best_cache=cache) for value in quantized]
-                self.assert_json_equal(actual, baseline)
-                self.assertEqual(counts["float"], 2)
-                self.assertEqual(counts["quantized"], 12)  # Two scalar sets plus two comparable groups per trial.
-                self.assertEqual(cache.best[0], 1)  # ID-ascending tie, not first-index argmax.
-                raw, _ = original(self.parameters, self.architecture,
-                    tuple(s.active for s in groups[1].successors))
-                parent, _ = trainer._parent_frame_values(groups[1], raw)
-                self.assertEqual(cache.best[1], trainer._deterministic_best(groups[1], parent))
-                self.assertEqual(cache.best[2:], [None, None, None])
-                self.assertEqual(cache.comparable, [True, True, False, False, False])
-                with self.assertRaisesRegex(trainer.TrainingError, "requires quantized validation"):
-                    trainer.successor_ranking_metrics(self.parameters, self.architecture, groups, _float_best_cache=cache)
+        # One live hidden path and one edge per row give exactly representable
+        # sums/products. Dense random weights can round identical rows differently
+        # in a BLAS tail kernel, so they do not guarantee the tie asserted here.
+        parameters = {name: np.zeros(shape, dtype=np.float32)
+                      for name, shape in self.architecture.shapes.items()}
+        parameters["w1"][:trainer.EDGE_COUNT, 0] = np.float32(.5)
+        parameters["w2"][0, 0] = np.float32(.5)
+        for polarity in (1, -1):
+            parameters["w3"][0] = np.float32(polarity * .5)
+            scales = {name: float(np.max(np.abs(value))) / 3
+                      for name, value in parameters.items()}
+            quantized = [trainer.quantize_fixed(parameters, self.architecture,
+                {name: value * factor for name, value in scales.items()}) for factor in (1., .85, 1.1)]
+            for weight in (0., .1, .25):
+                with self.subTest(weight=weight, polarity=polarity), trainer.native_thread_execution_scope():
+                    baseline = [trainer.evaluate_validation_pair(parameters, self.architecture, inputs, self.arm,
+                        quantized=value, ranking_weight=weight) for value in quantized]
+                    cache = trainer._new_float_ranking_decision_cache(parameters, self.architecture, inputs)
+                    original = trainer.forward
+                    counts = {"float": 0, "quantized": 0}
+                    def observed(*args, **kwargs):
+                        counts["float" if kwargs.get("quantized") is None else "quantized"] += 1
+                        return original(*args, **kwargs)
+                    with mock.patch.object(trainer, "forward", side_effect=observed):
+                        actual = [trainer.evaluate_validation_pair(parameters, self.architecture, inputs, self.arm,
+                            quantized=value, ranking_weight=weight, _float_best_cache=cache) for value in quantized]
+                    self.assert_json_equal(actual, baseline)
+                    self.assertEqual(counts["float"], 2)
+                    self.assertEqual(counts["quantized"], 12)  # Two scalar sets plus two comparable groups per trial.
+                    tied_raw, _ = original(parameters, self.architecture,
+                        tuple(s.active for s in groups[0].successors))
+                    np.testing.assert_array_equal(tied_raw, np.full(3, tied_raw[0], dtype=np.float32))
+                    self.assertGreater(float(tied_raw[0]) * polarity, 0.)
+                    self.assertEqual(cache.best[0], 1)  # ID-ascending tie, not first-index argmax.
+                    raw, _ = original(parameters, self.architecture,
+                        tuple(s.active for s in groups[1].successors))
+                    np.testing.assert_array_equal(raw, np.full(4, tied_raw[0], dtype=np.float32))
+                    parent, signs = trainer._parent_frame_values(groups[1], raw)
+                    np.testing.assert_array_equal(signs, np.asarray([-1., 1., 1., -1.], dtype=np.float32))
+                    np.testing.assert_array_equal(parent, raw * signs)
+                    np.testing.assert_array_equal(trainer._teacher_parent_values(groups[1]),
+                        np.asarray([-1., -1., .3, .4], dtype=np.float32))
+                    self.assertEqual(cache.best[1], 1 if polarity == 1 else 0)
+                    self.assertEqual(cache.best[1], trainer._deterministic_best(groups[1], parent))
+                    self.assertEqual(cache.best[2:], [None, None, None])
+                    self.assertEqual(cache.comparable, [True, True, False, False, False])
+                    with self.assertRaisesRegex(trainer.TrainingError, "requires quantized validation"):
+                        trainer.successor_ranking_metrics(parameters, self.architecture, groups, _float_best_cache=cache)
 
     def test_stale_parameters_architecture_order_and_eager_content_are_rejected(self):
         quantized = trainer.quantize_fixed(self.parameters, self.architecture, self.scales)
