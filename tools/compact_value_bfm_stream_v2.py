@@ -58,12 +58,50 @@ def read_gzip(path):
         for line in stream: yield json.loads(line)
 
 
+def _exclusion_index_module():
+    from tools import compact_value_bfm_exclusion_index_v2 as exclusion_index
+    return exclusion_index
+
+
+def _packed_index_path(context,phase):
+    return Path(context)/phase/'position-chunks/base-exclusions/index.json'
+
+
+def _packed_plan_mode(plan):
+    present='packed_base_exclusions' in plan
+    if ('packed_base_exclusions_loader' in plan)!=present:
+        raise ValueError('frozen packed base-exclusion plan is incomplete')
+    if present and (not isinstance(plan['packed_base_exclusions'],dict)
+            or not isinstance(plan['packed_base_exclusions_loader'],dict)):
+        raise ValueError('frozen packed base-exclusion records are malformed')
+    return present
+
+
+def _packed_plan_module(plan):
+    if not _packed_plan_mode(plan): raise ValueError('position plan has no packed base-exclusion index')
+    module=_exclusion_index_module()
+    if campaign.record(Path(module.__file__))!=plan['packed_base_exclusions_loader']:
+        raise ValueError('packed base-exclusion loader differs from frozen source')
+    context=campaign.verify(plan['context']).parent
+    expected=_packed_index_path(context,plan['phase']).resolve()
+    if Path(plan['packed_base_exclusions']['path']).absolute()!=expected:
+        raise ValueError('packed base-exclusion index belongs to another phase')
+    campaign.verify(plan['packed_base_exclusions'])
+    return module
+
+
 def initialize_worker(plan_path,barrier_path):
     global _EXCLUDED,_WORKER_PLAN
     _WORKER_PLAN=campaign.read(Path(plan_path))
     contract=campaign.read(campaign.verify(_WORKER_PLAN['context']))
     if contract['policy']!=campaign.POLICY: raise ValueError('approved campaign policy changed')
-    _EXCLUDED=campaign.exclusion_sets(contract)
+    if _packed_plan_mode(_WORKER_PLAN):
+        module=_packed_plan_module(_WORKER_PLAN)
+        # Copy only the small ordered role mapping; membership arrays stay mapped.
+        _EXCLUDED=dict(module.load_index(_WORKER_PLAN['packed_base_exclusions'],
+            contract_record=_WORKER_PLAN['context']))
+    else:
+        _EXCLUDED=campaign.exclusion_sets(contract)
     if barrier_path:
         barrier=campaign.read(Path(barrier_path))
         for domain,record in barrier['arrays'].items():
@@ -146,20 +184,53 @@ def build_barrier(root,phase,records):
         'all_validation_successors_included':True})
 
 
-def run_positions(context,phase,workers=8):
+def run_positions(context,phase,workers=8,*,packed_base_exclusions=False):
     if not 1<=workers<=8: raise ValueError('position workers must be in 1..8')
+    if type(packed_base_exclusions) is not bool: raise ValueError('packed base-exclusion mode must be explicit boolean')
+    context=Path(context)
     output=context/phase/'positions.json'
+    plan_path=context/phase/'positions-plan.json'
+    source=context/phase/'position-chunks'/(hashlib.sha256(_EXECUTION_BYTES).hexdigest()+'.producer.py')
+    producer={'path':str(source.resolve()),'bytes':len(_EXECUTION_BYTES),
+        'sha256':hashlib.sha256(_EXECUTION_BYTES).hexdigest()}
+    frozen=campaign.read(plan_path) if plan_path.exists() else None
+    if frozen is not None:
+        if _packed_plan_mode(frozen)!=packed_base_exclusions:
+            raise ValueError('cannot change the frozen position plan base-exclusion mode')
+        if frozen.get('producer')!=producer:
+            raise ValueError('frozen position plan producer changed; use its bound source')
+        if packed_base_exclusions:
+            _packed_plan_module(frozen)
+    elif output.exists() and packed_base_exclusions:
+        raise ValueError('cannot retrofit packed base exclusions onto completed positions')
     if output.exists():
         result=campaign.read(output)
+        if frozen is not None and result.get('plan')!=campaign.record(plan_path):
+            raise ValueError('completed positions differ from the frozen position plan')
+        if packed_base_exclusions:
+            # A completed result still depends on the bound exclusion bytes.
+            # Verify sources and arrays through the loader, then release maps.
+            loaded=_packed_plan_module(frozen).load_index(frozen['packed_base_exclusions'],
+                contract_record=frozen['context'])
+            del loaded
         for record in result['census_files']: campaign.verify(record)
         return result
     games_path=context/phase/'games.json';games=campaign.read(games_path)
-    plan_path=context/phase/'positions-plan.json'
-    source=context/phase/'position-chunks'/(hashlib.sha256(_EXECUTION_BYTES).hexdigest()+'.producer.py')
+    body={'schema':campaign.ID+'.stream-positions-plan.v2','context':campaign.record(context/'campaign.json'),
+        'games':campaign.record(games_path),'phase':phase,'workers':workers,'producer':producer,
+        'sample_limit':20,'opening_max_edges':12,'validation_first':True,'closure_limit':100000}
+    packed={}
+    if frozen is not None:
+        if packed_base_exclusions:
+            packed={key:frozen[key] for key in ('packed_base_exclusions','packed_base_exclusions_loader')}
+        if {key:value for key,value in frozen.items() if key!='body_sha256'}!={**body,**packed}:
+            raise ValueError('frozen position plan inputs or worker contract changed')
+    elif packed_base_exclusions:
+        module=_exclusion_index_module()
+        index=module.build_index((context/'campaign.json').resolve(),_packed_index_path(context,phase).resolve())
+        packed={'packed_base_exclusions':index,'packed_base_exclusions_loader':campaign.record(Path(module.__file__))}
     campaign.once(source,_EXECUTION_BYTES)
-    campaign.seal(plan_path,{'schema':campaign.ID+'.stream-positions-plan.v2','context':campaign.record(context/'campaign.json'),
-        'games':campaign.record(games_path),'phase':phase,'workers':workers,'producer':campaign.record(source),
-        'sample_limit':20,'opening_max_edges':12,'validation_first':True,'closure_limit':100000})
+    campaign.seal(plan_path,{**body,**packed})
     records=[];barrier_path=None;barrier_record=None;started=time.monotonic()
     for split in ('validation','train'):
         items=sorted((row for row in games['rows'] if row['split']==split),key=lambda row:row['ordinal'])
@@ -195,11 +266,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',type=Path,required=True)
     parser.add_argument('--context',type=Path,required=True);parser.add_argument('--phase',required=True)
     parser.add_argument('--workers',type=int,default=8);parser.add_argument('command',choices=('positions',))
+    parser.add_argument('--packed-base-exclusions',action='store_true',
+        help='freeze a new mmap index for base exclusions; existing plans cannot change mode')
     args=parser.parse_args();root=args.root.resolve();context=args.context.resolve()
     contract=campaign.read(context/'campaign.json')
     if campaign.verify(contract['parent_campaign']).parent!=root: raise ValueError('phase parent changed')
     with campaign.lease(root):
-        result=run_positions(context,args.phase,args.workers)
+        result=run_positions(context,args.phase,args.workers,packed_base_exclusions=args.packed_base_exclusions)
         campaign.event(root,'pilot-positions-completed',{'artifact':campaign.record(context/args.phase/'positions.json'),'counts':result['counts']})
     print(json.dumps({'command':args.command,'counts':result['counts'],'early_counts':result['early_counts']}),flush=True)
 

@@ -498,3 +498,16 @@ appear in several RSS totals. This load-only probe does not measure preparation
 temporaries or peak training-batch workspaces. Review those additional costs for
 the actual corpus before enabling four-worker production; the report never
 grants automatic activation or model qualification.
+
+For a new position-preflight plan, `compact_value_bfm_stream_v2.py positions`
+accepts `--packed-base-exclusions`. This builds shared, read-only indexes for
+the prior exclusion history before starting workers. Each role/domain retains
+its full 256-bit fingerprint union and its original iteration order, preserving
+rejection reasons, early-training exceptions and whole-group filtering. Workers
+map the binary arrays instead of rebuilding large Python sets of strings.
+
+The new position plan binds the index, ordered source artifacts, producer and
+array hashes. The validation barrier remains separate and unchanged. A frozen
+plan cannot change exclusion mode or producer on resume; active historical
+plans must continue with their original source. The opt-in does not alter
+teacher labels, training math, clocks or qualification thresholds.

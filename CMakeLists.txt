@@ -417,6 +417,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_sparse_scatter
               tests.codingame.test_compact_value_bfm_ranking_store
               tests.codingame.test_compact_value_bfm_stream_v2
+              tests.codingame.test_compact_value_bfm_exclusion_index_v2
               tests.codingame.test_compact_value_bfm_labels_v2
               tests.codingame.test_compact_value_bfm_pilot_selection_v2
               tests.codingame.test_compact_value_bfm_pilot_gate_v2
