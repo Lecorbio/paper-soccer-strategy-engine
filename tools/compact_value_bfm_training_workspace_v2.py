@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Allocation-only workspace measurement using an explicitly frozen fa012e7 engine.
+"""Allocation-only workspace measurement using an explicitly supported frozen engine.
 
 This file is a standalone bootstrap, deliberately separate from the frozen tools
 package. No optimizer, candidate training, quality test, or automatic activation
@@ -22,9 +22,14 @@ import os
 from pathlib import Path
 import resource
 import sys
+import tarfile
 from types import ModuleType, SimpleNamespace
 
-ENGINE_COMMIT = 'fa012e7783ae374b64f18d884d5e563794fbdf9c'
+ENGINE_COMMIT = 'fa012e7783ae374b64f18d884d5e563794fbdf9c'  # Historical/default route.
+RETENTION_ENGINE_COMMIT = '829c0095430ffb9936a44895f7a119474f02c1fb'
+RETENTION_ENGINE_ARCHIVE_SHA256 = '64ba8eb119664e6a346ca4e0d3336a5ad8255263cfc19ecaf093650f883abb55'
+RETENTION_PROFILE = 'retention-first-low-rate-v1'
+ENGINE_CHOICES = (ENGINE_COMMIT, RETENTION_ENGINE_COMMIT)
 SCHEMA = 'compact-value-bfm-trained-v2.training-workspace.v2'
 ENVIRONMENT = {name: '1' for name in ('MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
     'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS')}
@@ -96,18 +101,70 @@ def isolate_engine_namespace(engine_root):
         sys.modules['tools'] = package
 
 
-def bootstrap(capacity_plan):
-    capacity_path = verified(capacity_plan) if isinstance(capacity_plan, dict) else Path(capacity_plan).resolve()
-    plan = sealed(capacity_path)
+def engine_route(plan, engine_commit=ENGINE_COMMIT):
+    """Select only an explicit supported engine; never infer a newer default."""
+    if engine_commit not in ENGINE_CHOICES:
+        raise ValueError('workspace engine is not an explicitly supported immutable snapshot')
     root = Path(plan['root']).resolve()
-    engine_root = root / 'source-snapshots' / ENGINE_COMMIT / 'repository'
+    engine_root = root / 'source-snapshots' / engine_commit / 'repository'
     sources = {Path(item['path']).name: item for item in plan['sources']}
+    if len(sources) != len(plan['sources']):
+        raise ValueError('capacity plan duplicates a numerical source name')
     required = ('compact_value_bfm_training_capacity_v2.py', 'compact_value_bfm_seed_process_v2.py',
                 'compact_value_bfm_train.py', 'compact_value_bfm_campaign_v2.py', 'compact_value_bfm_ranking_store.py',
                 'compact_value_bfm_teacher_training.py')
     for name in required:
-        if name not in sources or verified(sources[name]).resolve() != engine_root / 'tools' / name:
-            raise ValueError('capacity plan does not bind the required fa012e7 numerical engine')
+        expected = engine_root / 'tools' / name
+        if (name not in sources or Path(sources[name]['path']) != expected
+                or verified(sources[name]).resolve() != expected):
+            raise ValueError(f'capacity plan does not bind the required {engine_commit[:7]} numerical engine')
+    binding = None
+    if engine_commit == RETENTION_ENGINE_COMMIT:
+        snapshot_path = engine_root.parent / 'snapshot.json'
+        if snapshot_path.resolve() != snapshot_path:
+            raise ValueError('workspace829 snapshot path is redirected')
+        snapshot = sealed(snapshot_path)
+        archive = engine_root.parent / 'source.tar'
+        if (snapshot.get('schema') != 'compact-value-bfm-trained-v2.source-snapshot.v2'
+                or snapshot.get('commit') != engine_commit or snapshot.get('repository') != str(engine_root)
+                or snapshot['archive']['path'] != str(archive)
+                or snapshot['archive']['sha256'] != RETENTION_ENGINE_ARCHIVE_SHA256
+                or verified(snapshot['archive']) != archive or archive.resolve() != archive):
+            raise ValueError('workspace829 snapshot/archive identity changed')
+        expected_sources = [record(path) for path in sorted((engine_root / 'tools').glob('*.py'))]
+        if plan['sources'] != expected_sources:
+            raise ValueError('workspace829 requires the entire exact capacity source closure')
+        extra = [engine_root / 'submissions/codingame/bots/compact_value_bfm' / name
+                 for name in ('export_model.py', 'export_submission.py', 'rank4_gate_support.py')]
+        # The fixed archive digest authenticates the declared commit. Compare every
+        # provider byte before importing, including dynamic exporter dependencies.
+        with tarfile.open(archive, 'r:') as tar:
+            archived_tools = [member for member in tar.getmembers()
+                              if len(Path(member.name).parts) == 2 and Path(member.name).parts[0] == 'tools'
+                              and Path(member.name).suffix == '.py']
+            if (any(not member.isfile() for member in archived_tools)
+                    or sorted(member.name for member in archived_tools) !=
+                    sorted(Path(item['path']).relative_to(engine_root).as_posix() for item in expected_sources)):
+                raise ValueError('workspace829 tool inventory differs from its authenticated archive')
+            for path in [*(Path(item['path']) for item in expected_sources), *extra]:
+                if path.resolve() != path:
+                    raise ValueError('workspace829 provider path is redirected')
+                member = tar.getmember(path.relative_to(engine_root).as_posix())
+                if not member.isfile(): raise ValueError('workspace829 archive provider is not a regular file')
+                with tar.extractfile(member) as file:
+                    digest = hashlib.file_digest(file, 'sha256').hexdigest()
+                actual = record(path)
+                if actual['bytes'] != member.size or actual['sha256'] != digest:
+                    raise ValueError('workspace829 provider differs from its authenticated archive')
+        binding = {'snapshot': record(snapshot_path), 'archive': snapshot['archive'],
+                   'required_engine_commit': engine_commit, 'archive_provider_bytes_verified': True}
+    return root, engine_root, sources, binding
+
+
+def bootstrap(capacity_plan, *, engine_commit=ENGINE_COMMIT):
+    capacity_path = verified(capacity_plan) if isinstance(capacity_plan, dict) else Path(capacity_plan).resolve()
+    plan = sealed(capacity_path)
+    root, engine_root, sources, route = engine_route(plan, engine_commit)
     isolate_engine_namespace(engine_root)
     os.environ.update(ENVIRONMENT); os.environ[MARKER] = '1'
     capacity = importlib.import_module('tools.compact_value_bfm_training_capacity_v2')
@@ -128,7 +185,34 @@ def bootstrap(capacity_plan):
     isolate_engine_namespace(engine_root)
     capacity.validate_plan(capacity_path)
     return SimpleNamespace(root=root, capacity=capacity, campaign=campaign, trainer=trainer,
-                           process=process, store=store, sampling=sampling, sources=plan['sources'], provider_sources=provider_sources)
+                           process=process, store=store, sampling=sampling, resources=resources, sources=plan['sources'], provider_sources=provider_sources,
+                           engine_commit=engine_commit, engine_route=route)
+
+
+def phase_recipe_binding(engine, base):
+    """The829 extension admits only the actual approved pilot4 recipe."""
+    if engine.engine_commit == ENGINE_COMMIT:
+        return None
+    contract = engine.campaign.read(verified(base['phase_contract']))
+    intervention = importlib.import_module('tools.compact_value_bfm_intervention_v2')
+    expected_source = engine.root / 'source-snapshots' / RETENTION_ENGINE_COMMIT / 'repository/tools/compact_value_bfm_intervention_v2.py'
+    if Path(intervention.__file__).resolve() != expected_source:
+        raise ValueError('workspace829 profile validator is from another source')
+    expected_profile = intervention.expected_qat_profile(contract)
+    profile_contract = engine.trainer.qat_profile_contract(RETENTION_PROFILE)
+    if (contract.get('attempt') != 4 or contract.get('phase') != 'pilot'
+            or base['phase'] != 'attempt-004-pilot' or expected_profile != RETENTION_PROFILE
+            or contract.get('qat_profile') != expected_profile or contract.get('qat_profile_contract') != profile_contract
+            or contract.get('training_executor') != {'mode': 'spawn-v2', 'maximum_workers': 4}
+            or engine.resources.expected_workers(contract) != 4
+            or contract.get('training_resource_authorization') != base['training_resource_authorization']
+            or any(base['policy'].get(key) != value for key, value in
+                   (('workers', 4), ('start_method', 'spawn'), ('numerical_threads_per_worker', 1)))):
+        raise ValueError('workspace829 lost its exact pilot4 profile/resource binding')
+    return {'phase_contract': base['phase_contract'], 'input_audit': base['input_audit'],
+            'training_resource_authorization': base['training_resource_authorization'],
+            'intervention': contract['intervention'], 'qat_profile': expected_profile,
+            'qat_profile_contract': profile_contract, 'maximum_workers': 4, 'numerical_threads_per_worker': 1}
 
 
 def validation_envelope(engine, capacity_plan):
@@ -142,8 +226,8 @@ def validation_envelope(engine, capacity_plan):
             'V': chosen['end'] - chosen['begin'], 'validation_groups': len(groups)}
 
 
-def prepare(capacity_plan, output, *, hold_seconds=10, reconstruction_timeout_seconds=3600):
-    engine = bootstrap(capacity_plan); c = engine.campaign
+def prepare(capacity_plan, output, *, hold_seconds=10, reconstruction_timeout_seconds=3600, engine_commit=ENGINE_COMMIT):
+    engine = bootstrap(capacity_plan, engine_commit=engine_commit); c = engine.campaign
     capacity_path = verified(capacity_plan) if isinstance(capacity_plan, dict) else Path(capacity_plan).resolve()
     base = engine.capacity.validate_plan(capacity_path)
     completed = engine.capacity.validate_result(capacity_path)
@@ -160,7 +244,7 @@ def prepare(capacity_plan, output, *, hold_seconds=10, reconstruction_timeout_se
     body = {'schema': SCHEMA + '.plan', 'capacity_plan': record(capacity_path),
         'capacity_result': record(Path(base['output']) / 'result.json'), 'output': str(output),
         'root': str(engine.root), 'context': base['context'], 'phase': base['phase'], 'inputs': inputs,
-        'engine_commit': ENGINE_COMMIT, 'engine_sources': engine.sources, 'adapter_dependency_sources': engine.provider_sources,
+        'engine_commit': engine.engine_commit, 'engine_sources': engine.sources, 'adapter_dependency_sources': engine.provider_sources,
         'probe_source': record(__file__),
         'runtime': engine.capacity.runtime(), 'numpy_version': engine.trainer.np.__version__, 'policy': POLICY,
         'expected_input_identity': completed['coordinator']['identity'],
@@ -168,15 +252,18 @@ def prepare(capacity_plan, output, *, hold_seconds=10, reconstruction_timeout_se
         'validation_envelope': validation_envelope(engine, base),
         'hold_seconds': hold_seconds, 'reconstruction_timeout_seconds': reconstruction_timeout_seconds,
         'metadata_only_preparation': True}
+    recipe = phase_recipe_binding(engine, base)
+    if recipe is not None:
+        body.update(engine_route=engine.engine_route, phase_recipe=recipe)
     c.seal(output / 'plan.json', body)
     return record(output / 'plan.json')
 
 
 def validate_plan(path):
     path = Path(path).resolve(); plan = sealed(path)
-    if plan.get('probe_source') != record(__file__) or plan.get('policy') != POLICY or plan.get('engine_commit') != ENGINE_COMMIT:
+    if plan.get('probe_source') != record(__file__) or plan.get('policy') != POLICY or plan.get('engine_commit') not in ENGINE_CHOICES:
         raise ValueError('workspace probe source/policy/engine changed')
-    engine = bootstrap(plan['capacity_plan']); c = engine.campaign
+    engine = bootstrap(plan['capacity_plan'], engine_commit=plan['engine_commit']); c = engine.campaign
     base = engine.capacity.validate_plan(verified(plan['capacity_plan']))
     completed = engine.capacity.validate_result(verified(plan['capacity_plan']))
     allowed = engine.root / 'diagnostics/training-workspace'
@@ -195,6 +282,12 @@ def validate_plan(path):
             or type(plan['hold_seconds']) is not int or not 2 <= plan['hold_seconds'] <= 60
             or type(plan['reconstruction_timeout_seconds']) is not int or not 1 <= plan['reconstruction_timeout_seconds'] <= 7200):
         raise ValueError('workspace plan lost its completed actual-corpus capacity binding')
+    recipe = phase_recipe_binding(engine, base)
+    if recipe is None:
+        if 'engine_route' in plan or 'phase_recipe' in plan:
+            raise ValueError('historical FA workspace plan cannot claim the829 extension')
+    elif plan.get('engine_route') != engine.engine_route or plan.get('phase_recipe') != recipe:
+        raise ValueError('workspace829 snapshot/profile/input/resource route changed')
     contract = c.read(verified(base['phase_contract']))
     if plan['inputs'] != {key: contract['inputs'][key] for key in plan['inputs']} or set(plan['inputs']) != {'attempt_one_initial_checkpoint', 'attempt_zero_runtime'}:
         raise ValueError('workspace changed original checkpoint or frozen deployed scales')
@@ -340,7 +433,8 @@ def validate_ranges(ranges, plan):
 
 
 def worker(plan_path, ordinal, connection, lock_ticket, expected_lock):
-    engine = bootstrap(sealed(plan_path)['capacity_plan']); cap = engine.capacity
+    prepared = sealed(plan_path)
+    engine = bootstrap(prepared['capacity_plan'], engine_commit=prepared['engine_commit']); cap = engine.capacity
     owned_lock = cap.retain_shared_lock(lock_ticket, expected_lock); cap.parent_death_guard()
     bundle = inputs = retained = parameters = quantized = None
     try:
@@ -485,10 +579,11 @@ def validate_allocations(allocations, summary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__); sub = parser.add_subparsers(dest='command', required=True)
     prep = sub.add_parser('prepare'); prep.add_argument('--capacity-plan', type=Path, required=True); prep.add_argument('--output', type=Path, required=True)
+    prep.add_argument('--engine-commit', choices=ENGINE_CHOICES, default=ENGINE_COMMIT)
     prep.add_argument('--hold-seconds', type=int, default=10); prep.add_argument('--reconstruction-timeout-seconds', type=int, default=3600)
     for name in ('run', 'validate'): sub.add_parser(name).add_argument('--plan', type=Path, required=True)
     args = parser.parse_args()
-    if args.command == 'prepare': result = prepare(args.capacity_plan, args.output, hold_seconds=args.hold_seconds, reconstruction_timeout_seconds=args.reconstruction_timeout_seconds)
+    if args.command == 'prepare': result = prepare(args.capacity_plan, args.output, hold_seconds=args.hold_seconds, reconstruction_timeout_seconds=args.reconstruction_timeout_seconds, engine_commit=args.engine_commit)
     else: result = run(args.plan) if args.command == 'run' else validate(args.plan)
     print(json.dumps(result if args.command == 'prepare' else {'selection': result['selection'], 'optimizer_steps': 0,
                                                             'production_peak_headroom_proven': False}), flush=True)

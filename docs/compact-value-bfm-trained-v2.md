@@ -568,8 +568,14 @@ When load-only measurements leave batch memory uncertain,
 `compact_value_bfm_training_workspace_v2.py prepare --capacity-plan CAPACITY_PLAN
 --output OUTPUT` prepares a separate allocation probe. It uses the exact engine
 source bound by the completed capacity plan, with the newer probe source bound
-separately. The current probe supports the frozen `fa012e7` engine and rejects
-other engine versions. Run and validate it through its standalone CLI so an already
+separately. The default remains the frozen `fa012e7` engine, with the historical
+plan shape unchanged. The explicit `--engine-commit 829c0095430ffb9936a44895f7a119474f02c1fb`
+route supports the approved pilot4 `retention-first-low-rate-v1` recipe. It binds
+the authenticated829 snapshot archive, complete capacity source closure, actual
+phase/input audit, intervention and four-worker/native-one-thread authority.
+Other engine versions, substituted provider paths and profile drift are rejected.
+Existing FA evidence is never relabelled as829 evidence. Run and validate the probe
+through its standalone CLI so an already
 loaded, different `tools` package cannot substitute for the frozen engine.
 
 The probe reconstructs the actual corpus and holds four workers' real mapped

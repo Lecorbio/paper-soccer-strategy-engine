@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tarfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -97,6 +98,157 @@ print('isolated')
                 with self.assertRaisesRegex(ValueError, 'fa012e7'):
                     probe.bootstrap(path)
             isolate.assert_not_called()
+
+    def seal_fixture(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        value = {**body, 'body_sha256': probe.hashlib.sha256(probe.raw(body)).hexdigest()}
+        path.write_bytes(probe.raw(value)); return probe.record(path)
+
+    def route_fixture(self, root, commit):
+        root = root.resolve()
+        engine = root / 'source-snapshots' / commit / 'repository'
+        tools = engine / 'tools'; tools.mkdir(parents=True)
+        names = ('compact_value_bfm_training_capacity_v2.py', 'compact_value_bfm_seed_process_v2.py',
+                 'compact_value_bfm_train.py', 'compact_value_bfm_campaign_v2.py', 'compact_value_bfm_ranking_store.py',
+                 'compact_value_bfm_teacher_training.py', 'compact_value_bfm_intervention_v2.py')
+        for name in names: (tools / name).write_text('# exact fixture ' + name)
+        extra = engine / 'submissions/codingame/bots/compact_value_bfm'; extra.mkdir(parents=True)
+        for name in ('export_model.py', 'export_submission.py', 'rank4_gate_support.py'):
+            (extra / name).write_text('# frozen exporter ' + name)
+        archive = engine.parent / 'source.tar'
+        with tarfile.open(archive, 'w:') as tar:
+            for path in sorted(engine.rglob('*.py')): tar.add(path, arcname=path.relative_to(engine).as_posix())
+        self.seal_fixture(engine.parent / 'snapshot.json', {'schema': 'compact-value-bfm-trained-v2.source-snapshot.v2',
+            'commit': commit, 'repository': str(engine), 'archive': probe.record(archive)})
+        plan = {'root': str(root), 'sources': [probe.record(path) for path in sorted(tools.glob('*.py'))]}
+        return plan, engine, probe.record(archive)['sha256']
+
+    def test_829_requires_explicit_route_and_authenticated_complete_provider_closure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, engine, digest = self.route_fixture(Path(tmp), probe.RETENTION_ENGINE_COMMIT)
+            with self.assertRaisesRegex(ValueError, 'fa012e7'): probe.engine_route(plan)
+            with self.assertRaisesRegex(ValueError, 'explicitly supported'): probe.engine_route(plan, '0'*40)
+            with mock.patch.object(probe, 'RETENTION_ENGINE_ARCHIVE_SHA256', digest):
+                root, actual, sources, binding = probe.engine_route(plan, probe.RETENTION_ENGINE_COMMIT)
+                self.assertEqual(actual, engine); self.assertEqual(len(sources), 7)
+                self.assertEqual(binding['snapshot'], probe.record(engine.parent / 'snapshot.json'))
+                self.assertTrue(binding['archive_provider_bytes_verified'])
+                for mutation in ('missing', 'duplicate', 'order', 'foreign-path', 'source-bytes', 'exporter-bytes', 'missing-file', 'snapshot-link', 'snapshot', 'archive'):
+                    changed = copy.deepcopy(plan)
+                    snapshot_path = engine.parent / 'snapshot.json'; old_snapshot = snapshot_path.read_bytes()
+                    touched = None; old_bytes = None
+                    if mutation == 'missing': changed['sources'] = changed['sources'][:-1]
+                    elif mutation == 'duplicate': changed['sources'].append(changed['sources'][0])
+                    elif mutation == 'order': changed['sources'].reverse()
+                    elif mutation == 'foreign-path':
+                        foreign = Path(tmp) / 'foreign.py'; foreign.write_bytes(Path(changed['sources'][0]['path']).read_bytes())
+                        changed['sources'][0] = probe.record(foreign)
+                    elif mutation == 'missing-file':
+                        touched = engine / 'tools/compact_value_bfm_intervention_v2.py'; old_bytes = touched.read_bytes(); touched.unlink()
+                        changed['sources'] = [item for item in changed['sources'] if Path(item['path']) != touched]
+                    elif mutation == 'snapshot-link':
+                        external = engine.parent / 'redirected-snapshot.json'; external.write_bytes(old_snapshot)
+                        snapshot_path.unlink(); snapshot_path.symlink_to(external)
+                    elif mutation in ('source-bytes', 'exporter-bytes'):
+                        touched = Path(changed['sources'][0]['path']) if mutation == 'source-bytes' else engine / 'submissions/codingame/bots/compact_value_bfm/export_model.py'
+                        old_bytes = touched.read_bytes(); touched.write_bytes(old_bytes + b'\n# substituted')
+                        if mutation == 'source-bytes': changed['sources'][0] = probe.record(touched)
+                    else:
+                        snapshot = probe.sealed(snapshot_path); snapshot.pop('body_sha256')
+                        if mutation == 'snapshot': snapshot['commit'] = probe.ENGINE_COMMIT
+                        else: snapshot['archive']['sha256'] = '0'*64
+                        self.seal_fixture(snapshot_path, snapshot)
+                    try:
+                        with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                            probe.engine_route(changed, probe.RETENTION_ENGINE_COMMIT)
+                    finally:
+                        if snapshot_path.is_symlink(): snapshot_path.unlink()
+                        snapshot_path.write_bytes(old_snapshot)
+                        if touched is not None: touched.write_bytes(old_bytes)
+
+    def test_legacy_engine_route_keeps_default_without_new_snapshot_requirement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, engine, _digest = self.route_fixture(Path(tmp), probe.ENGINE_COMMIT)
+            (engine.parent / 'snapshot.json').unlink(); (engine.parent / 'source.tar').unlink()
+            _root, actual, _sources, route = probe.engine_route(plan)
+            self.assertEqual(actual, engine); self.assertIsNone(route)
+            self.assertIsNone(probe.phase_recipe_binding(SimpleNamespace(engine_commit=probe.ENGINE_COMMIT), {}))
+
+    def test_829_recipe_checks_actual_intervention_profile_audit_and_worker_authority(self):
+        root = Path('/fixture').resolve()
+        profile = trainer.qat_profile_contract(probe.RETENTION_PROFILE)
+        contract = {'attempt': 4, 'phase': 'pilot', 'qat_profile': probe.RETENTION_PROFILE, 'qat_profile_contract': profile,
+            'training_executor': {'mode': 'spawn-v2', 'maximum_workers': 4}, 'training_resource_authorization': {'authority': True},
+            'intervention': {'actual': 4}}
+        base = {'phase': 'attempt-004-pilot', 'phase_contract': {'contract': True}, 'input_audit': {'audit': 'actual corpus'},
+            'training_resource_authorization': contract['training_resource_authorization'],
+            'policy': {'workers': 4, 'start_method': 'spawn', 'numerical_threads_per_worker': 1}}
+        expected = mock.Mock(return_value=probe.RETENTION_PROFILE)
+        intervention = SimpleNamespace(__file__=str(root / 'source-snapshots' / probe.RETENTION_ENGINE_COMMIT /
+            'repository/tools/compact_value_bfm_intervention_v2.py'), expected_qat_profile=expected)
+        engine = SimpleNamespace(root=root, engine_commit=probe.RETENTION_ENGINE_COMMIT,
+            campaign=SimpleNamespace(read=lambda _p: contract), trainer=trainer,
+            resources=SimpleNamespace(expected_workers=lambda _c: 4))
+        with mock.patch.object(probe, 'verified', side_effect=lambda value: value), \
+                mock.patch.object(probe.importlib, 'import_module', return_value=intervention):
+            binding = probe.phase_recipe_binding(engine, base)
+            expected.assert_called_once_with(contract)
+            self.assertEqual(binding['input_audit'], base['input_audit']); self.assertEqual(binding['qat_profile_contract'], profile)
+            for key, value in (('attempt', 3), ('phase', 'full'), ('qat_profile', 'refined-adaptive-scales-v1'),
+                               ('qat_profile_contract', {}), ('training_executor', {'mode': 'spawn-v2', 'maximum_workers': 2}),
+                               ('training_resource_authorization', {})):
+                old = contract[key]; contract[key] = value
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'profile/resource'): probe.phase_recipe_binding(engine, base)
+                contract[key] = old
+            for key, value in (('workers', 3), ('numerical_threads_per_worker', 2), ('start_method', 'fork')):
+                old = base['policy'][key]; base['policy'][key] = value
+                with self.assertRaisesRegex(ValueError, 'profile/resource'): probe.phase_recipe_binding(engine, base)
+                base['policy'][key] = old
+            intervention.__file__ = '/foreign/compact_value_bfm_intervention_v2.py'
+            with self.assertRaisesRegex(ValueError, 'another source'): probe.phase_recipe_binding(engine, base)
+
+    def test_legacy_plan_shape_and_new_recipe_source_binding_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); output = root / 'diagnostics/training-workspace/fixture'
+            base_path = root / 'capacity/plan.json'; self.seal_fixture(base_path, {'fixture': True})
+            self.seal_fixture(base_path.parent / 'result.json', {'fixture': True})
+            contract_path = root / 'campaign.json'
+            initial = root / 'original.npz'; initial.write_bytes(b'fixture original')
+            runtime = root / 'deployed.json'; runtime.write_bytes(b'fixture runtime')
+            contract = {'inputs': {'attempt_one_initial_checkpoint': probe.record(initial), 'attempt_zero_runtime': probe.record(runtime)}}
+            self.seal_fixture(contract_path, contract)
+            base = {'output': str(base_path.parent), 'root': str(root), 'context': str(root / 'context'), 'phase': 'fixture',
+                    'phase_contract': probe.record(contract_path)}
+            complete = {'memory_measurements_complete': True, 'coordinator': {'identity': {'audited': True}},
+                        'workspace_dimensions_metadata_only': {'N': 20}}
+            engine = SimpleNamespace(root=root, engine_commit=probe.ENGINE_COMMIT, engine_route=None, sources=['exact'], provider_sources={'exporter': 'exact'},
+                campaign=SimpleNamespace(read=lambda path: json.loads(Path(path).read_bytes()), seal=lambda path, body: self.seal_fixture(Path(path), body)),
+                capacity=SimpleNamespace(validate_plan=lambda _p: base, validate_result=lambda _p: complete, runtime=lambda: {}), trainer=trainer)
+            with mock.patch.object(probe, 'bootstrap', return_value=engine) as bootstrap, \
+                    mock.patch.object(probe, 'validation_envelope', return_value={'V': 3}), mock.patch.object(probe, 'phase_recipe_binding', return_value=None) as recipe:
+                binding = probe.prepare(base_path, output)
+                original = probe.sealed(binding['path']); probe.validate_plan(binding['path'])
+                self.assertNotIn('engine_route', original); self.assertNotIn('phase_recipe', original)
+                self.assertEqual(original['engine_commit'], probe.ENGINE_COMMIT)
+                self.assertEqual(set(original), {'schema','capacity_plan','capacity_result','output','root','context','phase','inputs',
+                    'engine_commit','engine_sources','adapter_dependency_sources','probe_source','runtime','numpy_version','policy',
+                    'expected_input_identity','training_envelope','validation_envelope','hold_seconds','reconstruction_timeout_seconds',
+                    'metadata_only_preparation','body_sha256'})
+                engine.engine_commit = probe.RETENTION_ENGINE_COMMIT; engine.engine_route = {'archive': 'authenticated'}
+                recipe.return_value = {'input_audit': 'actual', 'qat_profile': probe.RETENTION_PROFILE, 'maximum_workers': 4}
+                newer = root / 'diagnostics/training-workspace/newer'
+                new_binding = probe.prepare(base_path, newer, engine_commit=probe.RETENTION_ENGINE_COMMIT)
+                new_plan = probe.sealed(new_binding['path']); probe.validate_plan(new_binding['path'])
+                self.assertEqual(new_plan['engine_route'], engine.engine_route)
+                self.assertEqual(new_plan['phase_recipe'], recipe.return_value)
+                self.assertEqual(bootstrap.call_args.kwargs['engine_commit'], probe.RETENTION_ENGINE_COMMIT)
+                for key in ('engine_route', 'phase_recipe'):
+                    bad = copy.deepcopy(new_plan); bad.pop('body_sha256'); bad[key] = {'substituted': True}
+                    self.seal_fixture(Path(new_binding['path']), bad)
+                    with self.assertRaisesRegex(ValueError, 'snapshot/profile/input/resource'): probe.validate_plan(new_binding['path'])
+                bad = copy.deepcopy(original); bad.pop('body_sha256'); bad['engine_route'] = {'forged': True}
+                self.seal_fixture(Path(binding['path']), bad); engine.engine_commit = probe.ENGINE_COMMIT; recipe.return_value = None
+                with self.assertRaisesRegex(ValueError, 'historical FA'): probe.validate_plan(binding['path'])
 
     def test_top_k_all_group_envelope_and_largest_validation_are_deterministic(self):
         selected, validation = probe.select_groups(trainer, inputs())
