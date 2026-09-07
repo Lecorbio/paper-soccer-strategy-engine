@@ -88,6 +88,15 @@ def validate_pilot(root, attempt, full_contract):
     context = root / 'phases' / phase
     contract = attempts.bound(full_contract['pilot_context'], context / 'campaign.json')
     directory = context / phase
+    if attempt == 4:
+        if (contract.get('attempt') != attempt or contract.get('phase') != 'pilot'
+                or full_contract.get('attempt') != attempt or full_contract.get('phase') != 'full'
+                or contract.get('parent_campaign') != full_contract.get('parent_campaign')
+                or full_selection.intervention.expected_qat_profile(contract)
+                    != full_selection.intervention.expected_qat_profile(full_contract)
+                or any(contract.get(key) != full_contract.get(key) for key in
+                       ('qat_profile', 'qat_profile_contract', 'intervention'))):
+            raise ValueError('fourth full outcome lost its admitted pilot intervention or parent')
     outcome = attempts.bound(full_contract['admitted_pilot'], directory / 'pilot-outcome.json')
     if (outcome.get('admitted') is not True or outcome.get('status') != 'pilot-admitted'
             or outcome.get('campaign_success') is not False):
@@ -156,12 +165,16 @@ def completed_rejection(root, context, phase, model):
 
 def validated_evidence(root, attempt):
     root = Path(root).resolve()
-    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
-        raise ValueError('after two unsuccessful trained attempts an intervention binding is required')
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3, 4):
+        raise ValueError('attempts beyond four require another source-bound intervention')
     phase = f'attempt-{attempt:03d}-full'
     context = root / 'phases' / phase
     with full_selection.trainer.native_thread_execution_scope():
         contract, model = validate_full_selection(root, context, phase)
+        if attempt == 4:
+            if contract.get('attempt') != attempt or contract.get('phase') != 'full':
+                raise ValueError('fourth full outcome changed its requested attempt slot')
+            full_selection.intervention.expected_qat_profile(contract)
         pilot = validate_pilot(root, attempt, contract)
         stage, stages, source, suites, development_result = completed_rejection(root, context, phase, model)
     return {'stage': 'full', 'attempt': attempt, 'context': context, 'phase': phase, 'contract': contract,
@@ -241,8 +254,12 @@ def collect_fingerprints(previous):
 
 def carry_failed_full(root, previous, destination):
     """Create a new-context isolation closure; previous evidence stays sealed."""
-    if previous.get('stage') != 'full' or previous['attempt'] not in (1, 2, 3):
+    if previous.get('stage') != 'full' or previous['attempt'] not in (1, 2, 3, 4):
         raise ValueError('a verified failed full attempt is required')
+    if previous['attempt'] == 4:
+        if previous['contract'].get('attempt') != 4 or previous['contract'].get('phase') != 'full':
+            raise ValueError('fourth full carry changed its requested attempt slot')
+        full_selection.intervention.expected_qat_profile(previous['contract'])
     values = collect_fingerprints(previous)
     directory = Path(destination) / 'exclusions' / f'failed-attempt-{previous["attempt"]:03d}'
     sources = {**outcome_body(previous), 'outcome': previous['outcome']}
@@ -268,7 +285,7 @@ def carry_failed_full(root, previous, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2, 3))
+    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2, 3, 4))
     parser.add_argument('command', choices=('record', 'validate'))
     args = parser.parse_args()
     root = args.root.resolve()

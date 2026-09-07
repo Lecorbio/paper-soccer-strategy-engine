@@ -88,10 +88,19 @@ def prepare(root,pilot_context,pilot_phase,*,training_executor=None,training_wor
     pilot=admitted_pilot(pilot_context,pilot_phase)
     parent=campaign.read(pilot_context/'campaign.json');attempt=parent['attempt']
     profile=intervention.expected_qat_profile(parent)
+    if attempt==4 and (parent.get('phase')!='pilot' or pilot_phase!='attempt-004-pilot'
+            or pilot_context.resolve()!=(root/'phases'/pilot_phase).resolve()
+            or parent.get('parent_campaign')!=campaign.record(root/'campaign.json')):
+        raise ValueError('fourth full training requires its canonical admitted pilot and parent')
     context=root/'phases'/f'attempt-{attempt:03d}-full';phase=f'attempt-{attempt:03d}-full'
     path=context/'campaign.json'
     if path.exists():
         frozen=campaign.read(path)
+        if attempt==4 and (frozen.get('attempt')!=attempt or frozen.get('phase')!='full'
+                or frozen.get('parent_campaign')!=parent['parent_campaign']
+                or frozen.get('pilot_context')!=campaign.record(pilot_context/'campaign.json')
+                or frozen.get('admitted_pilot')!=campaign.record(pilot_context/pilot_phase/'pilot-outcome.json')):
+            raise ValueError('fourth full resume changed its admitted pilot or parent')
         if (intervention.expected_qat_profile(frozen)!=profile
                 or any(frozen.get(key)!=parent.get(key) for key in
                     ('qat_profile','qat_profile_contract','intervention'))):
@@ -118,6 +127,7 @@ def prepare(root,pilot_context,pilot_phase,*,training_executor=None,training_wor
     for name in ('anchor-derived.json','prior-search-validation.json'):
         campaign.copy_checked(root/'exclusions'/name,context/'exclusions'/name)
     resources.expected_workers(body)
+    if attempt==4:intervention.expected_qat_profile(body)
     result=campaign.seal(path,body)
     campaign.event(root,'full-context-frozen',{'context':campaign.record(path),'admitted_pilot':body['admitted_pilot']})
     return context,phase,result

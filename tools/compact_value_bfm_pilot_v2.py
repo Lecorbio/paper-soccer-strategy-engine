@@ -21,10 +21,13 @@ from tools import compact_value_bfm_attempt_v2 as attempts
 def context_root(root,attempt,*,intervention=None):
     if isinstance(attempt,bool) or not isinstance(attempt,int): raise ValueError('attempt must be an integer')
     if attempt<1: raise ValueError('attempt zero is forbidden')
-    if attempt>3 or (attempt==3 and intervention is None):
+    if attempt>4 or (attempt in (3,4) and intervention is None):
         raise ValueError('after two unsuccessful trained attempts, a validated unprotected attribution intervention is required')
     if attempt==3 and (intervention.get('attempt')!=3 or intervention.get('category')!='qat-and-scales'):
         raise ValueError('third pilot requires the concrete QAT/scales intervention')
+    if attempt==4 and (intervention.get('attempt')!=4 or intervention.get('category')!='qat-and-scales'
+                      or intervention.get('qat_profile')!='retention-first-low-rate-v1'):
+        raise ValueError('fourth pilot requires the concrete retention-first QAT/scales intervention')
     return root/'phases'/f'attempt-{attempt:03d}-pilot'
 
 
@@ -104,7 +107,8 @@ def prepare(root,attempt,*,training_executor=None,training_workers=None,training
     if isinstance(attempt,bool) or not isinstance(attempt,int): raise ValueError('attempt must be an integer')
     if training_executor not in (None,'threads','spawn-v2'):
         raise ValueError('training executor must be threads or spawn-v2')
-    intervention=interventions.prepare(root) if attempt==3 else None
+    intervention=(interventions.prepare(root) if attempt==3 else
+                  interventions.prepare(root,attempt=4) if attempt==4 else None)
     context=context_root(root,attempt,intervention=intervention)
     parent=campaign.read(root/'campaign.json');smoke=validate_smoke(root)
     baseline=campaign.read(root/'baseline-engine-comparison.json')
@@ -132,14 +136,14 @@ def prepare(root,attempt,*,training_executor=None,training_workers=None,training
                     raise ValueError('pilot resume prior-attempt outcome changed')
                 carry=campaign.read(campaign.verify(binding['carry']))
                 for item in carry['artifacts']:campaign.verify(item)
-                if attempt==3:
+                if attempt in (3,4):
                     carried,index=attempts.carry_failed_attempt(root,prior,context)
                     if binding['carry']!=index or carry['artifacts']!=carried:
                         raise ValueError('third pilot carry does not reproduce both prior attempt closures')
                 required=prior['contract']['exclusions']+carry['artifacts']
                 if any(item not in frozen['exclusions'] for item in required):
                     raise ValueError('pilot resume dropped accumulated isolation exclusions')
-        if intervention is not None and frozen.get('intervention')!=campaign.record(interventions.path(root)):
+        if intervention is not None and frozen.get('intervention')!=campaign.record(interventions.path(root,attempt)):
             raise ValueError('third pilot resume changed its frozen intervention')
         interventions.expected_qat_profile(frozen)
         for item in frozen['exclusions']:campaign.verify(item)
@@ -182,7 +186,7 @@ def prepare(root,attempt,*,training_executor=None,training_workers=None,training
         body['attempt_closure_driver']=campaign.copy_checked(Path(attempts.__file__),context/'attempt-closure-driver.py')
     if intervention is not None:
         body.update({'qat_profile':intervention['qat_profile'],'qat_profile_contract':intervention['qat_profile_contract'],
-            'intervention':campaign.record(interventions.path(root)),
+            'intervention':campaign.record(interventions.path(root,attempt)),
             'intervention_driver':campaign.copy_checked(Path(interventions.__file__),context/'intervention-driver.py')})
     interventions.expected_qat_profile(body)
     resources.expected_workers(body)
@@ -202,7 +206,7 @@ def main():
         contract=prepare(root,args.attempt,training_executor=args.training_executor,training_workers=args.training_workers,
                          training_resource_authorization=args.training_resource_authorization)
         if args.command=='games':
-            bound_intervention=campaign.read(campaign.verify(contract['intervention'])) if args.attempt==3 else None
+            bound_intervention=campaign.read(campaign.verify(contract['intervention'])) if args.attempt in (3,4) else None
             context=context_root(root,args.attempt,intervention=bound_intervention)
             result=campaign.run_games(context,f'attempt-{args.attempt:03d}-pilot',2000,8)
             campaign.event(root,'pilot-games-completed',{'attempt':args.attempt,

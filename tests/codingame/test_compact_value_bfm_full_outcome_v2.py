@@ -1,6 +1,6 @@
 """Completed full-attempt rejection and lossless cross-attempt isolation."""
 from collections import defaultdict
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import copy
 from pathlib import Path
 import tempfile
@@ -202,6 +202,123 @@ class TerminalStageTests(unittest.TestCase):
         pilot.assert_not_called()
         with self.assertRaisesRegex(ValueError, 'intervention binding'):
             attempts.failed_attempt(self.root, 3)
+
+
+class FourthAttemptTests(unittest.TestCase):
+    def setUp(self):
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        self.root = Path(temporary).resolve()
+        self.phase = 'attempt-004-full'; self.context = self.root / 'phases' / self.phase
+        self.pilot_phase = 'attempt-004-pilot'; self.pilot = self.root / 'phases' / self.pilot_phase
+        path = self.root / 'original-input'; campaign.once(path, b'original input')
+        inputs = {key: campaign.record(path) for key in
+                  ('attempt_one_initial_checkpoint', 'teacher_runtime', 'attempt_zero_runtime')}
+        campaign.seal(self.root / 'campaign.json', {'inputs': inputs})
+        self.contract = campaign.seal(self.pilot / 'campaign.json', {
+            'attempt': 4, 'phase': 'pilot', 'parent_campaign': campaign.record(self.root / 'campaign.json'),
+            'policy': campaign.POLICY, 'inputs': inputs, 'qat_profile': 'retention-first-low-rate-v1',
+            'qat_profile_contract': {'frozen': 'retention'}, 'intervention': {'frozen': 'after-three'}})
+        campaign.seal(self.pilot / self.pilot_phase / 'training.json', {'all_nine': True})
+        campaign.seal(self.pilot / self.pilot_phase / 'model-selection.json', {
+            'training': campaign.record(self.pilot / self.pilot_phase / 'training.json')})
+        campaign.seal(self.pilot / self.pilot_phase / 'pilot-outcome.json', {
+            'admitted': False, 'status': 'offline-rejected', 'campaign_success': False,
+            'selection': campaign.record(self.pilot / self.pilot_phase / 'model-selection.json')})
+        self.profile = self.enterContext(mock.patch.object(outcome.full_selection.intervention, 'expected_qat_profile',
+            return_value='retention-first-low-rate-v1'))
+        self.enterContext(mock.patch.object(outcome.full_selection.trainer, 'native_thread_execution_scope', return_value=nullcontext()))
+
+    def full_contract(self):
+        return campaign.seal(self.context / 'campaign.json', {
+            **{key: value for key, value in self.contract.items() if key != 'body_sha256'}, 'phase': 'full',
+            'pilot_context': campaign.record(self.pilot / 'campaign.json'),
+            'admitted_pilot': campaign.record(self.pilot / self.pilot_phase / 'pilot-outcome.json')})
+
+    def test_fourth_failed_pilot_reopens_intervention_and_training_without_admitting_fifth(self):
+        with mock.patch.object(attempts, 'validate_training', return_value={'all_nine': True}) as training, \
+                mock.patch.object(attempts, 'validate_selection', return_value=None):
+            previous = attempts.failed_attempt(self.root, 4)
+        self.assertEqual(previous['attempt'], 4)
+        training.assert_called_once_with(self.pilot, self.pilot_phase, self.contract)
+        self.assertEqual(self.profile.call_count, 2)  # Dispatcher plus pilot validator.
+        for name in ('positions.json', 'games.json'):
+            campaign.seal(self.pilot / self.pilot_phase / name, {'fixture': name})
+        domain = campaign.legacy.FEATURE_FINGERPRINT_DOMAIN
+        values = defaultdict(set, {('prior-validation', domain): {'c' * 64}})
+        with mock.patch.object(attempts, 'collect_fingerprints', return_value=(values, 'none')):
+            bindings, index = attempts.carry_failed_attempt(self.root, previous, self.root / 'future')
+        self.assertEqual(campaign.read(campaign.verify(index))['attempt'], 4)
+        self.assertEqual(campaign.read(campaign.verify(bindings[0]))['fingerprints'], ['c' * 64])
+        self.profile.side_effect = ValueError('changed frozen intervention')
+        with mock.patch.object(attempts, 'validate_training') as training, \
+                self.assertRaisesRegex(ValueError, 'changed frozen intervention'):
+            attempts.failed_attempt(self.root, 4)
+        training.assert_not_called()
+        with mock.patch.object(attempts, 'collect_fingerprints') as collect, \
+                self.assertRaisesRegex(ValueError, 'changed frozen intervention'):
+            attempts.carry_failed_attempt(self.root, previous, self.root / 'blocked')
+        collect.assert_not_called()
+        for invalid in (0, 5, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                attempts.failed_attempt(self.root, invalid)
+            with self.subTest(carry=invalid), self.assertRaises(ValueError):
+                attempts.carry_failed_attempt(self.root, {'attempt': invalid}, self.root / 'blocked')
+
+    def test_fourth_full_dispatch_cannot_fall_back_to_failed_pilot(self):
+        self.full_contract()
+        with mock.patch.object(outcome, 'failed_full', return_value='verified-full') as full, \
+                mock.patch.object(attempts, 'failed_pilot') as pilot:
+            self.assertEqual(attempts.failed_attempt(self.root, 4), 'verified-full')
+        full.assert_called_once_with(self.root, 4); pilot.assert_not_called()
+
+    def test_fourth_full_outcome_and_carry_count_both_phases_once(self):
+        contract = self.full_contract()
+        for name in ('full-model-selection.json', 'training.json', 'positions.json', 'games.json'):
+            campaign.seal(self.context / self.phase / name, {'fixture': name})
+        pilot = {key: campaign.record(self.pilot / self.pilot_phase / name) for key, name in (
+            ('outcome', 'pilot-outcome.json'), ('training', 'training.json'), ('selection', 'model-selection.json'))}
+        model = {'training': campaign.record(self.context / self.phase / 'training.json'), 'seed_references': []}
+        with mock.patch.object(outcome, 'validate_full_selection', return_value=(contract, model)), \
+                mock.patch.object(outcome, 'validate_pilot', return_value=pilot), \
+                mock.patch.object(outcome, 'completed_rejection', return_value=('full-offline', {}, None, [], None)):
+            document = outcome.record_outcome(self.root, 4)
+            previous = outcome.failed_full(self.root, 4)
+        self.assertEqual(document['attempt'], 4)
+        self.assertEqual(document['completed_attempt_count'], 1)
+        self.assertTrue(document['pilot_and_full_are_one_attempt'])
+        self.assertFalse(document['protected_results_used'])
+        self.assertFalse(document['live_results_used'])
+        domain = campaign.legacy.FEATURE_FINGERPRINT_DOMAIN
+        values = defaultdict(set, {('prior-train', domain): {'a' * 64}, ('prior-validation', domain): {'b' * 64}})
+        before = {path: path.read_bytes() for path in self.context.rglob('*') if path.is_file()}
+        with mock.patch.object(outcome, 'collect_fingerprints', return_value=values):
+            bindings, index = outcome.carry_failed_full(self.root, previous, self.root / 'future')
+        carried = campaign.read(campaign.verify(index))
+        self.assertEqual(carried['attempt'], 4); self.assertEqual(carried['completed_attempt_count'], 1)
+        self.assertEqual({(row['role'], row['domain']): set(row['fingerprints']) for row in
+                         (campaign.read(campaign.verify(item)) for item in bindings)}, values)
+        self.assertEqual(before, {path: path.read_bytes() for path in self.context.rglob('*') if path.is_file()})
+        self.profile.side_effect = ValueError('intervention changed before carry')
+        with mock.patch.object(outcome, 'collect_fingerprints') as collect, \
+                self.assertRaisesRegex(ValueError, 'intervention changed'):
+            outcome.carry_failed_full(self.root, previous, self.root / 'blocked')
+        collect.assert_not_called(); self.assertFalse((self.root / 'blocked').exists())
+
+    def test_fourth_full_rejects_profile_or_parent_graft_before_pilot_evidence(self):
+        good = self.full_contract()
+        for field in ('attempt', 'parent_campaign', 'intervention', 'qat_profile_contract'):
+            contract = {**good, field: 3 if field == 'attempt' else {'foreign': field}}
+            with self.subTest(field=field), mock.patch.object(attempts, 'validate_training') as training, \
+                    self.assertRaisesRegex(ValueError, 'admitted pilot intervention or parent'):
+                outcome.validate_pilot(self.root, 4, contract)
+            training.assert_not_called()
+        self.profile.side_effect = ValueError('changed frozen fourth profile')
+        with mock.patch.object(outcome, 'validate_full_selection', return_value=(good, {})), \
+                mock.patch.object(outcome, 'completed_rejection') as rejection, \
+                self.assertRaisesRegex(ValueError, 'changed frozen fourth profile'):
+            outcome.validated_evidence(self.root, 4)
+        rejection.assert_not_called()
+        with self.assertRaises(ValueError): outcome.validated_evidence(self.root, 5)
 
 
 class FullCarryTests(unittest.TestCase):

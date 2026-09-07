@@ -41,7 +41,7 @@ def validate_context(root, context, phase):
     parent = campaign.read(parent_path)
     attempt = contract['attempt']
     expected_phase = f'attempt-{attempt:03d}-full'
-    if (isinstance(attempt, bool) or attempt not in (1, 2, 3) or phase != expected_phase
+    if (isinstance(attempt, bool) or attempt not in (1, 2, 3, 4) or phase != expected_phase
             or context != root / 'phases' / expected_phase or contract.get('phase') != 'full'
             or contract.get('full_games') != 10000 or contract.get('policy') != parent['policy']
             or parent['policy'] != campaign.POLICY):

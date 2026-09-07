@@ -73,6 +73,71 @@ def pilot_patches(root, previous):
     )
 
 
+def fourth_fixture(root, *, freeze_intervention=True):
+    """Synthetic completed1/2/3 metadata and the actual fourth-profile binding."""
+    from tests.codingame.test_compact_value_bfm_attribution_v2 import fixture as phase_fixture
+    root = root.resolve(); inputs = {}
+    for key in ('attempt_one_initial_checkpoint', 'teacher_runtime', 'attempt_zero_runtime'):
+        source = root / 'inputs' / key; campaign.once(source, ('fixed ' + key).encode())
+        inputs[key] = campaign.record(source)
+    parent = campaign.seal(root / 'campaign.json', {'policy': campaign.POLICY, 'inputs': inputs, 'exclusions': []})
+    previous = []
+    for attempt in (1, 2, 3):
+        if attempt == 3:
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]):
+                attribution.produce(root)
+                third_intervention = intervention.prepare(root)
+        row = phase_fixture(root, attempt, float_sign=.88, quantized_sign=.86)
+        for name in ('positions.json', 'games.json'):
+            campaign.seal(row['context'] / row['phase'] / name, {'fixture': name})
+        exclusion = root / 'exclusions' / f'prior-{attempt}.json'
+        campaign.seal(exclusion, {'role': 'prior-validation', 'domain': campaign.legacy.FEATURE_FINGERPRINT_DOMAIN,
+                                  'fingerprints': [str(attempt) * 64]})
+        contract = {'attempt': attempt, 'phase': 'pilot', 'policy': campaign.POLICY,
+                    'parent_campaign': campaign.record(root / 'campaign.json'), 'inputs': inputs,
+                    'exclusions': [campaign.record(exclusion)]}
+        if attempt == 3:
+            contract.update({'qat_profile': intervention.PROFILE, 'qat_profile_contract': intervention.approved_profile(),
+                'intervention': campaign.record(intervention.path(root)), 'completed_unsuccessful_trained_attempts': 2,
+                'previous_failed_attempts': third_intervention['previous_failed_attempts'],
+                'pilot_games': 2000, 'pilot_training_roster': {'lambdas': [0, .1, .25], 'seeds': list(attribution.trainer.FIXED_SEEDS)},
+                'candidate_lineage': {'mandatory_training': True, 'initial_float': inputs['attempt_one_initial_checkpoint'],
+                    'generation_student': inputs['attempt_zero_runtime'], 'smoke_weights_reused': False}})
+            training = campaign.read(row['training']['path']); training['schema'] = campaign.ID + '.training.v2'
+            for seed in training['results']:
+                receipt = seed['seed_receipt']; receipt.update({'qat_profile': intervention.PROFILE,
+                    'qat_profile_contract': intervention.approved_profile()})
+                receipt['offline_gate'] = attribution.trainer.offline_advancement_gate(
+                    receipt['float_validation'], receipt['quantized_validation'])
+            rewrite(Path(row['training']['path']), training); row['training'] = campaign.record(row['training']['path'])
+            selected = campaign.read(row['selection']['path']); selected.update({
+                'schema': campaign.ID + '.pilot-model-selection.v2', 'training': row['training'],
+                'status': 'offline-rejected-before-rank4-screen', 'selected': None,
+                'pilot_admitted': False, 'campaign_success': False})
+            rewrite(Path(row['selection']['path']), selected); row['selection'] = campaign.record(row['selection']['path'])
+        outcome = {'schema': campaign.ID + '.pilot-outcome.v2', 'status': 'offline-rejected',
+                   'admitted': False, 'campaign_success': False, 'selection': row['selection']}
+        rewrite(Path(row['outcome']['path']), outcome); row['outcome'] = campaign.record(row['outcome']['path'])
+        row['contract'] = campaign.seal(row['context'] / 'campaign.json', contract)
+        previous.append(row)
+    campaign.seal(root / 'baseline-engine-comparison.json', {'same_weights': True, 'all_checks_passed': True, 'exclusions': []})
+    campaign.seal(root / 'exclusions/anchor-derived.json', {'domain': campaign.legacy.FEATURE_FINGERPRINT_DOMAIN, 'fingerprints': {}})
+    campaign.seal(root / 'exclusions/prior-search-validation.json', {'role': 'prior-validation',
+        'domain': campaign.legacy.FEATURE_FINGERPRINT_DOMAIN, 'fingerprints': []})
+    with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]):
+        report = attribution.produce(root, after_attempts=3)
+        document = intervention.prepare(root, attempt=4) if freeze_intervention else None
+    contract4 = None if document is None else {**{k: v for k, v in parent.items() if k != 'body_sha256'},
+        'parent_campaign': campaign.record(root / 'campaign.json'), 'attempt': 4, 'phase': 'pilot',
+        'qat_profile': document['qat_profile'], 'qat_profile_contract': document['qat_profile_contract'],
+        'intervention': campaign.record(intervention.path(root, 4)), 'completed_unsuccessful_trained_attempts': 3,
+        'previous_failed_attempts': document['previous_failed_attempts'], 'pilot_games': 2000,
+        'pilot_training_roster': {'lambdas': [0, .1, .25], 'seeds': list(attribution.trainer.FIXED_SEEDS)},
+        'candidate_lineage': {'mandatory_training': True, 'initial_float': document['initial_float'],
+            'generation_student': document['pilot_generation_student'], 'smoke_weights_reused': False}}
+    return root, parent, report, previous, contract4
+
+
 class InterventionTests(unittest.TestCase):
     def test_no_frozen_attribution_means_no_third_context_or_intervention(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -273,6 +338,170 @@ class InterventionTests(unittest.TestCase):
                 result = intervention.prepare(root)
             self.assertFalse(result['protected_metrics_used_for_intervention'])
             self.assertFalse(result['live_metrics_used_for_intervention'])
+
+
+class FourthInterventionTests(unittest.TestCase):
+    def test_incomplete_third_blocks_before_validators_or_metric_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for attempt in (1, 2):
+                phase = f'attempt-{attempt:03d}-pilot'
+                campaign.seal(root / 'phases' / phase / phase / 'pilot-outcome.json', {'status': 'offline-rejected'})
+            with mock.patch.object(attribution.attempts, 'failed_attempt') as failed, \
+                    mock.patch.object(attribution, 'third_pilot_retention') as facts:
+                with self.assertRaisesRegex(ValueError, 'three completed'):
+                    attribution.produce(root, after_attempts=3)
+            failed.assert_not_called(); facts.assert_not_called()
+            self.assertFalse(attribution.path(root, after_attempts=3).exists())
+
+    def test_after_three_reproduces_all_failures_and_keeps_after_two_frozen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, report, previous, contract = fourth_fixture(Path(tmp))
+            old = attribution.path(root).read_bytes()
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]) as checked:
+                self.assertEqual(report, attribution.validate(root, after_attempts=3))
+            self.assertEqual([call.args[1] for call in checked.call_args_list], [1, 2, 3])
+            self.assertEqual(attribution.path(root).read_bytes(), old)
+            self.assertEqual(set(campaign.read(attribution.path(root))['maintained_profile_menu']['qat_and_scales']),
+                             {intervention.STANDARD, intervention.PROFILE})
+            self.assertEqual(report['third_pilot_retention']['retention_failed_seed_count'], 9)
+            self.assertFalse(report['recommendation']['causal_attribution_proven'])
+            self.assertFalse(report['recommendation']['attempt_four_may_start'])
+            self.assertEqual(intervention.expected_qat_profile(contract), intervention.RETENTION_PROFILE)
+
+    @staticmethod
+    def change_third(previous, mutate):
+        row = previous[-1]; training = campaign.read(row['training']['path']); mutate(training)
+        rewrite(Path(row['training']['path']), training); row['training'] = campaign.record(row['training']['path'])
+        selected = campaign.read(row['selection']['path']); selected['training'] = row['training']
+        rewrite(Path(row['selection']['path']), selected); row['selection'] = campaign.record(row['selection']['path'])
+        outcome = campaign.read(row['outcome']['path']); outcome['selection'] = row['selection']
+        rewrite(Path(row['outcome']['path']), outcome); row['outcome'] = campaign.record(row['outcome']['path'])
+
+    def test_missing_duplicate_passing_or_forged_third_seed_cannot_authorize(self):
+        for fault in ('missing', 'duplicate', 'passing', 'forged-gate', 'wrong-profile'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                root, _, _, previous, _ = fourth_fixture(Path(tmp), freeze_intervention=False)
+                def mutate(training):
+                    if fault == 'missing': training['results'].pop()
+                    elif fault == 'duplicate': training['results'][-1] = copy.deepcopy(training['results'][0])
+                    else:
+                        receipt = training['results'][0]['seed_receipt']
+                        if fault == 'passing':
+                            receipt['quantized_validation'] = copy.deepcopy(receipt['float_validation'])
+                            receipt['offline_gate'] = attribution.trainer.offline_advancement_gate(
+                                receipt['float_validation'], receipt['quantized_validation'])
+                        elif fault == 'forged-gate': receipt['offline_gate']['errors'] = ['invented failure']
+                        else: receipt['qat_profile'] = intervention.STANDARD
+                self.change_third(previous, mutate)
+                with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]):
+                    with self.assertRaises(ValueError): attribution.body_after_three(root)
+                self.assertFalse(intervention.path(root, 4).exists())
+
+    def test_protected_terminal_and_third_full_are_rejected_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, _, previous, _ = fourth_fixture(Path(tmp), freeze_intervention=False)
+            full = root / 'phases/attempt-003-full'; full.mkdir()
+            with mock.patch.object(attribution.attempts, 'failed_attempt') as failed:
+                with self.assertRaisesRegex(ValueError, 'third pilot'): attribution.completed_three(root)
+            failed.assert_not_called(); full.rmdir()
+            full = root / 'phases/attempt-001-full'
+            campaign.seal(full / full.name / 'attempt-outcome.json', {'schema': 'protected-terminal',
+                'protected_result': {'path': '/must-not-open/protected.json'}, 'status': 'completed-unsuccessful'})
+            with mock.patch.object(attribution.attempts, 'failed_attempt') as failed:
+                with self.assertRaisesRegex(ValueError, 'unprotected failures'): attribution.completed_three(root)
+            failed.assert_not_called()
+
+    def test_unknown_protected_fields_are_not_opened_or_copied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, _, previous, _ = fourth_fixture(Path(tmp), freeze_intervention=False)
+            poison = root / 'protected/poison.json'; campaign.once(poison, b'POISON PRIVATE METRICS')
+            secret = campaign.record(poison)
+            def mutate(training):
+                training['protected_result'] = secret
+                for row in training['results']:
+                    row['seed_receipt']['float_validation']['protected_result'] = secret
+                    row['seed_receipt']['quantized_validation']['canonical_validation']['live_result'] = secret
+            self.change_third(previous, mutate)
+            old_read = campaign.read; old_verify = campaign.verify
+            def read(path):
+                if Path(path) == poison: raise AssertionError('protected source opened')
+                return old_read(path)
+            def verify(record):
+                if Path(record['path']) == poison: raise AssertionError('protected source hashed')
+                return old_verify(record)
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]), \
+                    mock.patch.object(campaign, 'read', side_effect=read), mock.patch.object(campaign, 'verify', side_effect=verify):
+                report = attribution.body_after_three(root)
+                self.assertNotIn(str(poison), campaign.raw(report).decode())
+                redirected = {**report['third_pilot_retention']['sources'], 'training': secret}
+                with self.assertRaisesRegex(ValueError, 'fixed unprotected'):
+                    attribution.third_pilot_retention(root, redirected)
+
+    def test_exact_fourth_profile_preserves_shapes_and_rejects_changed_lr_or_reference(self):
+        profile = intervention.approved_profile(4); prior = intervention.approved_profile()
+        self.assertEqual(profile['schedule'], {**prior['schedule'], 'qat_learning_rate': .0000625})
+        self.assertEqual(profile['quantization'], prior['quantization'])
+        original = intervention.trainer.qat_profile_contract
+        for field in ('rate', 'reference'):
+            changed = copy.deepcopy(profile)
+            if field == 'rate': changed['schedule']['qat_learning_rate'] = .000125
+            else: changed['scale_selection']['retention_policy']['reference'] = 'current-epoch-float'
+            with mock.patch.object(intervention.trainer, 'qat_profile_contract',
+                    side_effect=lambda name: changed if name == intervention.RETENTION_PROFILE else original(name)):
+                with self.assertRaisesRegex(ValueError, 'approved recipe'): intervention.approved_profile(4)
+
+    def test_fourth_resume_preserves_producers_and_rejects_changed_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, report, previous, contract = fourth_fixture(Path(tmp))
+            document = campaign.read(intervention.path(root, 4))
+            copied = campaign.copy_checked(Path(document['producers']['intervention']['path']), root / 'snapshot/intervention.py')
+            document['producers']['intervention'] = copied; rewrite(intervention.path(root, 4), document)
+            contract['intervention'] = campaign.record(intervention.path(root, 4))
+            self.assertEqual(intervention.expected_qat_profile(contract), intervention.RETENTION_PROFILE)
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]):
+                self.assertEqual(intervention.prepare(root, attempt=4), intervention.validate(root, attempt=4))
+            Path(copied['path']).write_bytes(b'changed source')
+            with self.assertRaisesRegex(ValueError, 'changed artifact'): intervention.expected_qat_profile(contract)
+
+    def test_fourth_binding_rejects_missing_prior_foreign_profile_and_fifth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, _, _, contract = fourth_fixture(Path(tmp))
+            original_document = campaign.read(intervention.path(root, 4))
+            for field in ('prior', 'profile', 'attempt', 'producer', 'facts'):
+                changed = copy.deepcopy(contract)
+                if field == 'prior': changed['previous_failed_attempts'].pop()
+                elif field == 'profile': changed['qat_profile'] = intervention.PROFILE
+                elif field == 'attempt': changed['attempt'] = 5
+                else:
+                    document = copy.deepcopy(original_document)
+                    if field == 'producer': document['producers'] = {}
+                    else: document['third_pilot_retention_sources']['training'] = {'path': '/forbidden/protected.json'}
+                    rewrite(intervention.path(root, 4), document); changed['intervention'] = campaign.record(intervention.path(root, 4))
+                with self.subTest(field=field), self.assertRaises((ValueError, KeyError)):
+                    intervention.expected_qat_profile(changed)
+            with self.assertRaises(ValueError): pilot.context_root(root, 5, intervention={'attempt': 5})
+
+    def test_fourth_pilot_prepare_carries_all_three_and_resume_cannot_drop_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, parent, _, previous, _ = fourth_fixture(Path(tmp))
+            with mock.patch.object(attribution.attempts, 'failed_attempt', side_effect=lambda _, n: previous[n - 1]), \
+                    mock.patch.object(pilot, 'validate_smoke', return_value={'smoke': 'bound'}), \
+                    mock.patch.object(pilot, 'smoke_exclusions', return_value=[]), \
+                    mock.patch.object(pilot.attempts, 'collect_fingerprints', side_effect=lambda row:
+                        ({('prior-validation', campaign.legacy.FEATURE_FINGERPRINT_DOMAIN): {str(row['attempt'] + 3) * 64}}, 'not-opened')):
+                contract = pilot.prepare(root, 4)
+                self.assertEqual(contract, pilot.prepare(root, 4))
+                self.assertEqual(contract['completed_unsuccessful_trained_attempts'], 3)
+                self.assertEqual([row['attempt'] for row in contract['previous_failed_attempts']], [1, 2, 3])
+                self.assertEqual(contract['inputs'], parent['inputs'])
+                self.assertEqual(contract['qat_profile'], intervention.RETENTION_PROFILE)
+                for row in previous:
+                    self.assertTrue(all(item in contract['exclusions'] for item in row['contract']['exclusions']))
+                target = root / 'phases/attempt-004-pilot/campaign.json'
+                altered = copy.deepcopy(contract)
+                altered['exclusions'].remove(previous[-1]['contract']['exclusions'][0]); rewrite(target, altered)
+                with self.assertRaises(ValueError): pilot.prepare(root, 4)
 
 
 if __name__ == '__main__':

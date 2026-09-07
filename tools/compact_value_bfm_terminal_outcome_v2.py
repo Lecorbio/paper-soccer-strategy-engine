@@ -36,8 +36,8 @@ DOMAINS = (campaign.legacy.STATE_FINGERPRINT_DOMAIN, campaign.legacy.FEATURE_FIN
 
 
 def location(root, attempt):
-    if type(attempt) is not int or attempt not in (1, 2, 3):
-        raise ValueError('only the three source-bound trained attempt slots are supported')
+    if type(attempt) is not int or attempt not in (1, 2, 3, 4):
+        raise ValueError('only the four source-bound trained attempt slots are supported')
     root = Path(root).resolve()
     phase = f'attempt-{attempt:03d}-full'
     context = root / 'phases' / phase
@@ -48,6 +48,10 @@ def _unprotected_context(root, attempt):
     root, context, phase = location(root, attempt)
     with full.full_selection.trainer.native_thread_execution_scope():
         contract, model = full.validate_full_selection(root, context, phase)
+        if attempt == 4:
+            if contract.get('attempt') != attempt or contract.get('phase') != 'full':
+                raise ValueError('fourth terminal outcome changed its requested attempt slot')
+            full.full_selection.intervention.expected_qat_profile(contract)
         pilot = full.validate_pilot(root, attempt, contract)
         if model.get('selected') is None or model.get('eligible_for_multi_opponent') is not True:
             raise ValueError('terminal qualification requires an actually eligible full trained model')
@@ -280,7 +284,7 @@ def carry_failed_terminal(root, previous, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2, 3))
+    parser.add_argument('--attempt', type=int, required=True, choices=(1, 2, 3, 4))
     parser.add_argument('command', choices=('record', 'validate'))
     args = parser.parse_args()
     with campaign.lease(args.root.resolve()):

@@ -29,13 +29,16 @@ def seed_receipt(seed, *, passed=True, loss=.1, regret=.2):
 
 
 class FullContextTests(unittest.TestCase):
+    attempt = 1
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
-        self.phase = 'attempt-001-full'
+        self.phase = f'attempt-{self.attempt:03d}-full'
         self.context = self.root / 'phases' / self.phase
-        self.pilot = self.root / 'phases/attempt-001-pilot'
+        self.pilot_phase = f'attempt-{self.attempt:03d}-pilot'
+        self.pilot = self.root / 'phases' / self.pilot_phase
         self.inputs = {}
         for key in ('attempt_one_initial_checkpoint', 'teacher_runtime', 'teacher_manifest',
                     'attempt_zero_runtime', 'discrete_v3_deployment.cpp'):
@@ -47,7 +50,7 @@ class FullContextTests(unittest.TestCase):
         self.parent = {'inputs': self.inputs, 'bundle': campaign.record(bundle_path),
                        'policy': campaign.POLICY}
         campaign.seal(self.root / 'campaign.json', self.parent)
-        pilot_contract = {**self.parent, 'attempt': 1, 'phase': 'pilot', 'exclusions': [],
+        pilot_contract = {**self.parent, 'attempt': self.attempt, 'phase': 'pilot', 'exclusions': [],
                           'parent_campaign': campaign.record(self.root / 'campaign.json')}
         campaign.seal(self.pilot / 'campaign.json', pilot_contract)
         runtime_path = self.pilot / 'admitted.runtime'
@@ -57,7 +60,7 @@ class FullContextTests(unittest.TestCase):
         selected = {'lambda': .1, 'runtime': campaign.record(runtime_path), 'source': campaign.record(source_path)}
         self.outcome = {'status': 'pilot-admitted', 'selected': selected, 'admitted': True,
                         'games': 200, 'wins': 105, 'failures': 0, 'development_exclusions': []}
-        outcome_path = self.pilot / 'attempt-001-pilot/pilot-outcome.json'
+        outcome_path = self.pilot / self.pilot_phase / 'pilot-outcome.json'
         campaign.seal(outcome_path, self.outcome)
         self.contract = {
             **pilot_contract, 'phase': 'full', 'full_games': 10000,
@@ -78,7 +81,7 @@ class FullContextTests(unittest.TestCase):
     def test_original_float_and_actual_admission_are_reopened(self):
         with mock.patch.object(full_selection.full, 'admitted_pilot', return_value=self.outcome) as admission:
             contract, parent = self.validate()
-        admission.assert_called_once_with(self.pilot, 'attempt-001-pilot')
+        admission.assert_called_once_with(self.pilot, self.pilot_phase)
         self.assertEqual(contract['inputs']['attempt_one_initial_checkpoint'], parent['inputs']['attempt_one_initial_checkpoint'])
         self.assertNotEqual(contract['inputs']['attempt_zero_runtime'], parent['inputs']['attempt_zero_runtime'])
 
@@ -115,6 +118,40 @@ class FullContextTests(unittest.TestCase):
         self.contract['qat_profile_contract'] = trainer.qat_profile_contract(self.contract['qat_profile'])
         with self.assertRaises(ValueError):
             self.validate()
+
+
+class FourthFullContextTests(FullContextTests):
+    attempt = 4
+
+    def setUp(self):
+        super().setUp()
+        fields = {'qat_profile': 'retention-first-low-rate-v1',
+                  'qat_profile_contract': {'frozen': 'retention'}, 'intervention': {'frozen': 'after-three'}}
+        path = self.pilot / 'campaign.json'
+        pilot = campaign.read(path); path.unlink()
+        campaign.seal(path, {**{key: value for key, value in pilot.items() if key != 'body_sha256'}, **fields})
+        self.contract.update(fields)
+        self.contract['pilot_context'] = campaign.record(path)
+        self.profile = self.enterContext(mock.patch.object(full_selection.intervention, 'expected_qat_profile',
+            return_value='retention-first-low-rate-v1'))
+
+    def test_both_fourth_phase_profiles_are_reopened_before_admission(self):
+        with mock.patch.object(full_selection.full, 'admitted_pilot', return_value=self.outcome):
+            self.validate()
+        self.assertEqual([call.args[0]['phase'] for call in self.profile.call_args_list], ['full', 'pilot'])
+
+    def test_unbound_fourth_profile_blocks_before_admission(self):
+        self.profile.side_effect = ValueError('changed after-three intervention')
+        with mock.patch.object(full_selection.full, 'admitted_pilot') as admission, \
+                self.assertRaisesRegex(ValueError, 'after-three intervention'):
+            self.validate()
+        admission.assert_not_called()
+
+    def test_fifth_attempt_remains_outside_supported_contexts(self):
+        self.contract['attempt'] = 5
+        with self.assertRaisesRegex(ValueError, 'context or phase changed'):
+            self.validate()
+        self.profile.assert_not_called()
 
 
 class FullRosterAndSelectionTests(unittest.TestCase):

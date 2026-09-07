@@ -415,7 +415,28 @@ recommendation is QAT/scales. A fresh third pilot must carry both failed attempt
 exclusions and retain the original float initialization, teacher, architecture,
 one warmup epoch and four QAT epochs. Any admitted full phase inherits the same
 exact recipe. Teacher-ranking and search recommendations still require their
-own concrete experiment integration; attempt four remains unavailable.
+own concrete experiment integration.
+
+After three verified unprotected failures, a separate `--after-attempts 3`
+attribution route can bind attempt four to `retention-first-low-rate-v1`. This
+route requires an offline-rejected third pilot with all nine refined models
+failing the reproduced retention gate. It is a QAT/scales hypothesis, not a
+causal finding or an admission result. Attempt four uses fresh games and labels,
+all three failed attempts' exclusions, and the original initialization.
+
+The new profile retains the refined scale search and four all-layer QAT epochs,
+with QAT learning rate 0.0000625. Scale and epoch selection first prefer the
+existing retention gate against float validation frozen before QAT. Failing
+states are ordered by the sum of eight positive normalized violations, then
+the existing refined ranking key. For each heldout pool, sign and Huber deficits
+are normalized by that pool's absolute limits; relative sign excess uses 0.005,
+and relative Huber excess uses the larger of 1.02 times frozen float Huber and
+the absolute Huber limit. The exact strict sign gate still decides feasibility
+at a zero-excess boundary. Nonfinite scores are rejected. Reports bind the same
+float reference throughout initial scale search, adaptive search and epoch
+selection. An admitted full phase inherits this exact profile; attempts beyond
+four remain unavailable without another concrete implementation. Historical
+standard and refined profile contracts and all qualification gates are unchanged.
 
 `compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
 or a completed calibrated live rejection. It keeps terminal proof separate from

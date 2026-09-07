@@ -18,10 +18,10 @@ def sealed(path, body):
     return campaign.record(path)
 
 
-def fixture(root, passed=False):
-    context = root / 'phases/attempt-001-full'; phase = context.name; directory = context / phase
+def fixture(root, passed=False, *, attempt=1):
+    context = root / 'phases' / f'attempt-{attempt:03d}-full'; phase = context.name; directory = context / phase
     parent = sealed(root / 'campaign.json', {'frozen': 'parent'})
-    contract = campaign.seal(context / 'campaign.json', {'parent_campaign': parent, 'exclusions': []})
+    contract = campaign.seal(context / 'campaign.json', {'attempt': attempt, 'phase': 'full', 'parent_campaign': parent, 'exclusions': []})
     source_path = directory / 'source.cpp'; source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text('synthetic-source')
     runtime = sealed(directory / 'runtime.json', {'quantization': {'payload_sha256': 'a' * 64}})
@@ -36,7 +36,7 @@ def fixture(root, passed=False):
     development = {'passed': True, 'selected': selected, 'games': 1000, 'candidate_wins': 570,
                    'failures': 0, 'candidate_wins_by_color': [285, 285], 'paired_lower_95': .53}
     dev = sealed(directory / 'development/assessment.json', development)
-    previous = {'stage': 'full', 'terminal_outcome': True, 'attempt': 1, 'context': context, 'phase': phase,
+    previous = {'stage': 'full', 'terminal_outcome': True, 'attempt': attempt, 'context': context, 'phase': phase,
         'contract': contract, 'training': training, 'selection': model, 'screen': None, 'pilot': pilot,
         'rejection_stage': 'post-development', 'stages': {'development': dev}, 'source_selection': None,
         'suites': [], 'development': development, 'seed_references': []}
@@ -60,10 +60,12 @@ def fixture(root, passed=False):
 
 
 class TerminalTests(unittest.TestCase):
+    attempt = 1
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
-        self.previous, self.selected, self.qualified = fixture(self.root)
+        self.previous, self.selected, self.qualified = fixture(self.root, attempt=self.attempt)
         self.context, self.phase = self.previous['context'], self.previous['phase']
 
     def validators(self, qualified=None):
@@ -86,9 +88,9 @@ class TerminalTests(unittest.TestCase):
                 patch.object(terminal.full, 'validate_pilot', return_value=self.previous['pilot']) as pilot, \
                 patch.object(terminal.development, 'prerequisites', return_value=(self.previous['contract'], self.selected, inputs, [])), \
                 patch.object(terminal.development, 'completed_development', return_value=self.previous['development']) as dev:
-            previous, selected = terminal._unprotected_context(self.root, 1)
+            previous, selected = terminal._unprotected_context(self.root, self.attempt)
         trained.assert_called_once_with(self.root, self.context, self.phase)
-        pilot.assert_called_once_with(self.root, 1, self.previous['contract'])
+        pilot.assert_called_once_with(self.root, self.attempt, self.previous['contract'])
         dev.assert_called_once_with(self.context, self.phase)
         self.assertEqual(selected, self.selected)
         self.assertEqual(set(previous['stages']), {'search', 'screen', 'confirmation', 'development'})
@@ -97,8 +99,8 @@ class TerminalTests(unittest.TestCase):
     def test_complete_protected_failure_counts_once_and_returns_only_unprotected_metrics(self):
         from tools import compact_value_bfm_attribution_v2 as attribution
         with self.validators(), patch.object(terminal.live, 'assess') as live_assess:
-            result = terminal.record_outcome(self.root, 1)
-            previous = terminal.failed_terminal(self.root, 1)
+            result = terminal.record_outcome(self.root, self.attempt)
+            previous = terminal.failed_terminal(self.root, self.attempt)
         live_assess.assert_not_called()
         self.assertEqual(result['completed_attempt_count'], 1)
         self.assertTrue(result['pilot_and_full_are_one_attempt'])
@@ -118,25 +120,25 @@ class TerminalTests(unittest.TestCase):
         with patch.object(terminal, '_unprotected_context', return_value=(self.previous, self.selected)), \
                 patch.object(terminal.protected, 'validate', side_effect=ValueError('spent shard')), \
                 self.assertRaisesRegex(ValueError, 'spent shard'):
-            terminal.record_outcome(self.root, 1)
+            terminal.record_outcome(self.root, self.attempt)
         self.assertFalse((self.context / self.phase / 'attempt-outcome.json').exists())
 
     def test_mismatched_qualified_source_and_later_live_evidence_block_protected_closure(self):
         wrong = copy.deepcopy(self.qualified); wrong['selected']['source'] = {'sha256': 'wrong'}
         with self.validators(wrong), self.assertRaisesRegex(ValueError, 'exact developed source'):
-            terminal.record_outcome(self.root, 1)
+            terminal.record_outcome(self.root, self.attempt)
         terminal.live.directory(self.root, self.selected['source']['sha256']).mkdir(parents=True)
         with self.validators(), self.assertRaisesRegex(ValueError, 'cannot hide later'):
-            terminal.record_outcome(self.root, 1)
+            terminal.record_outcome(self.root, self.attempt)
 
     def test_completed_receipt_is_immutable_and_revalidated(self):
         with self.validators():
-            first = terminal.record_outcome(self.root, 1)
-            self.assertEqual(first, terminal.record_outcome(self.root, 1))
+            first = terminal.record_outcome(self.root, self.attempt)
+            self.assertEqual(first, terminal.record_outcome(self.root, self.attempt))
             before = (self.context / self.phase / 'attempt-outcome.json').read_bytes()
             with patch.object(terminal.protected, 'validate', side_effect=ValueError('changed binary')), \
                     self.assertRaisesRegex(ValueError, 'changed binary'):
-                terminal.failed_terminal(self.root, 1)
+                terminal.failed_terminal(self.root, self.attempt)
             self.assertEqual(before, (self.context / self.phase / 'attempt-outcome.json').read_bytes())
 
     def live_fixture(self, **changes):
@@ -254,9 +256,9 @@ class TerminalTests(unittest.TestCase):
 
     def test_next_attempt_carries_all_roles_without_changing_prior_evidence(self):
         with self.validators():
-            terminal.record_outcome(self.root, 1)
-            previous = terminal.failed_terminal(self.root, 1)
-            _, evidence = terminal._validated(self.root, 1)
+            terminal.record_outcome(self.root, self.attempt)
+            previous = terminal.failed_terminal(self.root, self.attempt)
+            _, evidence = terminal._validated(self.root, self.attempt)
         files = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
         state, feature = terminal.DOMAINS
         corpus = defaultdict(set, {('prior-train', state): {'a' * 64},
@@ -279,19 +281,42 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(document['protected_never_exempt'])
         for path, raw in files.items(): self.assertEqual(raw, path.read_bytes())
 
-    def test_dispatchers_route_only_the_terminal_schema_and_keep_attempt_three_guarded(self):
-        with self.validators(): terminal.record_outcome(self.root, 1)
-        sentinel = {'terminal_outcome': True, 'attempt': 1}
+    def test_dispatchers_route_only_the_terminal_schema_and_keep_missing_interventions_guarded(self):
+        with self.validators(): terminal.record_outcome(self.root, self.attempt)
+        sentinel = {'terminal_outcome': True, 'attempt': self.attempt}
         with patch.object(terminal, 'failed_terminal', return_value=sentinel) as validate, \
                 patch.object(terminal.full, 'failed_full') as old:
-            self.assertEqual(terminal.attempts.failed_attempt(self.root, 1), sentinel)
-        validate.assert_called_once_with(self.root, 1); old.assert_not_called()
+            self.assertEqual(terminal.attempts.failed_attempt(self.root, self.attempt), sentinel)
+        validate.assert_called_once_with(self.root, self.attempt); old.assert_not_called()
         with patch.object(terminal, 'carry_failed_terminal', return_value='carry') as carry:
             self.assertEqual(terminal.attempts.carry_failed_attempt(self.root, sentinel, self.root / 'next'), 'carry')
         carry.assert_called_once()
-        for attempt in (3, 4):
+        for attempt in ({3, 4} - {self.attempt}):
             with self.assertRaisesRegex(ValueError, 'intervention binding'):
                 terminal.attempts.failed_attempt(self.root, attempt)
+
+
+class FourthTerminalTests(TerminalTests):
+    attempt = 4
+
+    def setUp(self):
+        super().setUp()
+        self.profile = self.enterContext(patch.object(terminal.full.full_selection.intervention,
+            'expected_qat_profile', return_value='retention-first-low-rate-v1'))
+
+    def test_unbound_fourth_intervention_blocks_before_development_or_terminal_verdict(self):
+        self.profile.side_effect = ValueError('changed fourth intervention')
+        with patch.object(terminal.full.full_selection.trainer, 'native_thread_execution_scope', return_value=nullcontext()), \
+                patch.object(terminal.full, 'validate_full_selection', return_value=(self.previous['contract'], {})), \
+                patch.object(terminal.development, 'prerequisites') as development, \
+                self.assertRaisesRegex(ValueError, 'changed fourth intervention'):
+            terminal._unprotected_context(self.root, 4)
+        development.assert_not_called()
+        self.assertFalse((self.context / self.phase / 'attempt-outcome.json').exists())
+
+    def test_fifth_attempt_has_no_terminal_slot(self):
+        with self.assertRaisesRegex(ValueError, 'four source-bound'):
+            terminal.location(self.root, 5)
 
 
 if __name__ == '__main__':

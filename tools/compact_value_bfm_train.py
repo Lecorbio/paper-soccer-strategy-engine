@@ -161,6 +161,7 @@ NATIVE_THREAD_EXECUTION_SCHEMA = (
 )
 STANDARD_QAT_PROFILE = "standard-v1"
 REFINED_ADAPTIVE_SCALES_QAT_PROFILE = "refined-adaptive-scales-v1"
+RETENTION_FIRST_LOW_RATE_QAT_PROFILE = "retention-first-low-rate-v1"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -175,6 +176,7 @@ class QATProfile:
     adapt_scales_after_each_epoch: bool
     adaptive_quantile_names: tuple[str, ...]
     adaptive_coordinate_passes: int
+    qat_learning_rate: float = QAT_LEARNING_RATE
 
 
 REFINED_SCALE_QUANTILES = (
@@ -221,6 +223,17 @@ QAT_PROFILES = {
         adapt_scales_after_each_epoch=True,
         adaptive_quantile_names=("p900", "p975", "p995", "p998"),
         adaptive_coordinate_passes=1,
+    ),
+    RETENTION_FIRST_LOW_RATE_QAT_PROFILE: QATProfile(
+        name=RETENTION_FIRST_LOW_RATE_QAT_PROFILE,
+        scale_quantiles=REFINED_SCALE_QUANTILES,
+        coordinate_search_passes=3,
+        local_refinement_multipliers=REFINED_SCALE_MULTIPLIERS,
+        local_refinement_passes=1,
+        adapt_scales_after_each_epoch=True,
+        adaptive_quantile_names=("p900", "p975", "p995", "p998"),
+        adaptive_coordinate_passes=1,
+        qat_learning_rate=0.0000625,
     ),
 }
 
@@ -502,7 +515,8 @@ def resolve_qat_profile(value: str | QATProfile) -> QATProfile:
         return registered
     if not isinstance(value, str) or value not in QAT_PROFILES:
         raise TrainingError(
-            "QAT profile must be standard-v1 or refined-adaptive-scales-v1"
+            "QAT profile must be standard-v1, refined-adaptive-scales-v1 "
+            "or retention-first-low-rate-v1"
         )
     return QAT_PROFILES[value]
 
@@ -511,7 +525,7 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
     """Build the exact body-hashed recipe sealed into plans and receipts."""
 
     profile = resolve_qat_profile(value)
-    return body_hashed({
+    body = {
         "schema": QAT_PROFILE_SCHEMA,
         "qat_profile": profile.name,
         "quantization": {
@@ -525,7 +539,7 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
         "schedule": {
             "float_warmup_epochs": RANKING_FLOAT_EPOCHS,
             "qat_epochs": QAT_EPOCHS,
-            "qat_learning_rate": QAT_LEARNING_RATE,
+            "qat_learning_rate": profile.qat_learning_rate,
             "all_layers_trainable_each_qat_epoch": True,
         },
         "scale_selection": {
@@ -564,7 +578,43 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
                 )
             ),
         },
-    })
+    }
+    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+        body["scale_selection"]["validation_objective"] = (
+            "retention-feasibility-then-normalized-violation-sum-then-"
+            "refined-ranking-key-then-lower-scale"
+        )
+        body["scale_selection"]["retention_policy"] = {
+            "reference": "frozen-pre-QAT-float-validation",
+            "predicate": "existing-offline-advancement-gate",
+            "failure_score": "sum-eight-positive-normalized-violations",
+            "pool_order": ["common_adjudicator", "canonical_validation"],
+            "components_per_pool": [
+                "max(0,(minimum_sign-sign)/minimum_sign)",
+                "max(0,(huber-maximum_huber)/maximum_huber)",
+                "max(0,(float_sign-sign-maximum_sign_loss)/maximum_sign_loss)",
+                "max(0,(huber-float_huber*maximum_huber_ratio)/"
+                "max(float_huber*maximum_huber_ratio,maximum_huber))",
+            ],
+            "sum": "math.fsum",
+            "absolute_sign_denominator": "pool-minimum-sign-accuracy",
+            "absolute_huber_denominator": "pool-maximum-weighted-huber",
+            "relative_sign_denominator": MAXIMUM_SIGN_LOSS,
+            "relative_huber_denominator": (
+                "max-frozen-float-huber-times-ratio-and-pool-maximum-huber"
+            ),
+            "strict_sign_boundary": "failure-even-when-normalized-excess-is-zero",
+            "nonfinite_reference_or_score": "reject",
+            "gate_thresholds": {
+                "common_minimum_sign": COMMON_MINIMUM_SIGN,
+                "common_maximum_huber": COMMON_MAXIMUM_HUBER,
+                "canonical_minimum_sign": CANONICAL_MINIMUM_SIGN,
+                "canonical_maximum_huber": CANONICAL_MAXIMUM_HUBER,
+                "maximum_sign_loss_exclusive": MAXIMUM_SIGN_LOSS,
+                "maximum_huber_ratio_inclusive": MAXIMUM_HUBER_RATIO,
+            },
+        }
+    return body_hashed(body)
 
 
 def validate_qat_profile_contract(
@@ -3768,9 +3818,94 @@ def _validation_key(
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class _FrozenRetentionReference:
+    """Immutable scalar report bytes, fixed before any QAT optimizer step."""
+
+    payload: bytes
+
+    def __post_init__(self):
+        try:
+            report = json.loads(self.payload)
+            if (
+                not isinstance(report, Mapping)
+                or canonical_json_bytes(report) != self.payload
+                or not _finite_metric_report(report)
+            ):
+                raise ValueError("noncanonical or nonfinite reference")
+            for name in ("common_adjudicator", "canonical_validation"):
+                for key in ("sign_accuracy", "weighted_huber"):
+                    if not math.isfinite(float(report[name][key])):
+                        raise ValueError("nonfinite reference metric")
+        except (KeyError, TypeError, ValueError) as error:
+            raise TrainingError("retention reference requires finite float validation") from error
+
+    def metrics(self):
+        return json.loads(self.payload)
+
+    def document(self):
+        return {
+            "schema": "papersoccer.compact-value-bfm-frozen-retention-reference.v1",
+            "float_validation_sha256": sha256_bytes(self.payload),
+            "float_validation": self.metrics(),
+        }
+
+
+def _retention_reference(profile, value):
+    if profile.name != RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+        if value is not None:
+            raise TrainingError("float retention reference requires retention-first QAT")
+        return None
+    if isinstance(value, _FrozenRetentionReference):
+        return value
+    if not isinstance(value, Mapping):
+        raise TrainingError("retention-first QAT requires frozen pre-QAT float validation")
+    try:
+        return _FrozenRetentionReference(canonical_json_bytes(value))
+    except (TypeError, ValueError) as error:
+        raise TrainingError("retention reference requires finite float validation") from error
+
+
+def _retention_violation_key(report, reference):
+    """Use unchanged gate feasibility, then finite normalized positive deficits."""
+    if not isinstance(report, Mapping) or not _finite_metric_report(report):
+        raise TrainingError("retention-first QAT requires finite validation metrics")
+    frozen = reference.metrics()
+    try:
+        passed = offline_advancement_gate(frozen, report)["passed"]
+        violations = []
+        for name, minimum_sign, maximum_huber in (
+            ("common_adjudicator", COMMON_MINIMUM_SIGN, COMMON_MAXIMUM_HUBER),
+            ("canonical_validation", CANONICAL_MINIMUM_SIGN, CANONICAL_MAXIMUM_HUBER),
+        ):
+            candidate, baseline = report[name], frozen[name]
+            sign = float(candidate["sign_accuracy"])
+            huber = float(candidate["weighted_huber"])
+            float_sign = float(baseline["sign_accuracy"])
+            float_huber = float(baseline["weighted_huber"])
+            relative_huber_cap = float_huber * MAXIMUM_HUBER_RATIO
+            components = (
+                (minimum_sign - sign) / minimum_sign,
+                (huber - maximum_huber) / maximum_huber,
+                (float_sign - sign - MAXIMUM_SIGN_LOSS) / MAXIMUM_SIGN_LOSS,
+                (huber - relative_huber_cap) / max(relative_huber_cap, maximum_huber),
+            )
+            if not all(math.isfinite(value) for value in (*components, relative_huber_cap)):
+                raise ValueError("nonfinite normalized retention violation")
+            violations.extend(max(0.0, value) for value in components)
+        score = math.fsum(violations)
+        if not math.isfinite(score):
+            raise ValueError("nonfinite retention violation sum")
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise TrainingError("retention-first QAT violation metrics are invalid") from error
+    # Strict sign loss uses the gate result, even at a zero-excess boundary.
+    return (0.0, 0.0) if passed else (1.0, score)
+
+
 def _qat_validation_key(
     report: Mapping[str, Mapping[str, float | int]],
     profile: QATProfile,
+    *, float_validation_reference: object = None,
 ) -> tuple[float, ...]:
     """Keep standard ordering exact; target action flips in the refined arm."""
 
@@ -3796,6 +3931,9 @@ def _qat_validation_key(
         ) from error
     if any(not math.isfinite(value) for value in result):
         raise TrainingError("refined adaptive QAT ranking metrics are nonfinite")
+    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+        reference = _retention_reference(profile, float_validation_reference)
+        return (*_retention_violation_key(report, reference), *result)
     return result
 
 
@@ -4092,9 +4230,12 @@ def select_fixed_scales(
     *,
     ranking_weight: float = 0.0,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
+    float_validation_reference: object = None,
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(qat_profile)
+    reference = _retention_reference(profile, float_validation_reference)
+    selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     float_best_cache = _new_float_ranking_decision_cache(parameters, architecture, inputs)
     cache_arguments = {} if float_best_cache is None else {"_float_best_cache": float_best_cache}
     candidates = {
@@ -4121,7 +4262,7 @@ def select_fixed_scales(
                     ranking_weight=ranking_weight,
                     **cache_arguments,
                 )
-                key = (*_qat_validation_key(metrics, profile), float(candidate))
+                key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
                     "pass": search_pass,
                     "layer": name,
@@ -4156,7 +4297,7 @@ def select_fixed_scales(
                     ranking_weight=ranking_weight,
                     **cache_arguments,
                 )
-                key = (*_qat_validation_key(metrics, profile), float(candidate))
+                key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
                     "stage": "local-refinement",
                     "refinement_pass": refinement_pass,
@@ -4183,7 +4324,7 @@ def select_fixed_scales(
         ranking_weight=ranking_weight,
         **cache_arguments,
     )
-    return selected, {
+    report = {
         "scheme": (
             "fixed-symmetric-3bit-validation-coordinate-search-"
             "lower-rank-robust-quantiles/v1"
@@ -4209,6 +4350,9 @@ def select_fixed_scales(
         "selected_validation": selected_metrics,
         "trials": trials,
     }
+    if reference is not None:
+        report["retention_reference"] = reference.document()
+    return selected, report
 
 
 def _adapt_fixed_scales(
@@ -4221,11 +4365,14 @@ def _adapt_fixed_scales(
     *,
     qat_epoch: int,
     ranking_weight: float,
+    float_validation_reference: object = None,
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     """Locally reselect scales after one QAT epoch from current master weights."""
 
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(profile)
+    reference = _retention_reference(profile, float_validation_reference)
+    selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     if not profile.adapt_scales_after_each_epoch:
         raise TrainingError("fixed QAT profile cannot perform adaptive reselection")
     if not 1 <= qat_epoch <= QAT_EPOCHS:
@@ -4269,7 +4416,7 @@ def _adapt_fixed_scales(
                     ranking_weight=ranking_weight,
                     **cache_arguments,
                 )
-                key = (*_qat_validation_key(metrics, profile), float(candidate))
+                key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
                     "pass": search_pass,
                     "layer": name,
@@ -4301,7 +4448,7 @@ def _adapt_fixed_scales(
     after = {
         name: float(selected.scales[name]) for name in ("w1", "w2", "w3")
     }
-    return selected, {
+    report = {
         "scheme": "post-epoch-local-plus-current-weight-quantile-reselection/v1",
         "qat_profile": profile.name,
         "qat_epoch": qat_epoch,
@@ -4317,6 +4464,9 @@ def _adapt_fixed_scales(
         "selected_validation": selected_metrics,
         "trials": trials,
     }
+    if reference is not None:
+        report["retention_reference"] = reference.document()
+    return selected, report
 
 
 @dataclasses.dataclass(frozen=True)
@@ -4362,13 +4512,18 @@ def run_fixed_scale_qat(
     if qat_epochs != QAT_EPOCHS:
         raise TrainingError("compact deployment requires exactly four QAT epochs")
     profile = resolve_qat_profile(qat_profile)
-    if profile.name == REFINED_ADAPTIVE_SCALES_QAT_PROFILE and (
+    if profile.name != STANDARD_QAT_PROFILE and (
         architecture.name != "capacity-12x8"
         or inputs.successor_rankings is None
     ):
         raise TrainingError(
             "refined adaptive QAT requires successor-labeled capacity-12x8"
         )
+    reference = _retention_reference(
+        profile,
+        float_result.metrics if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else None,
+    )
+    selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     ranking_weight = _ranking_weight(ranking_weight)
     all_ranking_groups = (
         () if inputs.successor_rankings is None else inputs.successor_rankings.train
@@ -4385,6 +4540,7 @@ def run_fixed_scale_qat(
         arm,
         ranking_weight=ranking_weight,
         qat_profile=profile,
+        **selection_arguments,
     )
     selected: QuantizedWeights | None = None
     selected_epoch = 0
@@ -4403,7 +4559,7 @@ def run_fixed_scale_qat(
         name: value.copy() for name, value in float_result.parameters.items()
     }
     optimizer = AdamW(
-        master, learning_rate=QAT_LEARNING_RATE, weight_decay=WEIGHT_DECAY
+        master, learning_rate=profile.qat_learning_rate, weight_decay=WEIGHT_DECAY
     )
     history = []
     executed_batches = 0
@@ -4474,6 +4630,7 @@ def run_fixed_scale_qat(
                 profile,
                 qat_epoch=qat_epoch,
                 ranking_weight=ranking_weight,
+                **selection_arguments,
             )
             metrics = adaptive_scale_search["selected_validation"]
             fixed_scales = dict(candidate.scales)
@@ -4487,7 +4644,7 @@ def run_fixed_scale_qat(
                 quantized=candidate,
                 ranking_weight=ranking_weight,
             )
-        key = _qat_validation_key(metrics, profile)
+        key = _qat_validation_key(metrics, profile, **selection_arguments)
         history.append({
             "qat_epoch": qat_epoch,
             "schedule_epoch": schedule_epoch,
@@ -4525,7 +4682,7 @@ def run_fixed_scale_qat(
         "qat_profile": profile.name,
         "qat_profile_contract": qat_profile_contract(profile),
         "qat_epochs": qat_epochs,
-        "learning_rate": QAT_LEARNING_RATE,
+        "learning_rate": profile.qat_learning_rate,
         "fixed_scale_qat": not profile.adapt_scales_after_each_epoch,
         "adaptive_scale_qat": profile.adapt_scales_after_each_epoch,
         "all_layer_fake_three_bit_qat": True,
@@ -4560,6 +4717,8 @@ def run_fixed_scale_qat(
         "selected_validation": selected_metrics,
         "selected_per_layer_qat_evidence": selected_per_layer_update,
     }
+    if reference is not None:
+        qat_report["retention_reference"] = reference.document()
     if inputs.successor_rankings is not None:
         qat_report.update({
             "successor_ranking": {
@@ -4601,7 +4760,7 @@ def run_fixed_scale_qat(
             },
             "per_layer_update_evidence": selected_per_layer_update,
         })
-    validate_qat_execution_evidence(qat_report, expected_profile=profile.name)
+    validate_qat_execution_evidence(qat_report, expected_profile=profile.name, **selection_arguments)
     if inputs.successor_rankings is not None:
         validate_successor_schedule_execution(
             float_result.report, qat_report, seed=seed
@@ -4616,6 +4775,7 @@ def run_fixed_scale_qat(
 
 def validate_qat_execution_evidence(
     value: object, *, expected_profile: str,
+    float_validation_reference: object = None,
 ) -> dict[str, object]:
     """Validate the exact four-epoch, all-layer fake-quantization evidence."""
 
@@ -4654,6 +4814,58 @@ def validate_qat_execution_evidence(
     initial_scales = scales(
         scale_search.get("selected_scales"), "QAT initial"
     )
+    reference = None
+    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+        document = value.get("retention_reference")
+        if not isinstance(document, Mapping):
+            raise TrainingError("QAT frozen retention reference is absent")
+        reference = _retention_reference(profile, document.get("float_validation"))
+        if document != reference.document() or scale_search.get("retention_reference") != document:
+            raise TrainingError("QAT frozen retention reference changed")
+        if float_validation_reference is not None and reference != _retention_reference(profile, float_validation_reference):
+            raise TrainingError("QAT retention reference differs from frozen float validation")
+
+    def retention_search(search, *, adaptive):
+        if reference is None:
+            return
+        if search.get("retention_reference") != reference.document():
+            raise TrainingError("QAT adaptive retention reference changed")
+        if not isinstance(search.get("trials"), list) or not search["trials"] or any(
+            not isinstance(trial, Mapping) for trial in search["trials"]
+        ):
+            raise TrainingError("QAT retention search trials are malformed")
+        grouped = []
+        for trial in search["trials"]:
+            identity = (trial.get("stage", "coordinate"),
+                trial.get("pass", trial.get("refinement_pass")), trial.get("layer"))
+            if not grouped or grouped[-1][0] != identity:
+                grouped.append((identity, []))
+            grouped[-1][1].append(trial)
+        expected = [("coordinate", index, name)
+            for index in range(1, (profile.adaptive_coordinate_passes if adaptive else profile.coordinate_search_passes) + 1)
+            for name in ("w1", "w2", "w3")]
+        if not adaptive:
+            expected += [("local-refinement", index, name)
+                for index in range(1, profile.local_refinement_passes + 1)
+                for name in ("w1", "w2", "w3")]
+        if [group[0] for group in grouped] != expected:
+            raise TrainingError("QAT retention search order changed")
+        state = search["starting_scales"] if adaptive else {name: values[-1] for name, values in search["candidates"].items()}
+        for (_stage, _pass, layer), trials in grouped:
+            if any(any(trial["scales"][name] != state[name] for name in state if name != layer) for trial in trials):
+                raise TrainingError("QAT retention coordinate trajectory changed")
+            winner = min(trials, key=lambda trial: (
+                *_qat_validation_key(trial["validation"], profile, float_validation_reference=reference),
+                float(trial["requested_scale"])))
+            state = winner["scales"]
+        if state != search["selected_scales"]:
+            raise TrainingError("QAT retention scale choice differs from its frozen objective")
+        if winner["validation"] != search.get("selected_validation"):
+            raise TrainingError("QAT retention selected metrics differ from the winning scale trial")
+
+    retention_search(scale_search, adaptive=False)
+    if reference is not None and scale_search.get("selected_validation") != value.get("pre_qat_validation"):
+        raise TrainingError("QAT retention pre-QAT metrics differ from initial scale selection")
     selected_scales = scales(value.get("selected_scales"), "QAT selected")
     selected_epoch = value.get("selected_qat_epoch")
     final_updates = value.get("final_master_per_layer_update_evidence")
@@ -4661,7 +4873,7 @@ def validate_qat_execution_evidence(
     if (
         value.get("qat_profile") != profile.name
         or value.get("qat_epochs") != QAT_EPOCHS
-        or value.get("learning_rate") != QAT_LEARNING_RATE
+        or value.get("learning_rate") != profile.qat_learning_rate
         or value.get("fixed_scale_qat")
         is not (not profile.adapt_scales_after_each_epoch)
         or value.get("adaptive_scale_qat")
@@ -4777,6 +4989,9 @@ def validate_qat_execution_evidence(
                 or not adaptive["trials"]
             ):
                 raise TrainingError("QAT adaptive scale evidence changed")
+            retention_search(adaptive, adaptive=True)
+            if reference is not None and adaptive.get("selected_validation") != epoch.get("validation"):
+                raise TrainingError("QAT retention epoch metrics differ from adaptive scale selection")
         elif candidate_scales != epoch_scales:
             raise TrainingError("standard-v1 changed scales during QAT")
         next_training_scales = candidate_scales
@@ -4790,6 +5005,11 @@ def validate_qat_execution_evidence(
         "validation"
     ):
         raise TrainingError("QAT selected validation evidence changed")
+    if reference is not None:
+        winner = min(history, key=lambda epoch: _qat_validation_key(
+            epoch["validation"], profile, float_validation_reference=reference))
+        if winner["qat_epoch"] != selected_epoch:
+            raise TrainingError("QAT retention epoch choice differs from its frozen objective")
     successor = value.get("successor_ranking")
     if isinstance(successor, Mapping) and value.get(
         "per_layer_update_evidence"
@@ -5138,7 +5358,7 @@ def training_binding(
             "weight_decay": WEIGHT_DECAY,
             "gradient_clip": GRADIENT_CLIP,
             "qat_epochs": QAT_EPOCHS,
-            "qat_learning_rate": QAT_LEARNING_RATE,
+            "qat_learning_rate": profile.qat_learning_rate,
             "qat_profile": profile.name,
             "qat_profile_contract": qat_profile_contract(profile),
         },
@@ -5295,10 +5515,15 @@ def _load_seed_receipt_from_reference(
     if (
         receipt.get("qat_profile") != profile_name
         or receipt.get("qat_profile_contract") != profile_contract
+        or settings.get("qat_learning_rate") != profile_contract["schedule"]["qat_learning_rate"]
+        or (profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE
+            and not isinstance(receipt.get("float_validation"), Mapping))
     ):
         raise TrainingError("compact seed receipt QAT profile changed")
     validate_qat_execution_evidence(
-        receipt.get("quantized_training"), expected_profile=profile_name
+        receipt.get("quantized_training"), expected_profile=profile_name,
+        **({"float_validation_reference": receipt.get("float_validation")}
+            if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else {}),
     )
     architecture_name = receipt.get("architecture")
     if architecture_name not in ARCHITECTURES:
@@ -5785,9 +6010,13 @@ def validate_selection(
     profile_contract = validate_qat_profile_contract(
         selection.get("qat_profile_contract"), expected_name=profile_name
     )
+    if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE and not isinstance(selection.get("float_validation"), Mapping):
+        raise TrainingError("compact selection frozen float validation is absent")
     validate_qat_execution_evidence(
         selection.get("qat_execution_evidence"),
         expected_profile=profile_name,
+        **({"float_validation_reference": selection.get("float_validation")}
+            if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else {}),
     )
     seed_policy = selection.get("seed_execution_policy")
     seed_workers = seed_policy.get("seed_workers") if isinstance(

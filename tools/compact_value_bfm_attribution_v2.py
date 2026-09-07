@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Freeze unprotected attribution after exactly two completed trained failures.
+"""Freeze the historical after-two or concrete after-three failure attribution.
 
 This diagnostic bridge recommends one approved intervention category. It never
-starts attempt three, changes a training recipe, or grants advancement authority.
+starts training, changes a training recipe, or grants advancement authority.
 The maintained attempt validators reproduce outcomes and their source bindings;
 only explicitly projected unprotected metrics enter the attribution decision.
 """
@@ -40,6 +40,32 @@ POLICY = {
     'live_metrics_used': False, 'transcripts_in_output': False,
     'attempt_three_authorized_by_receipt': False,
 }
+RETENTION_PROFILE = 'retention-first-low-rate-v1'
+AFTER_THREE_POLICY = {
+    **POLICY, 'schema': campaign.ID + '.after-three-attribution-policy.v2',
+    'completed_attempts': [1, 2, 3],
+    'decision_inputs': 'all-nine-completed-third-pilot-retention-verdicts;prior-attempts-context-only',
+    'priority': ['explicit-retention-first-QAT-scales-hypothesis'],
+    'third_pilot_required_status': 'offline-rejected',
+    'third_pilot_all_nine_retention_failed': True,
+    'attempt_four_authorized_by_receipt': False,
+}
+AFTER_THREE_RECOMMENDATION = {
+    'category': 'qat-and-scales', 'existing_profile_to_consider': RETENTION_PROFILE,
+    'selected_execution_profile': None, 'attempt_four_may_start': False,
+    'causal_attribution_proven': False, 'status': 'awaiting-source-bound-profile-integration',
+    'hypothesis': 'retention-first scale and epoch selection against frozen pre-QAT float validation, with quarter QAT learning rate',
+    'basis': 'all-nine-completed-refined-third-pilot-retention-failures',
+    'limits': ['This is the selected QAT/scales hypothesis, not a proven cause or an admission result.',
+               'Fresh training, accumulated exclusions and every original gate remain required.'],
+}
+
+
+def path(root, *, after_attempts=2):
+    if type(after_attempts) is not int or after_attempts not in (2, 3):
+        raise ValueError('attribution supports only the frozen after-two or after-three route')
+    name = 'two' if after_attempts == 2 else 'three'
+    return Path(root).resolve() / f'attribution/after-{name}-attempts.json'
 
 
 def number(value, *, minimum=None, maximum=None):
@@ -251,9 +277,15 @@ def recommendation(evidence):
             ]}
 
 
-def profile_menu():
+def profile_menu(*, after_attempts=2):
+    path(Path('.'), after_attempts=after_attempts)
     maintained = pilot.selection
-    return {'qat_and_scales': {name: trainer.qat_profile_contract(name) for name in trainer.QAT_PROFILES},
+    # Historical after-two receipts froze exactly this menu. New registrations
+    # must not change their substantive validation when read by a newer source.
+    profiles = (trainer.STANDARD_QAT_PROFILE, trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE)
+    if after_attempts == 3:
+        profiles += (RETENTION_PROFILE,)
+    return {'qat_and_scales': {name: trainer.qat_profile_contract(name) for name in profiles},
             'teacher_ranking': {name: maintained.pipeline.teacher_ranking_policy(name)
                                 for name in maintained.pipeline.TEACHER_RANKING_PROFILES},
             'single_search': sorted(attempts.rank4_gate_support.SEARCH_PROFILES - {'standard-v1'}),
@@ -276,8 +308,96 @@ def completed_pair(root):
     return previous
 
 
-def body(root):
-    previous = completed_pair(root)
+def completed_three(root):
+    """Reject incomplete/protected branches before invoking outcome validators."""
+    root = Path(root).resolve()
+    terminals = []
+    for attempt in (1, 2, 3):
+        full = root / 'phases' / f'attempt-{attempt:03d}-full'
+        if attempt == 3 and full.exists():
+            raise ValueError('after-three retention attribution requires an offline-rejected third pilot')
+        phase = full.name if full.exists() else f'attempt-{attempt:03d}-pilot'
+        terminal = root / 'phases' / phase / phase / ('attempt-outcome.json' if full.exists() else 'pilot-outcome.json')
+        if terminal.resolve() != terminal.absolute() or not terminal.is_file():
+            raise ValueError('three completed unsuccessful trained attempts are required before attribution')
+        terminals.append((attempt, terminal, full.exists()))
+    for attempt, terminal, full in terminals:
+        document = campaign.read(terminal)
+        if full:
+            # The terminal-outcome dispatcher may open protected/live evidence;
+            # this route accepts only the maintained unprotected full outcome.
+            if (document.get('schema') != campaign.ID + '.full-attempt-outcome.v2'
+                    or document.get('status') != 'completed-unsuccessful'
+                    or document.get('rejection_stage') not in ('full-offline', 'search', 'screen', 'confirmation', 'development')):
+                raise ValueError('after-three attribution accepts only completed unprotected failures')
+        elif (document.get('schema') != campaign.ID + '.pilot-outcome.v2'
+                or document.get('admitted') is not False or document.get('campaign_success') is not False
+                or document.get('status') not in ('offline-rejected', 'rank4-screen-rejected')
+                or attempt == 3 and document.get('status') != 'offline-rejected'):
+            raise ValueError('after-three attribution requires completed unprotected failed pilots')
+    previous = [attempts.failed_attempt(root, attempt) for attempt in (1, 2, 3)]
+    if [row['attempt'] for row in previous] != [1, 2, 3] or any(row.get('terminal_outcome') for row in previous):
+        raise ValueError('after-three attribution lost its distinct unprotected attempt identities')
+    for row, (_attempt, terminal, full) in zip(previous, terminals):
+        if (Path(row['context']).resolve() != terminal.parent.parent
+                or row['phase'] != terminal.parent.name or (row.get('stage') == 'full') is not full):
+            raise ValueError('after-three validator returned a redirected attempt context')
+    return previous
+
+
+def third_pilot_retention(root, bindings):
+    """Reproduce the narrow new-route facts from bound metadata, without forwards."""
+    root = Path(root).resolve()
+    context = root / 'phases/attempt-003-pilot'; directory = context / context.name
+    if (root / 'phases/attempt-003-full').exists() or (directory / 'rank4-screen').exists():
+        raise ValueError('retention hypothesis cannot abandon a full or spent screen branch')
+    contract = bound_document(bindings['contract'], context / 'campaign.json')
+    outcome = bound_document(bindings['outcome'], directory / 'pilot-outcome.json')
+    selection = bound_document(bindings['selection'], directory / 'model-selection.json')
+    training = bound_document(bindings['training'], directory / 'training.json')
+    refined = trainer.REFINED_ADAPTIVE_SCALES_QAT_PROFILE
+    if (contract.get('attempt') != 3 or contract.get('phase') != 'pilot'
+            or contract.get('qat_profile') != refined
+            or contract.get('qat_profile_contract') != trainer.qat_profile_contract(refined)
+            or outcome.get('schema') != campaign.ID + '.pilot-outcome.v2'
+            or outcome.get('status') != 'offline-rejected' or outcome.get('admitted') is not False
+            or outcome.get('campaign_success') is not False or outcome.get('selection') != bindings['selection']
+            or selection.get('schema') != campaign.ID + '.pilot-model-selection.v2'
+            or selection.get('status') != 'offline-rejected-before-rank4-screen'
+            or selection.get('selected') is not None or selection.get('pilot_admitted') is not False
+            or selection.get('campaign_success') is not False or selection.get('training') != bindings['training']
+            or training.get('schema') != campaign.ID + '.training.v2' or training.get('smoke') is not False
+            or training.get('mandatory_training_verified') is not True):
+        raise ValueError('third-pilot metadata does not bind the completed refined retention failure')
+    rows = training['results']
+    expected = {(weight, seed) for weight in (0, .1, .25) for seed in trainer.FIXED_SEEDS}
+    if (len(rows) != 9 or any(isinstance(row['weight'], bool) or type(row['seed']) is not int for row in rows)
+            or {(row['weight'], row['seed']) for row in rows} != expected):
+        raise ValueError('third-pilot retention attribution requires all nine distinct trained seeds')
+    seeds = []
+    for row in sorted(rows, key=lambda value: (value['weight'], value['seed'])):
+        receipt = row['seed_receipt']; projected = seed_metrics(row)
+        # Never pass unknown metric fields, protected references or transcripts
+        # to the gate; its decision uses only these two allowlisted strata.
+        frames = [{name: projected['reports'][frame][name]
+                   for name in ('common_adjudicator', 'canonical_validation')}
+                  for frame in ('float_validation', 'quantized_validation')]
+        gate = trainer.offline_advancement_gate(*frames)
+        if (receipt.get('qat_profile') != refined
+                or receipt.get('qat_profile_contract') != trainer.qat_profile_contract(refined)
+                or receipt.get('offline_gate') != gate or gate['passed'] is not False):
+            raise ValueError('all nine third-pilot retention failures must reproduce their actual gates')
+        seeds.append({**projected, 'offline_gate': gate})
+    if ([arm['lambda'] for arm in selection['arms']] != [0, .1, .25]
+            or any(arm.get('canonical_retention_passed') is not False for arm in selection['arms'])):
+        raise ValueError('third-pilot selected arms disagree with all-nine retention rejection')
+    return {'sources': {key: bindings[key] for key in ('contract', 'outcome', 'training', 'selection')},
+            'attempt': 3, 'phase': context.name, 'prior_qat_profile': refined,
+            'completed_seed_count': 9, 'retention_failed_seed_count': 9,
+            'all_nine_retention_failed': True, 'status': 'offline-rejected', 'seeds': seeds}
+
+
+def _project_attempts(previous):
     evidence = []
     for row in previous:
         phases = [phase_evidence(row['pilot'])] if row.get('stage') == 'full' else []
@@ -287,6 +407,10 @@ def body(root):
         stage = row['rejection_stage'] if row.get('stage') == 'full' else terminal['status']
         evidence.append({'attempt': row['attempt'], 'outcome': row['outcome'], 'rejection_stage': stage,
                          'completed_attempt_count': 1, 'phases': phases, 'downstream': downstream_evidence(row)})
+    return evidence
+
+
+def _producers():
     paths = {
         'driver': Path(__file__), 'attempt_validator': Path(attempts.__file__),
         'trainer': Path(trainer.__file__), 'selection': Path(pilot.selection.__file__),
@@ -296,25 +420,48 @@ def body(root):
     for name in ('full_outcome', 'full_selection', 'search', 'category_profile',
                  'opponent_suite', 'development', 'timing_instrumentation'):
         paths[name] = campaign.REPO / 'tools' / ('compact_value_bfm_' + name + '_v2.py')
-    producers = {name: campaign.record(path) for name, path in paths.items()}
-    return {'schema': campaign.ID + '.attribution.v2', 'policy': POLICY, 'producers': producers,
+    return {name: campaign.record(path) for name, path in paths.items()}
+
+
+def body(root):
+    evidence = _project_attempts(completed_pair(root))
+    return {'schema': campaign.ID + '.attribution.v2', 'policy': POLICY, 'producers': _producers(),
             'completed_unsuccessful_trained_attempts': 2, 'attempts': evidence,
             'maintained_profile_menu': profile_menu(), 'recommendation': recommendation(evidence),
             'protected_results_used': False, 'live_results_used': False,
             'new_training_started': False, 'qualification_passed': False, 'campaign_success': False}
 
 
-def produce(root):
+def body_after_three(root):
     root = Path(root).resolve()
-    if (root / 'attribution/after-two-attempts.json').exists():
-        return validate(root)
-    return campaign.seal(root / 'attribution/after-two-attempts.json', body(root))
+    previous = completed_three(root)
+    third = previous[-1]
+    bindings = {key: third[key] for key in ('outcome', 'training', 'selection')}
+    bindings['contract'] = campaign.record(Path(third['context']) / 'campaign.json')
+    facts = third_pilot_retention(root, bindings)
+    evidence = _project_attempts(previous)
+    return {'schema': campaign.ID + '.after-three-attribution.v2',
+            'policy': AFTER_THREE_POLICY, 'producers': _producers(),
+            'completed_unsuccessful_trained_attempts': 3, 'attempts': evidence,
+            'third_pilot_retention': facts,
+            'maintained_profile_menu': profile_menu(after_attempts=3),
+            'recommendation': AFTER_THREE_RECOMMENDATION,
+            'protected_results_used': False, 'live_results_used': False,
+            'new_training_started': False, 'qualification_passed': False, 'campaign_success': False}
 
 
-def validate(root):
+def produce(root, *, after_attempts=2):
     root = Path(root).resolve()
-    document = campaign.read(root / 'attribution/after-two-attempts.json')
-    expected = body(root)
+    output = path(root, after_attempts=after_attempts)
+    if output.exists():
+        return validate(root, after_attempts=after_attempts)
+    return campaign.seal(output, body(root) if after_attempts == 2 else body_after_three(root))
+
+
+def validate(root, *, after_attempts=2):
+    root = Path(root).resolve()
+    document = campaign.read(path(root, after_attempts=after_attempts))
+    expected = body(root) if after_attempts == 2 else body_after_three(root)
     if set(document['producers']) != set(expected['producers']):
         raise ValueError('attribution source closure is incomplete')
     for record in document['producers'].values():
@@ -331,10 +478,12 @@ def validate(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--after-attempts', type=int, choices=(2, 3), default=2)
     parser.add_argument('command', choices=('record', 'validate'))
     args = parser.parse_args()
     with campaign.lease(args.root):
-        result = produce(args.root) if args.command == 'record' else validate(args.root)
+        result = (produce(args.root, after_attempts=args.after_attempts) if args.command == 'record'
+                  else validate(args.root, after_attempts=args.after_attempts))
     print(json.dumps(result['recommendation']), flush=True)
 
 

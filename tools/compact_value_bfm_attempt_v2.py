@@ -242,11 +242,11 @@ def validate_played_exclusions(directory, outcome, bank, raw):
 
 
 def failed_pilot(root, attempt):
-    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
-        raise ValueError('only the three source-bound trained attempts are supported')
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3, 4):
+        raise ValueError('only the four source-bound trained attempts are supported')
     phase = f'attempt-{attempt:03d}-pilot'; context = root / 'phases' / phase
     contract = campaign.read(context / 'campaign.json'); parent = bound(contract['parent_campaign'], root / 'campaign.json')
-    if attempt == 3:
+    if attempt in (3, 4):
         from tools import compact_value_bfm_intervention_v2 as intervention
         intervention.expected_qat_profile(contract)
     if (contract['attempt'] != attempt or contract['phase'] != 'pilot' or contract['policy'] != campaign.POLICY
@@ -367,6 +367,13 @@ def collect_fingerprints(previous, *, expected_games=2000):
 
 def carry_failed_pilot(root, previous, destination):
     """Write only in the new context; never reopen the preceding phase receipts."""
+    if type(previous.get('attempt')) is not int or previous['attempt'] not in (1, 2, 3, 4):
+        raise ValueError('a verified source-bound failed pilot is required')
+    if previous['attempt'] == 4:
+        from tools import compact_value_bfm_intervention_v2 as intervention
+        if previous['contract'].get('attempt') != 4 or previous['contract'].get('phase') != 'pilot':
+            raise ValueError('fourth pilot carry changed its requested attempt slot')
+        intervention.expected_qat_profile(previous['contract'])
     values, screen_coverage = collect_fingerprints(previous)
     directory = destination / 'exclusions' / f'failed-attempt-{previous["attempt"]:03d}'
     artifacts = []
@@ -390,13 +397,13 @@ def carry_failed_pilot(root, previous, destination):
 def failed_attempt(root, attempt):
     """Choose the actual terminal branch; never bypass an existing full stage."""
     root = Path(root).resolve()
-    if isinstance(attempt, bool) or attempt not in (1, 2, 3):
-        raise ValueError('after three trained attempts another intervention binding is required')
+    if isinstance(attempt, bool) or attempt not in (1, 2, 3, 4):
+        raise ValueError('after four trained attempts another intervention binding is required')
     context = root / 'phases' / f'attempt-{attempt:03d}-full'
-    if attempt == 3:
-        contract_path = (context if context.exists() else root / 'phases' / 'attempt-003-pilot') / 'campaign.json'
+    if attempt in (3, 4):
+        contract_path = (context if context.exists() else root / 'phases' / f'attempt-{attempt:03d}-pilot') / 'campaign.json'
         if not contract_path.is_file():
-            raise ValueError('attempt three requires its source-bound intervention binding')
+            raise ValueError(f'attempt {attempt} requires its source-bound intervention binding')
         from tools import compact_value_bfm_intervention_v2 as intervention
         intervention.expected_qat_profile(campaign.read(contract_path))
     if context.exists():
@@ -410,6 +417,8 @@ def failed_attempt(root, attempt):
 
 
 def carry_failed_attempt(root, previous, destination):
+    if type(previous.get('attempt')) is not int or previous['attempt'] not in (1, 2, 3, 4):
+        raise ValueError('only the four source-bound trained attempts can supply carry evidence')
     if previous.get('terminal_outcome') is True:
         from tools import compact_value_bfm_terminal_outcome_v2 as terminal
         return terminal.carry_failed_terminal(root, previous, destination)
