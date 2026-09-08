@@ -1321,6 +1321,7 @@ float fast_tanh(float value) noexcept {
          (135135.0F + square * (62370.0F + square * (3150.0F + 28.0F * square)));
 }
 
+// COMPACT_RUNTIME_V1_BEGIN
 QuantizedModel::QuantizedModel(ModelDescriptor descriptor)
     : hidden_one_(descriptor.hidden_one), hidden_two_(descriptor.hidden_two),
       scale_one_(descriptor.scale_one), scale_two_(descriptor.scale_two),
@@ -1371,6 +1372,70 @@ QuantizedModel::QuantizedModel(ModelDescriptor descriptor)
     weights_[index] = static_cast<std::int8_t>(signed_value);
   }
 }
+// COMPACT_RUNTIME_V1_END
+
+
+// COMPACT_RUNTIME_V2_BEGIN
+QuantizedModel::QuantizedModel(ChannelModelDescriptor descriptor)
+    : hidden_one_(descriptor.hidden_one), hidden_two_(descriptor.hidden_two) {
+  if (descriptor.inputs != kFeatureCount || hidden_one_ != 12 || hidden_two_ != 8 ||
+      descriptor.scales_one.size() != 12 || descriptor.scales_two.size() != 8 ||
+      descriptor.scales_three.size() != 1) {
+    throw std::invalid_argument("channel model metadata");
+  }
+  for (const auto scales : {descriptor.scales_one, descriptor.scales_two,
+                            descriptor.scales_three}) {
+    for (const float scale : scales) {
+      if (!std::isfinite(scale) || scale <= 0.0F) {
+        throw std::invalid_argument("channel model scale");
+      }
+    }
+  }
+  std::copy(descriptor.scales_one.begin(), descriptor.scales_one.end(),
+            channel_scales_one_.begin());
+  std::copy(descriptor.scales_two.begin(), descriptor.scales_two.end(),
+            channel_scales_two_.begin());
+  scale_three_ = descriptor.scales_three.front();
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+  per_output_channel_ = true;
+  // COMPACT_RUNTIME_NATIVE_END
+  const std::size_t count = kFeatureCount * hidden_one_ +
+                            hidden_one_ * hidden_two_ + hidden_two_;
+  const std::vector<std::uint8_t> bytes = decode_base64(descriptor.packed_base64);
+  if (!valid_sha256(descriptor.packed_sha256) ||
+      bytes.size() != (count * 3U + 7U) / 8U) {
+    throw std::invalid_argument("model payload length");
+  }
+  payload_sha256_ = sha256_hex(bytes);
+  if (payload_sha256_ != descriptor.packed_sha256) {
+    throw std::invalid_argument("model payload hash");
+  }
+  const std::size_t tail = count * 3U % 8U;
+  if (tail != 0U && (bytes.back() >> tail) != 0U) {
+    throw std::invalid_argument("model payload padding");
+  }
+  weights_.resize(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t bit = index * 3U;
+    std::uint16_t window = bytes[bit / 8U];
+    if (bit % 8U > 5U && bit / 8U + 1U < bytes.size()) {
+      window |= static_cast<std::uint16_t>(bytes[bit / 8U + 1U]) << 8U;
+    }
+    const int code = static_cast<int>((window >> (bit % 8U)) & 7U);
+    const int signed_value = (code & 4) != 0 ? code - 8 : code;
+    if (signed_value == -4) throw std::invalid_argument("model code 100");
+    const float scale = index < kFeatureCount * 12U
+        ? channel_scales_one_[index % 12U]
+        : index < kFeatureCount * 12U + 96U
+            ? channel_scales_two_[(index - kFeatureCount * 12U) % 8U]
+            : scale_three_;
+    if (!std::isfinite(static_cast<float>(signed_value) * scale)) {
+      throw std::invalid_argument("channel effective weight");
+    }
+    weights_[index] = static_cast<std::int8_t>(signed_value);
+  }
+}
+// COMPACT_RUNTIME_V2_END
 
 void QuantizedModel::add_input(std::array<std::int32_t, 12> &first,
                                std::size_t input,
@@ -1392,6 +1457,10 @@ PreparedEvaluation QuantizedModel::prepare(
 }
 
 float QuantizedModel::finish(std::array<std::int32_t, 12> first) const noexcept {
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+  if (per_output_channel_) return finish_channels(first);
+  // COMPACT_RUNTIME_NATIVE_END
+  // COMPACT_RUNTIME_V1_BEGIN
   std::array<float, 12> activated{};
   for (std::size_t input = 0; input < hidden_one_; ++input) {
     activated[input] = first_activation(
@@ -1419,7 +1488,43 @@ float QuantizedModel::finish(std::array<std::int32_t, 12> first) const noexcept 
     output = output + term;
   }
   return fast_tanh(output);
+  // COMPACT_RUNTIME_V1_END
+  // COMPACT_RUNTIME_V2_BEGIN
+  return finish_channels(first);
+  // COMPACT_RUNTIME_V2_END
 }
+
+// COMPACT_RUNTIME_V2_BEGIN
+float QuantizedModel::finish_channels(std::array<std::int32_t, 12> first) const noexcept {
+  std::array<float, 12> activated{};
+  for (std::size_t input = 0; input < hidden_one_; ++input) {
+    activated[input] = first_activation(
+        static_cast<float>(first[input]) * channel_scales_one_[input]);
+  }
+  std::array<float, 16> second{};
+  const std::size_t offset_two = kFeatureCount * hidden_one_;
+  for (std::size_t input = 0; input < hidden_one_; ++input) {
+    for (std::size_t hidden = 0; hidden < hidden_two_; ++hidden) {
+      volatile float scaled = activated[input] * channel_scales_two_[hidden];
+      volatile float term = scaled * static_cast<float>(
+          weights_[offset_two + input * hidden_two_ + hidden]);
+      second[hidden] = second[hidden] + term;
+    }
+  }
+  for (std::size_t hidden = 0; hidden < hidden_two_; ++hidden) {
+    second[hidden] = second_activation(second[hidden]);
+  }
+  const std::size_t offset_three = offset_two + hidden_one_ * hidden_two_;
+  float output = 0.0F;
+  for (std::size_t hidden = 0; hidden < hidden_two_; ++hidden) {
+    volatile float scaled = second[hidden] * scale_three_;
+    volatile float term = scaled * static_cast<float>(
+        weights_[offset_three + hidden]);
+    output = output + term;
+  }
+  return fast_tanh(output);
+}
+// COMPACT_RUNTIME_V2_END
 
 float QuantizedModel::evaluate(const SparseFeatures &features) const noexcept {
   return finish(prepare(features).first);
@@ -1448,10 +1553,27 @@ float QuantizedModel::evaluate_delta(
 }
 
 const QuantizedModel &deployment_model() {
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+#ifndef COMPACT_VALUE_BFM_CHANNEL_MODEL_V2
+  // COMPACT_RUNTIME_NATIVE_END
+  // COMPACT_RUNTIME_V1_BEGIN
   static const QuantizedModel instance(ModelDescriptor{
       model::kInputs, model::kHiddenOne, model::kHiddenTwo,
       model::kScaleOne, model::kScaleTwo, model::kScaleThree,
       model::kPackedWeights, model::kPayloadSha256, model::kBootstrapZero});
+  // COMPACT_RUNTIME_V1_END
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+#else
+  // COMPACT_RUNTIME_NATIVE_END
+  // COMPACT_RUNTIME_V2_BEGIN
+  static const QuantizedModel instance(ChannelModelDescriptor{
+      model::kInputs, model::kHiddenOne, model::kHiddenTwo,
+      model::kScaleOne, model::kScaleTwo, model::kScaleThree,
+      model::kPackedWeights, model::kPayloadSha256});
+  // COMPACT_RUNTIME_V2_END
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+#endif
+  // COMPACT_RUNTIME_NATIVE_END
   return instance;
 }
 

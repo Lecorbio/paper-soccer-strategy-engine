@@ -10,6 +10,8 @@ namespace papersoccer::compact_value_bfm_runtime {
 
 inline constexpr const char *kRuntimeSchema =
     "papersoccer.compact-value-bfm-runtime.v1";
+inline constexpr const char *kChannelRuntimeSchema =
+    "papersoccer.compact-value-bfm-runtime.v2";
 inline constexpr const char *kFeatureSchema =
     "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"
     "mover-relative-rotate180:true-turn-distance+free-degree";
@@ -23,6 +25,9 @@ struct Identity {
   std::string architecture;
   std::string arm;
   std::uint64_t seed{};
+  std::string runtime_schema;
+  std::string qat_profile;
+  std::string qat_evidence_sha256;
 };
 
 struct LoadedRuntime {

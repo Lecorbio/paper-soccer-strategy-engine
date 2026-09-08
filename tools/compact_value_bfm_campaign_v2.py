@@ -795,7 +795,9 @@ def train_models(root,phase,*,smoke=False,ranking_weights=(0.0,.10,.25),qat_prof
                     raise ValueError('all three master tensors must have finite nonzero trained updates')
                 runtime=directory/receipt['quantized_runtime']['path']
                 arch,quantized,_,_=trainer.load_runtime(runtime)
-                initial_codes=trainer.quantize_fixed(params,arch,quantized.scales)
+                quantize_initial=(trainer.quantize_channels if isinstance(quantized,trainer.ChannelQuantizedWeights)
+                                  else trainer.quantize_fixed)
+                initial_codes=quantize_initial(params,arch,quantized.scales)
                 changes=trainer._quantized_update_evidence(initial_codes,quantized)
                 if not any(r['changed_codes'] for r in changes.values()): raise ValueError('export matches quantized initialization')
                 output=directory/f'seed-{receipt["seed"]}.cpp'

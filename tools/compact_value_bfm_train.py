@@ -23,6 +23,7 @@ import base64
 import binascii
 import concurrent.futures
 import contextlib
+import copy
 import dataclasses
 import hashlib
 import io
@@ -36,6 +37,7 @@ import tempfile
 import weakref
 import zipfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any
 
 # Numerical runtimes commonly snapshot these values when NumPy is imported.
@@ -99,6 +101,7 @@ SUCCESSOR_LABEL_SCHEMA = (
 SUCCESSOR_STORE_SCHEMA = "papersoccer.compact-value-bfm-ranking-store.v2"
 INPUT_AUDIT_SCHEMA = "papersoccer.compact-value-bfm-input-audit.v1"
 RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v1"
+CHANNEL_RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v2"
 SEED_RECEIPT_SCHEMA = "papersoccer.compact-value-bfm-seed-receipt.v1"
 SEED_REFERENCE_SCHEMA = "papersoccer.compact-value-bfm-seed-reference.v1"
 SELECTION_SCHEMA = "papersoccer.compact-value-bfm-selection.v1"
@@ -162,6 +165,8 @@ NATIVE_THREAD_EXECUTION_SCHEMA = (
 STANDARD_QAT_PROFILE = "standard-v1"
 REFINED_ADAPTIVE_SCALES_QAT_PROFILE = "refined-adaptive-scales-v1"
 RETENTION_FIRST_LOW_RATE_QAT_PROFILE = "retention-first-low-rate-v1"
+CHANNEL_PREDICTION_QAT_PROFILE = "channel-prediction-qat-v1"
+CHANNEL_SCALE_COUNTS = {"w1": 12, "w2": 8, "w3": 1}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -233,6 +238,17 @@ QAT_PROFILES = {
         adapt_scales_after_each_epoch=True,
         adaptive_quantile_names=("p900", "p975", "p995", "p998"),
         adaptive_coordinate_passes=1,
+        qat_learning_rate=0.0000625,
+    ),
+    CHANNEL_PREDICTION_QAT_PROFILE: QATProfile(
+        name=CHANNEL_PREDICTION_QAT_PROFILE,
+        scale_quantiles=REFINED_SCALE_QUANTILES,
+        coordinate_search_passes=2,
+        local_refinement_multipliers=(),
+        local_refinement_passes=0,
+        adapt_scales_after_each_epoch=True,
+        adaptive_quantile_names=(),
+        adaptive_coordinate_passes=2,
         qat_learning_rate=0.0000625,
     ),
 }
@@ -516,7 +532,7 @@ def resolve_qat_profile(value: str | QATProfile) -> QATProfile:
     if not isinstance(value, str) or value not in QAT_PROFILES:
         raise TrainingError(
             "QAT profile must be standard-v1, refined-adaptive-scales-v1 "
-            "or retention-first-low-rate-v1"
+            "or retention-first-low-rate-v1 or channel-prediction-qat-v1"
         )
     return QAT_PROFILES[value]
 
@@ -525,6 +541,8 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
     """Build the exact body-hashed recipe sealed into plans and receipts."""
 
     profile = resolve_qat_profile(value)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
+        return _channel_qat_profile_contract()
     body = {
         "schema": QAT_PROFILE_SCHEMA,
         "qat_profile": profile.name,
@@ -1673,6 +1691,92 @@ class QuantizedWeights:
         }
 
 
+@dataclasses.dataclass(frozen=True)
+class ChannelQuantizedWeights:
+    """Explicit v2 output-channel scales; legacy scalar descriptors stay v1."""
+
+    integer: Mapping[str, np.ndarray]
+    scales: Mapping[str, np.ndarray]
+
+    def __post_init__(self):
+        if set(self.integer) != set(CHANNEL_SCALE_COUNTS) or set(self.scales) != set(CHANNEL_SCALE_COUNTS):
+            raise TrainingError("channel quantization tensor roster changed")
+        architecture = ARCHITECTURES["capacity-12x8"]
+        codes, scales = {}, {}
+        for name, count in CHANNEL_SCALE_COUNTS.items():
+            code, scale = np.asarray(self.integer[name]), np.asarray(self.scales[name])
+            if code.dtype != np.dtype("int8") or code.shape != architecture.shapes[name] or np.any(code < -3) or np.any(code > 3):
+                raise TrainingError("channel quantization code dtype/shape/range changed")
+            if scale.dtype != np.dtype("float32") or scale.shape != (count,) or not np.all(np.isfinite(scale)) or np.any(scale <= 0):
+                raise TrainingError("channel scale dtype/shape/value changed")
+            codes[name], scales[name] = code.copy(), scale.copy()
+            codes[name].flags.writeable = False; scales[name].flags.writeable = False
+        object.__setattr__(self, "integer", MappingProxyType(codes)); object.__setattr__(self, "scales", MappingProxyType(scales))
+        if not all(np.all(np.isfinite(value)) for value in self.effective().values()):
+            raise TrainingError("channel effective weights are nonfinite")
+
+    def effective(self):
+        return {name: self.integer[name].astype(np.float32) * self.scales[name] for name in CHANNEL_SCALE_COUNTS}
+
+
+def _normalize_channel_scales(scales, *, canonical=False):
+    if not isinstance(scales, Mapping) or set(scales) != set(CHANNEL_SCALE_COUNTS):
+        raise TrainingError("channel scales are incomplete")
+    result = {}
+    for name, count in CHANNEL_SCALE_COUNTS.items():
+        values = scales[name]
+        if not isinstance(values, (list, tuple, np.ndarray)) or np.asarray(values).shape != (count,):
+            raise TrainingError("channel scale axis/count changed")
+        if any(isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)) for value in values):
+            raise TrainingError("channel scale is not numeric")
+        with np.errstate(over="ignore", invalid="ignore"):
+            array = np.asarray(values, dtype=np.float32)
+        if not np.all(np.isfinite(array)) or np.any(array <= 0):
+            raise TrainingError("channel scales must be finite positive float32")
+        if canonical and any(float(a) != float(b) for a, b in zip(array, values, strict=True)):
+            raise TrainingError("channel scale is not canonical float32")
+        result[name] = array.copy()
+    return result
+
+
+def quantize_channels(parameters, architecture, scales):
+    if architecture.name != "capacity-12x8":
+        raise TrainingError("channel quantization requires capacity-12x8")
+    parameters = _validate_parameters(parameters, architecture)
+    scales = _normalize_channel_scales(scales)
+    with np.errstate(over="ignore"):
+        integer = {name: np.clip(np.rint(parameters[name] / scales[name]), -3, 3).astype(np.int8) for name in CHANNEL_SCALE_COUNTS}
+    return ChannelQuantizedWeights(integer, scales)
+
+
+def _channel_scale_document(value):
+    scales = value.scales if isinstance(value, ChannelQuantizedWeights) else _normalize_channel_scales(value, canonical=True)
+    return {name: [float(scale) for scale in scales[name]] for name in CHANNEL_SCALE_COUNTS}
+
+
+def scalar_channel_quantized_forward(quantized, architecture, active):
+    if not isinstance(quantized, ChannelQuantizedWeights) or architecture.name != "capacity-12x8":
+        raise TrainingError("channel scalar inference requires its v2 descriptor")
+    indices = np.asarray(active, dtype=np.uint16)
+    first = np.empty(12, dtype=np.float32)
+    for output in range(12):
+        accumulator = sum(int(quantized.integer["w1"][int(index), output]) for index in indices)
+        value = np.float32(np.int32(accumulator) * quantized.scales["w1"][output])
+        first[output] = np.float32(value * value) if value >= 0 else np.float32(LEAKY_SLOPE * value)
+    second = np.empty(8, dtype=np.float32)
+    for output in range(8):
+        total = np.float32(0)
+        for hidden in range(12):
+            term = np.float32(np.float32(first[hidden] * quantized.scales["w2"][output]) * np.float32(quantized.integer["w2"][hidden, output]))
+            total = np.float32(total + term)
+        second[output] = total if total >= 0 else np.float32(LEAKY_SLOPE * total)
+    total = np.float32(0)
+    for hidden in range(8):
+        term = np.float32(np.float32(second[hidden] * quantized.scales["w3"][0]) * np.float32(quantized.integer["w3"][hidden]))
+        total = np.float32(total + term)
+    return _fast_tanh_scalar(total)
+
+
 def quantize_fixed(
     parameters: Mapping[str, np.ndarray],
     architecture: Architecture,
@@ -1793,6 +1897,8 @@ def scalar_quantized_forward(
 ) -> np.float32:
     """Scalar float32 deployment order with W1 integer accumulation once."""
 
+    if isinstance(quantized, ChannelQuantizedWeights):
+        return scalar_channel_quantized_forward(quantized, architecture, active)
     indices = np.asarray(active, dtype=np.uint16)
     q1 = quantized.integer["w1"]
     q2 = quantized.integer["w2"]
@@ -1898,6 +2004,197 @@ def _flatten_quantized(
     return np.concatenate(pieces).astype(np.int8, copy=False)
 
 
+def _channel_runtime_document(
+    architecture: Architecture,
+    quantized: ChannelQuantizedWeights,
+    *,
+    arm: Arm | str,
+    seed: int,
+    float_epoch: int,
+    qat_epoch: int,
+    source_bundle_body_sha256: str,
+    qat_profile: str,
+    qat_evidence_sha256: str,
+) -> dict[str, object]:
+    if (architecture.name != "capacity-12x8" or qat_profile != CHANNEL_PREDICTION_QAT_PROFILE
+            or not valid_sha256(qat_evidence_sha256) or type(float_epoch) is not int or float_epoch != 1
+            or type(seed) is not int or seed not in FIXED_SEEDS or type(qat_epoch) is not int or not 0 <= qat_epoch <= QAT_EPOCHS):
+        raise TrainingError("v2 runtime lost its channel profile/training evidence")
+    quantized = ChannelQuantizedWeights(quantized.integer, quantized.scales)
+    if isinstance(arm, str):
+        try:
+            arm = ARMS[arm]
+        except KeyError as error:
+            raise TrainingError("unknown runtime arm") from error
+    flat = _flatten_quantized(quantized, architecture)
+    packed = pack_signed_three_bit(flat)
+    counts = architecture.weight_counts
+    expected_bytes = (counts["total"] * QUANTIZATION_BITS + 7) // 8
+    if len(packed) != expected_bytes:
+        raise TrainingError("internal packed runtime length mismatch")
+    scales = _channel_scale_document(quantized)
+    body: dict[str, object] = {
+        "schema": CHANNEL_RUNTIME_SCHEMA,
+        "feature_schema": FEATURE_SCHEMA,
+        "architecture": {
+            "name": architecture.name,
+            "dimensions": list(architecture.dimensions),
+            "biases": False,
+            "activations": list(ACTIVATIONS),
+            "payload_layout": PAYLOAD_LAYOUT,
+        },
+        "quantization": {
+            "bits": QUANTIZATION_BITS,
+            "minimum": QUANTIZATION_MINIMUM,
+            "maximum": QUANTIZATION_MAXIMUM,
+            "scheme": "symmetric-signed-three-bit-per-output-channel-fixed-scale",
+            "granularity": "per-output-channel",
+            "scale_axis": "output",
+            "scale_counts": dict(CHANNEL_SCALE_COUNTS),
+            "packing": PACKING,
+            "scales": scales,
+            "weight_counts": counts,
+            "packed_byte_count": len(packed),
+            "payload_sha256": sha256_bytes(packed),
+            "payload_base64": base64.b64encode(packed).decode("ascii"),
+        },
+        "selection": {
+            "qat_profile": qat_profile,
+            "qat_evidence_sha256": qat_evidence_sha256,
+            "arm": arm.name,
+            "seed": seed,
+            "float_epoch": float_epoch,
+            "qat_epoch": qat_epoch,
+            "source_bundle_body_sha256": source_bundle_body_sha256,
+        },
+    }
+    return body_hashed(body)
+
+
+def _validate_channel_runtime_document(
+    value: Mapping[str, object],
+) -> tuple[Architecture, QuantizedWeights, dict[str, object]]:
+    verify_body_hash(value, schema=CHANNEL_RUNTIME_SCHEMA, label="compact runtime")
+    if set(value) != {
+        "schema",
+        "feature_schema",
+        "architecture",
+        "quantization",
+        "selection",
+        "body_sha256",
+    } or value.get("feature_schema") != FEATURE_SCHEMA:
+        raise TrainingError("compact runtime feature schema changed")
+    architecture_value = value.get("architecture")
+    if not isinstance(architecture_value, dict):
+        raise TrainingError("compact runtime architecture is missing")
+    name = architecture_value.get("name")
+    if not isinstance(name, str) or name not in ARCHITECTURES:
+        raise TrainingError("compact runtime architecture name is invalid")
+    architecture = ARCHITECTURES[name]
+    if name != "capacity-12x8":
+        raise TrainingError("v2 runtime requires capacity-12x8")
+    if (architecture_value.get("biases") is not False
+            or not isinstance(architecture_value.get("dimensions"), list)
+            or any(type(value) is not int for value in architecture_value["dimensions"])):
+        raise TrainingError("v2 architecture dimensions/bias flag have wrong types")
+    if architecture_value != {
+        "name": architecture.name,
+        "dimensions": list(architecture.dimensions),
+        "biases": False,
+        "activations": list(ACTIVATIONS),
+        "payload_layout": PAYLOAD_LAYOUT,
+    }:
+        raise TrainingError("compact runtime architecture contract changed")
+    quantization = value.get("quantization")
+    if not isinstance(quantization, dict):
+        raise TrainingError("compact runtime quantization is missing")
+    if set(quantization) != {
+        "bits",
+        "minimum",
+        "maximum",
+        "scheme",
+        "packing",
+        "scales",
+        "granularity", "scale_axis", "scale_counts",
+        "weight_counts",
+        "packed_byte_count",
+        "payload_sha256",
+        "payload_base64",
+    }:
+        raise TrainingError("compact runtime quantization fields changed")
+    if (any(type(quantization.get(key)) is not int for key in ("bits", "minimum", "maximum", "packed_byte_count"))
+            or not isinstance(quantization.get("scale_counts"), dict)
+            or any(type(value) is not int for value in quantization["scale_counts"].values())
+            or not isinstance(quantization.get("weight_counts"), dict)
+            or any(type(value) is not int for value in quantization["weight_counts"].values())):
+        raise TrainingError("v2 quantization counts must be exact integers")
+    expected_static = {
+        "bits": QUANTIZATION_BITS,
+        "minimum": QUANTIZATION_MINIMUM,
+        "maximum": QUANTIZATION_MAXIMUM,
+        "scheme": "symmetric-signed-three-bit-per-output-channel-fixed-scale",
+        "granularity": "per-output-channel",
+        "scale_axis": "output",
+        "scale_counts": dict(CHANNEL_SCALE_COUNTS),
+        "packing": PACKING,
+        "weight_counts": architecture.weight_counts,
+    }
+    if any(quantization.get(key) != expected for key, expected in expected_static.items()):
+        raise TrainingError("compact runtime quantization contract changed")
+    scales = _normalize_channel_scales(quantization.get("scales"), canonical=True)
+    encoded = quantization.get("payload_base64")
+    if not isinstance(encoded, str) or not encoded.isascii():
+        raise TrainingError("compact runtime payload is not ASCII base64")
+    try:
+        packed = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise TrainingError("compact runtime payload base64 is invalid") from error
+    total = architecture.weight_counts["total"]
+    expected_bytes = (total * QUANTIZATION_BITS + 7) // 8
+    if (
+        quantization.get("packed_byte_count") != expected_bytes
+        or len(packed) != expected_bytes
+        or quantization.get("payload_sha256") != sha256_bytes(packed)
+    ):
+        raise TrainingError("compact runtime payload length or hash changed")
+    flat = unpack_signed_three_bit(packed, total)
+    integer: dict[str, np.ndarray] = {}
+    offset = 0
+    for tensor in ("w1", "w2", "w3"):
+        count = architecture.weight_counts[tensor]
+        integer[tensor] = flat[offset : offset + count].reshape(
+            architecture.shapes[tensor], order="C"
+        ).copy()
+        offset += count
+    selection = value.get("selection")
+    if (
+        not isinstance(selection, dict)
+        or set(selection) != {
+            "arm", "qat_profile", "qat_evidence_sha256",
+            "seed",
+            "float_epoch",
+            "qat_epoch",
+            "source_bundle_body_sha256",
+        }
+        or selection.get("qat_profile") != CHANNEL_PREDICTION_QAT_PROFILE
+        or not valid_sha256(selection.get("qat_evidence_sha256"))
+        or selection.get("float_epoch") != 1
+        or type(selection.get("seed")) is not int
+        or selection.get("arm") not in ARMS
+        or selection.get("seed") not in FIXED_SEEDS
+        or isinstance(selection.get("float_epoch"), bool)
+        or not isinstance(selection.get("float_epoch"), int)
+        or not 1 <= selection["float_epoch"] <= MAX_FLOAT_EPOCHS
+        or isinstance(selection.get("qat_epoch"), bool)
+        or not isinstance(selection.get("qat_epoch"), int)
+        or not 0 <= selection["qat_epoch"] <= QAT_EPOCHS
+        or not valid_sha256(selection.get("source_bundle_body_sha256"))
+    ):
+        raise TrainingError("compact runtime selection binding is invalid")
+    return architecture, ChannelQuantizedWeights(integer, scales), dict(selection)
+
+
+
 def runtime_document(
     architecture: Architecture,
     quantized: QuantizedWeights,
@@ -1907,7 +2204,15 @@ def runtime_document(
     float_epoch: int,
     qat_epoch: int,
     source_bundle_body_sha256: str,
+    qat_profile: str | None = None,
+    qat_evidence_sha256: str | None = None,
 ) -> dict[str, object]:
+    if isinstance(quantized, ChannelQuantizedWeights):
+        return _channel_runtime_document(architecture, quantized, arm=arm, seed=seed, float_epoch=float_epoch,
+            qat_epoch=qat_epoch, source_bundle_body_sha256=source_bundle_body_sha256,
+            qat_profile=qat_profile, qat_evidence_sha256=qat_evidence_sha256)
+    if qat_profile is not None or qat_evidence_sha256 is not None:
+        raise TrainingError("v1 scalar runtime cannot carry v2 channel evidence")
     if isinstance(arm, str):
         try:
             arm = ARMS[arm]
@@ -1961,6 +2266,8 @@ def runtime_document(
 def validate_runtime_document(
     value: Mapping[str, object],
 ) -> tuple[Architecture, QuantizedWeights, dict[str, object]]:
+    if isinstance(value, Mapping) and value.get("schema") == CHANNEL_RUNTIME_SCHEMA:
+        return _validate_channel_runtime_document(value)
     verify_body_hash(value, schema=RUNTIME_SCHEMA, label="compact runtime")
     if set(value) != {
         "schema",
@@ -3338,6 +3645,7 @@ def _train_mixed_batch(
     anchor_rows: np.ndarray,
     *,
     fixed_scales: Mapping[str, object] | None = None,
+    quantization_granularity: str = "per-layer",
     ranking_group: CompleteTurnGroup | None = None,
     ranking_groups: Sequence[CompleteTurnGroup] | None = None,
     ranking_weight: float = 0.0,
@@ -3368,10 +3676,12 @@ def _train_mixed_batch(
             inputs.new.teacher_predictions[new_rows],
             inputs.anchor.teacher_predictions[anchor_rows],
         )).astype(np.float32, copy=False)
+    if quantization_granularity not in {"per-layer", "per-output-channel"}:
+        raise TrainingError("unknown training quantization granularity")
     quantized = (
-        quantize_fixed(parameters, architecture, fixed_scales)
-        if fixed_scales is not None
-        else None
+        (quantize_channels(parameters, architecture, fixed_scales)
+         if quantization_granularity == "per-output-channel" else quantize_fixed(parameters, architecture, fixed_scales))
+        if fixed_scales is not None else None
     )
     ranking_weight = _ranking_weight(ranking_weight)
     if ranking_group is not None and ranking_groups is not None:
@@ -3852,7 +4162,7 @@ class _FrozenRetentionReference:
 
 
 def _retention_reference(profile, value):
-    if profile.name != RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+    if profile.name not in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE):
         if value is not None:
             raise TrainingError("float retention reference requires retention-first QAT")
         return None
@@ -3931,7 +4241,7 @@ def _qat_validation_key(
         ) from error
     if any(not math.isfinite(value) for value in result):
         raise TrainingError("refined adaptive QAT ranking metrics are nonfinite")
-    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE):
         reference = _retention_reference(profile, float_validation_reference)
         return (*_retention_violation_key(report, reference), *result)
     return result
@@ -4222,6 +4532,254 @@ def train_float_seed(
     )
 
 
+CHANNEL_QAT_EXECUTION_SCHEMA = "papersoccer.compact-value-bfm-channel-qat-execution.v1"
+CHANNEL_FIXTURE_POLICY = {
+    "new_rows": 1024, "anchor_rows": 3072, "rows": 4096,
+    "generator": "PCG64", "seed": 20260908, "replace": False,
+    "draw_order": ["new", "anchor"], "within_pool_order": "ascending",
+    "fixture_order": ["new", "anchor"], "labels_used_for_calibration": False,
+}
+CHANNEL_CALIBRATION_POLICY = {
+    "sweeps": 2, "coordinate_events": 42,
+    "order": "w1-output0..11,w2-output0..7,w3-output0",
+    "candidates": "incumbent-first;current-master-robust14-lower-rank-quantiles;maxabs-div3;exact-float32-dedup",
+    "objective": "sum(float64(weights)*(float64(candidate)-float64(frozen-pre-QAT-float))**2)/sum(float64(weights))",
+    "tie_break": "first-incumbent-on-exact-tie", "updates": "greedy-immediate",
+    "early_stop": False, "epsilon": None, "batch_size": 4096,
+    "maximum_prediction_rows": 672, "prediction_dtype": "little-endian-float32",
+    "evidence": "streamed-memory-mapped-candidate-matrix;unused-rows-zero",
+    "maximum_prediction_payload_bytes": 11010048,
+    "heldout_used_for_calibration": False,
+    "replay_limit": "artifact replay verifies objectives, choices and code states; inference replay is separate",
+}
+
+
+def _channel_qat_profile_contract():
+    retention = qat_profile_contract(RETENTION_FIRST_LOW_RATE_QAT_PROFILE)["scale_selection"]["retention_policy"]
+    return body_hashed({
+        "schema": "papersoccer.compact-value-bfm-qat-profile.v2",
+        "qat_profile": CHANNEL_PREDICTION_QAT_PROFILE,
+        "quantization": {"bits": 3, "minimum": -3, "maximum": 3,
+            "scheme": "symmetric-signed-three-bit-per-output-channel-fixed-scale",
+            "granularity": "per-output-channel", "scale_axis": "output", "scale_counts": dict(CHANNEL_SCALE_COUNTS),
+            "runtime_schema": CHANNEL_RUNTIME_SCHEMA, "fake_quantized_layers": ["w1", "w2", "w3"],
+            "straight_through_master_weights": True},
+        "schedule": {"float_warmup_epochs": 1, "float_warmup_learning_rate": RANKING_FLOAT_LEARNING_RATE,
+            "qat_epochs": 4, "qat_learning_rate": .0000625, "all_layers_trainable_each_qat_epoch": True},
+        "training_fixture": copy.deepcopy(CHANNEL_FIXTURE_POLICY),
+        "scale_selection": {"lower_rank_quantiles": [{"name": n, "numerator": a, "denominator": b} for n, a, b in REFINED_SCALE_QUANTILES],
+            "initialization": "per-output-weight-MSE-projection;float32-effective-weights;float64-MSE;first-candidate-ties",
+            "all_zero_scale": 1., "positive_underflow_scale": "smallest-positive-float32",
+            "initial_calibration": copy.deepcopy(CHANNEL_CALIBRATION_POLICY),
+            "after_each_qat_epoch": copy.deepcopy(CHANNEL_CALIBRATION_POLICY),
+            "target_reference": "frozen-pre-QAT-float-predictions-on-fixed-training-fixture",
+            "current_master_codes_recomputed_for_every_candidate": True},
+        "epoch_selection": {"validation_objective": "retention-feasibility-then-normalized-violation-sum-then-refined-ranking-key",
+            "retention_policy": retention, "exact_ties": "earlier-trained-epoch", "pre-QAT-selectable": False},
+    })
+
+
+class _ChannelTrainingFixture:
+    __slots__ = ("indptr", "indices", "weights")
+
+    def __init__(self, active, weights):
+        self.indptr = np.zeros(len(active) + 1, dtype="<i8")
+        self.indptr[1:] = np.cumsum([len(row) for row in active], dtype=np.int64)
+        self.indices = np.concatenate(active).astype("<u2", copy=True)
+        self.weights = np.asarray(weights, dtype="<f4").copy()
+        if self.weights.shape != (4096,) or not np.all(np.isfinite(self.weights)) or np.any(self.weights <= 0):
+            raise TrainingError("channel fixture requires4096 positive finite training weights")
+        for array in (self.indptr, self.indices, self.weights): array.flags.writeable = False
+
+    def __len__(self): return len(self.weights)
+
+    def active_rows(self, rows):
+        return tuple(self.indices[self.indptr[i]:self.indptr[i + 1]] for i in rows)
+
+
+def _channel_sample_indices(new_count, anchor_count):
+    if type(new_count) is not int or type(anchor_count) is not int or new_count < 1024 or anchor_count < 3072:
+        raise TrainingError("channel calibration requires1024new and3072filtered-anchor training rows")
+    generator = np.random.Generator(np.random.PCG64(20260908))
+    return {"new": np.sort(generator.choice(new_count, 1024, replace=False)).astype("<i8"),
+            "anchor": np.sort(generator.choice(anchor_count, 3072, replace=False)).astype("<i8")}
+
+
+def _channel_artifact(path):
+    path = pathlib.Path(path).resolve()
+    return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
+
+
+def _channel_read_artifact(value, suffix):
+    if not isinstance(value, Mapping) or set(value) != {"path", "sha256", "bytes"} or not valid_sha256(value["sha256"]):
+        raise TrainingError("channel calibration artifact binding is malformed")
+    path = pathlib.Path(value["path"])
+    _reject_path_markers(path, "channel calibration artifact")
+    if path.resolve() != path or not path.is_file() or path.name != value["sha256"] + suffix or _channel_artifact(path) != dict(value):
+        raise TrainingError("channel calibration artifact path/bytes changed")
+    return path
+
+
+def _channel_fixture(inputs, directory):
+    # Only the two already audited training datasets are touched here. The
+    # returned object has no labels, Dataset references or held-out attributes.
+    if inputs.new.split != "train" or inputs.anchor.split != "train":
+        raise TrainingError("channel calibration fixture crossed training splits")
+    indices = _channel_sample_indices(len(inputs.new), len(inputs.anchor))
+    fixture = _ChannelTrainingFixture((*inputs.new.active_rows(indices["new"]), *inputs.anchor.active_rows(indices["anchor"])),
+        np.concatenate((inputs.new.weights[indices["new"]], inputs.anchor.weights[indices["anchor"]])))
+    identity = body_hashed({"schema": "papersoccer.compact-value-bfm-channel-fixture.v1", "policy": copy.deepcopy(CHANNEL_FIXTURE_POLICY),
+        "datasets": {"new": dataset_identity(inputs.new), "anchor": dataset_identity(inputs.anchor)},
+        "sampled_indices": {name: list(map(int, values)) for name, values in indices.items()},
+        "arrays": {name: _array_identity(getattr(fixture, name)) for name in ("indptr", "indices", "weights")}})
+    buffer = io.BytesIO()
+    np.savez(buffer, indptr=fixture.indptr, indices=fixture.indices, weights=fixture.weights,
+             new_indices=indices["new"], anchor_indices=indices["anchor"])
+    artifact = _write_content_addressed(directory, buffer.getvalue(), ".channel-fixture.npz")
+    return fixture, {"identity": identity, "artifact": _channel_artifact(artifact)}
+
+
+def _channel_prediction_reference(parameters, architecture, fixture, fixture_document, directory):
+    fixture_arrays = {name: _array_identity(getattr(fixture, name)) for name in ("indptr", "indices", "weights")}
+    if fixture_arrays != fixture_document["identity"]["arrays"]:
+        raise TrainingError("channel reference fixture differs from its audited identity")
+    prediction = predict_dataset(parameters, architecture, fixture, batch_size=4096)
+    prediction.flags.writeable = False
+    path = _write_content_addressed(directory, _array_npy_bytes(prediction), ".channel-reference.npy")
+    document = body_hashed({"schema": "papersoccer.compact-value-bfm-channel-prediction-reference.v1",
+        "fixture_identity_sha256": fixture_document["identity"]["body_sha256"],
+        "fixture_array_sha256": fixture_arrays,
+        "pre_qat_parameters": _parameter_identity(parameters, architecture),
+        "prediction_array_sha256": _array_identity(prediction), "prediction": _channel_artifact(path),
+        "frozen_across_initial_and_four_epoch_calibrations": True})
+    return prediction, document
+
+
+def _channel_candidates(values):
+    result = []
+    for scale in (*robust_scale_candidates(values, quantiles=REFINED_SCALE_QUANTILES), np.float32(float(np.max(np.abs(values))) / 3)):
+        if np.isfinite(scale) and scale > 0 and all(scale != prior for prior in result): result.append(np.float32(scale))
+    if not result: result = [np.nextafter(np.float32(0), np.float32(1)) if np.any(values != 0) else np.float32(1)]
+    return tuple(result)
+
+
+def _channel_coordinate_candidates(values, incumbent):
+    result = []
+    for scale in (np.float32(incumbent), *_channel_candidates(values)):
+        if all(scale != previous for previous in result): result.append(scale)
+    return tuple(result)
+
+
+def _channel_weight_projection(parameters, architecture):
+    parameters = _validate_parameters(parameters, architecture); scales = {}; reports = []
+    for name, count in CHANNEL_SCALE_COUNTS.items():
+        scales[name] = np.empty(count, dtype=np.float32)
+        for channel in range(count):
+            values = parameters[name] if name == "w3" else parameters[name][:, channel]
+            trials = []
+            for ordinal, scale in enumerate(_channel_candidates(values)):
+                with np.errstate(over="ignore"):
+                    codes = np.clip(np.rint(values / scale), -3, 3).astype(np.int8)
+                    effective = codes.astype(np.float32) * scale
+                delta = values.astype(np.float64) - effective.astype(np.float64)
+                error = float(np.mean(delta * delta, dtype=np.float64))
+                if not math.isfinite(error): raise TrainingError("channel weight projection error is nonfinite")
+                trials.append({"ordinal": ordinal, "scale": float(scale), "weight_mse": error})
+            selected = min(trials, key=lambda row: (row["weight_mse"], row["ordinal"]))
+            scales[name][channel] = np.float32(selected["scale"])
+            reports.append({"layer": name, "channel": channel, "trials": trials, "selected_ordinal": selected["ordinal"]})
+    return quantize_channels(parameters, architecture, scales), reports
+
+
+def _channel_prediction_objective(candidate, reference, weights):
+    if (candidate.dtype != np.dtype("float32") or reference.dtype != np.dtype("float32")
+            or candidate.shape != (4096,) or reference.shape != candidate.shape or weights.shape != candidate.shape
+            or not np.all(np.isfinite(candidate)) or not np.all(np.isfinite(reference))
+            or not np.all(np.isfinite(weights)) or np.any(weights <= 0)):
+        raise TrainingError("channel prediction objective requires finite4096-row evidence")
+    delta = candidate.astype(np.float64) - reference.astype(np.float64); weight = weights.astype(np.float64)
+    result = float(np.sum(weight * (delta * delta), dtype=np.float64) / np.sum(weight, dtype=np.float64))
+    if not math.isfinite(result): raise TrainingError("channel prediction objective is nonfinite")
+    return result
+
+
+class _ChannelPredictionWriter:
+    """Bounded disk matrix; no list of candidate prediction tensors is kept."""
+    def __init__(self, directory):
+        self.directory = pathlib.Path(directory); self.directory.mkdir(parents=True, exist_ok=True)
+        file = tempfile.NamedTemporaryFile(dir=self.directory, prefix=".channel-", suffix=".npy", delete=False)
+        self.path = pathlib.Path(file.name); file.close()
+        self.matrix = np.lib.format.open_memmap(self.path, mode="w+", dtype="<f4", shape=(672, 4096))
+        self.matrix[:] = 0; self.rows = 0
+
+    def append(self, prediction):
+        if self.rows >= 672 or prediction.shape != (4096,) or prediction.dtype != np.dtype("float32"):
+            raise TrainingError("channel prediction audit exceeded its fixed bound")
+        self.matrix[self.rows] = prediction; self.rows += 1
+        return self.rows - 1
+
+    def finish(self):
+        self.matrix.flush(); self.matrix._mmap.close(); self.matrix = None
+        digest = sha256_file(self.path); target = self.directory / (digest + ".channel-predictions.npy")
+        os.chmod(self.path, 0o444)
+        try: os.link(self.path, target)
+        except FileExistsError:
+            if sha256_file(target) != digest: raise TrainingError("channel prediction artifact collision")
+        self.path.unlink()
+        return _channel_artifact(target)
+
+    def close(self):
+        if self.matrix is not None:
+            self.matrix._mmap.close(); self.matrix = None
+        self.path.unlink(missing_ok=True)
+
+
+def _channel_calibrate(parameters, architecture, fixture, reference, reference_document, starting_scales, directory, *, epoch):
+    parameters = _validate_parameters(parameters, architecture)
+    verify_body_hash(reference_document, schema="papersoccer.compact-value-bfm-channel-prediction-reference.v1", label="channel prediction reference")
+    if (reference.flags.writeable or reference.dtype != np.dtype("float32") or reference.shape != (4096,)
+            or not np.all(np.isfinite(reference)) or _array_identity(reference) != reference_document.get("prediction_array_sha256")
+            or {name: _array_identity(getattr(fixture, name)) for name in ("indptr", "indices", "weights")} != reference_document.get("fixture_array_sha256")):
+        raise TrainingError("channel calibration target/fixture differs from the frozen reference")
+    before = _parameter_identity(parameters, architecture); reference_hash = _array_identity(reference)
+    current = quantize_channels(parameters, architecture, starting_scales); starting = current
+    writer = _ChannelPredictionWriter(directory); history = []; previous_score = None; previous_prediction = None
+    try:
+        for sweep in (1, 2):
+            for name, count in CHANNEL_SCALE_COUNTS.items():
+                for channel in range(count):
+                    values = parameters[name] if name == "w3" else parameters[name][:, channel]
+                    incumbent = current.scales[name][channel]; trials = []; best = None
+                    for ordinal, scale in enumerate(_channel_coordinate_candidates(values, incumbent)):
+                        scales = {key: value.copy() for key, value in current.scales.items()}; scales[name][channel] = scale
+                        quantized = quantize_channels(parameters, architecture, scales)
+                        prediction = predict_dataset(parameters, architecture, fixture, quantized=quantized, batch_size=4096)
+                        objective = _channel_prediction_objective(prediction, reference, fixture.weights)
+                        row = writer.append(prediction)
+                        if ordinal == 0 and previous_score is not None and (objective != previous_score or prediction.tobytes() != previous_prediction.tobytes()):
+                            raise TrainingError("channel incumbent prediction continuity changed")
+                        trials.append({"ordinal": ordinal, "scale": float(scale), "prediction_row": row,
+                            "scale_state_sha256": sha256_bytes(canonical_json_bytes(_channel_scale_document(quantized))), "objective": objective})
+                        if best is None or objective < best[0]: best = (objective, ordinal, quantized, prediction)
+                    current = best[2]; previous_score = best[0]; previous_prediction = best[3]
+                    history.append({"sweep": sweep, "layer": name, "channel": channel, "incumbent_scale": float(incumbent),
+                        "trials": trials, "selected_ordinal": best[1], "selected_scale": float(current.scales[name][channel]), "selected_objective": best[0]})
+        artifact = writer.finish()
+    finally: writer.close()
+    if _parameter_identity(parameters, architecture) != before or _array_identity(reference) != reference_hash:
+        raise TrainingError("channel calibration changed masters or frozen target predictions")
+    master = write_float_checkpoint(pathlib.Path(directory), parameters, architecture)
+    return current, {"schema": "papersoccer.compact-value-bfm-channel-calibration.v1", "qat_epoch": epoch,
+        "policy": copy.deepcopy(CHANNEL_CALIBRATION_POLICY), "training_reference": reference_document,
+        "master_parameters": before, "master_checkpoint": _channel_artifact(master),
+        "starting_scales": _channel_scale_document(starting), "selected_scales": _channel_scale_document(current),
+        "starting_code_sha256": {name: sha256_bytes(value.tobytes()) for name, value in starting.integer.items()},
+        "selected_code_sha256": {name: sha256_bytes(value.tobytes()) for name, value in current.integer.items()},
+        "trials": history, "prediction_rows": writer.rows, "prediction_matrix": artifact,
+        "initial_objective": history[0]["trials"][0]["objective"], "selected_objective": previous_score,
+        "parameters_unchanged_by_calibration": True, "heldout_read_by_calibration": False}
+
+
 def select_fixed_scales(
     parameters: Mapping[str, np.ndarray],
     architecture: Architecture,
@@ -4234,6 +4792,8 @@ def select_fixed_scales(
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(qat_profile)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
+        raise TrainingError("channel profile requires training-only channel calibration, not scalar heldout scale search")
     reference = _retention_reference(profile, float_validation_reference)
     selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     float_best_cache = _new_float_ranking_decision_cache(parameters, architecture, inputs)
@@ -4371,6 +4931,8 @@ def _adapt_fixed_scales(
 
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(profile)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
+        raise TrainingError("channel profile requires training-only channel calibration, not scalar heldout scale search")
     reference = _retention_reference(profile, float_validation_reference)
     selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     if not profile.adapt_scales_after_each_epoch:
@@ -4481,6 +5043,15 @@ def _quantized_update_evidence(
     before: QuantizedWeights,
     after: QuantizedWeights,
 ) -> dict[str, dict[str, object]]:
+    if isinstance(before, ChannelQuantizedWeights) or isinstance(after, ChannelQuantizedWeights):
+        if not isinstance(before, ChannelQuantizedWeights) or not isinstance(after, ChannelQuantizedWeights):
+            raise TrainingError("quantized update evidence mixed scalar/channel types")
+        return {name: {"granularity": "per-output-channel", "codes": int(after.integer[name].size),
+            "changed_codes": int(np.count_nonzero(before.integer[name] != after.integer[name])),
+            "changed": bool(np.any(before.integer[name] != after.integer[name])),
+            "before_sha256": sha256_bytes(before.integer[name].tobytes()),
+            "after_sha256": sha256_bytes(after.integer[name].tobytes()),
+            "output_scales": _channel_scale_document(after)[name]} for name in CHANNEL_SCALE_COUNTS}
     report: dict[str, dict[str, object]] = {}
     for name in ("w1", "w2", "w3"):
         first = np.asarray(before.integer[name], dtype=np.int8)
@@ -4498,6 +5069,277 @@ def _quantized_update_evidence(
     return report
 
 
+def _run_channel_prediction_qat(
+    float_result: FloatTrainingResult,
+    inputs: TrainingInputs,
+    architecture: Architecture,
+    arm: Arm,
+    seed: int,
+    *,
+    qat_epochs: int = QAT_EPOCHS,
+    ranking_weight: float = 0.0,
+    qat_profile: str | QATProfile = CHANNEL_PREDICTION_QAT_PROFILE,
+    calibration_directory: pathlib.Path,
+    original_parameters: Mapping[str, np.ndarray],
+) -> QuantizedTrainingResult:
+    if qat_epochs != QAT_EPOCHS:
+        raise TrainingError("compact deployment requires exactly four QAT epochs")
+    profile = resolve_qat_profile(qat_profile)
+    if profile.name != STANDARD_QAT_PROFILE and (
+        architecture.name != "capacity-12x8"
+        or inputs.successor_rankings is None
+    ):
+        raise TrainingError(
+            "refined adaptive QAT requires successor-labeled capacity-12x8"
+        )
+    reference = _retention_reference(
+        profile,
+        float_result.metrics,
+    )
+    selection_arguments = {} if reference is None else {"float_validation_reference": reference}
+    ranking_weight = _ranking_weight(ranking_weight)
+    all_ranking_groups = (
+        () if inputs.successor_rankings is None else inputs.successor_rankings.train
+    )
+    ranking_groups, density_report = _density_weighted_ranking_groups(
+        all_ranking_groups
+    )
+    if ranking_weight > 0.0 and not ranking_groups:
+        raise TrainingError("positive ranking loss has no QAT training groups")
+    if (float_result.epoch != 1 or float_result.report.get("best_float_epoch") != 1
+            or len(float_result.report.get("history", [])) != 1
+            or float_result.report.get("optimizer", {}).get("maximum_epochs") != 1
+            or float_result.report.get("optimizer", {}).get("learning_rate") != RANKING_FLOAT_LEARNING_RATE
+            or float_result.report.get("optimizer", {}).get("weight_decay") != WEIGHT_DECAY
+            or float_result.report.get("validation") != float_result.metrics):
+        raise TrainingError("channel QAT requires the unchanged one-epoch float warmup")
+    directory = pathlib.Path(calibration_directory).resolve()
+    _reject_path_markers(directory, "channel calibration output")
+    directory.mkdir(parents=True, exist_ok=True)
+    original_parameters = _validate_parameters(original_parameters, architecture)
+    if float_result.report.get("initialization", {}).get("parameters") != _parameter_identity(original_parameters, architecture):
+        raise TrainingError("channel QAT original initialization differs from frozen warmup")
+    fixture, fixture_document = _channel_fixture(inputs, directory)
+    frozen_prediction, prediction_document = _channel_prediction_reference(
+        float_result.parameters, architecture, fixture, fixture_document, directory)
+    projected, weight_projection = _channel_weight_projection(float_result.parameters, architecture)
+    pre_qat, scale_report = _channel_calibrate(float_result.parameters, architecture, fixture,
+        frozen_prediction, prediction_document, projected.scales, directory, epoch=0)
+    original_checkpoint = write_float_checkpoint(directory, original_parameters, architecture)
+    selected: ChannelQuantizedWeights | None = None
+    selected_epoch = 0
+    pre_qat_metrics = evaluate_validation_pair(
+        float_result.parameters,
+        architecture,
+        inputs,
+        arm,
+        quantized=pre_qat,
+        ranking_weight=ranking_weight,
+    )
+    selected_metrics: dict[str, dict[str, float | int]] | None = None
+    selected_key: tuple[float, ...] | None = None
+    fixed_scales = dict(pre_qat.scales)
+    master = {
+        name: value.copy() for name, value in float_result.parameters.items()
+    }
+    optimizer = AdamW(
+        master, learning_rate=profile.qat_learning_rate, weight_decay=WEIGHT_DECAY
+    )
+    history = []
+    executed_batches = 0
+    for qat_epoch in range(1, qat_epochs + 1):
+        epoch_starting_parameters = {
+            name: value.copy() for name, value in master.items()
+        }
+        schedule_epoch = (
+            RANKING_FLOAT_EPOCHS
+            if inputs.successor_rankings is not None
+            else MAX_FLOAT_EPOCHS
+        ) + qat_epoch
+        batch_count = math.ceil(len(inputs.new) / NEW_ROWS_PER_BATCH)
+        ranking_schedule = (
+            None
+            if ranking_weight == 0.0
+            else successor_ranking_epoch_schedule(
+                len(ranking_groups),
+                batch_count,
+                seed=seed,
+                epoch=schedule_epoch,
+            )
+        )
+        ranking_coverage = (
+            None
+            if ranking_schedule is None
+            else ranking_schedule_coverage(
+                ranking_groups, ranking_schedule, epoch=schedule_epoch
+            )
+        )
+        for batch_index, (new_rows, anchor_rows) in enumerate(mixed_epoch_batches(
+            len(inputs.new),
+            len(inputs.anchor),
+            seed=seed,
+            epoch=schedule_epoch,
+        )):
+            _train_mixed_batch(
+                master,
+                architecture,
+                arm,
+                optimizer,
+                inputs,
+                new_rows,
+                anchor_rows,
+                fixed_scales=fixed_scales,
+                quantization_granularity="per-output-channel",
+                ranking_groups=(
+                    None
+                    if ranking_schedule is None
+                    else tuple(
+                        ranking_groups[int(index)]
+                        for index in ranking_schedule[batch_index]
+                    )
+                ),
+                ranking_weight=ranking_weight,
+            )
+            executed_batches += 1
+        applied_scales = _channel_scale_document(fixed_scales)
+        candidate, adaptive_scale_search = _channel_calibrate(master, architecture, fixture,
+            frozen_prediction, prediction_document, fixed_scales, directory, epoch=qat_epoch)
+        fixed_scales = dict(candidate.scales)
+        metrics = evaluate_validation_pair(master, architecture, inputs, arm,
+            quantized=candidate, ranking_weight=ranking_weight)
+        key = _qat_validation_key(metrics, profile, **selection_arguments)
+        history.append({
+            "qat_epoch": qat_epoch,
+            "schedule_epoch": schedule_epoch,
+            "fixed_scales": applied_scales,
+            "candidate_scales": _channel_scale_document(candidate),
+            "adaptive_scale_search": adaptive_scale_search,
+            "ranking_schedule_coverage": ranking_coverage,
+            "fake_quantization": {
+                "bits": QUANTIZATION_BITS,
+                "layers": ["w1", "w2", "w3"],
+                "scales_applied_to_every_batch": applied_scales,
+                "batches": batch_count,
+                "optimizer_steps_after_epoch": executed_batches,
+                "all_layers_trainable": True,
+                "master_parameter_updates": _parameter_update_evidence(
+                    epoch_starting_parameters, master
+                ),
+            },
+            "validation": metrics,
+        })
+        # QAT epoch zero is diagnostic only.  Strict comparison keeps the
+        # earlier trained QAT epoch on an exact validation tie.
+        if selected_key is None or key < selected_key:
+            selected = candidate
+            selected_epoch = qat_epoch
+            selected_metrics = metrics
+            selected_key = key
+    if selected is None or selected_metrics is None or selected_epoch == 0:
+        raise TrainingError("QAT produced no selectable trained epoch")
+    selected_per_layer_update = _quantized_update_evidence(pre_qat, selected)
+    qat_report: dict[str, object] = {
+        "schema": CHANNEL_QAT_EXECUTION_SCHEMA,
+        "quantization_granularity": "per-output-channel",
+        "float_warmup_evidence_sha256": sha256_bytes(canonical_json_bytes(float_result.report)),
+        "training_fixture": fixture_document,
+        "training_prediction_reference": prediction_document,
+        "weight_projection": weight_projection,
+        "original_initialization_checkpoint": _channel_artifact(original_checkpoint),
+        "original_initialization_code_evidence": _quantized_update_evidence(
+            quantize_channels(original_parameters, architecture, selected.scales), selected),
+        "qat_profile": profile.name,
+        "qat_profile_contract": qat_profile_contract(profile),
+        "qat_epochs": qat_epochs,
+        "learning_rate": profile.qat_learning_rate,
+        "fixed_scale_qat": not profile.adapt_scales_after_each_epoch,
+        "adaptive_scale_qat": profile.adapt_scales_after_each_epoch,
+        "all_layer_fake_three_bit_qat": True,
+        "selected_qat_epoch": selected_epoch,
+        "selected_scales": _channel_scale_document(selected),
+        "pre_qat_validation": pre_qat_metrics,
+        "pre_qat_retained": False,
+        "tie_break": "prefer-earlier-qat-epoch-on-exact-tie",
+        "scale_search": scale_report,
+        "history": history,
+        "executed_qat_epochs": [
+            int(item["qat_epoch"]) for item in history
+        ],
+        "optimizer_steps": executed_batches,
+        "final_master_per_layer_update_evidence": _parameter_update_evidence(
+            float_result.parameters, master
+        ),
+        "applied_scale_trajectory": [
+            {
+                "qat_epoch": int(item["qat_epoch"]),
+                "training_scales": dict(item["fixed_scales"]),
+                "candidate_scales": dict(item["candidate_scales"]),
+                "adapted_after_epoch": (
+                    item["adaptive_scale_search"] is not None
+                ),
+            }
+            for item in history
+        ],
+        "selected_validation": selected_metrics,
+        "selected_per_layer_qat_evidence": selected_per_layer_update,
+    }
+    if reference is not None:
+        qat_report["retention_reference"] = reference.document()
+    if inputs.successor_rankings is not None:
+        qat_report.update({
+            "successor_ranking": {
+                "labels_present": True,
+                "loss_active": ranking_weight > 0.0,
+                "loss_weight": ranking_weight,
+                "composition": "scalar-loss-plus-lambda-ranking-loss",
+                "group_microbatch_objective": (
+                    "mean-of-gap-normalized-group-losses"
+                ),
+                "ranking_lambda_application": "once-after-group-mean",
+                "epoch_schedule": (
+                    "balanced-full-weighted-pool-permutation-per-epoch-v1"
+                ),
+                "pair_cap": RANKING_PAIR_CAP,
+                "gap_weighting": "teacher-gap-normalized",
+                "train_groups": len(all_ranking_groups),
+                "comparable_train_groups": density_report[
+                    "unique_comparable_groups"
+                ],
+                "hard_state_density": density_report,
+                "weighted_group_entries_per_epoch": len(ranking_groups),
+                "full_weighted_pool_coverage_each_active_epoch": (
+                    ranking_weight > 0.0
+                ),
+                "selected_epoch_schedule_coverage": history[
+                    selected_epoch - 1
+                ]["ranking_schedule_coverage"],
+                "skipped_nonexhaustive_train_groups": sum(
+                    not group.successors_exhaustive
+                    for group in all_ranking_groups
+                ),
+                "skipped_zero_pair_train_groups": sum(
+                    group.successors_exhaustive and not bool(
+                        _ranking_pairs(group)[1]
+                    )
+                    for group in all_ranking_groups
+                ),
+            },
+            "per_layer_update_evidence": selected_per_layer_update,
+        })
+    validate_qat_execution_evidence(qat_report, expected_profile=profile.name, **selection_arguments)
+    if inputs.successor_rankings is not None:
+        validate_successor_schedule_execution(
+            float_result.report, qat_report, seed=seed
+        )
+    return QuantizedTrainingResult(
+        quantized=selected,
+        qat_epoch=selected_epoch,
+        metrics=selected_metrics,
+        report=qat_report,
+    )
+
+
+
 def run_fixed_scale_qat(
     float_result: FloatTrainingResult,
     inputs: TrainingInputs,
@@ -4508,10 +5350,19 @@ def run_fixed_scale_qat(
     qat_epochs: int = QAT_EPOCHS,
     ranking_weight: float = 0.0,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
+    calibration_directory: pathlib.Path | None = None,
+    original_parameters: Mapping[str, np.ndarray] | None = None,
 ) -> QuantizedTrainingResult:
     if qat_epochs != QAT_EPOCHS:
         raise TrainingError("compact deployment requires exactly four QAT epochs")
     profile = resolve_qat_profile(qat_profile)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
+        if calibration_directory is None or original_parameters is None:
+            raise TrainingError("channel QAT requires an audit directory and original float parameters")
+        return _run_channel_prediction_qat(float_result, inputs, architecture, arm, seed, qat_epochs=qat_epochs,
+            ranking_weight=ranking_weight, qat_profile=profile, calibration_directory=calibration_directory, original_parameters=original_parameters)
+    if calibration_directory is not None or original_parameters is not None:
+        raise TrainingError("legacy QAT cannot accept channel-only audit/initialization parameters")
     if profile.name != STANDARD_QAT_PROFILE and (
         architecture.name != "capacity-12x8"
         or inputs.successor_rankings is None
@@ -4773,6 +5624,158 @@ def run_fixed_scale_qat(
     )
 
 
+def _validate_channel_fixture(document):
+    if not isinstance(document, Mapping) or set(document) != {"identity", "artifact"}:
+        raise TrainingError("channel fixture evidence is absent")
+    identity = document["identity"]
+    verify_body_hash(identity, schema="papersoccer.compact-value-bfm-channel-fixture.v1", label="channel fixture")
+    if identity.get("policy") != CHANNEL_FIXTURE_POLICY or set(identity.get("datasets", {})) != {"new", "anchor"}:
+        raise TrainingError("channel fixture training identity/policy changed")
+    indices = _channel_sample_indices(identity["datasets"]["new"]["samples"], identity["datasets"]["anchor"]["samples"])
+    if identity.get("sampled_indices") != {name: values.tolist() for name, values in indices.items()}:
+        raise TrainingError("channel fixture PCG64 sample changed")
+    with np.load(_channel_read_artifact(document["artifact"], ".channel-fixture.npz"), allow_pickle=False) as archive:
+        if set(archive.files) != {"indptr", "indices", "weights", "new_indices", "anchor_indices"}:
+            raise TrainingError("channel fixture contains unexpected arrays or labels")
+        arrays = {name: archive[name].copy() for name in archive.files}
+    if (arrays["indptr"].dtype != np.dtype("<i8") or arrays["indptr"].shape != (4097,)
+            or arrays["indices"].dtype != np.dtype("<u2") or arrays["indices"].ndim != 1
+            or arrays["indptr"][0] != 0 or arrays["indptr"][-1] != len(arrays["indices"])
+            or np.any(np.diff(arrays["indptr"]) < 0) or arrays["weights"].dtype != np.dtype("<f4")
+            or arrays["weights"].shape != (4096,) or not np.all(np.isfinite(arrays["weights"])) or np.any(arrays["weights"] <= 0)
+            or identity.get("arrays") != {name: _array_identity(arrays[name]) for name in ("indptr", "indices", "weights")}):
+        raise TrainingError("channel fixture array evidence changed")
+    for name in ("new", "anchor"):
+        if arrays[name + "_indices"].dtype != np.dtype("<i8") or not np.array_equal(arrays[name + "_indices"], indices[name]):
+            raise TrainingError("channel fixture sampled index bytes changed")
+    return arrays["weights"]
+
+
+def _validate_channel_calibration(stage, reference_document, reference, weights, *, epoch):
+    if (not isinstance(stage, Mapping) or stage.get("schema") != "papersoccer.compact-value-bfm-channel-calibration.v1"
+            or type(stage.get("qat_epoch")) is not int or stage["qat_epoch"] != epoch
+            or stage.get("policy") != CHANNEL_CALIBRATION_POLICY or stage.get("training_reference") != reference_document
+            or stage.get("parameters_unchanged_by_calibration") is not True or stage.get("heldout_read_by_calibration") is not False):
+        raise TrainingError("channel scale stage/reference/policy changed")
+    architecture = ARCHITECTURES["capacity-12x8"]
+    parameters = load_float_checkpoint(_channel_read_artifact(stage["master_checkpoint"], ".float.npz"), architecture)
+    if stage.get("master_parameters") != _parameter_identity(parameters, architecture):
+        raise TrainingError("channel current-master identity changed")
+    current = _normalize_channel_scales(stage.get("starting_scales"), canonical=True)
+    starting = quantize_channels(parameters, architecture, current)
+    if stage.get("starting_code_sha256") != {name: sha256_bytes(value.tobytes()) for name, value in starting.integer.items()}:
+        raise TrainingError("channel incumbent codes do not use current masters")
+    matrix = np.load(_channel_read_artifact(stage["prediction_matrix"], ".channel-predictions.npy"), mmap_mode="r", allow_pickle=False)
+    count = stage.get("prediction_rows"); history = stage.get("trials")
+    order = [(sweep, name, channel) for sweep in (1, 2) for name, n in CHANNEL_SCALE_COUNTS.items() for channel in range(n)]
+    if (matrix.dtype != np.dtype("<f4") or matrix.shape != (672, 4096) or type(count) is not int or not 42 <= count <= 672
+            or not np.all(np.isfinite(matrix[:count])) or np.any(matrix[count:] != 0)
+            or not isinstance(history, list) or len(history) != 42
+            or any(not isinstance(row, Mapping) or type(row.get("sweep")) is not int or type(row.get("channel")) is not int for row in history)
+            or [(row["sweep"], row["layer"], row["channel"]) for row in history] != order):
+        raise TrainingError("channel prediction matrix/two-sweep evidence changed")
+    offset = 0; last_score = None; last_row = None
+    for event in history:
+        name, channel = event["layer"], event["channel"]
+        values = parameters[name] if name == "w3" else parameters[name][:, channel]
+        candidates = _channel_coordinate_candidates(values, current[name][channel]); trials = event.get("trials")
+        if (not isinstance(trials, list) or len(trials) != len(candidates)
+                or event.get("incumbent_scale") != float(current[name][channel])
+                or any(type(row.get("ordinal")) is not int or type(row.get("prediction_row")) is not int or isinstance(row.get("scale"), bool) for row in trials)
+                or [row["ordinal"] for row in trials] != list(range(len(candidates)))
+                or [row["scale"] for row in trials] != list(map(float, candidates))
+                or [row["prediction_row"] for row in trials] != list(range(offset, offset + len(candidates)))):
+            raise TrainingError("channel incumbent-first candidate/prediction order changed")
+        for trial, candidate in zip(trials, candidates, strict=True):
+            state = _channel_scale_document(current); state[name][channel] = float(candidate)
+            if trial.get("scale_state_sha256") != sha256_bytes(canonical_json_bytes(state)):
+                raise TrainingError("channel prediction lost its full scale-state binding")
+            score = _channel_prediction_objective(matrix[trial["prediction_row"]], reference, weights)
+            if isinstance(trial.get("objective"), bool) or trial.get("objective") != score:
+                raise TrainingError("channel candidate objective differs from saved predictions")
+        if last_score is not None and (trials[0]["objective"] != last_score or matrix[offset].tobytes() != matrix[last_row].tobytes()):
+            raise TrainingError("channel incumbent prediction continuity changed")
+        selected = min(trials, key=lambda row: (row["objective"], row["ordinal"]))
+        if (type(event.get("selected_ordinal")) is not int or event["selected_ordinal"] != selected["ordinal"]
+                or event.get("selected_scale") != selected["scale"] or event.get("selected_objective") != selected["objective"]):
+            raise TrainingError("channel exact first-incumbent choice changed")
+        current[name][channel] = np.float32(selected["scale"]); last_score = selected["objective"]
+        last_row = selected["prediction_row"]; offset += len(trials)
+    selected = quantize_channels(parameters, architecture, current)
+    if (offset != count or stage.get("selected_scales") != _channel_scale_document(selected)
+            or stage.get("selected_code_sha256") != {name: sha256_bytes(value.tobytes()) for name, value in selected.integer.items()}
+            or stage.get("initial_objective") != history[0]["trials"][0]["objective"] or stage.get("selected_objective") != last_score):
+        raise TrainingError("channel scale/code/objective trajectory changed")
+    return parameters, selected
+
+
+def _validate_channel_qat_execution(value, *, float_validation_reference):
+    profile = resolve_qat_profile(CHANNEL_PREDICTION_QAT_PROFILE)
+    validate_qat_profile_contract(value.get("qat_profile_contract"), expected_name=profile.name)
+    reference = _retention_reference(profile, float_validation_reference)
+    if (value.get("schema") != CHANNEL_QAT_EXECUTION_SCHEMA or value.get("qat_profile") != profile.name
+            or value.get("quantization_granularity") != "per-output-channel" or not valid_sha256(value.get("float_warmup_evidence_sha256"))
+            or type(value.get("qat_epochs")) is not int or value.get("qat_epochs") != 4
+            or value.get("learning_rate") != .0000625 or value.get("fixed_scale_qat") is not False or value.get("adaptive_scale_qat") is not True
+            or value.get("all_layer_fake_three_bit_qat") is not True or value.get("pre_qat_retained") is not False
+            or value.get("tie_break") != "prefer-earlier-qat-epoch-on-exact-tie"
+            or value.get("executed_qat_epochs") != [1, 2, 3, 4] or any(type(epoch) is not int for epoch in value["executed_qat_epochs"])
+            or value.get("retention_reference") != reference.document()):
+        raise TrainingError("channel QAT mandatory schedule/profile/retention reference changed")
+    fixture = value.get("training_fixture"); weights = _validate_channel_fixture(fixture)
+    prediction_document = value.get("training_prediction_reference")
+    verify_body_hash(prediction_document, schema="papersoccer.compact-value-bfm-channel-prediction-reference.v1", label="channel prediction reference")
+    if (prediction_document.get("fixture_identity_sha256") != fixture["identity"]["body_sha256"]
+            or prediction_document.get("fixture_array_sha256") != fixture["identity"]["arrays"]
+            or prediction_document.get("frozen_across_initial_and_four_epoch_calibrations") is not True):
+        raise TrainingError("channel target reference lost its fixed fixture")
+    prediction = np.load(_channel_read_artifact(prediction_document["prediction"], ".channel-reference.npy"), mmap_mode="r", allow_pickle=False)
+    if prediction.dtype != np.dtype("<f4") or prediction.shape != (4096,) or _array_identity(prediction) != prediction_document.get("prediction_array_sha256"):
+        raise TrainingError("channel frozen prediction target bytes changed")
+    warmup, initial_quantized = _validate_channel_calibration(value["scale_search"], prediction_document, prediction, weights, epoch=0)
+    if prediction_document.get("pre_qat_parameters") != _parameter_identity(warmup, ARCHITECTURES["capacity-12x8"]):
+        raise TrainingError("channel targets no longer bind the pre-QAT float master")
+    projected, projection_report = _channel_weight_projection(warmup, ARCHITECTURES["capacity-12x8"])
+    if value.get("weight_projection") != projection_report or value["scale_search"]["starting_scales"] != _channel_scale_document(projected):
+        raise TrainingError("channel QAT initial weight projection changed")
+    history = value.get("history"); trajectory = value.get("applied_scale_trajectory")
+    if not isinstance(history, list) or len(history) != 4 or not isinstance(trajectory, list) or len(trajectory) != 4:
+        raise TrainingError("channel QAT must contain four complete trained epochs")
+    expected_batches = math.ceil(fixture["identity"]["datasets"]["new"]["samples"] / NEW_ROWS_PER_BATCH)
+    last_parameters = warmup; scales = _channel_scale_document(initial_quantized); states = []; step = 0
+    for epoch, (row, applied) in enumerate(zip(history, trajectory, strict=True), start=1):
+        parameters, quantized = _validate_channel_calibration(row["adaptive_scale_search"], prediction_document, prediction, weights, epoch=epoch)
+        candidate_scales = _channel_scale_document(quantized); fake = row.get("fake_quantization", {}); step += expected_batches
+        if (type(row.get("qat_epoch")) is not int or row["qat_epoch"] != epoch or row.get("schedule_epoch") != 1 + epoch
+                or row.get("fixed_scales") != scales or row.get("candidate_scales") != candidate_scales
+                or row["adaptive_scale_search"]["starting_scales"] != scales
+                or fake.get("bits") != 3 or fake.get("layers") != ["w1", "w2", "w3"] or fake.get("all_layers_trainable") is not True
+                or type(fake.get("batches")) is not int or type(fake.get("optimizer_steps_after_epoch")) is not int
+                or type(row.get("schedule_epoch")) is not int or type(applied.get("qat_epoch")) is not int
+                or fake.get("batches") != expected_batches or fake.get("optimizer_steps_after_epoch") != step
+                or fake.get("scales_applied_to_every_batch") != scales
+                or fake.get("master_parameter_updates") != _parameter_update_evidence(last_parameters, parameters)
+                or applied != {"qat_epoch": epoch, "training_scales": scales, "candidate_scales": candidate_scales, "adapted_after_epoch": True}
+                or not isinstance(row.get("validation"), Mapping) or not _finite_metric_report(row["validation"])):
+            raise TrainingError("channel epoch optimizer/master/scale evidence is discontinuous")
+        states.append(quantized); last_parameters = parameters; scales = candidate_scales
+    selected_epoch = value.get("selected_qat_epoch")
+    if type(selected_epoch) is not int or not 1 <= selected_epoch <= 4:
+        raise TrainingError("channel QAT selected an untrained epoch")
+    selected_index = min(range(4), key=lambda index: (*_qat_validation_key(history[index]["validation"], profile, float_validation_reference=reference), index))
+    selected = states[selected_index]
+    original = load_float_checkpoint(_channel_read_artifact(value["original_initialization_checkpoint"], ".float.npz"), ARCHITECTURES["capacity-12x8"])
+    original_quantized = quantize_channels(original, ARCHITECTURES["capacity-12x8"], selected.scales)
+    if (selected_epoch != selected_index + 1 or value.get("selected_scales") != _channel_scale_document(selected)
+            or value.get("selected_validation") != history[selected_index]["validation"] or type(value.get("optimizer_steps")) is not int or value.get("optimizer_steps") != step
+            or value.get("selected_per_layer_qat_evidence") != _quantized_update_evidence(initial_quantized, selected)
+            or value.get("per_layer_update_evidence") != _quantized_update_evidence(initial_quantized, selected)
+            or value.get("original_initialization_code_evidence") != _quantized_update_evidence(original_quantized, selected)
+            or value.get("final_master_per_layer_update_evidence") != _parameter_update_evidence(warmup, last_parameters)):
+        raise TrainingError("channel QAT selection/code/update evidence changed")
+    return dict(value)
+
+
 def validate_qat_execution_evidence(
     value: object, *, expected_profile: str,
     float_validation_reference: object = None,
@@ -4782,6 +5785,8 @@ def validate_qat_execution_evidence(
     if not isinstance(value, Mapping):
         raise TrainingError("QAT execution evidence is absent")
     profile = resolve_qat_profile(expected_profile)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
+        return _validate_channel_qat_execution(value, float_validation_reference=float_validation_reference)
     validate_qat_profile_contract(
         value.get("qat_profile_contract"), expected_name=profile.name
     )
@@ -5468,6 +6473,56 @@ def _output_artifact(
     return path
 
 
+def _channel_artifact_scope_preflight(report, output_directory):
+    root = pathlib.Path(output_directory).resolve()
+    if not isinstance(report, Mapping):
+        raise TrainingError("channel QAT evidence is absent")
+    def paths(value):
+        if isinstance(value, Mapping):
+            if set(value) == {"path", "sha256", "bytes"}:
+                if not isinstance(value["path"], str):
+                    raise TrainingError("channel calibration artifact path is not a string")
+                path = pathlib.Path(value["path"])
+                _reject_path_markers(path, "channel calibration artifact")
+                if not path.is_absolute() or path.resolve() != path or not path.is_relative_to(root):
+                    raise TrainingError("channel calibration artifact escaped its seed output")
+            else:
+                for item in value.values(): paths(item)
+        elif isinstance(value, list):
+            for item in value: paths(item)
+    paths(report)
+
+
+def _validate_channel_receipt_links(receipt, expected_binding, output_directory, warmup_parameters, quantized, runtime_selection, runtime_document_value):
+    report = receipt["quantized_training"]
+    _channel_artifact_scope_preflight(report, output_directory)
+    fixture_identity = report["training_fixture"]["identity"]
+    expected_datasets = {name: expected_binding["datasets"][name] for name in ("new", "anchor")}
+    if (fixture_identity["datasets"] != expected_datasets
+            or report["training_prediction_reference"]["pre_qat_parameters"] != _parameter_identity(warmup_parameters, ARCHITECTURES["capacity-12x8"])
+            or runtime_document_value.get("schema") != CHANNEL_RUNTIME_SCHEMA
+            or runtime_selection.get("qat_profile") != CHANNEL_PREDICTION_QAT_PROFILE
+            or runtime_selection.get("qat_evidence_sha256") != sha256_bytes(canonical_json_bytes(report))
+            or _channel_scale_document(quantized) != report["selected_scales"]
+            or {name: sha256_bytes(value.tobytes()) for name, value in quantized.integer.items()}
+                != report["history"][report["selected_qat_epoch"] - 1]["adaptive_scale_search"]["selected_code_sha256"]
+            or runtime_selection.get("qat_epoch") != report["selected_qat_epoch"] or runtime_selection.get("float_epoch") != 1
+            or runtime_selection.get("source_bundle_body_sha256") != expected_binding.get("source_bundle_body_sha256")):
+        raise TrainingError("channel receipt/runtime transplanted another fixture, warmup or QAT evidence")
+    original = load_float_checkpoint(_channel_read_artifact(report["original_initialization_checkpoint"], ".float.npz"), ARCHITECTURES["capacity-12x8"])
+    initial = expected_binding.get("successor_ranking", {}).get("initial_checkpoint", {})
+    if (_parameter_identity(original, ARCHITECTURES["capacity-12x8"]) != initial.get("parameters")
+            or report.get("float_warmup_evidence_sha256") != sha256_bytes(canonical_json_bytes(receipt.get("float_training")))
+            or receipt.get("float_training", {}).get("per_layer_update_evidence") != _parameter_update_evidence(original, warmup_parameters)
+            or receipt.get("float_training", {}).get("optimizer", {}).get("learning_rate") != RANKING_FLOAT_LEARNING_RATE
+            or receipt.get("float_training", {}).get("seed") != expected_binding.get("seed")
+            or receipt.get("seed") != expected_binding.get("seed")
+            or receipt.get("float_training", {}).get("validation") != receipt.get("float_validation")):
+        raise TrainingError("channel receipt changed the outer frozen initialization/warmup evidence")
+    if receipt.get("quantized_validation") != report["selected_validation"] or receipt.get("offline_gate") != offline_advancement_gate(receipt["float_validation"], receipt["quantized_validation"]):
+        raise TrainingError("channel receipt metric/gate outcome differs from selected QAT evidence")
+
+
 def _load_seed_receipt_from_reference(
     output_directory: pathlib.Path,
     reference_path: pathlib.Path,
@@ -5516,14 +6571,16 @@ def _load_seed_receipt_from_reference(
         receipt.get("qat_profile") != profile_name
         or receipt.get("qat_profile_contract") != profile_contract
         or settings.get("qat_learning_rate") != profile_contract["schedule"]["qat_learning_rate"]
-        or (profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE
+        or (profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE)
             and not isinstance(receipt.get("float_validation"), Mapping))
     ):
         raise TrainingError("compact seed receipt QAT profile changed")
+    if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
+        _channel_artifact_scope_preflight(receipt.get("quantized_training"), output_directory)
     validate_qat_execution_evidence(
         receipt.get("quantized_training"), expected_profile=profile_name,
         **({"float_validation_reference": receipt.get("float_validation")}
-            if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) else {}),
     )
     architecture_name = receipt.get("architecture")
     if architecture_name not in ARCHITECTURES:
@@ -5538,7 +6595,7 @@ def _load_seed_receipt_from_reference(
         expected_sha256=checkpoint.get("sha256"),
         label="float checkpoint",
     )
-    load_float_checkpoint(checkpoint_path, ARCHITECTURES[architecture_name])
+    warmup_parameters = load_float_checkpoint(checkpoint_path, ARCHITECTURES[architecture_name])
     runtime_path = _output_artifact(
         output_directory,
         runtime.get("path"),
@@ -5546,6 +6603,10 @@ def _load_seed_receipt_from_reference(
         label="quantized runtime",
     )
     loaded_architecture, _quantized, selection, _document = load_runtime(runtime_path)
+    if profile_name != CHANNEL_PREDICTION_QAT_PROFILE and _document.get("schema") != RUNTIME_SCHEMA:
+        raise TrainingError("legacy seed receipt cannot bind a channel runtime")
+    if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
+        _validate_channel_receipt_links(receipt, expected_binding, output_directory, warmup_parameters, _quantized, selection, _document)
     if (
         loaded_architecture.name != architecture_name
         or selection.get("arm") != receipt.get("arm")
@@ -5640,6 +6701,9 @@ def train_seed_candidate(
         seed,
         ranking_weight=ranking_weight,
         qat_profile=profile,
+        **({"calibration_directory": output_directory / "channel-calibration" / f"seed-{seed}",
+            "original_parameters": float_arguments["initial_parameters"]}
+           if profile.name == CHANNEL_PREDICTION_QAT_PROFILE else {}),
     )
     gate = offline_advancement_gate(
         float_result.metrics, quantized_result.metrics
@@ -5658,6 +6722,8 @@ def train_seed_candidate(
         float_epoch=float_result.epoch,
         qat_epoch=quantized_result.qat_epoch,
         source_bundle_body_sha256=bundle.body_sha256,
+        **({"qat_profile": profile.name, "qat_evidence_sha256": sha256_bytes(canonical_json_bytes(quantized_result.report))}
+           if profile.name == CHANNEL_PREDICTION_QAT_PROFILE else {}),
     )
     if len(inputs.common_adjudicator) < 4_096:
         raise TrainingError("common adjudicator has fewer than 4,096 parity states")
@@ -6010,13 +7076,15 @@ def validate_selection(
     profile_contract = validate_qat_profile_contract(
         selection.get("qat_profile_contract"), expected_name=profile_name
     )
-    if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE and not isinstance(selection.get("float_validation"), Mapping):
+    if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) and not isinstance(selection.get("float_validation"), Mapping):
         raise TrainingError("compact selection frozen float validation is absent")
+    if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
+        _channel_artifact_scope_preflight(selection.get("qat_execution_evidence"), artifact_root)
     validate_qat_execution_evidence(
         selection.get("qat_execution_evidence"),
         expected_profile=profile_name,
         **({"float_validation_reference": selection.get("float_validation")}
-            if profile_name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) else {}),
     )
     seed_policy = selection.get("seed_execution_policy")
     seed_workers = seed_policy.get("seed_workers") if isinstance(
@@ -6074,6 +7142,13 @@ def validate_selection(
             "schedule_execution"
         ) != schedule_execution:
             raise TrainingError("selection seed successor schedule summary changed")
+    if profile_name != CHANNEL_PREDICTION_QAT_PROFILE and _document.get("schema") != RUNTIME_SCHEMA:
+        raise TrainingError("legacy immutable selection cannot bind a channel runtime")
+    if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
+        checkpoint = receipt["float_checkpoint"]
+        warmup_path = _output_artifact(artifact_root, checkpoint["path"], expected_sha256=checkpoint["sha256"], label="channel warmup")
+        _validate_channel_receipt_links(receipt, receipt["binding"], artifact_root,
+            load_float_checkpoint(warmup_path, architecture), _quantized, runtime_selection, _document)
     if (
         architecture.name != selection["architecture"]
         or runtime_selection.get("arm") != selection["arm"]
@@ -6261,10 +7336,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "schema": document["schema"],
                 "architecture": architecture.name,
                 "weight_counts": architecture.weight_counts,
-                "scales": {
+                "scales": (_channel_scale_document(quantized) if isinstance(quantized, ChannelQuantizedWeights) else {
                     name: float(quantized.scales[name])
                     for name in ("w1", "w2", "w3")
-                },
+                }),
                 "selection": selection,
                 "runtime_sha256": sha256_file(arguments.runtime),
             }

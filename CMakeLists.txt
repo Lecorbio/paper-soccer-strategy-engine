@@ -414,6 +414,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_validation_cache_check_v2
               tests.codingame.test_compact_value_bfm_training
               tests.codingame.test_compact_value_bfm_retention_qat
+              tests.codingame.test_compact_value_bfm_channel_qat
+              tests.codingame.test_compact_value_bfm_channel_integration
               tests.codingame.test_compact_value_bfm_deterministic_best
               tests.codingame.test_compact_value_bfm_training_resources_v2
               tests.codingame.test_compact_value_bfm_training_acceleration_v2
@@ -1002,6 +1004,13 @@ if(NOT EMSCRIPTEN)
   target_compile_definitions(
     papersoccer_codingame_compact_value_bfm_search_trace_modular
     PRIVATE COMPACT_VALUE_BFM_TRACE_MODULAR=1)
+  add_executable(papersoccer_compact_value_bfm_channel_runtime_test
+    tests/codingame/compact_value_bfm_channel_runtime_test.cpp
+    submissions/codingame/bots/compact_value_bfm/engine.cpp)
+  target_include_directories(papersoccer_compact_value_bfm_channel_runtime_test
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME papersoccer_compact_value_bfm_channel_runtime_test
+    COMMAND papersoccer_compact_value_bfm_channel_runtime_test)
   add_executable(papersoccer_codingame_compact_value_bfm_rank4_gate
     submissions/codingame/bots/compact_value_bfm/rank4_gate.cpp)
   add_test(NAME papersoccer_codingame_compact_value_bfm_rank4_gate_self_test

@@ -118,6 +118,7 @@ float first_activation(float value) noexcept;
 float second_activation(float value) noexcept;
 float fast_tanh(float value) noexcept;
 
+// COMPACT_RUNTIME_V1_BEGIN
 struct ModelDescriptor {
   std::size_t inputs{kFeatureCount};
   std::size_t hidden_one{};
@@ -129,6 +130,20 @@ struct ModelDescriptor {
   std::string_view packed_sha256{};
   bool allow_empty_bootstrap{};
 };
+// COMPACT_RUNTIME_V1_END
+
+// COMPACT_RUNTIME_V2_BEGIN
+struct ChannelModelDescriptor {
+  std::size_t inputs{kFeatureCount};
+  std::size_t hidden_one{};
+  std::size_t hidden_two{};
+  std::span<const float> scales_one{};
+  std::span<const float> scales_two{};
+  std::span<const float> scales_three{};
+  std::string_view packed_base64{};
+  std::string_view packed_sha256{};
+};
+// COMPACT_RUNTIME_V2_END
 
 struct PreparedEvaluation {
   SparseFeatures features{};
@@ -137,7 +152,12 @@ struct PreparedEvaluation {
 
 class QuantizedModel {
  public:
+  // COMPACT_RUNTIME_V1_BEGIN
   explicit QuantizedModel(ModelDescriptor descriptor);
+  // COMPACT_RUNTIME_V1_END
+  // COMPACT_RUNTIME_V2_BEGIN
+  explicit QuantizedModel(ChannelModelDescriptor descriptor);
+  // COMPACT_RUNTIME_V2_END
 
   PreparedEvaluation prepare(const SparseFeatures &features) const noexcept;
   float evaluate(const SparseFeatures &features) const noexcept;
@@ -153,10 +173,21 @@ class QuantizedModel {
   std::vector<std::int8_t> weights_{};
   std::size_t hidden_one_{};
   std::size_t hidden_two_{};
+  // COMPACT_RUNTIME_V1_BEGIN
   float scale_one_{};
   float scale_two_{};
+  // COMPACT_RUNTIME_V1_END
   float scale_three_{};
   std::string payload_sha256_{};
+
+  // COMPACT_RUNTIME_V2_BEGIN
+  std::array<float, 12> channel_scales_one_{};
+  std::array<float, 8> channel_scales_two_{};
+  float finish_channels(std::array<std::int32_t, 12> first) const noexcept;
+  // COMPACT_RUNTIME_V2_END
+  // COMPACT_RUNTIME_NATIVE_BEGIN
+  bool per_output_channel_{};
+  // COMPACT_RUNTIME_NATIVE_END
 
   void add_input(std::array<std::int32_t, 12> &first, std::size_t input,
                  int multiplier) const noexcept;

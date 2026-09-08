@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import json
 import pathlib
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,7 +17,7 @@ import export_submission  # noqa: E402
 class CompactExporterTests(unittest.TestCase):
     def runtime(self, root: pathlib.Path, hidden_one: int, hidden_two: int,
                 *, name: str | None = None, scale: float = 0.125,
-                mutate_payload=None) -> pathlib.Path:
+                mutate_payload=None, channel: bool = False, mutate_body=None) -> pathlib.Path:
         names = {(8, 8): "compact-8x8", (8, 16): "source-neutral-8x16",
                  (12, 8): "capacity-12x8"}
         counts = {
@@ -53,6 +55,17 @@ class CompactExporterTests(unittest.TestCase):
                 "source_bundle_body_sha256": "1" * 64,
             },
         }
+        if channel:
+            body["schema"] = export_model.CHANNEL_RUNTIME_SCHEMA
+            body["quantization"].update(export_model.CHANNEL_QUANTIZATION)
+            body["quantization"]["scale_counts"] = dict(export_model.CHANNEL_SCALE_COUNTS)
+            body["quantization"]["scales"] = {
+                key: [scale] * count for key, count in export_model.CHANNEL_SCALE_COUNTS.items()
+            }
+            body["selection"].update(qat_profile=export_model.CHANNEL_QAT_PROFILE,
+                                     qat_evidence_sha256="2" * 64)
+        if mutate_body:
+            mutate_body(body)
         runtime = dict(body)
         runtime["body_sha256"] = hashlib.sha256(
             export_model.canonical_json_bytes(body)).hexdigest()
@@ -156,6 +169,84 @@ value = value - -right;
             tampered.write_bytes(raw)
             with self.assertRaises((ValueError, UnicodeDecodeError)):
                 export_model.render_header(tampered)
+
+    def test_channel_source_reserve_including_extreme_canonical_float32_literals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for raw_bits in (1, 0x00800001, 0x3dcccccd, 0x7f7fffff):
+                scale = struct.unpack("<f", struct.pack("<I", raw_bits))[0]
+                path = self.runtime(pathlib.Path(directory), 12, 8, scale=scale, channel=True)
+                header, metadata = export_model.render_header(path)
+                _, source = export_submission.render(model_header=header)
+                with self.subTest(scale=scale):
+                    self.assertEqual(metadata["runtime_schema"], export_model.CHANNEL_RUNTIME_SCHEMA)
+                    self.assertIn(b"std::array<float, 12> kScaleOne", header)
+                    self.assertLessEqual(len(source), 93_000)
+                    self.assertTrue(source.isascii())
+                    self.assertEqual(export_submission.compact_cpp_code(source.decode()).encode(), source)
+                    self.assertNotIn(b"model::kBootstrapZero", source)
+
+    def test_source_region_selection_is_nested_and_rejects_unbalanced_markers(self):
+        source = ("common\n// COMPACT_RUNTIME_V1_BEGIN\nlegacy\n// COMPACT_RUNTIME_V1_END\n"
+                  "// COMPACT_RUNTIME_V2_BEGIN\nchannel\n// COMPACT_RUNTIME_NATIVE_BEGIN\n"
+                  "dispatch\n// COMPACT_RUNTIME_NATIVE_END\n// COMPACT_RUNTIME_V2_END\n")
+        self.assertEqual(export_submission.runtime_source_region(source, export_model.RUNTIME_SCHEMA),
+                         "common\nlegacy\n")
+        self.assertEqual(export_submission.runtime_source_region(source, export_model.CHANNEL_RUNTIME_SCHEMA),
+                         "common\nchannel\n")
+        for invalid_source in ("// COMPACT_RUNTIME_V1_END\n", "// COMPACT_RUNTIME_V2_BEGIN\n",
+                               "// COMPACT_RUNTIME_V1_BEGIN\n// COMPACT_RUNTIME_V2_END\n"):
+            with self.subTest(source=invalid_source), self.assertRaises(ValueError):
+                export_submission.runtime_source_region(invalid_source, export_model.RUNTIME_SCHEMA)
+
+    def test_channel_effective_float32_weight_overflow_is_rejected_per_output_axis(self):
+        maximum = struct.unpack("<f", struct.pack("<I", 0x7f7fffff))[0]
+        with tempfile.TemporaryDirectory() as directory:
+            for name, index, output in (("w1", 6301 * 12 - 1, 11),
+                                         ("w2", 6301 * 12 + 12 * 8 - 1, 7),
+                                         ("w3", 6301 * 12 + 12 * 8 + 7, 0)):
+                for code in (-3, -2, -1, 0, 1, 2, 3):
+                    def packed(payload):
+                        for bit in range(3):
+                            position = index * 3 + bit
+                            payload[position // 8] |= ((code >> bit) & 1) << (position % 8)
+                    def scaled(body):
+                        body["quantization"]["scales"][name][output] = maximum
+                    path = self.runtime(pathlib.Path(directory), 12, 8, channel=True,
+                                        mutate_payload=packed, mutate_body=scaled)
+                    with self.subTest(layer=name, code=code):
+                        if abs(code) >= 2:
+                            with self.assertRaisesRegex(ValueError, "effective weight"):
+                                export_model.validate_runtime(path)
+                        else:
+                            export_model.validate_runtime(path)
+            # The v2 consistency rule must not alter historical v1 acceptance.
+            path = self.runtime(pathlib.Path(directory), 12, 8, scale=maximum,
+                                mutate_payload=lambda payload: payload.__setitem__(0, 3))
+            export_model.validate_runtime(path)
+
+    def test_model_header_schema_and_native_macro_must_agree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for channel in (False, True):
+                runtime = self.runtime(pathlib.Path(directory), 12, 8, channel=channel)
+                header, _ = export_model.render_header(runtime)
+                malformed = (header.replace(b"#define COMPACT_VALUE_BFM_CHANNEL_MODEL_V2 1", b"")
+                             if channel else b"#define COMPACT_VALUE_BFM_CHANNEL_MODEL_V2 1\n" + header)
+                with self.subTest(channel=channel), self.assertRaisesRegex(ValueError, "mixes"):
+                    export_submission.render(model_header=malformed)
+
+    def test_content_addressed_duplicate_keys_are_still_noncanonical(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for channel in (False, True):
+                runtime = self.runtime(root, 12, 8, channel=channel)
+                document = json.loads(runtime.read_bytes())
+                # Parsing would discard this duplicate without changing the body.
+                raw = runtime.read_bytes().replace(b'{', b'{"schema":' +
+                    json.dumps(document["schema"]).encode() + b',', 1)
+                path = root / f"{hashlib.sha256(raw).hexdigest()}.runtime.json"
+                path.write_bytes(raw)
+                with self.subTest(channel=channel), self.assertRaisesRegex(ValueError, "canonical"):
+                    export_model.render_header(path)
 
 
 if __name__ == "__main__":

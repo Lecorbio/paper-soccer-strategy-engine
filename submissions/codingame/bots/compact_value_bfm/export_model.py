@@ -16,6 +16,9 @@ from typing import Any
 
 
 RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v1"
+CHANNEL_RUNTIME_SCHEMA = "papersoccer.compact-value-bfm-runtime.v2"
+CHANNEL_QAT_PROFILE = "channel-prediction-qat-v1"
+CHANNEL_SCALE_COUNTS = {"w1": 12, "w2": 8, "w3": 1}
 FEATURE_SCHEMA = (
     "papersoccer.jacek-replay-bfm.features.v1:edge316+vertex105x57:"
     "mover-relative-rotate180:true-turn-distance+free-degree"
@@ -32,6 +35,12 @@ QUANTIZATION = {
     "maximum": 3,
     "scheme": "symmetric-signed-three-bit-per-layer-fixed-scale",
     "packing": "signed-three-bit-twos-complement-lsb-first",
+}
+CHANNEL_QUANTIZATION = {
+    **QUANTIZATION,
+    "scheme": "symmetric-signed-three-bit-per-output-channel-fixed-scale",
+    "granularity": "per-output-channel",
+    "scale_axis": "output",
 }
 ELIGIBLE = {
     (8, 8): "compact-8x8",
@@ -86,10 +95,15 @@ def quoted_chunks(value: str, width: int = 96) -> str:
 
 
 def float_literal(value: object, field: str) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric float32")
     number = float(value)
     if not math.isfinite(number) or number <= 0.0:
         raise ValueError(f"{field} must be finite and positive")
-    float32 = struct.unpack("<f", struct.pack("<f", number))[0]
+    try:
+        float32 = struct.unpack("<f", struct.pack("<f", number))[0]
+    except (OverflowError, struct.error) as error:
+        raise ValueError(f"{field} is outside float32") from error
     if float32 != number:
         raise ValueError(f"{field} is not an exact finite float32 value")
     rendered = f"{number:.9g}"
@@ -105,8 +119,15 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
     if path.name != expected_name:
         raise ValueError(f"runtime filename must be content-addressed as {expected_name}")
     runtime = json.loads(raw)
-    if not isinstance(runtime, dict) or runtime.get("schema") != RUNTIME_SCHEMA:
+    if not isinstance(runtime, dict) or runtime.get("schema") not in {
+        RUNTIME_SCHEMA, CHANNEL_RUNTIME_SCHEMA
+    }:
         raise ValueError("unexpected compact runtime schema")
+    channel = runtime["schema"] == CHANNEL_RUNTIME_SCHEMA
+    if set(runtime) != {"schema", "feature_schema", "architecture", "quantization", "selection", "body_sha256"}:
+        raise ValueError("runtime fields changed")
+    if canonical_json_bytes(runtime) != raw:
+        raise ValueError("runtime JSON is not canonical")
     if runtime.get("feature_schema") != FEATURE_SCHEMA:
         raise ValueError("unexpected compact feature schema")
     body_sha = runtime.get("body_sha256")
@@ -119,11 +140,15 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
         raise ValueError("runtime body SHA-256 mismatch")
 
     architecture = runtime.get("architecture")
-    if not isinstance(architecture, dict):
+    if not isinstance(architecture, dict) or set(architecture) != {
+        "name", "dimensions", "biases", "activations", "payload_layout"
+    }:
         raise ValueError("runtime architecture is missing")
     dimensions = architecture.get("dimensions")
     if (
         dimensions not in ([6301, 8, 8, 1], [6301, 8, 16, 1], [6301, 12, 8, 1])
+        or any(type(value) is not int for value in dimensions)
+        or channel and dimensions != [6301, 12, 8, 1]
         or architecture.get("biases") is not False
         or architecture.get("activations") != ACTIVATIONS
         or architecture.get("payload_layout") != LAYOUT
@@ -136,26 +161,45 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
     quantization = runtime.get("quantization")
     if not isinstance(quantization, dict):
         raise ValueError("runtime quantization is missing")
-    for field, expected in QUANTIZATION.items():
+    constants = CHANNEL_QUANTIZATION if channel else QUANTIZATION
+    expected_fields = set(constants) | {"scales", "weight_counts", "packed_byte_count", "payload_sha256", "payload_base64"}
+    if channel:
+        expected_fields.add("scale_counts")
+    if set(quantization) != expected_fields:
+        raise ValueError("runtime mixes quantization schema fields")
+    for field, expected in constants.items():
         if quantization.get(field) != expected:
             raise ValueError(f"unexpected quantization field {field}")
+        if type(expected) is int and type(quantization[field]) is not int:
+            raise ValueError(f"quantization field {field} must be integer")
     scales = quantization.get("scales")
     if not isinstance(scales, dict) or set(scales) != {"w1", "w2", "w3"}:
         raise ValueError("runtime scales are incomplete")
-    scale_literals = {
-        name: float_literal(scales[name], f"scale {name}")
-        for name in ("w1", "w2", "w3")
-    }
+    if channel:
+        scale_counts = quantization.get("scale_counts")
+        if (scale_counts != CHANNEL_SCALE_COUNTS or not isinstance(scale_counts, dict)
+                or any(type(value) is not int for value in scale_counts.values())):
+            raise ValueError("runtime channel scale counts changed")
+        if any(not isinstance(scales[name], list) or len(scales[name]) != count
+               for name, count in CHANNEL_SCALE_COUNTS.items()):
+            raise ValueError("runtime channel scale lengths changed")
+        scale_literals = {name: [float_literal(value, f"scale {name}[{index}]")
+                                for index, value in enumerate(scales[name])]
+                          for name in CHANNEL_SCALE_COUNTS}
+    else:
+        scale_literals = {name: float_literal(scales[name], f"scale {name}")
+                          for name in ("w1", "w2", "w3")}
     counts = {
         "w1": 6301 * hidden_one,
         "w2": hidden_one * hidden_two,
         "w3": hidden_two,
     }
     counts["total"] = counts["w1"] + counts["w2"] + counts["w3"]
-    if quantization.get("weight_counts") != counts:
+    if (quantization.get("weight_counts") != counts
+            or any(type(value) is not int for value in quantization["weight_counts"].values())):
         raise ValueError("runtime weight counts mismatch")
     expected_bytes = (counts["total"] * 3 + 7) // 8
-    if quantization.get("packed_byte_count") != expected_bytes:
+    if type(quantization.get("packed_byte_count")) is not int or quantization["packed_byte_count"] != expected_bytes:
         raise ValueError("runtime packed byte count mismatch")
     encoded = quantization.get("payload_base64")
     if not isinstance(encoded, str) or not encoded:
@@ -176,16 +220,32 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
         window = payload[bit // 8]
         if bit % 8 > 5 and bit // 8 + 1 < len(payload):
             window |= payload[bit // 8 + 1] << 8
-        if (window >> (bit % 8)) & 7 == 4:
+        code = (window >> (bit % 8)) & 7
+        if code == 4:
             raise ValueError("runtime payload contains forbidden code 100")
+        if channel:
+            if index < counts["w1"]:
+                scale = scales["w1"][index % hidden_one]
+            elif index < counts["w1"] + counts["w2"]:
+                scale = scales["w2"][(index - counts["w1"]) % hidden_two]
+            else:
+                scale = scales["w3"][0]
+            signed_code = code - 8 if code & 4 else code
+            try:
+                effective = struct.unpack("<f", struct.pack("<f", signed_code * scale))[0]
+            except (OverflowError, struct.error) as error:
+                raise ValueError("runtime channel effective weight is nonfinite") from error
+            if not math.isfinite(effective):
+                raise ValueError("runtime channel effective weight is nonfinite")
     tail = counts["total"] * 3 % 8
     if tail and payload[-1] >> tail:
         raise ValueError("runtime payload has nonzero trailing padding")
 
     selection = runtime.get("selection")
-    if not isinstance(selection, dict) or set(selection) != {
-        "arm", "seed", "float_epoch", "qat_epoch", "source_bundle_body_sha256"
-    }:
+    selection_fields = {"arm", "seed", "float_epoch", "qat_epoch", "source_bundle_body_sha256"}
+    if channel:
+        selection_fields.update(("qat_profile", "qat_evidence_sha256"))
+    if not isinstance(selection, dict) or set(selection) != selection_fields:
         raise ValueError("runtime selection binding is incomplete")
     if (
         selection["arm"] not in {"search-target", "teacher-assisted"}
@@ -201,6 +261,9 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
         or not valid_sha256(selection["source_bundle_body_sha256"])
     ):
         raise ValueError("runtime selection values are invalid")
+    if channel and (selection["qat_profile"] != CHANNEL_QAT_PROFILE
+                    or not valid_sha256(selection["qat_evidence_sha256"])):
+        raise ValueError("runtime channel QAT evidence binding changed")
     metadata = {
         "file_sha256": file_sha,
         "body_sha256": body_sha,
@@ -219,6 +282,41 @@ def validate_runtime(path: pathlib.Path) -> tuple[dict[str, Any], bytes, dict[st
 def render_header(path: pathlib.Path) -> tuple[bytes, dict[str, Any]]:
     runtime, _payload, metadata = validate_runtime(path)
     architecture = runtime["architecture"]
+    if runtime["schema"] == CHANNEL_RUNTIME_SCHEMA:
+        declarations = "\n".join(
+            f'inline constexpr std::array<float, {CHANNEL_SCALE_COUNTS[name]}> {constant}{{'
+            + ", ".join(metadata["scales"][name]) + "};"
+            for name, constant in (("w1", "kScaleOne"), ("w2", "kScaleTwo"), ("w3", "kScaleThree"))
+        )
+        content = f'''#pragma once
+
+#include <array>
+#include <cstddef>
+#include <string_view>
+#define COMPACT_VALUE_BFM_CHANNEL_MODEL_V2 1
+
+namespace compact_value_bfm::model {{
+inline constexpr std::size_t kInputs = 6301;
+inline constexpr std::size_t kHiddenOne = 12;
+inline constexpr std::size_t kHiddenTwo = 8;
+inline constexpr std::size_t kOutputs = 1;
+inline constexpr std::size_t kWeightCount = {metadata["counts"]["total"]};
+inline constexpr std::size_t kPackedByteCount = {metadata["packed_bytes"]};
+{declarations}
+inline constexpr std::string_view kRuntimeSchema = "{CHANNEL_RUNTIME_SCHEMA}";
+inline constexpr std::string_view kFeatureSchema = "{FEATURE_SCHEMA}";
+inline constexpr std::string_view kPayloadSha256 = "{metadata["payload_sha256"]}";
+inline constexpr std::string_view kRuntimeBodySha256 = "{metadata["body_sha256"]}";
+inline constexpr std::string_view kQatProfile = "{CHANNEL_QAT_PROFILE}";
+inline constexpr std::string_view kQatEvidenceSha256 = "{runtime["selection"]["qat_evidence_sha256"]}";
+inline constexpr std::string_view kIdentity = "{metadata["identity"]}";
+inline constexpr std::string_view kPackedWeights =
+{quoted_chunks(metadata["encoded"])};
+}}  // namespace compact_value_bfm::model
+'''.encode("ascii")
+        metadata.update({"architecture": architecture, "header_sha256": hashlib.sha256(content).hexdigest(),
+                         "header_characters": len(content), "runtime_schema": CHANNEL_RUNTIME_SCHEMA})
+        return content, metadata
     content = f'''#pragma once
 
 #include <cstddef>

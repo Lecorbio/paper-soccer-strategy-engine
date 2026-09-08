@@ -33,6 +33,9 @@ PRIVATE_IDENTIFIERS = (
     "select_descendant", "select_path", "first_child", "child_index",
     "child_perspective", "selected_score", "selected_order",
     "cache_", "reuse_", "traversal_closed",
+    "ChannelModelDescriptor", "channel_scales_one_", "channel_scales_two_",
+    "finish_channels", "per_output_channel_",
+    "scales_one", "scales_two", "scales_three", "kQatProfile", "kQatEvidenceSha256",
 )
 PRIVATE_ALIASES = {
     identifier: f"{prefix}{suffix}"
@@ -207,6 +210,31 @@ def minify_private_identifiers(source: str) -> str:
     return "".join(output)
 
 
+def runtime_source_region(source: str, version: str) -> str:
+    """Specialize inference only; preserve the complete historical v1 text.
+
+    Native builds compile both descriptor paths. Standalone exports remove
+    native dispatch and the other version's inference declarations/definitions.
+    The existing source compactor and every search region remain unchanged.
+    """
+    selected = "V2" if version == "papersoccer.compact-value-bfm-runtime.v2" else "V1"
+    stack: list[str] = []
+    output: list[str] = []
+    for line in source.splitlines(keepends=True):
+        marker = re.fullmatch(r"\s*// COMPACT_RUNTIME_(V1|V2|NATIVE)_(BEGIN|END)\s*", line)
+        if marker:
+            kind, action = marker.groups()
+            if action == "BEGIN":
+                stack.append(kind)
+            elif not stack or stack.pop() != kind:
+                raise ValueError("unbalanced runtime source region")
+        elif all(kind == selected for kind in stack):
+            output.append(line)
+    if stack:
+        raise ValueError("unterminated runtime source region")
+    return "".join(output)
+
+
 def render(*, model_header: bytes | None = None) -> tuple[pathlib.Path, bytes]:
     config = json.loads(CONFIG.read_text())
     if config.get("schema") != "papersoccer.codingame-submission.v1":
@@ -221,16 +249,29 @@ def render(*, model_header: bytes | None = None) -> tuple[pathlib.Path, bytes]:
     ]
     if not sources:
         raise ValueError("empty source manifest")
+    model_text = (model_header.decode("ascii") if model_header is not None
+                  else (HERE / "model.hpp").read_text())
+    versions = re.findall(r'kRuntimeSchema\s*=\s*"([^"]+)"', model_text)
+    if len(versions) != 1 or versions[0] not in {
+        "papersoccer.compact-value-bfm-runtime.v1",
+        "papersoccer.compact-value-bfm-runtime.v2",
+    }:
+        raise ValueError("model header requires one supported runtime schema")
+    version = versions[0]
+    channel_header = "#define COMPACT_VALUE_BFM_CHANNEL_MODEL_V2 1" in model_text
+    if channel_header != (version == "papersoccer.compact-value-bfm-runtime.v2"):
+        raise ValueError("model header mixes scalar and channel runtime schemas")
     system_headers: set[str] = set()
     bodies: list[str] = []
     for relative in sources:
         source = contained(ROOT, relative, "source")
         source_text = (
-            model_header.decode("ascii")
-            if model_header is not None and relative ==
+            model_text
+            if relative ==
             "submissions/codingame/bots/compact_value_bfm/model.hpp"
             else source.read_text()
         )
+        source_text = runtime_source_region(source_text, version)
         kept: list[str] = []
         for line in source_text.replace("\r\n", "\n").split("\n"):
             if line.strip() == "#pragma once":

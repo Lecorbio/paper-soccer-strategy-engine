@@ -156,7 +156,9 @@ def verify_master_updates(row, initial, parameters, architecture, quantized):
             or any(not value['changed'] or not math.isfinite(value['l2_delta']) or value['l2_delta'] <= 0
                    or value['before_sha256'] == value['after_sha256'] for value in updates.values())):
         raise ValueError('full seed lacks actual finite nonzero all-layer master updates')
-    initial_quantized = trainer.quantize_fixed(initial, architecture, quantized.scales)
+    quantize_initial = (trainer.quantize_channels if isinstance(quantized, trainer.ChannelQuantizedWeights)
+                        else trainer.quantize_fixed)
+    initial_quantized = quantize_initial(initial, architecture, quantized.scales)
     changes = trainer._quantized_update_evidence(initial_quantized, quantized)
     if changes != row.get('quantized_changes_vs_initialization') or not any(v['changed_codes'] for v in changes.values()):
         raise ValueError('full seed quantized initialization was reused or changed')

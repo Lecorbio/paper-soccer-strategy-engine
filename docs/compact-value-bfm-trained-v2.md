@@ -438,6 +438,36 @@ selection. An admitted full phase inherits this exact profile; attempts beyond
 four remain unavailable without another concrete implementation. Historical
 standard and refined profile contracts and all qualification gates are unchanged.
 
+The prospective `channel-prediction-qat-v1` profile adds output-channel scales
+for the same bias-free 6301→12→8→1 network and signed three-bit codes. Runtime
+v2 stores 12, 8 and 1 positive canonical float32 scales for the three layers;
+runtime v1 retains its three scalar scales and exact historical export bytes.
+Native full, incremental and perspective evaluations must agree with the Python
+implementation. V2 loaders and exporters reject mixed schemas, malformed scale
+vectors and effective weights that overflow float32. The existing size and
+source-reserve requirements still apply.
+
+This profile freezes a training-only calibration fixture of 1,024 new rows and
+3,072 filtered anchor rows, sampled without replacement by PCG64 seed 20260908,
+sorted within each pool, with new rows first. It requires sufficient rows and
+preserves their sample weights. Float predictions made before QAT remain the
+calibration targets for all five scale-selection stages. Initial scales use
+weight reconstruction error followed by two fixed coordinate sweeps minimizing
+weighted prediction error. After each QAT epoch, the same two-sweep procedure
+re-quantizes the current master weights, starting with the incumbent scales.
+Layers and output channels use fixed order; incumbent-first candidates retain
+the incumbent on exact ties. Calibration does not access heldout inputs or
+metrics. Heldout metrics still choose the QAT epoch using the frozen-reference
+retention key and unchanged gates.
+
+The original warm-up, four all-layer QAT epochs, losses, gradient/AdamW rules,
+batch mixture and initialization remain. QAT learning rate is 0.0000625.
+Calibration prediction traces stream to bounded disk-backed arrays, at most
+672×4096 float32 values per stage (10.5 MiB), with fixture, target, master, code,
+objective and runtime-evidence bindings validated on load. Registering this
+profile and runtime does not authorize another production attempt: prospective
+native QAT validation and a concrete new campaign lineage remain necessary.
+
 `compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
 or a completed calibrated live rejection. It keeps terminal proof separate from
 the unprotected metrics used for attribution, and carries fingerprints from the

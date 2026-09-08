@@ -397,8 +397,10 @@ std::string python_float(double value) {
   const std::size_t exponent_at = result.find('e');
   if (exponent_at != std::string::npos) {
     int exponent{};
+    const char *exponent_begin = result.data() + exponent_at + 1U;
+    if (*exponent_begin == '+') ++exponent_begin;
     const auto parsed = std::from_chars(
-        result.data() + exponent_at + 1U, result.data() + result.size(), exponent);
+        exponent_begin, result.data() + result.size(), exponent);
     if (parsed.ec != std::errc{} || parsed.ptr != result.data() + result.size()) {
       throw std::logic_error("canonical runtime float exponent");
     }
@@ -473,7 +475,11 @@ LoadedRuntime load(const std::filesystem::path &path) {
   }
   keys(document, {"schema", "feature_schema", "architecture", "quantization",
                   "selection", "body_sha256"});
-  exact_string(field(document, "schema"), kRuntimeSchema, "runtime schema");
+  const std::string schema(string(field(document, "schema"), "runtime schema"));
+  const bool channel = schema == kChannelRuntimeSchema;
+  if (schema != kRuntimeSchema && !channel) {
+    throw std::invalid_argument("runtime schema changed");
+  }
   exact_string(field(document, "feature_schema"), kFeatureSchema,
                "runtime feature schema");
   const std::string claimed_body(
@@ -506,6 +512,7 @@ LoadedRuntime load(const std::filesystem::path &path) {
       (hidden_one == 12U && hidden_two == 8U &&
        architecture_name == "capacity-12x8");
   if (inputs != cv::kFeatureCount || outputs != 1U || !eligible ||
+      (channel && (hidden_one != 12U || hidden_two != 8U)) ||
       boolean(field(architecture, "biases"), "architecture biases")) {
     throw std::invalid_argument("compact runtime architecture changed");
   }
@@ -524,25 +531,56 @@ LoadedRuntime load(const std::filesystem::path &path) {
   }
 
   const Json &quantization = field(document, "quantization");
-  keys(quantization, {"bits", "minimum", "maximum", "scheme", "packing",
-                      "scales", "weight_counts", "packed_byte_count",
-                      "payload_sha256", "payload_base64"});
+  if (channel) {
+    keys(quantization, {"bits", "minimum", "maximum", "scheme", "packing",
+                        "scales", "weight_counts", "packed_byte_count",
+                        "payload_sha256", "payload_base64", "granularity",
+                        "scale_axis", "scale_counts"});
+    exact_string(field(quantization, "granularity"), "per-output-channel", "quantization granularity");
+    exact_string(field(quantization, "scale_axis"), "output", "quantization scale axis");
+  } else {
+    keys(quantization, {"bits", "minimum", "maximum", "scheme", "packing",
+                        "scales", "weight_counts", "packed_byte_count",
+                        "payload_sha256", "payload_base64"});
+  }
   if (integer<int>(field(quantization, "bits"), "quantization bits") != 3 ||
       integer<int>(field(quantization, "minimum"), "quantization minimum") != -3 ||
       integer<int>(field(quantization, "maximum"), "quantization maximum") != 3) {
     throw std::invalid_argument("compact runtime quantization bounds changed");
   }
   exact_string(field(quantization, "scheme"),
-               "symmetric-signed-three-bit-per-layer-fixed-scale",
+               channel ? "symmetric-signed-three-bit-per-output-channel-fixed-scale"
+                       : "symmetric-signed-three-bit-per-layer-fixed-scale",
                "quantization scheme");
   exact_string(field(quantization, "packing"),
                "signed-three-bit-twos-complement-lsb-first",
                "quantization packing");
   const Json &scales = field(quantization, "scales");
   keys(scales, {"w1", "w2", "w3"});
-  const float scale_one = positive_float32(field(scales, "w1"), "w1 scale");
-  const float scale_two = positive_float32(field(scales, "w2"), "w2 scale");
-  const float scale_three = positive_float32(field(scales, "w3"), "w3 scale");
+  std::array<float, 12> scale_one{};
+  std::array<float, 8> scale_two{};
+  std::array<float, 1> scale_three{};
+  if (channel) {
+    const Json &scale_counts = field(quantization, "scale_counts");
+    keys(scale_counts, {"w1", "w2", "w3"});
+    const auto read_scales = [&](std::string_view name, std::span<float> target) {
+      const Json &array = field(scales, name);
+      if (integer<std::size_t>(field(scale_counts, name), "scale count") != target.size() ||
+          array.kind != Json::Kind::Array || array.array.size() != target.size()) {
+        throw std::invalid_argument("runtime channel scale lengths changed");
+      }
+      for (std::size_t index = 0; index < target.size(); ++index) {
+        target[index] = positive_float32(array.array[index], name);
+      }
+    };
+    read_scales("w1", scale_one);
+    read_scales("w2", scale_two);
+    read_scales("w3", scale_three);
+  } else {
+    scale_one[0] = positive_float32(field(scales, "w1"), "w1 scale");
+    scale_two[0] = positive_float32(field(scales, "w2"), "w2 scale");
+    scale_three[0] = positive_float32(field(scales, "w3"), "w3 scale");
+  }
   const std::size_t w1 = cv::kFeatureCount * hidden_one;
   const std::size_t w2 = hidden_one * hidden_two;
   const std::size_t w3 = hidden_two;
@@ -566,8 +604,20 @@ LoadedRuntime load(const std::filesystem::path &path) {
   }
 
   const Json &selection = field(document, "selection");
-  keys(selection, {"arm", "seed", "float_epoch", "qat_epoch",
-                   "source_bundle_body_sha256"});
+  std::string qat_profile;
+  std::string qat_evidence;
+  if (channel) {
+    keys(selection, {"arm", "seed", "float_epoch", "qat_epoch",
+                     "source_bundle_body_sha256", "qat_profile", "qat_evidence_sha256"});
+    qat_profile = string(field(selection, "qat_profile"), "QAT profile");
+    qat_evidence = string(field(selection, "qat_evidence_sha256"), "QAT evidence SHA-256");
+    if (qat_profile != "channel-prediction-qat-v1" || !sha256(qat_evidence)) {
+      throw std::invalid_argument("runtime channel QAT evidence changed");
+    }
+  } else {
+    keys(selection, {"arm", "seed", "float_epoch", "qat_epoch",
+                     "source_bundle_body_sha256"});
+  }
   const std::string arm(string(field(selection, "arm"), "selection arm"));
   if (arm != "search-target" && arm != "teacher-assisted") {
     throw std::invalid_argument("compact runtime selection arm changed");
@@ -586,16 +636,20 @@ LoadedRuntime load(const std::filesystem::path &path) {
     throw std::invalid_argument("compact runtime selection binding changed");
   }
 
-  auto model = std::make_unique<cv::QuantizedModel>(cv::ModelDescriptor{
-      inputs, hidden_one, hidden_two, scale_one, scale_two, scale_three,
-      payload, payload_sha, false});
+  auto model = channel
+      ? std::make_unique<cv::QuantizedModel>(cv::ChannelModelDescriptor{
+            inputs, hidden_one, hidden_two, scale_one, scale_two, scale_three,
+            payload, payload_sha})
+      : std::make_unique<cv::QuantizedModel>(cv::ModelDescriptor{
+            inputs, hidden_one, hidden_two, scale_one[0], scale_two[0], scale_three[0],
+            payload, payload_sha, false});
   if (model->payload_sha256() != payload_sha) {
     throw std::logic_error("compact runtime/model payload identity mismatch");
   }
   return LoadedRuntime{
       Identity{digest(bytes), claimed_body, payload_sha, source_bundle,
                digest(serialize(selection) + "\n"), architecture_name, arm,
-               seed},
+               seed, schema, qat_profile, qat_evidence},
       std::move(model)};
 }
 
