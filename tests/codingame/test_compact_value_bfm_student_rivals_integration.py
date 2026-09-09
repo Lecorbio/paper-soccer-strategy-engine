@@ -173,20 +173,27 @@ class StudentRivalIntegrationTests(unittest.TestCase):
         self.assertEqual(report['pairwise_loss'], expected_loss)
         self.assertEqual(report['pairs'], 8)
 
-    def test_historical_numerical_and_validation_kernels_match_8856_asts(self):
-        # Captured from immutable 8856daf; no ignored snapshot needed by CI.
+    def test_historical_numerical_and_validation_kernels_match_8856_source(self):
+        # Exact UTF-8 source segments from immutable 8856daf. ASTs locate the
+        # definitions only: ast.dump formatting differs across Python versions.
+        # No ignored snapshot is needed by CI, and source changes still reject.
         expected = {
-            '_network_gradients': '8aee72986955b3c86e3f77a7aab6a5449b32bea90b3ac95647764f2d8d709251',
-            'AdamW': 'daaaf670549f198b3aff8cba451af9b4919e4376e88dd0f731646c4a8f19aad9',
-            'pairwise_successor_ranking_loss_gradient': '5356f2625cfbbbb1819cac1dbff5b25f50092d451f94980ac89f652534633766',
-            'successor_ranking_metrics': 'bafbe63c69faa18d1581692779dc8b9120a62c8af0c2a2c097a8aa685ff8e14c',
-            'mixed_epoch_batches': '328ef6fe1ac9cbd4954cad85ddc3aca7b35ff6269b40d0547dee5d0a6b941f68',
-            'successor_ranking_epoch_schedule': '21137e94cd40c464f69c9a10f346a3ced5626e60965ec3e8d94ece1fe32ad3b8',
+            '_network_gradients': '9e0cbcb4562d9d10f54ebed5fb5f6d392b3805e512e7c4629ea1e0c341e4a6e3',
+            'AdamW': 'e4759dfb7971e48db42b196a997b693c32eac3382613b34d4533909e3231a318',
+            'pairwise_successor_ranking_loss_gradient': 'a48ae1470ddbf5933bae1a91d98a392da04e69a93aea853478c6cf46d3d82dab',
+            'successor_ranking_metrics': '1293cfceedf0fffeb7bbb65498e7df9fb9b1eb6ba31aecbf48c6dda492f0196f',
+            'mixed_epoch_batches': 'bb77f1a9165f55a60d08dba2f459443ad4c54edb33697b66659ffca75cdc4d5d',
+            'successor_ranking_epoch_schedule': '65280891d2b4bda753e7c65b3cf193c763de5d332a2028eaa5778e241f59c263',
         }
-        nodes = {n.name: n for n in ast.parse(Path(t.__file__).read_text()).body if hasattr(n, 'name')}
+        source = Path(t.__file__).read_text(encoding='utf-8')
+        nodes = {n.name: n for n in ast.parse(source).body if hasattr(n, 'name')}
         for name, digest in expected.items():
             with self.subTest(name=name):
-                self.assertEqual(hashlib.sha256(ast.dump(nodes[name], include_attributes=False).encode()).hexdigest(), digest)
+                # get_source_segment starts at def/class, so guard decorators too.
+                self.assertFalse(nodes[name].decorator_list)
+                segment = ast.get_source_segment(source, nodes[name])
+                self.assertIsNotNone(segment)
+                self.assertEqual(hashlib.sha256(segment.encode('utf-8')).hexdigest(), digest)
 
     def test_real_seed_producer_receipt_runtime_and_immutable_selection_roundtrip(self):
         parameters, scalar_inputs, group = controlled_inputs()
