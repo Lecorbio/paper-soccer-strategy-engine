@@ -84,6 +84,8 @@ NATIVE_THREAD_PREIMPORT_MARKER_AT_NUMPY_IMPORT = os.environ.get(
 
 import numpy as np
 
+_TRAINER_SOURCE_AT_IMPORT = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()
+
 
 TOOL_DIRECTORY = pathlib.Path(__file__).resolve().parent
 if str(TOOL_DIRECTORY) not in sys.path:
@@ -162,6 +164,9 @@ QAT_PROFILE_SCHEMA = "papersoccer.compact-value-bfm-qat-profile.v1"
 NATIVE_THREAD_EXECUTION_SCHEMA = (
     "papersoccer.compact-value-bfm-native-thread-execution.v1"
 )
+PARALLEL_NATIVE_EXECUTION_SCHEMA = "papersoccer.compact-value-bfm-native-thread-execution.v2"
+KERNEL_EXECUTION_SCHEMA = "papersoccer.compact-value-bfm-native-kernel-execution.v1"
+
 STANDARD_QAT_PROFILE = "standard-v1"
 REFINED_ADAPTIVE_SCALES_QAT_PROFILE = "refined-adaptive-scales-v1"
 RETENTION_FIRST_LOW_RATE_QAT_PROFILE = "retention-first-low-rate-v1"
@@ -312,8 +317,68 @@ def _native_thread_controllers(values: object) -> list[dict[str, object]]:
     )
 
 
+def validation_prediction_settings(workers=1, seed_concurrency=1):
+    if type(workers) is not int or workers not in (1, 2, 4):
+        raise TrainingError("validation workers must be exactly1,2or4")
+    if type(seed_concurrency) is not int or seed_concurrency not in (1, 2, 4) or workers * seed_concurrency > 4:
+        raise TrainingError("combined active seed/prediction concurrency exceeds4 or is unsupported")
+    if workers == 1:
+        return None
+    from tools import compact_value_bfm_prediction_pool as prediction
+    return {"policy": prediction.policy(workers, seed_concurrency),
+        "sources": prediction._source_records(sys.modules[__name__])}
+
+
+def native_kernel_evidence(value):
+    value = validate_native_thread_execution(value)
+    if value["schema"] != NATIVE_THREAD_EXECUTION_SCHEMA:
+        raise TrainingError("kernel evidence requires the coordinator's native limiter")
+    result = dict(value)
+    result["schema"] = KERNEL_EXECUTION_SCHEMA
+    result.pop("native_threads_per_seed_maximum")
+    result["native_threads_per_kernel_maximum"] = 1
+    result["limiter_scope"] = "per-process-native-kernel-limit"
+    return result
+
+
+def validate_native_kernel_evidence(value):
+    if not isinstance(value, Mapping) or value.get("schema") != KERNEL_EXECUTION_SCHEMA or value.get("native_threads_per_kernel_maximum") != 1 or value.get("limiter_scope") != "per-process-native-kernel-limit":
+        raise TrainingError("native kernel execution evidence changed")
+    legacy = dict(value)
+    legacy["schema"] = NATIVE_THREAD_EXECUTION_SCHEMA
+    legacy.pop("native_threads_per_kernel_maximum")
+    legacy["native_threads_per_seed_maximum"] = 1
+    legacy["limiter_scope"] = "outer-roster-established-before-seed-workers"
+    validate_native_thread_execution(legacy)
+    return dict(value)
+
+
+def prediction_native_execution(base, settings):
+    if settings is None:
+        if base.get("schema") != NATIVE_THREAD_EXECUTION_SCHEMA:
+            raise TrainingError("serial execution cannot claim prediction helper use")
+        return validate_native_thread_execution(base)
+    from tools import compact_value_bfm_prediction_pool as prediction
+    prediction.validate_policy(settings["policy"])
+    return {"schema": PARALLEL_NATIVE_EXECUTION_SCHEMA,
+        "coordinator_kernel": native_kernel_evidence(base),
+        "prediction_policy": settings["policy"],
+        "maximum_active_numerical_streams": settings["policy"]["maximum_active_numerical_streams"],
+        "parent_numerics_wait_for_all_helpers": True}
+
+
 def validate_native_thread_execution(value: object) -> dict[str, object]:
     expected_environment = dict(NATIVE_THREAD_ENVIRONMENT)
+    if isinstance(value, Mapping) and value.get("schema") == PARALLEL_NATIVE_EXECUTION_SCHEMA:
+        from tools import compact_value_bfm_prediction_pool as prediction
+        if set(value) != {"schema", "coordinator_kernel", "prediction_policy", "maximum_active_numerical_streams", "parent_numerics_wait_for_all_helpers"}:
+            raise TrainingError("parallel native execution envelope changed")
+        policy = prediction.validate_policy(value["prediction_policy"])
+        validate_native_kernel_evidence(value["coordinator_kernel"])
+        if value["maximum_active_numerical_streams"] != policy["maximum_active_numerical_streams"] or value["parent_numerics_wait_for_all_helpers"] is not True:
+            raise TrainingError("parallel native aggregate concurrency changed")
+        return dict(value)
+
     if (
         not isinstance(value, Mapping)
         or set(value) != {
@@ -4272,7 +4337,9 @@ def evaluate_validation_pair(
     quantized: QuantizedWeights | None = None,
     ranking_weight: float = 0.0,
     _float_best_cache: _FloatRankingDecisionCache | None = None,
+    _prediction_executor=None,
 ) -> dict[str, dict[str, Any]]:
+    prediction = predict_dataset if _prediction_executor is None else _prediction_executor.predict
     ranking_weight = _ranking_weight(ranking_weight)
     if _float_best_cache is not None and inputs.successor_rankings is None:
         raise TrainingError("float-ranking decision cache requires successor groups")
@@ -4286,7 +4353,7 @@ def evaluate_validation_pair(
         raise TrainingError("positive ranking loss has no comparable validation groups")
     report: dict[str, dict[str, Any]] = {
         "common_adjudicator": metrics_from_predictions(
-            predict_dataset(
+            prediction(
                 parameters,
                 architecture,
                 inputs.common_adjudicator,
@@ -4296,7 +4363,7 @@ def evaluate_validation_pair(
             arm,
         ),
         "canonical_validation": metrics_from_predictions(
-            predict_dataset(
+            prediction(
                 parameters,
                 architecture,
                 inputs.canonical_validation,
@@ -4529,7 +4596,9 @@ def train_float_seed(
     ranking_weight: float = 0.0,
     initial_parameters: Mapping[str, np.ndarray] | None = None,
     training_pair_policy: str | None = None,
+    _prediction_executor=None,
 ) -> FloatTrainingResult:
+    prediction_arguments = {} if _prediction_executor is None else {"_prediction_executor": _prediction_executor}
     if seed not in FIXED_SEEDS:
         raise TrainingError("compact training requires one of the three fixed seeds")
     if maximum_epochs <= 0 or maximum_epochs > MAX_FLOAT_EPOCHS or patience <= 0:
@@ -4637,6 +4706,7 @@ def train_float_seed(
             inputs,
             arm,
             ranking_weight=ranking_weight,
+            **prediction_arguments,
         )
         coverage = mixed_epoch_coverage(len(inputs.new), len(inputs.anchor), epoch)
         complete = (
@@ -5020,7 +5090,9 @@ def select_fixed_scales(
     ranking_weight: float = 0.0,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     float_validation_reference: object = None,
+    _prediction_executor=None,
 ) -> tuple[QuantizedWeights, dict[str, object]]:
+    prediction_arguments = {} if _prediction_executor is None else {"_prediction_executor": _prediction_executor}
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(qat_profile)
     if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
@@ -5052,6 +5124,7 @@ def select_fixed_scales(
                     quantized=quantized,
                     ranking_weight=ranking_weight,
                     **cache_arguments,
+                    **prediction_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
@@ -5087,6 +5160,7 @@ def select_fixed_scales(
                     quantized=quantized,
                     ranking_weight=ranking_weight,
                     **cache_arguments,
+                    **prediction_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
@@ -5114,6 +5188,7 @@ def select_fixed_scales(
         quantized=selected,
         ranking_weight=ranking_weight,
         **cache_arguments,
+        **prediction_arguments,
     )
     report = {
         "scheme": (
@@ -5157,8 +5232,10 @@ def _adapt_fixed_scales(
     qat_epoch: int,
     ranking_weight: float,
     float_validation_reference: object = None,
+    _prediction_executor=None,
 ) -> tuple[QuantizedWeights, dict[str, object]]:
     """Locally reselect scales after one QAT epoch from current master weights."""
+    prediction_arguments = {} if _prediction_executor is None else {"_prediction_executor": _prediction_executor}
 
     parameters = _validate_parameters(parameters, architecture)
     profile = resolve_qat_profile(profile)
@@ -5208,6 +5285,7 @@ def _adapt_fixed_scales(
                     quantized=quantized,
                     ranking_weight=ranking_weight,
                     **cache_arguments,
+                    **prediction_arguments,
                 )
                 key = (*_qat_validation_key(metrics, profile, **selection_arguments), float(candidate))
                 trials.append({
@@ -5233,6 +5311,7 @@ def _adapt_fixed_scales(
         quantized=selected,
         ranking_weight=ranking_weight,
         **cache_arguments,
+        **prediction_arguments,
     )
     before = {
         name: float(np.float32(starting_scales[name]))
@@ -5583,10 +5662,14 @@ def run_fixed_scale_qat(
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     calibration_directory: pathlib.Path | None = None,
     original_parameters: Mapping[str, np.ndarray] | None = None,
+    _prediction_executor=None,
 ) -> QuantizedTrainingResult:
+    prediction_arguments = {} if _prediction_executor is None else {"_prediction_executor": _prediction_executor}
     if qat_epochs != QAT_EPOCHS:
         raise TrainingError("compact deployment requires exactly four QAT epochs")
     profile = resolve_qat_profile(qat_profile)
+    if profile.name == CHANNEL_PREDICTION_QAT_PROFILE and _prediction_executor is not None:
+        raise TrainingError("parallel validation currently rejects channel QAT before work")
     if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
         if calibration_directory is None or original_parameters is None:
             raise TrainingError("channel QAT requires an audit directory and original float parameters")
@@ -5632,6 +5715,7 @@ def run_fixed_scale_qat(
         ranking_weight=ranking_weight,
         qat_profile=profile,
         **selection_arguments,
+        **prediction_arguments,
     )
     selected: QuantizedWeights | None = None
     selected_epoch = 0
@@ -5642,6 +5726,7 @@ def run_fixed_scale_qat(
         arm,
         quantized=pre_qat,
         ranking_weight=ranking_weight,
+        **prediction_arguments,
     )
     selected_metrics: dict[str, dict[str, float | int]] | None = None
     selected_key: tuple[float, ...] | None = None
@@ -5731,6 +5816,7 @@ def run_fixed_scale_qat(
                 qat_epoch=qat_epoch,
                 ranking_weight=ranking_weight,
                 **selection_arguments,
+                **prediction_arguments,
             )
             metrics = adaptive_scale_search["selected_validation"]
             fixed_scales = dict(candidate.scales)
@@ -5743,6 +5829,7 @@ def run_fixed_scale_qat(
                 arm,
                 quantized=candidate,
                 ranking_weight=ranking_weight,
+                **prediction_arguments,
             )
         key = _qat_validation_key(metrics, profile, **selection_arguments)
         history.append({
@@ -6703,7 +6790,11 @@ def training_binding(
     ranking_weight: float = 0.0,
     initial_checkpoint: pathlib.Path | None = None,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
+    *, validation_workers: int = 1, seed_concurrency: int = 1,
 ) -> dict[str, object]:
+    prediction_settings = validation_prediction_settings(validation_workers, seed_concurrency)
+    if validation_workers > 1 and resolve_qat_profile(qat_profile).name == CHANNEL_PREDICTION_QAT_PROFILE:
+        raise TrainingError("parallel validation currently rejects channel QAT before work")
     ranking_weight = _ranking_weight(ranking_weight)
     profile = resolve_qat_profile(qat_profile)
     sidecar = None
@@ -6821,6 +6912,11 @@ def training_binding(
     if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
         body["settings"]["training_pair_policy"] = training_pair_policy_contract(profile)
         body["successor_ranking"]["training_pair_policy"] = training_pair_policy_contract(profile)
+    if prediction_settings is not None:
+        from tools import compact_value_bfm_prediction_pool as prediction
+        prediction_settings["features"] = {name: prediction._features(getattr(inputs, name), np)
+            for name in ("common_adjudicator", "canonical_validation")}
+        body["settings"]["validation_prediction"] = prediction_settings
     return body_hashed(body)
 
 
@@ -6939,6 +7035,38 @@ def _validate_student_receipt_artifacts(receipt, binding, warmup_parameters, qua
             raise TrainingError("student rival warmup/runtime codes changed")
 
 
+def prediction_seed_execution_policy(seed_workers, settings):
+    from tools import compact_value_bfm_prediction_pool as prediction
+    pol = prediction.validate_policy(settings["policy"])
+    if seed_workers not in (1, 2) or pol["seed_concurrency"] != seed_workers:
+        raise TrainingError("prediction policy differs from actual thread seed roster")
+    return {"schema": "papersoccer.compact-value-bfm-seed-execution.v2",
+        "seed_workers": seed_workers, "maximum_seed_workers": 2,
+        "worker_model": "shared-read-only-input-thread-pool" if seed_workers == 2 else "serial-seed-roster",
+        "receipt_order": "fixed-seed-order", "selection_order": "validation-key-then-seed",
+        "resume": "completed-reference-only;interrupted-parallel-seed-is-spent",
+        "per_seed_execution_binding_includes_worker_count": True,
+        "validation_prediction_policy": pol,
+        "maximum_active_numerical_streams": pol["maximum_active_numerical_streams"]}
+
+
+def validate_validation_prediction_receipt(receipt, expected_binding, artifact_root):
+    settings = expected_binding.get("settings", {}).get("validation_prediction")
+    evidence = receipt.get("validation_prediction_execution")
+    native = receipt.get("native_thread_execution", {})
+    if settings is None:
+        if evidence is not None or native.get("schema") == PARALLEL_NATIVE_EXECUTION_SCHEMA:
+            raise TrainingError("serial seed cannot claim unbound prediction helpers")
+        return
+    from tools import compact_value_bfm_prediction_pool as prediction
+    prediction.validate_policy(settings["policy"])
+    if (native.get("schema") != PARALLEL_NATIVE_EXECUTION_SCHEMA
+            or native.get("prediction_policy") != settings["policy"]):
+        raise TrainingError("prediction helper native envelope disagrees with seed binding")
+    prediction.validate_execution(evidence, settings, artifact_root=artifact_root,
+        dataset_identities=expected_binding["datasets"], trainer=sys.modules[__name__])
+
+
 def _load_seed_receipt_from_reference(
     output_directory: pathlib.Path,
     reference_path: pathlib.Path,
@@ -6974,6 +7102,7 @@ def _load_seed_receipt_from_reference(
             raise TrainingError("compact seed successor schedule summary changed")
     if receipt.get("binding") != expected_binding:
         raise TrainingError("compact seed resume binding changed")
+    validate_validation_prediction_receipt(receipt, expected_binding, output_directory)
     settings = expected_binding.get("settings")
     profile_name = settings.get("qat_profile") if isinstance(
         settings, Mapping
@@ -7051,7 +7180,12 @@ def train_seed_candidate(
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     resume: bool = False,
     _native_thread_execution: Mapping[str, object] | None = None,
+    validation_workers: int = 1,
+    _seed_concurrency: int = 1,
 ) -> dict[str, Any]:
+    prediction_settings = validation_prediction_settings(validation_workers, _seed_concurrency)
+    if validation_workers > 1 and resolve_qat_profile(qat_profile).name == CHANNEL_PREDICTION_QAT_PROFILE:
+        raise TrainingError("parallel validation currently rejects channel QAT before any work")
     if _native_thread_execution is None:
         with native_thread_execution_scope() as execution:
             return train_seed_candidate(
@@ -7067,10 +7201,12 @@ def train_seed_candidate(
                 qat_profile=qat_profile,
                 resume=resume,
                 _native_thread_execution=execution,
+                validation_workers=validation_workers, _seed_concurrency=_seed_concurrency,
             )
     native_execution = validate_native_thread_execution(
         _native_thread_execution
     )
+    native_execution = prediction_native_execution(native_execution, prediction_settings)
     profile = resolve_qat_profile(qat_profile)
     binding = training_binding(
         bundle,
@@ -7082,6 +7218,7 @@ def train_seed_candidate(
         ranking_weight,
         initial_checkpoint,
         profile,
+        validation_workers=validation_workers, seed_concurrency=_seed_concurrency,
     )
     reference_path = _seed_reference_path(
         output_directory, architecture, arm, seed
@@ -7113,21 +7250,34 @@ def train_seed_candidate(
         })
     if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
         float_arguments["training_pair_policy"] = STUDENT_RIVAL_PAIR_POLICY
-    float_result = train_float_seed(
-        inputs, architecture, arm, seed, **float_arguments
-    )
-    quantized_result = run_fixed_scale_qat(
-        float_result,
-        inputs,
-        architecture,
-        arm,
-        seed,
-        ranking_weight=ranking_weight,
-        qat_profile=profile,
-        **({"calibration_directory": output_directory / "channel-calibration" / f"seed-{seed}",
-            "original_parameters": float_arguments["initial_parameters"]}
-           if profile.name == CHANNEL_PREDICTION_QAT_PROFILE else {}),
-    )
+    prediction_evidence = None
+    manager = contextlib.nullcontext(None)
+    if prediction_settings is not None:
+        from tools import compact_value_bfm_prediction_pool as prediction
+        manager = prediction.ValidationPredictionPool(
+            {"common_adjudicator": inputs.common_adjudicator, "canonical_validation": inputs.canonical_validation},
+            output_directory / "validation-prediction" / f"seed-{seed}", validation_workers,
+            seed_concurrency=_seed_concurrency, trainer=sys.modules[__name__])
+    with manager as predictor:
+        prediction_arguments = {} if predictor is None else {"_prediction_executor": predictor}
+        float_result = train_float_seed(
+            inputs, architecture, arm, seed, **float_arguments, **prediction_arguments
+        )
+        quantized_result = run_fixed_scale_qat(
+            float_result,
+            inputs,
+            architecture,
+            arm,
+            seed,
+            ranking_weight=ranking_weight,
+            qat_profile=profile,
+            **({"calibration_directory": output_directory / "channel-calibration" / f"seed-{seed}",
+                "original_parameters": float_arguments["initial_parameters"]}
+               if profile.name == CHANNEL_PREDICTION_QAT_PROFILE else {}),
+            **prediction_arguments,
+        )
+    if prediction_settings is not None:
+        prediction_evidence = manager.evidence()
     gate = offline_advancement_gate(
         float_result.metrics, quantized_result.metrics
     )
@@ -7187,6 +7337,9 @@ def train_seed_candidate(
         "protected_tests_opened": False,
         "resume_policy": "completed-receipt-reused;interrupted-seed-restarts-epoch-zero",
     }
+    if prediction_evidence is not None:
+        body["validation_prediction_execution"] = prediction_evidence
+        body["resume_policy"] = "completed-receipt-reused;interrupted-parallel-seed-is-spent"
     if inputs.successor_rankings is not None:
         body["successor_ranking"] = {
             "labels_present": True,
@@ -7262,9 +7415,11 @@ def _train_seed_roster(
     initial_checkpoint: pathlib.Path | None,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     resume: bool,
+    validation_workers: int = 1,
 ) -> list[dict[str, Any]]:
     """Run independent seeds with shared read-only inputs and stable ordering."""
 
+    validation_prediction_settings(validation_workers, seed_workers)
     workers = _seed_worker_count(
         seed_workers, successor_mode=inputs.successor_rankings is not None
     )
@@ -7284,6 +7439,7 @@ def _train_seed_roster(
                 qat_profile=qat_profile,
                 resume=resume,
                 _native_thread_execution=native_execution,
+                validation_workers=validation_workers, _seed_concurrency=workers,
             )
 
         if workers == 1:
@@ -7324,7 +7480,11 @@ def train_arm_campaign(
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     resume: bool = False,
     generated_source_ascii_bytes: int | None = None,
+    validation_workers: int = 1,
 ) -> pathlib.Path:
+    prediction_settings = validation_prediction_settings(validation_workers, seed_workers)
+    if validation_workers > 1 and resolve_qat_profile(qat_profile).name == CHANNEL_PREDICTION_QAT_PROFILE:
+        raise TrainingError("parallel validation currently rejects channel QAT before any work")
     inputs = load_training_inputs(
         bundle,
         arm,
@@ -7357,6 +7517,7 @@ def train_arm_campaign(
         initial_checkpoint=initial_checkpoint,
         qat_profile=profile,
         resume=resume,
+        validation_workers=validation_workers,
     )
     passing = [
         receipt for receipt in receipts
@@ -7438,6 +7599,9 @@ def train_arm_campaign(
     }
     if chosen.get("successor_ranking", {}).get("labels_present") is True:
         body["successor_ranking"] = dict(chosen["successor_ranking"])
+    if prediction_settings is not None:
+        body["validation_prediction"] = chosen["binding"]["settings"]["validation_prediction"]
+        body["seed_execution_policy"] = prediction_seed_execution_policy(seed_workers, body["validation_prediction"])
     document = body_hashed(body)
     path = _write_content_addressed(
         output_directory / "selections",
@@ -7476,6 +7640,8 @@ def validate_selection(
     }
     if "successor_ranking" in selection:
         expected_fields.add("successor_ranking")
+    if "validation_prediction" in selection:
+        expected_fields.add("validation_prediction")
     if (
         set(selection) != expected_fields
         or selection.get("campaign_id") != CAMPAIGN_ID
@@ -7513,27 +7679,33 @@ def validate_selection(
     seed_workers = seed_policy.get("seed_workers") if isinstance(
         seed_policy, Mapping
     ) else None
-    if (
-        not isinstance(seed_policy, Mapping)
-        or set(seed_policy) != {
-            "seed_workers", "maximum_seed_workers", "worker_model",
-            "receipt_order", "selection_order", "resume",
-            "per_seed_numerical_binding_includes_worker_count",
-        }
-        or isinstance(seed_workers, bool)
-        or seed_workers not in (1, 2)
-        or seed_policy.get("maximum_seed_workers") != 2
-        or seed_policy.get("worker_model")
-        != "shared-read-only-input-thread-pool"
-        or seed_policy.get("receipt_order") != "fixed-seed-order"
-        or seed_policy.get("selection_order") != "validation-key-then-seed"
-        or seed_policy.get("resume")
-        != "per-seed-content-addressed-reference"
-        or seed_policy.get("per_seed_numerical_binding_includes_worker_count")
-        is not False
-        or ("successor_ranking" in selection and seed_workers != 2)
-    ):
-        raise TrainingError("compact seed execution policy changed")
+    prediction_settings = selection.get("validation_prediction")
+    if prediction_settings is not None:
+        if (seed_policy != prediction_seed_execution_policy(seed_workers, prediction_settings)
+                or ("successor_ranking" in selection and seed_workers != 2)):
+            raise TrainingError("parallel seed execution policy changed")
+    else:
+        if (
+            not isinstance(seed_policy, Mapping)
+            or set(seed_policy) != {
+                "seed_workers", "maximum_seed_workers", "worker_model",
+                "receipt_order", "selection_order", "resume",
+                "per_seed_numerical_binding_includes_worker_count",
+            }
+            or isinstance(seed_workers, bool)
+            or seed_workers not in (1, 2)
+            or seed_policy.get("maximum_seed_workers") != 2
+            or seed_policy.get("worker_model")
+            != "shared-read-only-input-thread-pool"
+            or seed_policy.get("receipt_order") != "fixed-seed-order"
+            or seed_policy.get("selection_order") != "validation-key-then-seed"
+            or seed_policy.get("resume")
+            != "per-seed-content-addressed-reference"
+            or seed_policy.get("per_seed_numerical_binding_includes_worker_count")
+            is not False
+            or ("successor_ranking" in selection and seed_workers != 2)
+        ):
+            raise TrainingError("compact seed execution policy changed")
     runtime_path = _output_artifact(
         artifact_root,
         runtime.get("path"),
@@ -7556,6 +7728,9 @@ def validate_selection(
         receipt, schema=SEED_RECEIPT_SCHEMA, label="selection seed receipt"
     )
     validate_native_thread_execution(receipt.get("native_thread_execution"))
+    validate_validation_prediction_receipt(receipt, receipt.get("binding", {}), artifact_root)
+    if receipt.get("binding", {}).get("settings", {}).get("validation_prediction") != prediction_settings:
+        raise TrainingError("selection prediction execution binding changed")
     if receipt.get("successor_ranking", {}).get("labels_present") is True:
         schedule_execution = validate_successor_schedule_execution(
             receipt.get("float_training"), receipt.get("quantized_training"),
@@ -7742,6 +7917,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=0.0,
     )
     train.add_argument("--seed-workers", type=int, choices=(1, 2), default=1)
+    train.add_argument("--validation-workers", type=int, choices=(1, 2, 4), default=1)
     train.add_argument(
         "--qat-profile",
         choices=tuple(QAT_PROFILES),
@@ -7799,6 +7975,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ranking_weight=arguments.ranking_weight,
                         initial_checkpoint=arguments.initial_checkpoint,
                         seed_workers=arguments.seed_workers,
+                        validation_workers=arguments.validation_workers,
                         qat_profile=arguments.qat_profile,
                         input_audit=arguments.input_audit,
                         resume=arguments.resume,

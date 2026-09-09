@@ -493,6 +493,42 @@ initialization, selected scales/codes and runtime artifact. Original profile
 contracts, native/export math and all qualification gates remain unchanged.
 Registration authorizes no additional production attempt or gate exemption.
 
+Scalar validation can opt into `--validation-workers 2` or
+`--validation-workers 4`. The default is one worker and preserves the existing
+serial path and historical receipts. The helper processes run only the common
+and canonical prediction batches. Ranking, calibration and optimizer work keep
+their existing execution paths. The initial parallel path supports float and
+per-layer quantized prediction; channel quantization rejects this option before
+training starts.
+
+Each call copies the current model state, refreshes every helper and waits for
+acknowledgment before proceeding. Helpers retain the original 4,096-row batch
+boundaries, and the parent assembles predictions in their original order before
+computing metrics. Execution evidence records the helper policy, actual process
+use, model refreshes and cleanup separately from the numerical thread limit in
+each process. Small datasets may leave some helpers idle.
+
+The product of concurrent seeds and validation workers cannot exceed four
+active numerical streams. Four validation workers are available to the
+single-seed API and one-job diagnostic adapters. The full successor-labelled
+CLI keeps its established two-seed-worker roster, so its parallel configuration
+is `--seed-workers 2 --validation-workers 2`. Prefer independent-seed
+parallelism when several training jobs are available; do not serialize a whole
+roster just to add prediction helpers. This CPU limit does not authorize memory
+use: each
+campaign still needs a resource review for its actual corpus and process count.
+The current measured memory basis covers one training seed plus its prediction
+helpers; multiple retained seeds need their own memory allowance. Helpers must
+exit before subsequent native timing or game qualification work.
+
+A fixed-model benchmark over 110,004 canonical feature rows measured median
+prediction times of 0.588 seconds serially, 0.355 seconds with two helpers and
+0.203 seconds with four helpers. All twelve passes matched byte for byte. The
+four-worker result is a 2.89× prediction throughput gain, excluding startup and
+model refresh. It is not a measurement of full training speed; ranking,
+optimization and other work still contribute to elapsed time. No additional
+training attempt or qualification result follows from enabling this option.
+
 `compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
 or a completed calibrated live rejection. It keeps terminal proof separate from
 the unprotected metrics used for attribution, and carries fingerprints from the

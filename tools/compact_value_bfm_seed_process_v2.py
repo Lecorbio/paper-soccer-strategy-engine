@@ -51,6 +51,25 @@ def executor_mode(plan):
     return 'spawn-v2'
 
 
+def prediction_options(spec):
+    """Use the executor's actual capacity, never a caller's optimistic default."""
+    workers = spec.get('validation_workers', 1)
+    if type(workers) is not int or workers not in (1, 2, 4):
+        raise ValueError('validation workers must be1,2or4')
+    if workers == 1:
+        return {}
+    if 'executor' in spec:
+        seeds = normalize_executor(spec['executor'])['maximum_workers']
+    elif len(spec.get('jobs', [])) == 1:
+        # Maintained one-job diagnostic adapter: no pool/production initializer.
+        seeds = 1
+    else:
+        raise ValueError('prediction helpers need an explicit actual seed executor')
+    if seeds * workers > 4:
+        raise ValueError('combined active seed/prediction concurrency exceeds4')
+    return {'validation_workers': workers, '_seed_concurrency': seeds}
+
+
 def filter_early_anchor(anchor, rows):
     """Reproduce the original filter, including order and dataset provenance."""
     campaign, trainer = _modules()
@@ -186,7 +205,7 @@ def roster_binding(base, seed, weight):
 
 
 def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, seeds,
-                *, qat_profile='standard-v1'):
+                *, qat_profile='standard-v1', validation_workers=None):
     campaign, trainer = _modules()
     from tools import compact_value_bfm_intervention_v2 as intervention
     root = Path(root).resolve()
@@ -195,6 +214,10 @@ def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, see
         raise ValueError('spawn execution was not frozen in this phase')
     profile = trainer.resolve_qat_profile(qat_profile)
     executor = normalize_executor(plan['training_executor'])
+    if validation_workers is None:validation_workers = plan.get('validation_workers', 1)
+    if validation_workers != plan.get('validation_workers', 1):raise ValueError('prediction worker count differs from frozen phase')
+    options = prediction_options({'executor': executor, 'validation_workers': validation_workers})
+    if options and profile.name == trainer.CHANNEL_PREDICTION_QAT_PROFILE:raise ValueError('parallel validation does not support channel QAT')
     if profile.name != intervention.expected_qat_profile(plan):
         raise ValueError('spawn QAT profile differs from frozen phase')
     if (tuple(ranking_weights) != tuple(sorted(set(ranking_weights)))
@@ -204,7 +227,8 @@ def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, see
     architecture, arm = trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target']
     initial = campaign.verify(plan['inputs']['attempt_one_initial_checkpoint'])
     base = trainer.training_binding(bundle, inputs, architecture, arm, seeds[0],
-        None, ranking_weights[0], initial, profile)
+        None, ranking_weights[0], initial, profile,
+        **({'validation_workers': validation_workers, 'seed_concurrency': executor['maximum_workers']} if options else {}))
     jobs = []
     for weight in ranking_weights:
         for seed in seeds:
@@ -221,7 +245,8 @@ def freeze_spec(root, phase, bundle, inputs, anchor_filter, ranking_weights, see
         'qat_profile': profile.name, 'qat_profile_contract': trainer.qat_profile_contract(profile),
         'sources': source_closure(), 'python': {'executable': str(Path(sys.executable).resolve()),
             'version': sys.version}, 'reconstruction': input_identity(inputs, anchor_filter),
-        'ranking_weights': list(ranking_weights), 'seeds': list(seeds), 'jobs': jobs, **resource_binding})
+        'ranking_weights': list(ranking_weights), 'seeds': list(seeds), 'jobs': jobs, **resource_binding,
+        **({'validation_workers': validation_workers} if options else {})})
     return path
 
 
@@ -238,6 +263,7 @@ def _initialize(spec_path):
     campaign, trainer = _modules()
     from tools import compact_value_bfm_intervention_v2 as intervention
     spec = campaign.read(spec_path)
+    options = prediction_options(spec)
     if spec['schema'] != campaign.ID + '.seed-process-spec.v2':
         raise ValueError('spawn worker specification changed')
     executor = normalize_executor(spec['executor'])
@@ -247,6 +273,7 @@ def _initialize(spec_path):
         raise ValueError('spawn worker Python runtime changed')
     root = campaign.verify(spec['phase_contract']).parent
     plan = campaign.read(root / 'campaign.json')
+    if spec.get('validation_workers', 1) != plan.get('validation_workers', 1):raise ValueError('prediction count differs from frozen phase')
     if executor_mode(plan) != 'spawn-v2' or normalize_executor(plan['training_executor']) != executor:
         raise ValueError('spawn worker phase contract changed')
     if executor == MODE4 and spec.get('training_resource_authorization') != plan['training_resource_authorization']:
@@ -269,7 +296,8 @@ def _initialize(spec_path):
     architecture, arm = trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target']
     with trainer.native_thread_execution_scope():
         base = trainer.training_binding(bundle, inputs, architecture, arm, seeds[0],
-            None, weights[0], initial, spec['qat_profile'])
+            None, weights[0], initial, spec['qat_profile'],
+            **({'validation_workers': options['validation_workers'], 'seed_concurrency': options['_seed_concurrency']} if options else {}))
     expected_jobs = [{'weight': weight, 'seed': seed,
         'directory': str(root / spec['phase'] / 'training' / f'lambda-{weight:.2f}'),
         'binding': roster_binding(base, seed, weight)} for weight in weights for seed in seeds]
@@ -281,12 +309,13 @@ def _initialize(spec_path):
 def _train(job, execution):
     campaign, trainer = _modules()
     spec, bundle, inputs, initial = _WORKER
+    options = prediction_options(spec)
     architecture, arm = trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target']
     binding = job['binding']
     directory = Path(job['directory'])
     receipt = trainer.train_seed_candidate(bundle, inputs, architecture, arm, job['seed'],
         directory, ranking_weight=job['weight'], initial_checkpoint=initial,
-        qat_profile=spec['qat_profile'], resume=True, _native_thread_execution=execution)
+        qat_profile=spec['qat_profile'], resume=True, _native_thread_execution=execution, **options)
     reference = trainer._seed_reference_path(directory, architecture, arm, job['seed'])
     if trainer._load_seed_receipt_from_reference(directory, reference, binding) != receipt:
         raise ValueError('spawn seed reference differs from returned receipt')
@@ -295,7 +324,7 @@ def _train(job, execution):
         'process': {'pid': os.getpid(), 'peak_rss': usage.ru_maxrss,
             'peak_rss_units': 'bytes' if sys.platform == 'darwin' else 'KiB',
             'minor_page_faults': usage.ru_minflt, 'major_page_faults': usage.ru_majflt},
-        'native_thread_execution': execution}
+        'native_thread_execution': receipt['native_thread_execution']}
 
 
 def _run(job):
@@ -320,6 +349,7 @@ class SpawnSeedExecutor:
 
     def __enter__(self):
         campaign, _trainer = _modules()
+        prediction_options(self.spec)
         if self.settings == MODE4:
             plan = campaign.read(campaign.verify(self.spec['phase_contract']))
             if executor_mode(plan) != 'spawn-v2' or plan['training_executor'] != MODE4:
