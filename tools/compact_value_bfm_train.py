@@ -166,6 +166,9 @@ STANDARD_QAT_PROFILE = "standard-v1"
 REFINED_ADAPTIVE_SCALES_QAT_PROFILE = "refined-adaptive-scales-v1"
 RETENTION_FIRST_LOW_RATE_QAT_PROFILE = "retention-first-low-rate-v1"
 CHANNEL_PREDICTION_QAT_PROFILE = "channel-prediction-qat-v1"
+STUDENT_RIVALS_RETENTION_PROFILE = "student-rivals-retention-v1"
+STUDENT_RIVAL_PAIR_POLICY = "current-student-top8-positive-gap-v1"
+STUDENT_TRAINING_OBJECTIVE = "mean-over-scalar-batches-of-scalar-loss-plus-lambda-current-student-rival-group-mean"
 CHANNEL_SCALE_COUNTS = {"w1": 12, "w2": 8, "w3": 1}
 
 
@@ -231,6 +234,17 @@ QAT_PROFILES = {
     ),
     RETENTION_FIRST_LOW_RATE_QAT_PROFILE: QATProfile(
         name=RETENTION_FIRST_LOW_RATE_QAT_PROFILE,
+        scale_quantiles=REFINED_SCALE_QUANTILES,
+        coordinate_search_passes=3,
+        local_refinement_multipliers=REFINED_SCALE_MULTIPLIERS,
+        local_refinement_passes=1,
+        adapt_scales_after_each_epoch=True,
+        adaptive_quantile_names=("p900", "p975", "p995", "p998"),
+        adaptive_coordinate_passes=1,
+        qat_learning_rate=0.0000625,
+    ),
+    STUDENT_RIVALS_RETENTION_PROFILE: QATProfile(
+        name=STUDENT_RIVALS_RETENTION_PROFILE,
         scale_quantiles=REFINED_SCALE_QUANTILES,
         coordinate_search_passes=3,
         local_refinement_multipliers=REFINED_SCALE_MULTIPLIERS,
@@ -532,7 +546,8 @@ def resolve_qat_profile(value: str | QATProfile) -> QATProfile:
     if not isinstance(value, str) or value not in QAT_PROFILES:
         raise TrainingError(
             "QAT profile must be standard-v1, refined-adaptive-scales-v1 "
-            "or retention-first-low-rate-v1 or channel-prediction-qat-v1"
+            "or retention-first-low-rate-v1 or channel-prediction-qat-v1 "
+            "or student-rivals-retention-v1"
         )
     return QAT_PROFILES[value]
 
@@ -597,7 +612,7 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
             ),
         },
     }
-    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
         body["scale_selection"]["validation_objective"] = (
             "retention-feasibility-then-normalized-violation-sum-then-"
             "refined-ranking-key-then-lower-scale"
@@ -632,7 +647,45 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
                 "maximum_huber_ratio_inclusive": MAXIMUM_HUBER_RATIO,
             },
         }
+    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+        body["training_pair_policy"] = training_pair_policy_contract(profile)
+        body["schedule"]["float_warmup_learning_rate"] = RANKING_FLOAT_LEARNING_RATE
     return body_hashed(body)
+
+
+def training_pair_policy_contract(value: str | QATProfile) -> dict[str, object] | None:
+    """New-only training policy; historical profile bodies never gain fields."""
+    profile = resolve_qat_profile(value)
+    if profile.name != STUDENT_RIVALS_RETENTION_PROFILE:
+        return None
+    return body_hashed({
+        "schema": "papersoccer.compact-value-bfm-training-pair-policy.v1",
+        "name": STUDENT_RIVAL_PAIR_POLICY,
+        "base_profile": RETENTION_FIRST_LOW_RATE_QAT_PROFILE,
+        "applies_to": ["float-warmup", "qat-1", "qat-2", "qat-3", "qat-4"],
+        "teacher_best": "unchanged-float32-parent-frame-max-then-successor-ID-index",
+        "eligible_rivals": "strict-positive-float32-teacher-gap;exhaustive-groups-only",
+        "selection_order": "current-student-parent-prediction-descending;successor-ID;index",
+        "pair_cap": RANKING_PAIR_CAP,
+        "accumulation_order": "teacher-gap-descending;successor-ID;index",
+        "student_prediction_source": "same-current-forward-used-for-training-gradient",
+        "reselection": "every-active-ranking-group-evaluation;no-stale-selection-cache",
+        "loss": "unchanged-logaddexp-gap-normalized-group-mean;lambda-before-backprop",
+        "inactive_lambda_zero": "no-ranking-forward-or-pair-selection;unchanged-scalar-math",
+        "validation_pair_policy": "unchanged-static-teacher-worst-eight",
+        "training_objective_report": STUDENT_TRAINING_OBJECTIVE,
+        "evidence": "per-epoch-counts-and-ordered-pair-prediction-and-batch-master-SHA256",
+        "digest_encoding": "SHA256-of-LF-terminated-canonical-JSON-events-in-execution-order",
+        "prediction_digest_dtype": "little-endian-float32-raw-current-forward-values",
+        "evidence_replay_limit": "stream-digests-attest-reviewed-execution;no-raw-prediction-trace-or-independent-forward-replay",
+        "automatic_training_or_gate_waiver": False,
+    })
+
+
+def _validate_training_pair_policy(value):
+    if value is not None and (type(value) is not str or value != STUDENT_RIVAL_PAIR_POLICY):
+        raise TrainingError("unknown training pair policy")
+    return value
 
 
 def validate_qat_profile_contract(
@@ -3483,12 +3536,166 @@ def pairwise_successor_ranking_loss_gradient(
     }
 
 
+def _student_ranking_pairs(group, parent_predictions, *, pair_cap=RANKING_PAIR_CAP):
+    """Choose by current student score, then accumulate in canonical teacher order."""
+    if isinstance(pair_cap, bool) or pair_cap != RANKING_PAIR_CAP:
+        raise TrainingError("student rival pair cap must be exactly eight")
+    scores = np.asarray(parent_predictions, dtype=np.float32)
+    if scores.shape != (len(group.successors),) or not np.all(np.isfinite(scores)):
+        raise TrainingError("student rival parent predictions are invalid")
+    teacher = _teacher_parent_values(group)
+    best = _deterministic_best(group, teacher)
+    if not group.successors_exhaustive:
+        return best, (), np.asarray([], dtype=np.float32)
+    candidates = []
+    for index, successor in enumerate(group.successors):
+        gap = float(teacher[best] - teacher[index])
+        if gap > 0.0:
+            candidates.append((index, gap, successor.successor_id))
+    candidates.sort(key=lambda row: (-float(scores[row[0]]), row[2], row[0]))
+    chosen = candidates[:pair_cap]
+    chosen.sort(key=lambda row: (-row[1], row[2], row[0]))
+    alternatives = tuple(row[0] for row in chosen)
+    gaps = np.asarray([row[1] for row in chosen], dtype=np.float32)
+    current = _deterministic_best(group, scores)
+    if float(teacher[best] - teacher[current]) > 0.0 and current not in alternatives:
+        raise TrainingError("student rival selection omitted its regrettable argmax")
+    return best, alternatives, gaps
+
+
+def student_rival_loss_gradient(
+    group: CompleteTurnGroup,
+    predictions: np.ndarray,
+    *,
+    pair_cap: int = RANKING_PAIR_CAP,
+) -> tuple[float, np.ndarray, dict[str, object]]:
+    """Training-only rival choice; arithmetic and canonical reduction match legacy."""
+
+    parent_predictions, signs = _parent_frame_values(group, predictions)
+    best, alternatives, gaps = _student_ranking_pairs(group, parent_predictions, pair_cap=pair_cap)
+    gradient_parent = np.zeros(len(group.successors), dtype=np.float32)
+    if not alternatives:
+        return 0.0, gradient_parent, {
+            "group_id": group.group_id,
+            "training_pair_policy": STUDENT_RIVAL_PAIR_POLICY,
+            "teacher_best_successor_index": best,
+            "selected_successor_indices": list(alternatives),
+            "teacher_best_successor_id": group.successors[best].successor_id,
+            "pair_count": 0,
+            "selected_successor_ids": [],
+            "gap_weighting": "teacher-gap-normalized",
+            "pair_cap": pair_cap,
+            "successors_exhaustive": group.successors_exhaustive,
+            "skipped_nonexhaustive": not group.successors_exhaustive,
+        }
+    denominator = float(np.sum(gaps, dtype=np.float64))
+    if not math.isfinite(denominator) or denominator <= 0.0:
+        raise TrainingError("successor ranking teacher gaps are invalid")
+    gap_weights = (gaps / np.float32(denominator)).astype(np.float32)
+    loss = 0.0
+    for weight, other in zip(gap_weights, alternatives, strict=True):
+        margin = float(parent_predictions[best] - parent_predictions[other])
+        pair_loss = float(np.logaddexp(0.0, -margin))
+        derivative = -1.0 / (1.0 + math.exp(margin))
+        loss += float(weight) * pair_loss
+        gradient_parent[best] += np.float32(float(weight) * derivative)
+        gradient_parent[other] -= np.float32(float(weight) * derivative)
+    gradient = (gradient_parent * signs).astype(np.float32)
+    if not math.isfinite(loss) or not np.all(np.isfinite(gradient)):
+        raise TrainingError("successor ranking loss produced a nonfinite result")
+    return loss, gradient, {
+        "group_id": group.group_id,
+        "training_pair_policy": STUDENT_RIVAL_PAIR_POLICY,
+        "teacher_best_successor_index": best,
+        "selected_successor_indices": list(alternatives),
+        "teacher_best_successor_id": group.successors[best].successor_id,
+        "pair_count": len(alternatives),
+        "selected_successor_ids": [
+            group.successors[index].successor_id for index in alternatives
+        ],
+        "teacher_gaps": [float(value) for value in gaps],
+        "normalized_gap_weights": [float(value) for value in gap_weights],
+        "gap_weighting": "teacher-gap-normalized",
+        "pair_cap": pair_cap,
+        "successors_exhaustive": True,
+        "skipped_nonexhaustive": False,
+    }
+
+
+class _StudentRivalEpochEvidence:
+    """Constant retained state; hash current decisions without retaining predictions."""
+    def __init__(self, *, phase, seed, schedule_epoch, ranking_weight, scalar_batches):
+        self.phase, self.seed, self.epoch = phase, seed, schedule_epoch
+        self.weight = _ranking_weight(ranking_weight)
+        self.scalar_batches = scalar_batches
+        self.batch = -1
+        self.batch_digest = hashlib.sha256()
+        self.pair_digest = hashlib.sha256()
+        self.counts = dict(group_evaluations=0, selected_pairs=0,
+            changed_static_subset_groups=0, regrettable_argmax_groups=0,
+            regrettable_argmax_included_groups=0)
+
+    def begin_batch(self, batch, parameters, architecture):
+        if batch != self.batch + 1 or batch >= self.scalar_batches:
+            raise TrainingError("student rival batch evidence is discontinuous")
+        self.batch = batch
+        self.batch_digest.update(canonical_json_bytes({"batch": batch,
+            "parameters": _parameter_identity(parameters, architecture)}) + b"\n")
+
+    def observe(self, group, predictions, report):
+        if self.weight == 0.0 or self.batch < 0:
+            raise TrainingError("inactive student rival policy selected pairs")
+        scores, _ = _parent_frame_values(group, predictions)
+        teacher = _teacher_parent_values(group)
+        best, static, _ = _ranking_pairs(group)
+        chosen = tuple(report["selected_successor_indices"])
+        current = _deterministic_best(group, scores)
+        regret = float(teacher[best] - teacher[current])
+        if (report["training_pair_policy"] != STUDENT_RIVAL_PAIR_POLICY
+                or report["teacher_best_successor_index"] != best or not chosen
+                or len(chosen) != report["pair_count"]
+                or (regret > 0.0 and current not in chosen)):
+            raise TrainingError("student rival execution invariant failed")
+        event = {"group_ordinal": self.counts["group_evaluations"], "batch": self.batch,
+            "group_id": group.group_id, "teacher_best_index": best,
+            "teacher_best_id": group.successors[best].successor_id,
+            "selected_indices": list(chosen), "selected_ids": report["selected_successor_ids"],
+            "teacher_gaps": report["teacher_gaps"], "current_argmax_index": current,
+            "current_argmax_id": group.successors[current].successor_id,
+            "regret": regret, "current_predictions_sha256": sha256_bytes(
+                np.asarray(predictions, dtype="<f4").tobytes())}
+        self.pair_digest.update(canonical_json_bytes(event) + b"\n")
+        self.counts["group_evaluations"] += 1
+        self.counts["selected_pairs"] += len(chosen)
+        self.counts["changed_static_subset_groups"] += int(set(chosen) != set(static))
+        self.counts["regrettable_argmax_groups"] += int(regret > 0.0)
+        self.counts["regrettable_argmax_included_groups"] += int(regret > 0.0 and current in chosen)
+
+    def finish(self):
+        if self.batch + 1 != self.scalar_batches:
+            raise TrainingError("student rival batch evidence is incomplete")
+        return body_hashed({"schema": "papersoccer.compact-value-bfm-student-rival-epoch.v1",
+            "policy": STUDENT_RIVAL_PAIR_POLICY, "phase": self.phase, "seed": self.seed,
+            "schedule_epoch": self.epoch, "loss_weight": self.weight,
+            "active": self.weight > 0.0, "scalar_batches": self.scalar_batches,
+            "executed_scalar_batches": self.batch + 1, **self.counts,
+            "missed_regrettable_argmax_groups": 0,
+            "batch_master_sha256": self.batch_digest.hexdigest(),
+            "ordered_pair_prediction_sha256": self.pair_digest.hexdigest(),
+            "raw_prediction_trace_retained": False})
+
+
 def ranking_microbatch_loss_gradient(
     groups: Sequence[CompleteTurnGroup],
     predictions: np.ndarray,
+    *, training_pair_policy: str | None = None,
+    pair_evidence: _StudentRivalEpochEvidence | None = None,
 ) -> tuple[float, np.ndarray, dict[str, object]]:
     """Average normalized group objectives without changing the external lambda."""
 
+    policy = _validate_training_pair_policy(training_pair_policy)
+    if pair_evidence is not None and policy is None:
+        raise TrainingError("legacy ranking cannot record student pair evidence")
     if not groups:
         raise TrainingError("successor ranking microbatch is empty")
     expected_predictions = sum(len(group.successors) for group in groups)
@@ -3505,7 +3712,8 @@ def ranking_microbatch_loss_gradient(
     scale = np.float32(1.0 / len(groups))
     for group in groups:
         stop = offset + len(group.successors)
-        loss, gradient, report = pairwise_successor_ranking_loss_gradient(
+        loss_function = (pairwise_successor_ranking_loss_gradient if policy is None else student_rival_loss_gradient)
+        loss, gradient, report = loss_function(
             group, predictions[offset:stop]
         )
         if (
@@ -3516,6 +3724,8 @@ def ranking_microbatch_loss_gradient(
             raise TrainingError(
                 "successor ranking microbatch contains an excluded zero-pair group"
             )
+        if pair_evidence is not None:
+            pair_evidence.observe(group, predictions[offset:stop], report)
         output_gradient[offset:stop] = gradient * scale
         losses.append(loss)
         pairs += int(report["pair_count"])
@@ -3649,7 +3859,10 @@ def _train_mixed_batch(
     ranking_group: CompleteTurnGroup | None = None,
     ranking_groups: Sequence[CompleteTurnGroup] | None = None,
     ranking_weight: float = 0.0,
+    training_pair_policy: str | None = None,
+    pair_evidence: _StudentRivalEpochEvidence | None = None,
 ) -> float:
+    _validate_training_pair_policy(training_pair_policy)
     if (
         new_rows.shape != (NEW_ROWS_PER_BATCH,)
         or anchor_rows.shape != (ANCHOR_ROWS_PER_BATCH,)
@@ -3723,7 +3936,9 @@ def _train_mixed_batch(
         )
         ranking_loss, ranking_output_gradient, _ranking_report = (
             ranking_microbatch_loss_gradient(
-                ranking_microbatch, ranking_predictions
+                ranking_microbatch, ranking_predictions,
+                **({"training_pair_policy": training_pair_policy, "pair_evidence": pair_evidence}
+                   if training_pair_policy is not None else {}),
             )
         )
         ranking_gradients = _network_gradients(
@@ -4162,7 +4377,7 @@ class _FrozenRetentionReference:
 
 
 def _retention_reference(profile, value):
-    if profile.name not in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE):
+    if profile.name not in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
         if value is not None:
             raise TrainingError("float retention reference requires retention-first QAT")
         return None
@@ -4241,7 +4456,7 @@ def _qat_validation_key(
         ) from error
     if any(not math.isfinite(value) for value in result):
         raise TrainingError("refined adaptive QAT ranking metrics are nonfinite")
-    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE):
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
         reference = _retention_reference(profile, float_validation_reference)
         return (*_retention_violation_key(report, reference), *result)
     return result
@@ -4313,11 +4528,16 @@ def train_float_seed(
     weight_decay: float = WEIGHT_DECAY,
     ranking_weight: float = 0.0,
     initial_parameters: Mapping[str, np.ndarray] | None = None,
+    training_pair_policy: str | None = None,
 ) -> FloatTrainingResult:
     if seed not in FIXED_SEEDS:
         raise TrainingError("compact training requires one of the three fixed seeds")
     if maximum_epochs <= 0 or maximum_epochs > MAX_FLOAT_EPOCHS or patience <= 0:
         raise TrainingError("float training epoch configuration is invalid")
+    policy = _validate_training_pair_policy(training_pair_policy)
+    if policy is not None and (inputs.successor_rankings is None or learning_rate != RANKING_FLOAT_LEARNING_RATE
+            or weight_decay != WEIGHT_DECAY or patience != 1 or type(patience) is not int):
+        raise TrainingError("student rivals require the exact successor warmup recipe")
     ranking_weight = _ranking_weight(ranking_weight)
     successor_mode = inputs.successor_rankings is not None
     if successor_mode:
@@ -4370,6 +4590,9 @@ def train_float_seed(
     for epoch in range(1, maximum_epochs + 1):
         losses = []
         batch_count = math.ceil(len(inputs.new) / NEW_ROWS_PER_BATCH)
+        pair_evidence = None if policy is None else _StudentRivalEpochEvidence(
+            phase="float-warmup", seed=seed, schedule_epoch=epoch,
+            ranking_weight=ranking_weight, scalar_batches=batch_count)
         ranking_schedule = (
             None
             if ranking_weight == 0.0
@@ -4387,6 +4610,8 @@ def train_float_seed(
         for batch_index, (new_rows, anchor_rows) in enumerate(mixed_epoch_batches(
             len(inputs.new), len(inputs.anchor), seed=seed, epoch=epoch
         )):
+            if pair_evidence is not None:
+                pair_evidence.begin_batch(batch_index, parameters, architecture)
             losses.append(_train_mixed_batch(
                 parameters,
                 architecture,
@@ -4404,6 +4629,7 @@ def train_float_seed(
                     )
                 ),
                 ranking_weight=ranking_weight,
+                **({"training_pair_policy": policy, "pair_evidence": pair_evidence} if policy is not None else {}),
             ))
         validation = evaluate_validation_pair(
             parameters,
@@ -4422,11 +4648,14 @@ def train_float_seed(
         eligible = complete and (best_key is None or key < best_key)
         history.append({
             "epoch": epoch,
-            "training_objective_weighted_huber": float(np.mean(losses)),
+            **({"training_objective_weighted_huber": float(np.mean(losses))}
+               if policy is None else {"training_total_objective": float(np.mean(losses)),
+                   "training_total_objective_definition": STUDENT_TRAINING_OBJECTIVE}),
             "validation": validation,
             "coverage": coverage,
             "ranking_schedule_coverage": ranking_coverage,
             "eligible": eligible,
+            **({"training_pair_selection": pair_evidence.finish()} if pair_evidence is not None else {}),
         })
         if eligible:
             best_key = key
@@ -4524,6 +4753,8 @@ def train_float_seed(
                 starting_parameters, best_parameters
             ),
         })
+    if policy is not None:
+        training_report["training_pair_policy"] = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
     return FloatTrainingResult(
         parameters=best_parameters,
         epoch=best_epoch,
@@ -5370,9 +5601,18 @@ def run_fixed_scale_qat(
         raise TrainingError(
             "refined adaptive QAT requires successor-labeled capacity-12x8"
         )
+    policy = STUDENT_RIVAL_PAIR_POLICY if profile.name == STUDENT_RIVALS_RETENTION_PROFILE else None
+    if policy is not None:
+        _validate_student_float_evidence(float_result.report, seed=seed, ranking_weight=ranking_weight)
+        if (float_result.metrics != float_result.report.get("validation") or any(
+                sha256_bytes(value.tobytes()) != float_result.report.get("per_layer_update_evidence", {}).get(name, {}).get("after_sha256")
+                for name, value in _validate_parameters(float_result.parameters, architecture).items())):
+            raise TrainingError("student rival QAT warmup parameters/validation changed")
+    elif "training_pair_policy" in float_result.report:
+        raise TrainingError("student rival warmup cannot enter a legacy QAT profile")
     reference = _retention_reference(
         profile,
-        float_result.metrics if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE else None,
+        float_result.metrics if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else None,
     )
     selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     ranking_weight = _ranking_weight(ranking_weight)
@@ -5424,6 +5664,9 @@ def run_fixed_scale_qat(
             else MAX_FLOAT_EPOCHS
         ) + qat_epoch
         batch_count = math.ceil(len(inputs.new) / NEW_ROWS_PER_BATCH)
+        pair_evidence = None if policy is None else _StudentRivalEpochEvidence(
+            phase="qat", seed=seed, schedule_epoch=schedule_epoch,
+            ranking_weight=ranking_weight, scalar_batches=batch_count)
         ranking_schedule = (
             None
             if ranking_weight == 0.0
@@ -5441,13 +5684,16 @@ def run_fixed_scale_qat(
                 ranking_groups, ranking_schedule, epoch=schedule_epoch
             )
         )
+        training_objectives = [] if policy is not None else None
         for batch_index, (new_rows, anchor_rows) in enumerate(mixed_epoch_batches(
             len(inputs.new),
             len(inputs.anchor),
             seed=seed,
             epoch=schedule_epoch,
         )):
-            _train_mixed_batch(
+            if pair_evidence is not None:
+                pair_evidence.begin_batch(batch_index, master, architecture)
+            objective = _train_mixed_batch(
                 master,
                 architecture,
                 arm,
@@ -5465,7 +5711,10 @@ def run_fixed_scale_qat(
                     )
                 ),
                 ranking_weight=ranking_weight,
+                **({"training_pair_policy": policy, "pair_evidence": pair_evidence} if policy is not None else {}),
             )
+            if training_objectives is not None:
+                training_objectives.append(objective)
             executed_batches += 1
         applied_scales = {
             name: float(fixed_scales[name]) for name in ("w1", "w2", "w3")
@@ -5518,6 +5767,10 @@ def run_fixed_scale_qat(
                 ),
             },
             "validation": metrics,
+            **({"training_total_objective": float(np.mean(training_objectives)),
+                "training_total_objective_definition": STUDENT_TRAINING_OBJECTIVE}
+               if training_objectives is not None else {}),
+            **({"training_pair_selection": pair_evidence.finish()} if pair_evidence is not None else {}),
         })
         # QAT epoch zero is diagnostic only.  Strict comparison keeps the
         # earlier trained QAT epoch on an exact validation tie.
@@ -5611,6 +5864,10 @@ def run_fixed_scale_qat(
             },
             "per_layer_update_evidence": selected_per_layer_update,
         })
+    if policy is not None:
+        qat_report["training_pair_policy"] = training_pair_policy_contract(profile)
+        qat_report["training_pair_seed"] = seed
+        qat_report["float_warmup_report_sha256"] = sha256_bytes(canonical_json_bytes(float_result.report))
     validate_qat_execution_evidence(qat_report, expected_profile=profile.name, **selection_arguments)
     if inputs.successor_rankings is not None:
         validate_successor_schedule_execution(
@@ -5776,6 +6033,134 @@ def _validate_channel_qat_execution(value, *, float_validation_reference):
     return dict(value)
 
 
+def _validate_student_epoch_evidence(value, *, phase, seed, epoch, weight, batches, groups):
+    if not isinstance(value, Mapping):
+        raise TrainingError("student rival epoch evidence is absent")
+    verify_body_hash(value, schema="papersoccer.compact-value-bfm-student-rival-epoch.v1", label="student rival epoch")
+    count_fields = ("group_evaluations", "selected_pairs", "changed_static_subset_groups",
+        "regrettable_argmax_groups", "regrettable_argmax_included_groups", "missed_regrettable_argmax_groups")
+    expected_fields = {"schema", "policy", "phase", "seed", "schedule_epoch", "loss_weight", "active",
+        "scalar_batches", "executed_scalar_batches", *count_fields, "batch_master_sha256",
+        "ordered_pair_prediction_sha256", "raw_prediction_trace_retained", "body_sha256"}
+    active = weight > 0.0
+    if (set(value) != expected_fields or value["policy"] != STUDENT_RIVAL_PAIR_POLICY
+            or value["phase"] != phase or type(value["seed"]) is not int or value["seed"] != seed
+            or type(value["schedule_epoch"]) is not int or value["schedule_epoch"] != epoch
+            or type(value["loss_weight"]) is not float or value["loss_weight"] != weight
+            or value["active"] is not active or type(value["scalar_batches"]) is not int or value["scalar_batches"] != batches
+            or type(value["executed_scalar_batches"]) is not int or value["executed_scalar_batches"] != batches
+            or any(type(value[k]) is not int or value[k] < 0 for k in count_fields)
+            or value["group_evaluations"] != (groups if active else 0)
+            or value["missed_regrettable_argmax_groups"] != 0
+            or value["regrettable_argmax_included_groups"] != value["regrettable_argmax_groups"]
+            or value["regrettable_argmax_groups"] > value["group_evaluations"]
+            or value["changed_static_subset_groups"] > value["group_evaluations"]
+            or not value["group_evaluations"] <= value["selected_pairs"] <= RANKING_PAIR_CAP * value["group_evaluations"]
+            or (active and value["group_evaluations"] <= 0)
+            or value["raw_prediction_trace_retained"] is not False
+            or not valid_sha256(value["batch_master_sha256"])
+            or value["batch_master_sha256"] == hashlib.sha256().hexdigest()
+            or not valid_sha256(value["ordered_pair_prediction_sha256"])
+            or ((value["ordered_pair_prediction_sha256"] == hashlib.sha256().hexdigest()) is active)):
+        raise TrainingError("student rival epoch counts/policy/identity changed")
+    return dict(value)
+
+
+def _validate_student_training_objective(epoch):
+    if ("training_objective_weighted_huber" in epoch
+            or type(epoch.get("training_total_objective")) is not float
+            or not math.isfinite(epoch["training_total_objective"])
+            or epoch.get("training_total_objective_definition") != STUDENT_TRAINING_OBJECTIVE):
+        raise TrainingError("student rival total training objective label/value changed")
+
+
+def _validate_student_float_evidence(value, *, seed, ranking_weight):
+    policy = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
+    optimizer = {"name": "adamw", "batch_size": BATCH_SIZE, "maximum_epochs": 1, "patience": 1,
+        "learning_rate": RANKING_FLOAT_LEARNING_RATE, "weight_decay": WEIGHT_DECAY, "gradient_norm_clip": GRADIENT_CLIP}
+    batching = {"new_rows_per_batch": NEW_ROWS_PER_BATCH, "anchor_rows_per_batch": ANCHOR_ROWS_PER_BATCH,
+        "new_loss_share": .25, "anchor_loss_share": .75, "sources_normalized_separately": True,
+        "anchor_stream": "continuous-no-repeat-until-permutation-complete"}
+    if (not isinstance(value, Mapping) or value.get("training_pair_policy") != policy
+            or type(seed) is not int or seed not in FIXED_SEEDS or type(value.get("seed")) is not int or value["seed"] != seed
+            or type(value.get("best_float_epoch")) is not int or value["best_float_epoch"] != 1
+            or not isinstance(value.get("history"), list) or len(value["history"]) != 1
+            or value.get("optimizer") != optimizer or value.get("batching") != batching
+            or any(type(value["optimizer"][key]) is not int for key in ("batch_size", "maximum_epochs", "patience"))
+            or value.get("initialization", {}).get("kind") != "frozen-float-checkpoint"
+            or value["initialization"].get("seed_affects") != "row-order-only"):
+        raise TrainingError("student rivals require a matching new-policy warmup")
+    successor = value.get("successor_ranking", {})
+    weight = _ranking_weight(ranking_weight)
+    if type(successor.get("loss_weight")) is not float or successor["loss_weight"] != weight or successor.get("loss_active") is not (weight > 0.0):
+        raise TrainingError("student rival warmup loss binding changed")
+    item = value["history"][0]
+    _validate_student_training_objective(item)
+    rows = item.get("coverage", {}).get("new", {}).get("rows_per_epoch")
+    groups = successor.get("weighted_group_entries_per_epoch")
+    if type(rows) is not int or rows <= 0 or rows % NEW_ROWS_PER_BATCH or type(groups) is not int or groups < 0:
+        raise TrainingError("student rival warmup schedule is absent")
+    return _validate_student_epoch_evidence(item.get("training_pair_selection"), phase="float-warmup",
+        seed=seed, epoch=1, weight=weight, batches=rows // NEW_ROWS_PER_BATCH, groups=groups)
+
+
+def _validate_student_qat_evidence(value):
+    policy = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
+    if (value.get("training_pair_policy") != policy or value.get("qat_profile") != STUDENT_RIVALS_RETENTION_PROFILE
+            or type(value.get("training_pair_seed")) is not int or value["training_pair_seed"] not in FIXED_SEEDS
+            or not valid_sha256(value.get("float_warmup_report_sha256"))
+            or not isinstance(value.get("history"), list) or len(value["history"]) != QAT_EPOCHS):
+        raise TrainingError("student rival QAT/warmup policy binding changed")
+    successor = value.get("successor_ranking", {})
+    weight = _ranking_weight(successor.get("loss_weight"))
+    groups = successor.get("weighted_group_entries_per_epoch")
+    if type(groups) is not int or groups < 0 or successor.get("loss_active") is not (weight > 0.0):
+        raise TrainingError("student rival QAT schedule is absent")
+    reports = []
+    for epoch, item in enumerate(value["history"], start=2):
+        _validate_student_training_objective(item)
+        batches = item.get("fake_quantization", {}).get("batches")
+        if type(batches) is not int or batches <= 0:
+            raise TrainingError("student rival QAT batch count is invalid")
+        reports.append(_validate_student_epoch_evidence(item.get("training_pair_selection"),
+            phase="qat", seed=value["training_pair_seed"], epoch=epoch, weight=weight, batches=batches, groups=groups))
+    return reports
+
+
+def validate_student_rival_execution(float_training, quantized_training, *, seed, expected_binding=None):
+    """Cross-bind new-only warmup and QAT evidence; stream hashes are not replay proofs."""
+    qat = _validate_student_qat_evidence(quantized_training)
+    weight = _ranking_weight(quantized_training["successor_ranking"]["loss_weight"])
+    warmup = _validate_student_float_evidence(float_training, seed=seed, ranking_weight=weight)
+    if (quantized_training["training_pair_seed"] != seed
+            or quantized_training["float_warmup_report_sha256"] != sha256_bytes(canonical_json_bytes(float_training))):
+        raise TrainingError("student rival QAT transplanted another warmup report")
+    if expected_binding is not None:
+        settings = expected_binding.get("settings", {})
+        successor = expected_binding.get("successor_ranking", {})
+        policy = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
+        if (expected_binding.get("seed") != seed or settings.get("qat_profile") != STUDENT_RIVALS_RETENTION_PROFILE
+                or settings.get("qat_profile_contract") != qat_profile_contract(STUDENT_RIVALS_RETENTION_PROFILE)
+                or settings.get("training_pair_policy") != policy or successor.get("training_pair_policy") != policy
+                or successor.get("loss_weight") != weight
+                or float_training.get("initialization", {}).get("parameters") != successor.get("initial_checkpoint", {}).get("parameters")
+                or successor.get("float_warmup", {}).get("epochs") != 1
+                or successor.get("float_warmup", {}).get("learning_rate") != RANKING_FLOAT_LEARNING_RATE):
+            raise TrainingError("student rival outer warmup/policy/initialization binding changed")
+    epochs = [warmup, *qat]
+    return body_hashed({"schema": "papersoccer.compact-value-bfm-student-rival-execution.v1",
+        "training_pair_policy": training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE),
+        "seed": seed, "loss_weight": weight, "validated_epoch_reports": len(epochs),
+        "group_evaluations": sum(v["group_evaluations"] for v in epochs),
+        "selected_pairs": sum(v["selected_pairs"] for v in epochs),
+        "changed_static_subset_groups": sum(v["changed_static_subset_groups"] for v in epochs),
+        "regrettable_argmax_groups": sum(v["regrettable_argmax_groups"] for v in epochs),
+        "missed_regrettable_argmax_groups": 0,
+        "epoch_evidence_body_sha256": [v["body_sha256"] for v in epochs],
+        "raw_prediction_trace_retained": False,
+        "independent_numerical_replay_claimed": False})
+
+
 def validate_qat_execution_evidence(
     value: object, *, expected_profile: str,
     float_validation_reference: object = None,
@@ -5820,7 +6205,7 @@ def validate_qat_execution_evidence(
         scale_search.get("selected_scales"), "QAT initial"
     )
     reference = None
-    if profile.name == RETENTION_FIRST_LOW_RATE_QAT_PROFILE:
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
         document = value.get("retention_reference")
         if not isinstance(document, Mapping):
             raise TrainingError("QAT frozen retention reference is absent")
@@ -6020,6 +6405,8 @@ def validate_qat_execution_evidence(
         "per_layer_update_evidence"
     ) != selected_updates:
         raise TrainingError("QAT successor selected-layer evidence changed")
+    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+        _validate_student_qat_evidence(value)
     return dict(value)
 
 
@@ -6149,7 +6536,13 @@ def validate_successor_schedule_execution(
             raise TrainingError("selected successor schedule coverage changed")
     elif selected_float is not None or selected_qat is not None:
         raise TrainingError("inactive ranking loss selected group coverage")
+    pair_execution = None
+    if quantized_training.get("qat_profile") == STUDENT_RIVALS_RETENTION_PROFILE:
+        pair_execution = validate_student_rival_execution(float_training, quantized_training, seed=seed)
+    elif "training_pair_policy" in float_training or "training_pair_policy" in quantized_training:
+        raise TrainingError("student rival warmup cannot be relabeled as a legacy recipe")
     return {
+        **({"training_pair_execution": pair_execution} if pair_execution is not None else {}),
         "loss_active": active,
         "float_epochs": len(float_history),
         "qat_epochs": len(qat_history),
@@ -6425,6 +6818,9 @@ def training_binding(
         raise TrainingError(
             "refined adaptive QAT requires successor-labeled capacity-12x8"
         )
+    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+        body["settings"]["training_pair_policy"] = training_pair_policy_contract(profile)
+        body["successor_ranking"]["training_pair_policy"] = training_pair_policy_contract(profile)
     return body_hashed(body)
 
 
@@ -6523,6 +6919,26 @@ def _validate_channel_receipt_links(receipt, expected_binding, output_directory,
         raise TrainingError("channel receipt metric/gate outcome differs from selected QAT evidence")
 
 
+def _validate_student_receipt_artifacts(receipt, binding, warmup_parameters, quantized, selection, document):
+    report = receipt["quantized_training"]
+    float_report = receipt["float_training"]
+    updates = float_report.get("per_layer_update_evidence", {})
+    initial = binding["successor_ranking"]["initial_checkpoint"]["parameters"]
+    if (document.get("schema") != RUNTIME_SCHEMA or selection.get("float_epoch") != 1
+            or selection.get("qat_epoch") != report["selected_qat_epoch"]
+            or selection.get("source_bundle_body_sha256") != binding.get("source_bundle_body_sha256")
+            or float_report.get("validation") != receipt.get("float_validation")
+            or receipt.get("quantized_validation") != report.get("selected_validation")
+            or receipt.get("offline_gate") != offline_advancement_gate(receipt["float_validation"], receipt["quantized_validation"])):
+        raise TrainingError("student rival runtime/metric/epoch binding changed")
+    for name in ("w1", "w2", "w3"):
+        if (updates.get(name, {}).get("before_sha256") != initial["layers"][name]["sha256"]
+                or updates.get(name, {}).get("after_sha256") != sha256_bytes(warmup_parameters[name].tobytes())
+                or quantized.scales[name] != report["selected_scales"][name]
+                or sha256_bytes(quantized.integer[name].tobytes()) != report["selected_per_layer_qat_evidence"][name]["after_sha256"]):
+            raise TrainingError("student rival warmup/runtime codes changed")
+
+
 def _load_seed_receipt_from_reference(
     output_directory: pathlib.Path,
     reference_path: pathlib.Path,
@@ -6571,7 +6987,7 @@ def _load_seed_receipt_from_reference(
         receipt.get("qat_profile") != profile_name
         or receipt.get("qat_profile_contract") != profile_contract
         or settings.get("qat_learning_rate") != profile_contract["schedule"]["qat_learning_rate"]
-        or (profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE)
+        or (profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE)
             and not isinstance(receipt.get("float_validation"), Mapping))
     ):
         raise TrainingError("compact seed receipt QAT profile changed")
@@ -6580,8 +6996,11 @@ def _load_seed_receipt_from_reference(
     validate_qat_execution_evidence(
         receipt.get("quantized_training"), expected_profile=profile_name,
         **({"float_validation_reference": receipt.get("float_validation")}
-            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else {}),
     )
+    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+        validate_student_rival_execution(receipt["float_training"], receipt["quantized_training"],
+            seed=receipt["seed"], expected_binding=expected_binding)
     architecture_name = receipt.get("architecture")
     if architecture_name not in ARCHITECTURES:
         raise TrainingError("compact seed receipt architecture changed")
@@ -6607,6 +7026,8 @@ def _load_seed_receipt_from_reference(
         raise TrainingError("legacy seed receipt cannot bind a channel runtime")
     if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
         _validate_channel_receipt_links(receipt, expected_binding, output_directory, warmup_parameters, _quantized, selection, _document)
+    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+        _validate_student_receipt_artifacts(receipt, expected_binding, warmup_parameters, _quantized, selection, _document)
     if (
         loaded_architecture.name != architecture_name
         or selection.get("arm") != receipt.get("arm")
@@ -6690,6 +7111,8 @@ def train_seed_candidate(
             "learning_rate": RANKING_FLOAT_LEARNING_RATE,
             "initial_parameters": initial_parameters,
         })
+    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+        float_arguments["training_pair_policy"] = STUDENT_RIVAL_PAIR_POLICY
     float_result = train_float_seed(
         inputs, architecture, arm, seed, **float_arguments
     )
@@ -7076,7 +7499,7 @@ def validate_selection(
     profile_contract = validate_qat_profile_contract(
         selection.get("qat_profile_contract"), expected_name=profile_name
     )
-    if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) and not isinstance(selection.get("float_validation"), Mapping):
+    if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) and not isinstance(selection.get("float_validation"), Mapping):
         raise TrainingError("compact selection frozen float validation is absent")
     if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
         _channel_artifact_scope_preflight(selection.get("qat_execution_evidence"), artifact_root)
@@ -7084,7 +7507,7 @@ def validate_selection(
         selection.get("qat_execution_evidence"),
         expected_profile=profile_name,
         **({"float_validation_reference": selection.get("float_validation")}
-            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE) else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else {}),
     )
     seed_policy = selection.get("seed_execution_policy")
     seed_workers = seed_policy.get("seed_workers") if isinstance(
@@ -7142,6 +7565,13 @@ def validate_selection(
             "schedule_execution"
         ) != schedule_execution:
             raise TrainingError("selection seed successor schedule summary changed")
+    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+        validate_student_rival_execution(receipt["float_training"], receipt["quantized_training"],
+            seed=receipt["seed"], expected_binding=receipt["binding"])
+        checkpoint = receipt["float_checkpoint"]
+        warmup_path = _output_artifact(artifact_root, checkpoint["path"], expected_sha256=checkpoint["sha256"], label="student rival warmup")
+        _validate_student_receipt_artifacts(receipt, receipt["binding"], load_float_checkpoint(warmup_path, architecture),
+            _quantized, runtime_selection, _document)
     if profile_name != CHANNEL_PREDICTION_QAT_PROFILE and _document.get("schema") != RUNTIME_SCHEMA:
         raise TrainingError("legacy immutable selection cannot bind a channel runtime")
     if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:

@@ -468,6 +468,31 @@ objective and runtime-evidence bindings validated on load. Registering this
 profile and runtime does not authorize another production attempt: prospective
 native QAT validation and a concrete new campaign lineage remain necessary.
 
+The prospective `student-rivals-retention-v1` profile changes the training pair
+selection in both the one-epoch float warmup and all four QAT epochs. It inherits
+the per-layer scales, runtime v1, frozen-reference retention selection and QAT
+learning rate of `retention-first-low-rate-v1`. For each exhaustive comparable
+group, it retains the same deterministic teacher-best move and selects up to
+eight positive-teacher-gap rivals with the highest current student predictions
+in the parent frame. Ties use successor ID and then original index. The chosen
+subset is accumulated in descending teacher-gap, successor-ID and index order,
+so an unchanged subset preserves the historical loss and gradient arithmetic.
+The gap-normalized logistic loss, group mean and application of the ranking
+weight remain unchanged. Validation continues to use the historical static
+teacher-worst-eight pairs; a training loss under the new policy is distinct
+from that evaluation loss.
+
+The profile contract binds the training pair policy across warmup and QAT.
+Each epoch records actual selection counts, changed static subsets, coverage
+of regretful student choices, and ordered digests of current forward predictions,
+selected pairs and batch master weights. The digests establish execution
+provenance; they do not retain raw predictions or support independent numerical
+replay. A zero ranking weight performs no ranking forwards or pair selection,
+and records inactive evidence. Receipts bind the warmup, four QAT epochs,
+initialization, selected scales/codes and runtime artifact. Original profile
+contracts, native/export math and all qualification gates remain unchanged.
+Registration authorizes no additional production attempt or gate exemption.
+
 `compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
 or a completed calibrated live rejection. It keeps terminal proof separate from
 the unprotected metrics used for attribution, and carries fingerprints from the
