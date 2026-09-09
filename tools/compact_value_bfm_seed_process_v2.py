@@ -310,6 +310,8 @@ def _train(job, execution):
     campaign, trainer = _modules()
     spec, bundle, inputs, initial = _WORKER
     options = prediction_options(spec)
+    if 'warmup_consistency_expectation' in job:
+        options['warmup_consistency_expectation'] = job['warmup_consistency_expectation']
     architecture, arm = trainer.ARCHITECTURES['capacity-12x8'], trainer.ARMS['search-target']
     binding = job['binding']
     directory = Path(job['directory'])

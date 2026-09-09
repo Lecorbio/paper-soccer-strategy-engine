@@ -420,6 +420,8 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_student_rivals_integration
               tests.codingame.test_compact_value_bfm_prediction_pool
               tests.codingame.test_compact_value_bfm_prediction_integration
+              tests.codingame.test_compact_value_bfm_warmup_consistency
+              tests.codingame.test_compact_value_bfm_warmup_consistency_integration
               tests.codingame.test_compact_value_bfm_deterministic_best
               tests.codingame.test_compact_value_bfm_training_resources_v2
               tests.codingame.test_compact_value_bfm_training_acceleration_v2

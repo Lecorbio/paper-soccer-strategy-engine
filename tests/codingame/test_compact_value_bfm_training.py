@@ -863,7 +863,7 @@ class QATProfileTests(unittest.TestCase):
     def test_profile_registry_is_closed_body_hashed_and_tamper_evident(self):
         self.assertEqual(
             set(trainer.QAT_PROFILES),
-            {"standard-v1", "refined-adaptive-scales-v1", "retention-first-low-rate-v1", "channel-prediction-qat-v1", "student-rivals-retention-v1"},
+            {"standard-v1", "refined-adaptive-scales-v1", "retention-first-low-rate-v1", "channel-prediction-qat-v1", "student-rivals-retention-v1", "warmup-consistency-qat-v1"},
         )
         for name in trainer.QAT_PROFILES:
             contract = trainer.qat_profile_contract(name)

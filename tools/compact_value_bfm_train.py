@@ -172,6 +172,9 @@ REFINED_ADAPTIVE_SCALES_QAT_PROFILE = "refined-adaptive-scales-v1"
 RETENTION_FIRST_LOW_RATE_QAT_PROFILE = "retention-first-low-rate-v1"
 CHANNEL_PREDICTION_QAT_PROFILE = "channel-prediction-qat-v1"
 STUDENT_RIVALS_RETENTION_PROFILE = "student-rivals-retention-v1"
+WARMUP_CONSISTENCY_QAT_PROFILE = "warmup-consistency-qat-v1"
+STUDENT_PAIR_PROFILES = (STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE)
+CONSISTENCY_TRAINING_OBJECTIVE = "mean-over-scalar-batches-of-label-loss-plus-lambda-student-rival-loss-plus-frozen-warmup-consistency-huber"
 STUDENT_RIVAL_PAIR_POLICY = "current-student-top8-positive-gap-v1"
 STUDENT_TRAINING_OBJECTIVE = "mean-over-scalar-batches-of-scalar-loss-plus-lambda-current-student-rival-group-mean"
 CHANNEL_SCALE_COUNTS = {"w1": 12, "w2": 8, "w3": 1}
@@ -250,6 +253,17 @@ QAT_PROFILES = {
     ),
     STUDENT_RIVALS_RETENTION_PROFILE: QATProfile(
         name=STUDENT_RIVALS_RETENTION_PROFILE,
+        scale_quantiles=REFINED_SCALE_QUANTILES,
+        coordinate_search_passes=3,
+        local_refinement_multipliers=REFINED_SCALE_MULTIPLIERS,
+        local_refinement_passes=1,
+        adapt_scales_after_each_epoch=True,
+        adaptive_quantile_names=("p900", "p975", "p995", "p998"),
+        adaptive_coordinate_passes=1,
+        qat_learning_rate=0.0000625,
+    ),
+    WARMUP_CONSISTENCY_QAT_PROFILE: QATProfile(
+        name=WARMUP_CONSISTENCY_QAT_PROFILE,
         scale_quantiles=REFINED_SCALE_QUANTILES,
         coordinate_search_passes=3,
         local_refinement_multipliers=REFINED_SCALE_MULTIPLIERS,
@@ -612,7 +626,7 @@ def resolve_qat_profile(value: str | QATProfile) -> QATProfile:
         raise TrainingError(
             "QAT profile must be standard-v1, refined-adaptive-scales-v1 "
             "or retention-first-low-rate-v1 or channel-prediction-qat-v1 "
-            "or student-rivals-retention-v1"
+            "or student-rivals-retention-v1 or warmup-consistency-qat-v1"
         )
     return QAT_PROFILES[value]
 
@@ -677,7 +691,7 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
             ),
         },
     }
-    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE):
         body["scale_selection"]["validation_objective"] = (
             "retention-feasibility-then-normalized-violation-sum-then-"
             "refined-ranking-key-then-lower-scale"
@@ -712,16 +726,18 @@ def qat_profile_contract(value: str | QATProfile) -> dict[str, object]:
                 "maximum_huber_ratio_inclusive": MAXIMUM_HUBER_RATIO,
             },
         }
-    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile.name in STUDENT_PAIR_PROFILES:
         body["training_pair_policy"] = training_pair_policy_contract(profile)
         body["schedule"]["float_warmup_learning_rate"] = RANKING_FLOAT_LEARNING_RATE
+    if profile.name == WARMUP_CONSISTENCY_QAT_PROFILE:
+        body["warmup_consistency"] = warmup_consistency_contract()
     return body_hashed(body)
 
 
 def training_pair_policy_contract(value: str | QATProfile) -> dict[str, object] | None:
     """New-only training policy; historical profile bodies never gain fields."""
     profile = resolve_qat_profile(value)
-    if profile.name != STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile.name not in STUDENT_PAIR_PROFILES:
         return None
     return body_hashed({
         "schema": "papersoccer.compact-value-bfm-training-pair-policy.v1",
@@ -3910,6 +3926,245 @@ def _network_gradients(
     return gradients
 
 
+def warmup_consistency_contract():
+    return body_hashed({
+        "schema": "papersoccer.compact-value-bfm-warmup-consistency-policy.v1",
+        "base_profile": STUDENT_RIVALS_RETENTION_PROFILE,
+        "phase": "qat-only", "coefficient": 1.0, "huber_delta": float(HUBER_DELTA),
+        "teacher": "own-frozen-genuine-float-warmup;stop-gradient",
+        "inputs": "existing-64-new-192-anchor-TRAIN-scalar-batch-only",
+        "weights": "existing-separately-normalized-25percent-new-75percent-anchor",
+        "formula": "labels-plus-lambda-ranking-plus-weighted-huber-to-frozen-warmup",
+        "derivative": "add-once-to-scalar-output-gradient-before-existing-backprop-clip-adamw",
+        "unchanged": ["warmup", "labels", "ranking", "epochs", "learning-rate", "per-layer-3bit", "scale-and-epoch-selection", "gates"],
+        "optional_audit_control": "when-bound-match-warmup-checkpoint-metrics-and-initial-QAT-scales-codes-before-optimizer",
+        "trace": "per-epoch-counts-loss-components-and-ordered-batch-row-prediction-derivative-hashes",
+        "replay_limit": "source-bound-execution-digests;no-independent-forward-or-gradient-replay",
+    })
+
+
+def _validate_warmup_consistency_policy(value):
+    verify_body_hash(value, schema="papersoccer.compact-value-bfm-warmup-consistency-policy.v1", label="consistency policy")
+    if value != warmup_consistency_contract():
+        raise TrainingError("warmup consistency policy changed")
+
+
+def _consistency_binding_identity(binding):
+    successor = binding.get("successor_ranking", {})
+    return {
+        "source_bundle_body_sha256": binding.get("source_bundle_body_sha256"),
+        "architecture": binding.get("architecture"), "arm": binding.get("arm"),
+        "seed": binding.get("seed"), "datasets": binding.get("datasets"),
+        "source_routes": binding.get("source_routes"),
+        "ranking": {name: successor.get(name) for name in (
+            "schema", "artifact_sha256", "body_sha256", "source_bundle_body_sha256",
+            "teacher", "train_groups", "validation_groups", "loss_weight")},
+        "initial_parameters": successor.get("initial_checkpoint", {}).get("parameters"),
+    }
+
+
+def build_warmup_consistency_expectation(control_receipt_path: pathlib.Path):
+    """Read one completed no-penalty control; never run a warmup or prediction."""
+    path = pathlib.Path(control_receipt_path).absolute()
+    if path.resolve() != path or not path.is_file():
+        raise TrainingError("consistency control receipt is absent or redirected")
+    payload, receipt = _load_canonical_json(path, "consistency no-penalty control")
+    verify_body_hash(receipt, schema=SEED_RECEIPT_SCHEMA, label="consistency control")
+    if path.name != sha256_bytes(payload) + ".seed-receipt.json":
+        raise TrainingError("consistency control is not content addressed")
+    profile = receipt.get("qat_profile")
+    weight = _ranking_weight(receipt.get("successor_ranking", {}).get("loss_weight"))
+    if profile != STUDENT_RIVALS_RETENTION_PROFILE and not (
+            profile == RETENTION_FIRST_LOW_RATE_QAT_PROFILE and weight == 0.0):
+        raise TrainingError("consistency requires a no-penalty student-rival or inactive scalar control")
+    architecture = ARCHITECTURES[receipt["architecture"]]
+    if architecture.name != "capacity-12x8" or receipt.get("arm") != "search-target":
+        raise TrainingError("consistency control architecture/arm changed")
+    completed = _load_seed_receipt_from_reference(path.parent.parent,
+        _seed_reference_path(path.parent.parent, architecture, ARMS["search-target"], receipt["seed"]), receipt["binding"])
+    if canonical_json_bytes(completed) != payload:
+        raise TrainingError("consistency control differs from its completed seed reference")
+    report = receipt["quantized_training"]
+    validate_qat_execution_evidence(report, expected_profile=profile,
+        float_validation_reference=receipt["float_validation"])
+    validate_successor_schedule_execution(receipt["float_training"], report, seed=receipt["seed"])
+    checkpoint = receipt["float_checkpoint"]
+    checkpoint_path = _output_artifact(path.parent.parent, checkpoint["path"],
+        expected_sha256=checkpoint["sha256"], label="consistency warmup control")
+    parameters = load_float_checkpoint(checkpoint_path, architecture)
+    scales = report["scale_search"]["selected_scales"]
+    if scales != report["history"][0]["fixed_scales"]:
+        raise TrainingError("consistency control initial scales changed")
+    quantized = quantize_fixed(parameters, architecture, scales)
+    warmup = receipt["float_training"]
+    if (warmup.get("best_float_epoch") != 1 or len(warmup.get("history", [])) != 1
+            or warmup.get("optimizer", {}).get("learning_rate") != RANKING_FLOAT_LEARNING_RATE
+            or warmup.get("validation") != receipt["float_validation"]
+            or any(warmup.get("per_layer_update_evidence", {}).get(name, {}).get("after_sha256")
+                != sha256_bytes(parameters[name].tobytes()) for name in parameters)):
+        raise TrainingError("consistency control warmup evidence changed")
+    return body_hashed({
+        "schema": "papersoccer.compact-value-bfm-warmup-consistency-expectation.v1",
+        "control_receipt": {"path": str(path), "sha256": sha256_bytes(payload), "bytes": len(payload)},
+        "control_profile": profile, "input_binding": _consistency_binding_identity(receipt["binding"]),
+        "warmup": {"parameters": _parameter_identity(parameters, architecture),
+            "checkpoint_sha256": checkpoint["sha256"], "checkpoint_bytes": checkpoint["bytes"],
+            "validation": receipt["float_validation"], "optimizer": warmup["optimizer"],
+            "batching": warmup["batching"], "epoch": 1},
+        "initial_quantization": {"scales": dict(scales),
+            "code_sha256": {name: sha256_bytes(v.tobytes()) for name, v in quantized.integer.items()},
+            "validation": report["pre_qat_validation"]},
+    })
+
+
+def _validate_consistency_expectation(value, *, binding=None, reread_control=False):
+    if not isinstance(value, Mapping):
+        raise TrainingError("warmup consistency requires its no-penalty control expectation")
+    verify_body_hash(value, schema="papersoccer.compact-value-bfm-warmup-consistency-expectation.v1", label="consistency expectation")
+    if set(value) != {"schema", "control_receipt", "control_profile", "input_binding", "warmup", "initial_quantization", "body_sha256"}:
+        raise TrainingError("consistency expectation fields changed")
+    control = value["control_receipt"]
+    if (not isinstance(control, Mapping) or set(control) != {"path", "sha256", "bytes"}
+            or not valid_sha256(control.get("sha256")) or type(control.get("bytes")) is not int or control["bytes"] <= 0
+            or not isinstance(control.get("path"), str) or not pathlib.Path(control["path"]).is_absolute()):
+        raise TrainingError("consistency control record is invalid")
+    if binding is not None and value["input_binding"] != _consistency_binding_identity(binding):
+        raise TrainingError("consistency no-penalty control input/seed/initialization binding differs")
+    if reread_control and build_warmup_consistency_expectation(pathlib.Path(control["path"])) != value:
+        raise TrainingError("consistency no-penalty control or expected warmup/grid changed")
+    # Copy so a caller cannot relabel the running teacher or expectation in place.
+    return json.loads(canonical_json_bytes(value))
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class _FrozenWarmupTeacher:
+    _payloads: tuple[bytes, ...]
+    _identity_bytes: bytes
+    architecture: Architecture
+
+    def __init__(self, parameters, architecture):
+        normalized = _validate_parameters(parameters, architecture)
+        object.__setattr__(self, "architecture", architecture)
+        object.__setattr__(self, "_payloads", tuple(np.asarray(normalized[name], dtype="<f4").tobytes(order="C") for name in ("w1", "w2", "w3")))
+        object.__setattr__(self, "_identity_bytes", canonical_json_bytes(_parameter_identity(normalized, architecture)))
+        self.verify()
+
+    @property
+    def parameters(self):
+        shapes = tuple(self.architecture.shapes[name] for name in ("w1", "w2", "w3"))
+        return {name: np.frombuffer(payload, dtype="<f4").reshape(shape)
+            for name, payload, shape in zip(("w1", "w2", "w3"), self._payloads, shapes)}
+
+    @property
+    def identity(self):
+        return json.loads(self._identity_bytes)
+
+    def verify(self):
+        if (type(self._identity_bytes) is not bytes or type(self._payloads) is not tuple
+                or len(self._payloads) != 3 or any(type(v) is not bytes for v in self._payloads)
+                or canonical_json_bytes(_parameter_identity(self.parameters, self.architecture)) != self._identity_bytes):
+            raise TrainingError("frozen warmup consistency teacher changed")
+
+    def predict(self, active, architecture):
+        self.verify()
+        if architecture != self.architecture:
+            raise TrainingError("consistency teacher architecture changed")
+        prediction, _ = forward(self.parameters, architecture, active)
+        self.verify()
+        return np.frombuffer(np.asarray(prediction, dtype="<f4").tobytes(), dtype="<f4")
+
+
+def _check_consistency_warmup(float_result, inputs, architecture, arm, seed, weight, expectation):
+    expected = _validate_consistency_expectation(expectation, reread_control=True)
+    ib = expected["input_binding"]
+    labels = inputs.successor_rankings
+    actual_datasets = {name: dataset_identity(getattr(inputs, name)) for name in (
+        "new", "anchor", "common_adjudicator", "canonical_validation")}
+    if (ib["seed"] != seed or ib["architecture"]["name"] != architecture.name or ib["arm"] != dataclasses.asdict(arm)
+            or ib["datasets"] != actual_datasets or ib["ranking"]["loss_weight"] != weight
+            or labels is None or ib["ranking"]["body_sha256"] != labels.body_sha256
+            or ib["initial_parameters"] != float_result.report.get("initialization", {}).get("parameters")):
+        raise TrainingError("consistency actual warmup/input/seed differs from control")
+    warmup = expected["warmup"]
+    payload = deterministic_npz({name: np.asarray(value, dtype="<f4") for name, value in float_result.parameters.items()})
+    if (float_result.epoch != 1 or _parameter_identity(float_result.parameters, architecture) != warmup["parameters"]
+            or sha256_bytes(payload) != warmup["checkpoint_sha256"] or len(payload) != warmup["checkpoint_bytes"]
+            or float_result.metrics != warmup["validation"] or float_result.report.get("optimizer") != warmup["optimizer"]
+            or float_result.report.get("batching") != warmup["batching"]):
+        raise TrainingError("consistency warmup checkpoint/metrics differ before QAT")
+    return expected
+
+
+def _check_consistency_initial_grid(quantized, metrics, expectation):
+    actual = {"scales": {name: float(value) for name, value in quantized.scales.items()},
+        "code_sha256": {name: sha256_bytes(v.tobytes()) for name, v in quantized.integer.items()}, "validation": metrics}
+    if actual != expectation["initial_quantization"]:
+        raise TrainingError("consistency initial QAT scales/codes/metrics differ before optimizer")
+    return body_hashed({"schema": "papersoccer.compact-value-bfm-warmup-consistency-pre-update.v1",
+        "expectation_sha256": expectation["body_sha256"], "warmup": expectation["warmup"],
+        "initial_quantization": actual, "optimizer_steps": 0, "checked_before_optimizer_construction": True})
+
+
+class _WarmupConsistencyEpochEvidence:
+    def __init__(self, teacher, *, seed, qat_epoch, input_identity, expectation_sha256):
+        self.teacher = teacher
+        self.seed = seed
+        self.qat_epoch = qat_epoch
+        self.input_identity = json.loads(canonical_json_bytes(input_identity))
+        self.expectation_sha256 = expectation_sha256
+        self.digest = hashlib.sha256()
+        self.losses = []
+        self.nonzero_derivative_batches = 0
+        self.nonzero_teacher_disagreement_rows = 0
+        self.derivative_l2_sum = 0.0
+        self.teacher.verify()
+        self.reference_identity = self.teacher.identity
+
+    def record(self, *, parameters, architecture, new_rows, anchor_rows, active,
+               predictions, targets, weights, derivative, label_loss, consistency_loss, weighted_ranking_loss):
+        self.teacher.verify()
+        if self.teacher.identity != self.reference_identity:
+            raise TrainingError("consistency epoch teacher identity changed")
+        components = (float(label_loss), float(consistency_loss), float(weighted_ranking_loss))
+        if any(not math.isfinite(v) or v < 0 for v in components) or not np.all(np.isfinite(derivative)):
+            raise TrainingError("consistency loss/gradient is nonfinite")
+        self.nonzero_derivative_batches += int(np.any(derivative != 0))
+        self.nonzero_teacher_disagreement_rows += int(np.count_nonzero(predictions != targets))
+        norm = math.sqrt(float(np.sum(np.asarray(derivative, dtype=np.float64) ** 2, dtype=np.float64)))
+        self.derivative_l2_sum += norm
+        event = {"batch": len(self.losses), "seed": self.seed, "qat_epoch": self.qat_epoch,
+            "reference": self.reference_identity, "master": _parameter_identity(parameters, architecture),
+            "new_rows_sha256": _array_identity(np.asarray(new_rows, dtype="<i8")),
+            "anchor_rows_sha256": _array_identity(np.asarray(anchor_rows, dtype="<i8")),
+            "active_features_sha256": sha256_bytes(canonical_json_bytes([list(map(int, row)) for row in active])),
+            "quantized_prediction_sha256": _array_identity(predictions), "teacher_prediction_sha256": _array_identity(targets),
+            "mixed_weights_sha256": _array_identity(weights), "consistency_output_gradient_sha256": _array_identity(derivative),
+            "label_loss": components[0], "consistency_loss": components[1], "weighted_ranking_loss": components[2]}
+        self.digest.update(canonical_json_bytes(event))
+        self.losses.append(components)
+
+    def finish(self):
+        self.teacher.verify()
+        count = len(self.losses)
+        if not count:
+            raise TrainingError("consistency epoch performed no batches")
+        means = {name: float(np.mean([row[index] for row in self.losses]))
+            for index, name in enumerate(("label_loss", "consistency_loss", "weighted_ranking_loss"))}
+        means["total_objective"] = float(np.mean([(row[0] + row[1]) + row[2] for row in self.losses]))
+        return body_hashed({"schema": "papersoccer.compact-value-bfm-warmup-consistency-epoch.v1",
+            "policy": warmup_consistency_contract(), "seed": self.seed, "qat_epoch": self.qat_epoch,
+            "schedule_epoch": self.qat_epoch + 1, "expectation_sha256": self.expectation_sha256,
+            "reference_before": self.reference_identity, "reference_after": self.teacher.identity,
+            "training_inputs": self.input_identity, "batches": count, "new_rows": count * 64, "anchor_rows": count * 192,
+            "teacher_forward_calls": count, "consistency_gradient_additions": count,
+            "nonzero_derivative_batches": self.nonzero_derivative_batches,
+            "nonzero_teacher_disagreement_rows": self.nonzero_teacher_disagreement_rows,
+            "consistency_output_gradient_l2_sum": self.derivative_l2_sum,
+            "mean_loss_components": means, "ordered_batch_prediction_gradient_sha256": self.digest.hexdigest(),
+            "reference_optimizer_steps": 0, "heldout_reference_predictions": False,
+            "raw_prediction_trace_retained": False, "independent_gradient_replay_claimed": False})
+
+
 def _train_mixed_batch(
     parameters: dict[str, np.ndarray],
     architecture: Architecture,
@@ -3926,8 +4181,19 @@ def _train_mixed_batch(
     ranking_weight: float = 0.0,
     training_pair_policy: str | None = None,
     pair_evidence: _StudentRivalEpochEvidence | None = None,
+    warmup_teacher: _FrozenWarmupTeacher | None = None,
+    consistency_evidence: _WarmupConsistencyEpochEvidence | None = None,
 ) -> float:
     _validate_training_pair_policy(training_pair_policy)
+    if warmup_teacher is not None or consistency_evidence is not None:
+        if (not isinstance(warmup_teacher, _FrozenWarmupTeacher) or fixed_scales is None
+                or quantization_granularity != "per-layer" or training_pair_policy != STUDENT_RIVAL_PAIR_POLICY
+                or not isinstance(consistency_evidence, _WarmupConsistencyEpochEvidence)
+                or consistency_evidence.teacher is not warmup_teacher):
+            raise TrainingError("warmup consistency requires its QAT-only per-layer teacher/evidence context")
+        if inputs.new.split != "train" or inputs.anchor.split != "train":
+            raise TrainingError("warmup consistency teacher requires TRAIN scalar sources")
+        warmup_teacher.verify()
     if (
         new_rows.shape != (NEW_ROWS_PER_BATCH,)
         or anchor_rows.shape != (ANCHOR_ROWS_PER_BATCH,)
@@ -3977,6 +4243,15 @@ def _train_mixed_batch(
     loss, output_gradient, _ = arm_loss_gradient(
         arm, predictions, targets, weights, teacher
     )
+    label_loss = loss
+    consistency_loss = 0.0
+    teacher_predictions = consistency_derivative = None
+    if warmup_teacher is not None:
+        teacher_predictions = warmup_teacher.predict(active, architecture)
+        consistency_loss, consistency_derivative = _weighted_huber_loss_gradient(
+            predictions, teacher_predictions, weights)
+        output_gradient = output_gradient + consistency_derivative
+        loss += consistency_loss
     effective = quantized.effective() if quantized is not None else parameters
     gradients = _network_gradients(
         parameters,
@@ -3987,6 +4262,7 @@ def _train_mixed_batch(
         effective,
     )
     objective = loss
+    weighted_ranking_loss = 0.0
     if ranking_microbatch:
         ranking_active = tuple(
             successor.active
@@ -4016,7 +4292,13 @@ def _train_mixed_batch(
         )
         for name in gradients:
             gradients[name] += ranking_gradients[name]
-        objective += ranking_weight * ranking_loss
+        weighted_ranking_loss = ranking_weight * ranking_loss
+        objective += weighted_ranking_loss
+    if consistency_evidence is not None:
+        consistency_evidence.record(parameters=parameters, architecture=architecture,
+            new_rows=new_rows, anchor_rows=anchor_rows, active=active, predictions=predictions,
+            targets=teacher_predictions, weights=weights, derivative=consistency_derivative,
+            label_loss=label_loss, consistency_loss=consistency_loss, weighted_ranking_loss=weighted_ranking_loss)
     norm = math.sqrt(
         sum(
             float(np.sum(value * value, dtype=np.float64))
@@ -4444,7 +4726,7 @@ class _FrozenRetentionReference:
 
 
 def _retention_reference(profile, value):
-    if profile.name not in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
+    if profile.name not in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE):
         if value is not None:
             raise TrainingError("float retention reference requires retention-first QAT")
         return None
@@ -4523,7 +4805,7 @@ def _qat_validation_key(
         ) from error
     if any(not math.isfinite(value) for value in result):
         raise TrainingError("refined adaptive QAT ranking metrics are nonfinite")
-    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE):
         reference = _retention_reference(profile, float_validation_reference)
         return (*_retention_violation_key(report, reference), *result)
     return result
@@ -5663,11 +5945,17 @@ def run_fixed_scale_qat(
     calibration_directory: pathlib.Path | None = None,
     original_parameters: Mapping[str, np.ndarray] | None = None,
     _prediction_executor=None,
+    warmup_consistency_expectation: Mapping[str, object] | None = None,
 ) -> QuantizedTrainingResult:
     prediction_arguments = {} if _prediction_executor is None else {"_prediction_executor": _prediction_executor}
     if qat_epochs != QAT_EPOCHS:
         raise TrainingError("compact deployment requires exactly four QAT epochs")
     profile = resolve_qat_profile(qat_profile)
+    consistency = profile.name == WARMUP_CONSISTENCY_QAT_PROFILE
+    if consistency and (inputs.new.split != "train" or inputs.anchor.split != "train" or arm.name != "search-target"):
+        raise TrainingError("warmup consistency requires search-target TRAIN scalar sources")
+    if not consistency and warmup_consistency_expectation is not None:
+        raise TrainingError("consistency control/callback cannot enter another QAT profile")
     if profile.name == CHANNEL_PREDICTION_QAT_PROFILE and _prediction_executor is not None:
         raise TrainingError("parallel validation currently rejects channel QAT before work")
     if profile.name == CHANNEL_PREDICTION_QAT_PROFILE:
@@ -5684,7 +5972,7 @@ def run_fixed_scale_qat(
         raise TrainingError(
             "refined adaptive QAT requires successor-labeled capacity-12x8"
         )
-    policy = STUDENT_RIVAL_PAIR_POLICY if profile.name == STUDENT_RIVALS_RETENTION_PROFILE else None
+    policy = STUDENT_RIVAL_PAIR_POLICY if profile.name in STUDENT_PAIR_PROFILES else None
     if policy is not None:
         _validate_student_float_evidence(float_result.report, seed=seed, ranking_weight=ranking_weight)
         if (float_result.metrics != float_result.report.get("validation") or any(
@@ -5695,7 +5983,7 @@ def run_fixed_scale_qat(
         raise TrainingError("student rival warmup cannot enter a legacy QAT profile")
     reference = _retention_reference(
         profile,
-        float_result.metrics if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else None,
+        float_result.metrics if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE) else None,
     )
     selection_arguments = {} if reference is None else {"float_validation_reference": reference}
     ranking_weight = _ranking_weight(ranking_weight)
@@ -5707,6 +5995,10 @@ def run_fixed_scale_qat(
     )
     if ranking_weight > 0.0 and not ranking_groups:
         raise TrainingError("positive ranking loss has no QAT training groups")
+    expectation = None
+    teacher = _FrozenWarmupTeacher(float_result.parameters, architecture) if consistency else None
+    if consistency and warmup_consistency_expectation is not None:
+        expectation = _check_consistency_warmup(float_result, inputs, architecture, arm, seed, ranking_weight, warmup_consistency_expectation)
     pre_qat, scale_report = select_fixed_scales(
         float_result.parameters,
         architecture,
@@ -5728,6 +6020,22 @@ def run_fixed_scale_qat(
         ranking_weight=ranking_weight,
         **prediction_arguments,
     )
+    consistency_reference = pre_update_check = None
+    if consistency:
+        teacher.verify()
+        training_identities = {name: dataset_identity(getattr(inputs, name)) for name in ("new", "anchor")}
+        checkpoint_payload = deterministic_npz(teacher.parameters)
+        consistency_reference = body_hashed({
+            "schema": "papersoccer.compact-value-bfm-frozen-warmup-teacher.v1",
+            "parameters": teacher.identity, "checkpoint_sha256": sha256_bytes(checkpoint_payload),
+            "checkpoint_bytes": len(checkpoint_payload), "training_inputs": training_identities,
+            "float_validation_sha256": sha256_bytes(canonical_json_bytes(float_result.metrics)),
+            "float_report_sha256": sha256_bytes(canonical_json_bytes(float_result.report))})
+        if expectation is not None:
+            pre_update_check = _check_consistency_initial_grid(pre_qat, pre_qat_metrics, expectation)
+        teacher.verify()
+        if _parameter_identity(float_result.parameters, architecture) != teacher.identity:
+            raise TrainingError("consistency warmup changed before optimizer construction")
     selected_metrics: dict[str, dict[str, float | int]] | None = None
     selected_key: tuple[float, ...] | None = None
     fixed_scales = dict(pre_qat.scales)
@@ -5752,6 +6060,9 @@ def run_fixed_scale_qat(
         pair_evidence = None if policy is None else _StudentRivalEpochEvidence(
             phase="qat", seed=seed, schedule_epoch=schedule_epoch,
             ranking_weight=ranking_weight, scalar_batches=batch_count)
+        consistency_evidence = None if teacher is None else _WarmupConsistencyEpochEvidence(
+            teacher, seed=seed, qat_epoch=qat_epoch, input_identity=consistency_reference["training_inputs"],
+            expectation_sha256=None if expectation is None else expectation["body_sha256"])
         ranking_schedule = (
             None
             if ranking_weight == 0.0
@@ -5797,6 +6108,7 @@ def run_fixed_scale_qat(
                 ),
                 ranking_weight=ranking_weight,
                 **({"training_pair_policy": policy, "pair_evidence": pair_evidence} if policy is not None else {}),
+                **({"warmup_teacher": teacher, "consistency_evidence": consistency_evidence} if consistency else {}),
             )
             if training_objectives is not None:
                 training_objectives.append(objective)
@@ -5855,9 +6167,10 @@ def run_fixed_scale_qat(
             },
             "validation": metrics,
             **({"training_total_objective": float(np.mean(training_objectives)),
-                "training_total_objective_definition": STUDENT_TRAINING_OBJECTIVE}
+                "training_total_objective_definition": (CONSISTENCY_TRAINING_OBJECTIVE if consistency else STUDENT_TRAINING_OBJECTIVE)}
                if training_objectives is not None else {}),
             **({"training_pair_selection": pair_evidence.finish()} if pair_evidence is not None else {}),
+            **({"warmup_consistency": consistency_evidence.finish()} if consistency_evidence is not None else {}),
         })
         # QAT epoch zero is diagnostic only.  Strict comparison keeps the
         # earlier trained QAT epoch on an exact validation tie.
@@ -5955,6 +6268,11 @@ def run_fixed_scale_qat(
         qat_report["training_pair_policy"] = training_pair_policy_contract(profile)
         qat_report["training_pair_seed"] = seed
         qat_report["float_warmup_report_sha256"] = sha256_bytes(canonical_json_bytes(float_result.report))
+    if consistency:
+        teacher.verify()
+        qat_report["warmup_consistency"] = {"policy": warmup_consistency_contract(),
+            "reference": consistency_reference, "expectation": expectation,
+            "pre_update_control_check": pre_update_check, "reference_after": teacher.identity}
     validate_qat_execution_evidence(qat_report, expected_profile=profile.name, **selection_arguments)
     if inputs.successor_rankings is not None:
         validate_successor_schedule_execution(
@@ -6153,11 +6471,11 @@ def _validate_student_epoch_evidence(value, *, phase, seed, epoch, weight, batch
     return dict(value)
 
 
-def _validate_student_training_objective(epoch):
+def _validate_student_training_objective(epoch, *, definition=STUDENT_TRAINING_OBJECTIVE):
     if ("training_objective_weighted_huber" in epoch
             or type(epoch.get("training_total_objective")) is not float
             or not math.isfinite(epoch["training_total_objective"])
-            or epoch.get("training_total_objective_definition") != STUDENT_TRAINING_OBJECTIVE):
+            or epoch.get("training_total_objective_definition") != definition):
         raise TrainingError("student rival total training objective label/value changed")
 
 
@@ -6193,7 +6511,7 @@ def _validate_student_float_evidence(value, *, seed, ranking_weight):
 
 def _validate_student_qat_evidence(value):
     policy = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
-    if (value.get("training_pair_policy") != policy or value.get("qat_profile") != STUDENT_RIVALS_RETENTION_PROFILE
+    if (value.get("training_pair_policy") != policy or value.get("qat_profile") not in STUDENT_PAIR_PROFILES
             or type(value.get("training_pair_seed")) is not int or value["training_pair_seed"] not in FIXED_SEEDS
             or not valid_sha256(value.get("float_warmup_report_sha256"))
             or not isinstance(value.get("history"), list) or len(value["history"]) != QAT_EPOCHS):
@@ -6205,7 +6523,8 @@ def _validate_student_qat_evidence(value):
         raise TrainingError("student rival QAT schedule is absent")
     reports = []
     for epoch, item in enumerate(value["history"], start=2):
-        _validate_student_training_objective(item)
+        _validate_student_training_objective(item, definition=(CONSISTENCY_TRAINING_OBJECTIVE
+            if value["qat_profile"] == WARMUP_CONSISTENCY_QAT_PROFILE else STUDENT_TRAINING_OBJECTIVE))
         batches = item.get("fake_quantization", {}).get("batches")
         if type(batches) is not int or batches <= 0:
             raise TrainingError("student rival QAT batch count is invalid")
@@ -6226,8 +6545,8 @@ def validate_student_rival_execution(float_training, quantized_training, *, seed
         settings = expected_binding.get("settings", {})
         successor = expected_binding.get("successor_ranking", {})
         policy = training_pair_policy_contract(STUDENT_RIVALS_RETENTION_PROFILE)
-        if (expected_binding.get("seed") != seed or settings.get("qat_profile") != STUDENT_RIVALS_RETENTION_PROFILE
-                or settings.get("qat_profile_contract") != qat_profile_contract(STUDENT_RIVALS_RETENTION_PROFILE)
+        if (expected_binding.get("seed") != seed or settings.get("qat_profile") != quantized_training["qat_profile"]
+                or settings.get("qat_profile_contract") != qat_profile_contract(quantized_training["qat_profile"])
                 or settings.get("training_pair_policy") != policy or successor.get("training_pair_policy") != policy
                 or successor.get("loss_weight") != weight
                 or float_training.get("initialization", {}).get("parameters") != successor.get("initial_checkpoint", {}).get("parameters")
@@ -6246,6 +6565,149 @@ def validate_student_rival_execution(float_training, quantized_training, *, seed
         "epoch_evidence_body_sha256": [v["body_sha256"] for v in epochs],
         "raw_prediction_trace_retained": False,
         "independent_numerical_replay_claimed": False})
+
+
+def _validate_warmup_consistency_qat(value):
+    evidence = value.get("warmup_consistency")
+    if (not isinstance(evidence, Mapping) or set(evidence) != {
+            "policy", "reference", "expectation", "pre_update_control_check", "reference_after"}
+            or evidence["policy"] != warmup_consistency_contract()):
+        raise TrainingError("warmup consistency QAT evidence is absent or relabeled")
+    _validate_warmup_consistency_policy(evidence["policy"])
+    reference = evidence["reference"]
+    verify_body_hash(reference, schema="papersoccer.compact-value-bfm-frozen-warmup-teacher.v1", label="frozen warmup teacher")
+    if (set(reference) != {"schema", "parameters", "checkpoint_sha256", "checkpoint_bytes", "training_inputs",
+            "float_validation_sha256", "float_report_sha256", "body_sha256"}
+            or evidence["reference_after"] != reference["parameters"]
+            or reference["float_report_sha256"] != value.get("float_warmup_report_sha256")
+            or reference["float_validation_sha256"] != value.get("retention_reference", {}).get("float_validation_sha256")
+            or type(reference["checkpoint_bytes"]) is not int or reference["checkpoint_bytes"] <= 0
+            or not valid_sha256(reference["checkpoint_sha256"])
+            or set(reference["training_inputs"]) != {"new", "anchor"}):
+        raise TrainingError("warmup consistency frozen reference identity changed")
+    architecture = ARCHITECTURES["capacity-12x8"]
+    params = reference["parameters"]
+    if (params.get("architecture") != architecture.name or params.get("dimensions") != list(architecture.dimensions)
+            or set(params.get("layers", {})) != {"w1", "w2", "w3"}):
+        raise TrainingError("warmup consistency reference architecture changed")
+    for name, shape in architecture.shapes.items():
+        layer = params["layers"][name]
+        if (layer.get("shape") != list(shape) or layer.get("dtype") != "little-endian-float32"
+                or not valid_sha256(layer.get("sha256"))
+                or value.get("final_master_per_layer_update_evidence", {}).get(name, {}).get("before_sha256") != layer["sha256"]):
+            raise TrainingError("warmup consistency reference differs from original QAT masters")
+    expected = evidence["expectation"]
+    if expected is not None:
+        expected = _validate_consistency_expectation(expected)
+        warmup = expected["warmup"]
+        check = evidence["pre_update_control_check"]
+        verify_body_hash(check, schema="papersoccer.compact-value-bfm-warmup-consistency-pre-update.v1", label="consistency pre-update check")
+        if (set(check) != {"schema", "expectation_sha256", "warmup", "initial_quantization", "optimizer_steps", "checked_before_optimizer_construction", "body_sha256"}
+                or check["expectation_sha256"] != expected["body_sha256"] or check["warmup"] != warmup
+                or check["initial_quantization"] != expected["initial_quantization"]
+                or type(check["optimizer_steps"]) is not int or check["optimizer_steps"] != 0
+                or check["checked_before_optimizer_construction"] is not True
+                or reference["parameters"] != warmup["parameters"]
+                or reference["checkpoint_sha256"] != warmup["checkpoint_sha256"]
+                or reference["checkpoint_bytes"] != warmup["checkpoint_bytes"]
+                or reference["float_validation_sha256"] != sha256_bytes(canonical_json_bytes(warmup["validation"]))
+                or check["initial_quantization"]["scales"] != value["scale_search"]["selected_scales"]
+                or check["initial_quantization"]["validation"] != value["pre_qat_validation"]
+                or {name: expected["input_binding"]["datasets"][name] for name in ("new", "anchor")} != reference["training_inputs"]):
+            raise TrainingError("consistency control-to-warmup/initial-grid proof changed")
+    elif evidence["pre_update_control_check"] is not None:
+        raise TrainingError("consistency pre-update control check has no bound expectation")
+    reports = []
+    fields = {"schema", "policy", "seed", "qat_epoch", "schedule_epoch", "expectation_sha256", "reference_before", "reference_after",
+        "training_inputs", "batches", "new_rows", "anchor_rows", "teacher_forward_calls", "consistency_gradient_additions",
+        "nonzero_derivative_batches", "nonzero_teacher_disagreement_rows", "consistency_output_gradient_l2_sum", "mean_loss_components",
+        "ordered_batch_prediction_gradient_sha256", "reference_optimizer_steps", "heldout_reference_predictions", "raw_prediction_trace_retained",
+        "independent_gradient_replay_claimed", "body_sha256"}
+    weight = value["successor_ranking"]["loss_weight"]
+    for index, item in enumerate(value["history"], start=1):
+        report = item.get("warmup_consistency")
+        verify_body_hash(report, schema="papersoccer.compact-value-bfm-warmup-consistency-epoch.v1", label="consistency epoch")
+        batches = item["fake_quantization"]["batches"]
+        _validate_warmup_consistency_policy(report["policy"])
+        if (set(report) != fields or report["policy"] != warmup_consistency_contract()
+                or type(report["seed"]) is not int or report["seed"] != value["training_pair_seed"]
+                or type(report["qat_epoch"]) is not int or report["qat_epoch"] != index
+                or type(report["schedule_epoch"]) is not int or report["schedule_epoch"] != index + 1
+                or report["expectation_sha256"] != (None if expected is None else expected["body_sha256"])
+                or report["reference_before"] != params or report["reference_after"] != params
+                or report["training_inputs"] != reference["training_inputs"]
+                or any(type(report[k]) is not int or report[k] != v for k, v in {
+                    "batches": batches, "new_rows": batches * 64, "anchor_rows": batches * 192,
+                    "teacher_forward_calls": batches, "consistency_gradient_additions": batches, "reference_optimizer_steps": 0}.items())
+                or type(report["nonzero_derivative_batches"]) is not int or not 0 <= report["nonzero_derivative_batches"] <= batches
+                or type(report["nonzero_teacher_disagreement_rows"]) is not int or not 0 <= report["nonzero_teacher_disagreement_rows"] <= batches * 256
+                or not valid_sha256(report["ordered_batch_prediction_gradient_sha256"])
+                or report["ordered_batch_prediction_gradient_sha256"] == hashlib.sha256().hexdigest()
+                or any(report[k] is not False for k in ("heldout_reference_predictions", "raw_prediction_trace_retained", "independent_gradient_replay_claimed"))):
+            raise TrainingError("consistency epoch phase/rows/reference/use evidence changed")
+        norm = report["consistency_output_gradient_l2_sum"]
+        components = report["mean_loss_components"]
+        if (type(norm) is not float or not math.isfinite(norm) or norm < 0
+                or (norm > 0) != (report["nonzero_derivative_batches"] > 0)
+                or report["nonzero_derivative_batches"] > report["nonzero_teacher_disagreement_rows"]
+                or not isinstance(components, Mapping) or set(components) != {"label_loss", "consistency_loss", "weighted_ranking_loss", "total_objective"}
+                or any(type(v) is not float or not math.isfinite(v) or v < 0 for v in components.values())
+                or (weight == 0.0 and components["weighted_ranking_loss"] != 0.0)
+                or not math.isclose(components["total_objective"], math.fsum(components[k] for k in ("label_loss", "consistency_loss", "weighted_ranking_loss")), rel_tol=1e-12, abs_tol=1e-15)
+                or item.get("training_total_objective") != components["total_objective"]
+                or item.get("training_total_objective_definition") != CONSISTENCY_TRAINING_OBJECTIVE):
+            raise TrainingError("consistency component losses/derivative use changed")
+        reports.append(report)
+    return reports
+
+
+def summarize_warmup_consistency_execution(float_training, quantized_training, *, expected_binding=None):
+    if quantized_training.get("qat_profile") != WARMUP_CONSISTENCY_QAT_PROFILE:
+        raise TrainingError("warmup consistency summary requires its own QAT profile")
+    reports = _validate_warmup_consistency_qat(quantized_training)
+    evidence = quantized_training["warmup_consistency"]
+    reference = evidence["reference"]
+    seed = quantized_training["training_pair_seed"]
+    validate_student_rival_execution(float_training, quantized_training, seed=seed, expected_binding=expected_binding)
+    if (reference["float_report_sha256"] != sha256_bytes(canonical_json_bytes(float_training))
+            or reference["float_validation_sha256"] != sha256_bytes(canonical_json_bytes(float_training["validation"]))
+            or any(float_training.get("per_layer_update_evidence", {}).get(name, {}).get("after_sha256") != layer["sha256"]
+                for name, layer in reference["parameters"]["layers"].items())):
+        raise TrainingError("consistency teacher differs from its genuine warmup")
+    if expected_binding is not None:
+        settings = expected_binding["settings"]
+        if (settings.get("warmup_consistency") != warmup_consistency_contract()
+                or settings.get("warmup_consistency_expectation") != evidence["expectation"]
+                or reference["training_inputs"] != {name: expected_binding["datasets"][name] for name in ("new", "anchor")}):
+            raise TrainingError("consistency outer input/policy/control binding changed")
+        if evidence["expectation"] is not None:
+            _validate_consistency_expectation(evidence["expectation"], binding=expected_binding)
+    return body_hashed({"schema": "papersoccer.compact-value-bfm-warmup-consistency-execution.v1",
+        "qat_profile": WARMUP_CONSISTENCY_QAT_PROFILE, "seed": seed, "coefficient": 1.0,
+        "reference": reference, "control_expectation_sha256": None if evidence["expectation"] is None else evidence["expectation"]["body_sha256"],
+        "control_checked_before_optimizer": evidence["pre_update_control_check"] is not None,
+        "validated_qat_epochs": QAT_EPOCHS, "teacher_forward_calls": sum(v["teacher_forward_calls"] for v in reports),
+        "consistency_gradient_additions": sum(v["consistency_gradient_additions"] for v in reports),
+        "nonzero_derivative_batches": sum(v["nonzero_derivative_batches"] for v in reports),
+        "nonzero_teacher_disagreement_rows": sum(v["nonzero_teacher_disagreement_rows"] for v in reports),
+        "epoch_evidence_body_sha256": [v["body_sha256"] for v in reports],
+        "reference_optimizer_steps": 0, "raw_prediction_trace_retained": False,
+        "independent_gradient_replay_claimed": False, "per_term_parameter_attribution_measured": False})
+
+
+def _validate_consistency_receipt_artifacts(receipt, binding, warmup_parameters):
+    report = receipt["quantized_training"]
+    summarize_warmup_consistency_execution(receipt["float_training"], report, expected_binding=binding)
+    reference = report["warmup_consistency"]["reference"]
+    artifact = receipt["float_checkpoint"]
+    if (reference["parameters"] != _parameter_identity(warmup_parameters, ARCHITECTURES[receipt["architecture"]])
+            or reference["checkpoint_sha256"] != artifact["sha256"] or reference["checkpoint_bytes"] != artifact["bytes"]):
+        raise TrainingError("consistency teacher checkpoint differs from owned warmup artifact")
+    expectation = report["warmup_consistency"]["expectation"]
+    if expectation is not None:
+        _validate_consistency_expectation(expectation, binding=binding, reread_control=True)
+        quantized = quantize_fixed(warmup_parameters, ARCHITECTURES[receipt["architecture"]], report["scale_search"]["selected_scales"])
+        _check_consistency_initial_grid(quantized, report["pre_qat_validation"], expectation)
 
 
 def validate_qat_execution_evidence(
@@ -6292,7 +6754,7 @@ def validate_qat_execution_evidence(
         scale_search.get("selected_scales"), "QAT initial"
     )
     reference = None
-    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE):
+    if profile.name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE):
         document = value.get("retention_reference")
         if not isinstance(document, Mapping):
             raise TrainingError("QAT frozen retention reference is absent")
@@ -6492,8 +6954,12 @@ def validate_qat_execution_evidence(
         "per_layer_update_evidence"
     ) != selected_updates:
         raise TrainingError("QAT successor selected-layer evidence changed")
-    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile.name in STUDENT_PAIR_PROFILES:
         _validate_student_qat_evidence(value)
+    if profile.name == WARMUP_CONSISTENCY_QAT_PROFILE:
+        _validate_warmup_consistency_qat(value)
+    elif "warmup_consistency" in value or any("warmup_consistency" in item for item in history):
+        raise TrainingError("consistency evidence cannot enter another QAT profile")
     return dict(value)
 
 
@@ -6624,12 +7090,14 @@ def validate_successor_schedule_execution(
     elif selected_float is not None or selected_qat is not None:
         raise TrainingError("inactive ranking loss selected group coverage")
     pair_execution = None
-    if quantized_training.get("qat_profile") == STUDENT_RIVALS_RETENTION_PROFILE:
+    if quantized_training.get("qat_profile") in STUDENT_PAIR_PROFILES:
         pair_execution = validate_student_rival_execution(float_training, quantized_training, seed=seed)
     elif "training_pair_policy" in float_training or "training_pair_policy" in quantized_training:
         raise TrainingError("student rival warmup cannot be relabeled as a legacy recipe")
     return {
         **({"training_pair_execution": pair_execution} if pair_execution is not None else {}),
+        **({"warmup_consistency_execution": summarize_warmup_consistency_execution(float_training, quantized_training)}
+           if quantized_training.get("qat_profile") == WARMUP_CONSISTENCY_QAT_PROFILE else {}),
         "loss_active": active,
         "float_epochs": len(float_history),
         "qat_epochs": len(qat_history),
@@ -6791,12 +7259,17 @@ def training_binding(
     initial_checkpoint: pathlib.Path | None = None,
     qat_profile: str | QATProfile = STANDARD_QAT_PROFILE,
     *, validation_workers: int = 1, seed_concurrency: int = 1,
+    warmup_consistency_expectation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     prediction_settings = validation_prediction_settings(validation_workers, seed_concurrency)
     if validation_workers > 1 and resolve_qat_profile(qat_profile).name == CHANNEL_PREDICTION_QAT_PROFILE:
         raise TrainingError("parallel validation currently rejects channel QAT before work")
     ranking_weight = _ranking_weight(ranking_weight)
     profile = resolve_qat_profile(qat_profile)
+    if profile.name == WARMUP_CONSISTENCY_QAT_PROFILE and (inputs.new.split != "train" or inputs.anchor.split != "train" or arm.name != "search-target"):
+        raise TrainingError("warmup consistency requires search-target TRAIN scalar sources")
+    if warmup_consistency_expectation is not None and profile.name != WARMUP_CONSISTENCY_QAT_PROFILE:
+        raise TrainingError("consistency audit control cannot enter another profile binding")
     sidecar = None
     if sidecar_index is not None:
         sidecar = {
@@ -6909,9 +7382,14 @@ def training_binding(
         raise TrainingError(
             "refined adaptive QAT requires successor-labeled capacity-12x8"
         )
-    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile.name in STUDENT_PAIR_PROFILES:
         body["settings"]["training_pair_policy"] = training_pair_policy_contract(profile)
         body["successor_ranking"]["training_pair_policy"] = training_pair_policy_contract(profile)
+    if profile.name == WARMUP_CONSISTENCY_QAT_PROFILE:
+        body["settings"]["warmup_consistency"] = warmup_consistency_contract()
+        if warmup_consistency_expectation is not None:
+            body["settings"]["warmup_consistency_expectation"] = _validate_consistency_expectation(
+                warmup_consistency_expectation, binding=body, reread_control=True)
     if prediction_settings is not None:
         from tools import compact_value_bfm_prediction_pool as prediction
         prediction_settings["features"] = {name: prediction._features(getattr(inputs, name), np)
@@ -7033,6 +7511,8 @@ def _validate_student_receipt_artifacts(receipt, binding, warmup_parameters, qua
                 or quantized.scales[name] != report["selected_scales"][name]
                 or sha256_bytes(quantized.integer[name].tobytes()) != report["selected_per_layer_qat_evidence"][name]["after_sha256"]):
             raise TrainingError("student rival warmup/runtime codes changed")
+    if report.get("qat_profile") == WARMUP_CONSISTENCY_QAT_PROFILE:
+        _validate_consistency_receipt_artifacts(receipt, binding, warmup_parameters)
 
 
 def prediction_seed_execution_policy(seed_workers, settings):
@@ -7116,7 +7596,7 @@ def _load_seed_receipt_from_reference(
         receipt.get("qat_profile") != profile_name
         or receipt.get("qat_profile_contract") != profile_contract
         or settings.get("qat_learning_rate") != profile_contract["schedule"]["qat_learning_rate"]
-        or (profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE)
+        or (profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE)
             and not isinstance(receipt.get("float_validation"), Mapping))
     ):
         raise TrainingError("compact seed receipt QAT profile changed")
@@ -7125,9 +7605,9 @@ def _load_seed_receipt_from_reference(
     validate_qat_execution_evidence(
         receipt.get("quantized_training"), expected_profile=profile_name,
         **({"float_validation_reference": receipt.get("float_validation")}
-            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE) else {}),
     )
-    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile_name in STUDENT_PAIR_PROFILES:
         validate_student_rival_execution(receipt["float_training"], receipt["quantized_training"],
             seed=receipt["seed"], expected_binding=expected_binding)
     architecture_name = receipt.get("architecture")
@@ -7155,7 +7635,7 @@ def _load_seed_receipt_from_reference(
         raise TrainingError("legacy seed receipt cannot bind a channel runtime")
     if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
         _validate_channel_receipt_links(receipt, expected_binding, output_directory, warmup_parameters, _quantized, selection, _document)
-    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile_name in STUDENT_PAIR_PROFILES:
         _validate_student_receipt_artifacts(receipt, expected_binding, warmup_parameters, _quantized, selection, _document)
     if (
         loaded_architecture.name != architecture_name
@@ -7182,7 +7662,10 @@ def train_seed_candidate(
     _native_thread_execution: Mapping[str, object] | None = None,
     validation_workers: int = 1,
     _seed_concurrency: int = 1,
+    warmup_consistency_expectation: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
+    if warmup_consistency_expectation is not None and resolve_qat_profile(qat_profile).name != WARMUP_CONSISTENCY_QAT_PROFILE:
+        raise TrainingError("consistency audit control cannot enter another seed profile")
     prediction_settings = validation_prediction_settings(validation_workers, _seed_concurrency)
     if validation_workers > 1 and resolve_qat_profile(qat_profile).name == CHANNEL_PREDICTION_QAT_PROFILE:
         raise TrainingError("parallel validation currently rejects channel QAT before any work")
@@ -7202,6 +7685,7 @@ def train_seed_candidate(
                 resume=resume,
                 _native_thread_execution=execution,
                 validation_workers=validation_workers, _seed_concurrency=_seed_concurrency,
+                warmup_consistency_expectation=warmup_consistency_expectation,
             )
     native_execution = validate_native_thread_execution(
         _native_thread_execution
@@ -7219,6 +7703,7 @@ def train_seed_candidate(
         initial_checkpoint,
         profile,
         validation_workers=validation_workers, seed_concurrency=_seed_concurrency,
+        warmup_consistency_expectation=warmup_consistency_expectation,
     )
     reference_path = _seed_reference_path(
         output_directory, architecture, arm, seed
@@ -7248,7 +7733,7 @@ def train_seed_candidate(
             "learning_rate": RANKING_FLOAT_LEARNING_RATE,
             "initial_parameters": initial_parameters,
         })
-    if profile.name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile.name in STUDENT_PAIR_PROFILES:
         float_arguments["training_pair_policy"] = STUDENT_RIVAL_PAIR_POLICY
     prediction_evidence = None
     manager = contextlib.nullcontext(None)
@@ -7271,6 +7756,8 @@ def train_seed_candidate(
             seed,
             ranking_weight=ranking_weight,
             qat_profile=profile,
+            **({"warmup_consistency_expectation": warmup_consistency_expectation}
+               if profile.name == WARMUP_CONSISTENCY_QAT_PROFILE else {}),
             **({"calibration_directory": output_directory / "channel-calibration" / f"seed-{seed}",
                 "original_parameters": float_arguments["initial_parameters"]}
                if profile.name == CHANNEL_PREDICTION_QAT_PROFILE else {}),
@@ -7665,7 +8152,7 @@ def validate_selection(
     profile_contract = validate_qat_profile_contract(
         selection.get("qat_profile_contract"), expected_name=profile_name
     )
-    if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) and not isinstance(selection.get("float_validation"), Mapping):
+    if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE) and not isinstance(selection.get("float_validation"), Mapping):
         raise TrainingError("compact selection frozen float validation is absent")
     if profile_name == CHANNEL_PREDICTION_QAT_PROFILE:
         _channel_artifact_scope_preflight(selection.get("qat_execution_evidence"), artifact_root)
@@ -7673,7 +8160,7 @@ def validate_selection(
         selection.get("qat_execution_evidence"),
         expected_profile=profile_name,
         **({"float_validation_reference": selection.get("float_validation")}
-            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE) else {}),
+            if profile_name in (RETENTION_FIRST_LOW_RATE_QAT_PROFILE, CHANNEL_PREDICTION_QAT_PROFILE, STUDENT_RIVALS_RETENTION_PROFILE, WARMUP_CONSISTENCY_QAT_PROFILE) else {}),
     )
     seed_policy = selection.get("seed_execution_policy")
     seed_workers = seed_policy.get("seed_workers") if isinstance(
@@ -7740,7 +8227,7 @@ def validate_selection(
             "schedule_execution"
         ) != schedule_execution:
             raise TrainingError("selection seed successor schedule summary changed")
-    if profile_name == STUDENT_RIVALS_RETENTION_PROFILE:
+    if profile_name in STUDENT_PAIR_PROFILES:
         validate_student_rival_execution(receipt["float_training"], receipt["quantized_training"],
             seed=receipt["seed"], expected_binding=receipt["binding"])
         checkpoint = receipt["float_checkpoint"]

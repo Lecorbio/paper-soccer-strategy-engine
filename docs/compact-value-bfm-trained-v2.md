@@ -529,6 +529,33 @@ model refresh. It is not a measurement of full training speed; ranking,
 optimization and other work still contribute to elapsed time. No additional
 training attempt or qualification result follows from enabling this option.
 
+The experimental `warmup-consistency-qat-v1` profile inherits the student-rivals
+training pairs, per-layer three-bit representation and frozen-reference
+retention selection. Its one-epoch float warmup is unchanged. During each of
+the four QAT epochs it adds a consistency objective to the existing supervised
+and ranking losses:
+
+`L = L_labels + lambda * L_ranking + Huber_w(y_quantized, y_frozen_warmup)`.
+
+The additive coefficient is exactly 1.0 and Huber delta is 0.25. The consistency
+term uses only the current scalar TRAIN batch: 64 new rows and 192 anchor rows,
+with the same independently normalized 25%/75% weights as the supervised loss.
+The teacher is that run's own genuine warmup model, frozen before QAT. Its
+predictions are fixed targets; no gradient updates the teacher. The consistency
+output derivative is added before existing backpropagation, clipping and AdamW.
+The original labels, ranking loss, learning rates, epoch schedule, scale search,
+selection and all qualification gates remain unchanged.
+
+Consistency is active even when the ranking weight is zero. Consequently an
+experiment comparing this profile needs a newly trained scalar control; an
+older scalar-only run is a no-consistency comparison, not the new-profile
+control. A diagnostic may bind an expected historical warmup and initial QAT
+state and require both to match before the first new update. This audit does
+not create a second warmup or require unrelated future seeds to match the same
+checkpoint. Each execution always binds its own frozen teacher and records
+consistency use and loss components across QAT. Registering this profile does
+not authorize additional production attempts or alter admission requirements.
+
 `compact_value_bfm_terminal_outcome_v2.py` closes a completed protected rejection
 or a completed calibrated live rejection. It keeps terminal proof separate from
 the unprotected metrics used for attribution, and carries fingerprints from the
