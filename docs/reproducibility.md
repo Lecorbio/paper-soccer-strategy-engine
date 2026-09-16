@@ -22,6 +22,12 @@ Training and research scripts additionally use Python 3.12–3.14 and the pinned
 package in `requirements-research.txt`. The C++ engine, CLI, checked-in models,
 and live browser game have no Python or NumPy runtime dependency.
 
+The [quick start](../README.md#quick-start) installs that dependency before the
+complete suite. The [development guide](development.md) explains portable
+contract checks and optional local recovery forensics. The [tooling guide](tooling.md)
+maps script families; the [campaign catalog](campaigns.md) distinguishes current
+capabilities from completed experiments.
+
 Emscripten is needed only to rebuild the checked-in browser modules. Exact
 artifact verification requires Emscripten 6.0.2.
 

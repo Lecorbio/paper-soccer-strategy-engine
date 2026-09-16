@@ -67,31 +67,7 @@ if(PAPERSOCCER_NODE_EXECUTABLE)
       TIMEOUT 330
     )
     if(NOT EMSCRIPTEN)
-      foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
-        papersoccer_codingame_target_prefix(
-          PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")
-        if(PAPERSOCCER_CODINGAME_BOT STREQUAL "compact_value_bfm" AND
-           Python3_Interpreter_FOUND)
-          add_test(
-            NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
-            COMMAND ${Python3_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/bots/compact_value_bfm/export_submission.py
-                    --check)
-        else()
-          add_test(
-            NAME ${PAPERSOCCER_CODINGAME_PREFIX}_submission_current
-            COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/generate_submission.mjs
-                    ${PAPERSOCCER_CODINGAME_BOT}
-                    --check)
-        endif()
-        add_test(
-          NAME ${PAPERSOCCER_CODINGAME_PREFIX}_protocol_smoke_test
-          COMMAND ${PAPERSOCCER_NODE_EXECUTABLE}
-                  ${CMAKE_CURRENT_SOURCE_DIR}/submissions/codingame/tools/protocol_smoke_test.mjs
-                  $<TARGET_FILE:${PAPERSOCCER_CODINGAME_PREFIX}_submission>
-        )
-      endforeach()
+      papersoccer_register_submission_protocol_checks()
       add_test(
         NAME papersoccer_replay_export_tests
         COMMAND ${CMAKE_COMMAND} -E env

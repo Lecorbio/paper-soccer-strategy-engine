@@ -59,7 +59,10 @@ and subsequent delayed-import runner repair remain chained into stages 19–21
 and the final summary.
 
 The accepted runtime remains a **local, noncanonical teacher candidate**.
-Student training is eligible but has not started. The campaign performed no
+Student training was eligible but had not started at that campaign's closure.
+Subsequent student work is recorded separately in the
+[campaign catalog](campaigns.md) and [training-v2 outcome](../benchmarks/compact_value_bfm/TRAINED_V2_OUTCOME.md).
+The teacher campaign performed no
 canonical promotion, model deployment, external model upload, Rank-4
 replacement, or leaderboard update. A later, explicitly authorized
 post-campaign documentation release publishes only compact path-normalized

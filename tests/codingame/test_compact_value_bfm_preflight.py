@@ -379,10 +379,12 @@ class PlanAndCacheTest(unittest.TestCase):
             self.assertIn("run: ./scripts/build-and-test.sh", blocks[job])
 
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ResearchChecks.cmake)", cmake)
+        research_checks = (ROOT / "cmake/ResearchChecks.cmake").read_text(encoding="utf-8")
         self.assertIn(
-            "-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame", cmake
+            "-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame", research_checks
         )
-        self.assertIn("-p test_*.py", cmake)
+        self.assertIn("-p test_*.py", research_checks)
 
     def test_untyped_or_wrong_cache_python_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

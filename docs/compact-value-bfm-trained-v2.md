@@ -1,5 +1,11 @@
 # Mandatory-training Compact Value-BFM campaign
 
+**Status: closed on 2026-09-09 without a qualifying newly trained candidate.**
+The [compact outcome](../benchmarks/compact_value_bfm/TRAINED_V2_OUTCOME.md)
+records the four failed pilots, final consistency pair, and stopping decision.
+This page preserves the implementation and qualification contract; commands
+below describe that protocol and do not reopen the completed experiment.
+
 This campaign starts from main commit
 `231b5ce0af9171670d68fe5fe022a67f86122cfd`. Its success condition is a newly
 trained 6301→12→8→1 bias-free, signed-three-bit scalar candidate completing

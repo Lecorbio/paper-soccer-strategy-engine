@@ -270,6 +270,13 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 
 ## Repository layout
 
+The top-level CMake file owns core configuration and engine targets. Focused
+includes under `cmake/` register Python research checks, contest/research native
+targets, browser checks, and the pinned Wasm targets in their original order.
+The public bot registry and source-specific submission compilation declarations
+stay in the root file for existing leaderboard and provenance readers.
+The [tooling guide](tooling.md) describes the research Python module boundaries.
+
 ```text
 .
 ├── include/papersoccer/        Stable public C++ API
@@ -302,6 +309,7 @@ and [Experiments](experiments.md#rank5derived-demo-gates) for demo-only gates.
 │   ├── game_review_gate/       Frozen gate integrity and statistics tests
 │   └── fixtures/               Frozen regression paths
 ├── models/                     Trained model JSON and detailed provenance
+├── cmake/                      Grouped build targets and test registrations
 ├── tools/                      Corpus, training, and gate helpers
 ├── submissions/codingame/      Contest bots, generators, and evidence
 ├── benchmarks/                 Curated compact benchmark reports and probes

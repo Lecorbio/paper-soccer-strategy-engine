@@ -1,0 +1,360 @@
+{
+  "architecture": [
+    6301,
+    12,
+    8,
+    1
+  ],
+  "arms": [
+    {
+      "consistency_batches": 104,
+      "float_validation": {
+        "canonical_validation": {
+          "correlation": 0.7959583808732539,
+          "mae": 0.31138935685157776,
+          "objective_weighted_huber": 0.05010407534511864,
+          "prediction_mean": 0.039748359471559525,
+          "samples": 110004,
+          "sign_accuracy": 0.865523071888295,
+          "weighted_huber": 0.05010407534511864
+        },
+        "common_adjudicator": {
+          "correlation": 0.7978985893501038,
+          "mae": 0.2904694080352783,
+          "objective_weighted_huber": 0.049932190035489765,
+          "prediction_mean": 0.03329397737979889,
+          "samples": 8000,
+          "sign_accuracy": 0.865125,
+          "weighted_huber": 0.049932190035489765
+        },
+        "successor_ranking": {
+          "comparable_groups": 148,
+          "float_vs_quantized_action_flip_rate": 0.0,
+          "float_vs_quantized_action_flips": 0,
+          "groups": 165,
+          "loss_weight": 0.0,
+          "mean_teacher_regret": 0.1995379600069813,
+          "pair_cap": 8,
+          "pairs": 1158,
+          "pairwise_loss": 0.41516664090236743,
+          "quantized_comparison": false,
+          "singleton_groups": 0,
+          "skipped_nonexhaustive_groups": 0,
+          "skipped_tied_groups": 17,
+          "top1_agreement": 0.32432432432432434
+        }
+      },
+      "historical_quantized_regret": 0.22744070788895762,
+      "native_feature_check": {
+        "full_delta_bit_exact": true,
+        "maximum_absolute_python_error": 2.384185791015625e-07,
+        "mover_frame_orientations": 2,
+        "outputs": 8192,
+        "passed": true,
+        "python_native_rotated_features_exact": true,
+        "scope": "same4096common active-feature rows and exact opposite-mover-frame rotations;no replayed game-state transitions",
+        "states": 4096,
+        "tolerance": 2e-06
+      },
+      "quantized_validation": {
+        "canonical_validation": {
+          "correlation": 0.783701404580596,
+          "mae": 0.32658490538597107,
+          "objective_weighted_huber": 0.05299928207156832,
+          "prediction_mean": 0.03458563983440399,
+          "samples": 110004,
+          "sign_accuracy": 0.8599232755172539,
+          "weighted_huber": 0.05299928207156832
+        },
+        "common_adjudicator": {
+          "correlation": 0.7933210304561498,
+          "mae": 0.29847559332847595,
+          "objective_weighted_huber": 0.05099834534725707,
+          "prediction_mean": 0.03368007764220238,
+          "samples": 8000,
+          "sign_accuracy": 0.860875,
+          "weighted_huber": 0.05099834534725707
+        },
+        "successor_ranking": {
+          "comparable_groups": 148,
+          "float_vs_quantized_action_flip_rate": 0.42567567567567566,
+          "float_vs_quantized_action_flips": 63,
+          "groups": 165,
+          "loss_weight": 0.0,
+          "mean_teacher_regret": 0.21140023305810787,
+          "pair_cap": 8,
+          "pairs": 1158,
+          "pairwise_loss": 0.4922620345591672,
+          "quantized_comparison": true,
+          "singleton_groups": 0,
+          "skipped_nonexhaustive_groups": 0,
+          "skipped_tied_groups": 17,
+          "top1_agreement": 0.2972972972972973
+        }
+      },
+      "ranking_weight": 0.0,
+      "retention": {
+        "errors": [
+          "common_adjudicator quantized Huber exceeds 1.02x float",
+          "canonical_validation sign accuracy is below 0.8613",
+          "canonical_validation quantized sign loss is not below .005",
+          "canonical_validation quantized Huber exceeds 1.02x float"
+        ],
+        "passed": false,
+        "status": "offline-evaluator-rejected",
+        "thresholds": {
+          "canonical_validation": {
+            "maximum_weighted_huber": 0.0551,
+            "minimum_sign_accuracy": 0.8613
+          },
+          "common_adjudicator": {
+            "maximum_weighted_huber": 0.056,
+            "minimum_sign_accuracy": 0.8475
+          },
+          "relative_to_float": {
+            "maximum_huber_ratio_inclusive": 1.02,
+            "maximum_sign_loss_exclusive": 0.005
+          }
+        }
+      },
+      "seed": 20260907,
+      "selected_qat_epoch": 3,
+      "source_size": {
+        "ascii_characters": 92165,
+        "reserve": 2835
+      }
+    },
+    {
+      "consistency_batches": 104,
+      "float_validation": {
+        "canonical_validation": {
+          "correlation": 0.7964846083392484,
+          "mae": 0.3103896975517273,
+          "objective_weighted_huber": 0.04994625570824002,
+          "prediction_mean": 0.04834778606891632,
+          "samples": 110004,
+          "sign_accuracy": 0.8660412348641867,
+          "weighted_huber": 0.04994625570824002
+        },
+        "common_adjudicator": {
+          "correlation": 0.7958070760586049,
+          "mae": 0.2905590832233429,
+          "objective_weighted_huber": 0.050272137016623156,
+          "prediction_mean": 0.041292402893304825,
+          "samples": 8000,
+          "sign_accuracy": 0.864875,
+          "weighted_huber": 0.050272137016623156
+        },
+        "successor_ranking": {
+          "comparable_groups": 148,
+          "float_vs_quantized_action_flip_rate": 0.0,
+          "float_vs_quantized_action_flips": 0,
+          "groups": 165,
+          "loss_weight": 0.1,
+          "mean_teacher_regret": 0.18621935166821285,
+          "pair_cap": 8,
+          "pairs": 1158,
+          "pairwise_loss": 0.41950747479739864,
+          "quantized_comparison": false,
+          "singleton_groups": 0,
+          "skipped_nonexhaustive_groups": 0,
+          "skipped_tied_groups": 17,
+          "top1_agreement": 0.32432432432432434
+        }
+      },
+      "historical_quantized_regret": 0.2210201726269883,
+      "native_feature_check": {
+        "full_delta_bit_exact": true,
+        "maximum_absolute_python_error": 2.980232238769531e-07,
+        "mover_frame_orientations": 2,
+        "outputs": 8192,
+        "passed": true,
+        "python_native_rotated_features_exact": true,
+        "scope": "same4096common active-feature rows and exact opposite-mover-frame rotations;no replayed game-state transitions",
+        "states": 4096,
+        "tolerance": 2e-06
+      },
+      "quantized_validation": {
+        "canonical_validation": {
+          "correlation": 0.7836711249407081,
+          "mae": 0.321774423122406,
+          "objective_weighted_huber": 0.0520013062037398,
+          "prediction_mean": 0.03534531593322754,
+          "samples": 110004,
+          "sign_accuracy": 0.8600869059306935,
+          "weighted_huber": 0.0520013062037398
+        },
+        "common_adjudicator": {
+          "correlation": 0.791289510172536,
+          "mae": 0.29296165704727173,
+          "objective_weighted_huber": 0.05107155517298254,
+          "prediction_mean": 0.03374069184064865,
+          "samples": 8000,
+          "sign_accuracy": 0.861875,
+          "weighted_huber": 0.05107155517298254
+        },
+        "successor_ranking": {
+          "comparable_groups": 148,
+          "float_vs_quantized_action_flip_rate": 0.41216216216216217,
+          "float_vs_quantized_action_flips": 61,
+          "groups": 165,
+          "loss_weight": 0.1,
+          "mean_teacher_regret": 0.21884455395912802,
+          "pair_cap": 8,
+          "pairs": 1158,
+          "pairwise_loss": 0.4893305454748162,
+          "quantized_comparison": true,
+          "singleton_groups": 0,
+          "skipped_nonexhaustive_groups": 0,
+          "skipped_tied_groups": 17,
+          "top1_agreement": 0.3108108108108108
+        }
+      },
+      "ranking_weight": 0.1,
+      "retention": {
+        "errors": [
+          "canonical_validation sign accuracy is below 0.8613",
+          "canonical_validation quantized sign loss is not below .005",
+          "canonical_validation quantized Huber exceeds 1.02x float"
+        ],
+        "passed": false,
+        "status": "offline-evaluator-rejected",
+        "thresholds": {
+          "canonical_validation": {
+            "maximum_weighted_huber": 0.0551,
+            "minimum_sign_accuracy": 0.8613
+          },
+          "common_adjudicator": {
+            "maximum_weighted_huber": 0.056,
+            "minimum_sign_accuracy": 0.8475
+          },
+          "relative_to_float": {
+            "maximum_huber_ratio_inclusive": 1.02,
+            "maximum_sign_loss_exclusive": 0.005
+          }
+        }
+      },
+      "seed": 20260907,
+      "selected_qat_epoch": 3,
+      "source_size": {
+        "ascii_characters": 92165,
+        "reserve": 2835
+      }
+    }
+  ],
+  "assessment": {
+    "automatic_replication_or_other_work": false,
+    "disposition": "stop learning branch; no retry or further alternative",
+    "early_available": false,
+    "early_formal_pass_claimed": false,
+    "early_stratum_available": false,
+    "formal_pilot_or_qualification_passed": false,
+    "formal_pilot_pass": false,
+    "old_no_penalty_ranking_regret_threshold": 0.2210201726269883,
+    "original_coverage_minimum": 0.8,
+    "original_early_and_flip_thresholds": {
+      "early_max_edges": 12,
+      "flip_margin": 0.005,
+      "minimum_comparable_groups": 100
+    },
+    "overall_comparable_fraction": 0.896969696969697,
+    "overall_comparable_groups": 148,
+    "overall_float_quantized_flips": 0.41216216216216217,
+    "overall_minimum100_coverage_met": true,
+    "promising_criterion_passed": false,
+    "quantized_regret_reduction_vs_fresh_scalar": -0.03521434576173774,
+    "ranking_quantized_regret": 0.21884455395912802,
+    "ranking_retention": {
+      "errors": [
+        "canonical_validation sign accuracy is below 0.8613",
+        "canonical_validation quantized sign loss is not below .005",
+        "canonical_validation quantized Huber exceeds 1.02x float"
+      ],
+      "passed": false,
+      "status": "offline-evaluator-rejected",
+      "thresholds": {
+        "canonical_validation": {
+          "maximum_weighted_huber": 0.0551,
+          "minimum_sign_accuracy": 0.8613
+        },
+        "common_adjudicator": {
+          "maximum_weighted_huber": 0.056,
+          "minimum_sign_accuracy": 0.8475
+        },
+        "relative_to_float": {
+          "maximum_huber_ratio_inclusive": 1.02,
+          "maximum_sign_loss_exclusive": 0.005
+        }
+      }
+    },
+    "same_comparable_groups": true,
+    "scalar_retention": {
+      "errors": [
+        "common_adjudicator quantized Huber exceeds 1.02x float",
+        "canonical_validation sign accuracy is below 0.8613",
+        "canonical_validation quantized sign loss is not below .005",
+        "canonical_validation quantized Huber exceeds 1.02x float"
+      ],
+      "passed": false,
+      "status": "offline-evaluator-rejected",
+      "thresholds": {
+        "canonical_validation": {
+          "maximum_weighted_huber": 0.0551,
+          "minimum_sign_accuracy": 0.8613
+        },
+        "common_adjudicator": {
+          "maximum_weighted_huber": 0.056,
+          "minimum_sign_accuracy": 0.8475
+        },
+        "relative_to_float": {
+          "maximum_huber_ratio_inclusive": 1.02,
+          "maximum_sign_loss_exclusive": 0.005
+        }
+      }
+    }
+  },
+  "biases": false,
+  "body_sha256": "98567d18e59261ee380438de5061c634836cf4f6a203637e647be69849ff30c4",
+  "completed_at_utc": "2026-09-09T19:50:13.653068+00:00",
+  "consistency_coefficient": 1.0,
+  "float_epochs": 1,
+  "huber_delta": 0.25,
+  "pair_elapsed_seconds": 851.653068,
+  "production_models_evaluated": 36,
+  "production_pilots": 4,
+  "production_retention_passes": 0,
+  "publication_scope": "Compact saved metrics and hashes only; no model weights, protected positions, raw games or independent numerical replay.",
+  "qat_epochs": 4,
+  "qat_profile": "warmup-consistency-qat-v1",
+  "research_games_completed": 704,
+  "sampled_peak_rss_bytes": 4619190272,
+  "schema": "papersoccer.compact-value-bfm-trained-v2-outcome.v1",
+  "short_job_budget": 8,
+  "short_jobs_completed": 6,
+  "source_commit": "8b3640ed5486256f63767b0cc919721a538e00b6",
+  "source_records": [
+    {
+      "bytes": 41917,
+      "name": "completion.json",
+      "sha256": "23af34a7c8c1a2f6bb10afc782a539e1168e4df571843aac1463e39a19af27dd"
+    },
+    {
+      "bytes": 3480,
+      "name": "worker-result.json",
+      "sha256": "62048717e1483b591b725a13960595bfd331d93def7a046e3b5dffc7345229f9"
+    },
+    {
+      "bytes": 69412,
+      "name": "scientific-assessment.json",
+      "sha256": "378d604bd7fff732fb85b00a50116bb6fc113482f911bca21b36def4f43d4e1b"
+    },
+    {
+      "bytes": 4466,
+      "name": "research-warmup-consistency-stop-decision.json",
+      "sha256": "e5466cc05ef808bed47c999ef9f4a95709c17e8f3d1b0134834d0a1d073ecefe"
+    }
+  ],
+  "status": "closed-without-qualifying-candidate",
+  "unused_conditional_replication_slots": 2,
+  "weight_bits": 3
+}

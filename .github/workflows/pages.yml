@@ -54,6 +54,9 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
             tests.codingame.test_jacek_replay_rebuild_completion
 
+      - name: Check documentation links
+        run: python3 tools/check_documentation_links.py
+
       - name: Test Compact Value-BFM campaign contracts
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \

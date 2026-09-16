@@ -2,6 +2,16 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
   add_test(
+    NAME papersoccer_documentation_links
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_documentation_links.py)
+  add_test(
+    NAME papersoccer_documentation_link_tests
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest tests.test_documentation_links)
+  set_tests_properties(papersoccer_documentation_link_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(
     NAME papersoccer_jacek_model_current
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_jacek_neural_model.py
@@ -235,6 +245,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_compact_value_bfm_prediction_integration
               tests.codingame.test_compact_value_bfm_warmup_consistency
               tests.codingame.test_compact_value_bfm_warmup_consistency_integration
+              tests.codingame.test_compact_value_bfm_training_outcome
               tests.codingame.test_compact_value_bfm_deterministic_best
               tests.codingame.test_compact_value_bfm_training_resources_v2
               tests.codingame.test_compact_value_bfm_training_acceleration_v2

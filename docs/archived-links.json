@@ -1,0 +1,23 @@
+[
+  {
+    "source": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+    "source_sha256": "e85407700a5280ab40974a53ba436bebedb399488a937f3f38f266c8e68f1cc1",
+    "target": "superseded/v3-data/development.json",
+    "archive_url": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/db163d4d44570cb5acac8a7de953d4a31a0346ac/benchmarks/flagship_study/superseded/v3-data/development.json",
+    "reason": "Hash-frozen failure record; data retained in the published study snapshot."
+  },
+  {
+    "source": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+    "source_sha256": "e85407700a5280ab40974a53ba436bebedb399488a937f3f38f266c8e68f1cc1",
+    "target": "superseded/v3-data/validation.json",
+    "archive_url": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/db163d4d44570cb5acac8a7de953d4a31a0346ac/benchmarks/flagship_study/superseded/v3-data/validation.json",
+    "reason": "Hash-frozen failure record; data retained in the published study snapshot."
+  },
+  {
+    "source": "benchmarks/flagship_study/V3_VALIDATION_FAILURE.md",
+    "source_sha256": "e85407700a5280ab40974a53ba436bebedb399488a937f3f38f266c8e68f1cc1",
+    "target": "superseded/v3-data/runtime_projection.json",
+    "archive_url": "https://github.com/Lecorbio/paper-soccer-strategy-engine/blob/db163d4d44570cb5acac8a7de953d4a31a0346ac/benchmarks/flagship_study/superseded/v3-data/runtime_projection.json",
+    "reason": "Hash-frozen failure record; data retained in the published study snapshot."
+  }
+]

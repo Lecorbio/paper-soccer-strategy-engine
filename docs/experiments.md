@@ -1,5 +1,10 @@
 # Experiments and benchmark evidence
 
+Use the [campaign catalog](campaigns.md) for current status and the
+[development workflow](development.md#start-the-next-experiment) before
+allocating new work. This page documents comparison methodology and historical
+results; closed campaigns retain their original stopping decisions.
+
 The project separates deterministic correctness checks from longer strength and
 latency experiments. CTest uses small budgets to validate accounting, legal
 moves, report schemas, and command behavior. Promotion decisions use explicit

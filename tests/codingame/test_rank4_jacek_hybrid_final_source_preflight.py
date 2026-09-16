@@ -718,6 +718,8 @@ class FinalSourcePreflightTest(unittest.TestCase):
             encoding="ascii"
         )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="ascii")
+        self.assertIn("include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CodingameTargets.cmake)", cmake)
+        native_targets = (ROOT / "cmake/CodingameTargets.cmake").read_text(encoding="ascii")
         self.assertEqual(
             wrapper,
             "#define PAPERSOCCER_HELDOUT_SWEEP_ACCOUNTING 1\n"
@@ -758,7 +760,7 @@ class FinalSourcePreflightTest(unittest.TestCase):
         self.assertIn("play(opening, 0, config)", opening_loop)
         self.assertIn("play(opening, 1, config)", opening_loop)
         self.assertIn("add_opening_pair", opening_loop)
-        self.assertIn(preflight.GATE_TARGET, cmake)
+        self.assertIn(preflight.GATE_TARGET, native_targets)
         self.assertEqual(preflight.gate_contract_command()[0], str(preflight.FINAL_GATE))
         self.assertEqual(
             Path(preflight.gate_contract_command()[

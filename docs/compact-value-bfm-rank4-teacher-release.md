@@ -22,9 +22,12 @@ automation.
 
 ## Release sequence
 
-Run the release steps in a dedicated checkout of the exact
-`compact-value-bfm` branch. `promote` refuses another branch and refuses
-unrelated changes. It writes only these four repository artifacts:
+This is the historical release protocol for the completed challenger. Its
+frozen `promote` implementation requires the exact `compact-value-bfm` branch
+name and refuses unrelated changes. That branch name is retired after
+integration into `main`; it remains here as a provenance constraint, not a
+current checkout instruction. A future release needs its own reviewed plan
+and source identity. The historical operation writes only these four artifacts:
 
 ```text
 submissions/codingame/bots/compact_value_bfm/model.hpp
