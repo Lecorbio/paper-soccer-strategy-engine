@@ -1,11 +1,47 @@
 # Evidence-gated replay rebuild
 
+**Recorded outcome: `no-development-qualified-candidate`.** The fixed ladder
+and residual fallback finished without a qualifying model. Its old login job
+is retired. See the [campaign catalog](campaigns.md) for related experiments.
+
 `tools/jacek_replay_rebuild.py` is a local-only research ladder for finding a
 replay-BFM model that combines the v5 pilot's playing strength with the v6
 pilot's canonical retention.  It does not change either completed campaign,
 regenerate their teacher labels, replace Rank-4, or upload a model.
 
 ## Frozen inputs
+
+### Completed runs and explicit replay
+
+For an existing completed run, use:
+
+```sh
+python tools/jacek_replay_rebuild.py run --inputs INPUTS.json \
+  --output-directory RUN --resume
+```
+
+The runner first checks the saved terminal summary, input bindings, embedded
+receipt hashes, referenced files, and phase/qualification records. It returns
+that historical outcome and synchronizes operational status without loading
+training datasets, predicting, training, playing games, or spawning workers.
+Corrupt evidence, inconsistent outcomes, or a terminal status with a missing
+summary cause an error; they never trigger implicit computational replay.
+
+An explicit audit can request the old full replay behavior:
+
+```sh
+python tools/jacek_replay_rebuild.py run --inputs INPUTS.json \
+  --output-directory RUN --resume --replay-completed
+```
+
+This option requires a completed run and `--resume`. It can repeat entire
+training schedules and strict gate validation. Use the original source and
+environment required by those receipts. Ordinary completion checks verify
+saved evidence; they do not perform or claim a fresh scientific qualification.
+Incomplete-run resume and the low-level numerical replay validators retain
+their existing behavior.
+
+### Frozen dataset and evaluation inputs
 
 The rebuild corpus binds all canonical R0/R1/R2 train, validation, and test
 shards plus the v5/v6 search, Rank-4, and adjudicator shards.  Search, Rank-4,

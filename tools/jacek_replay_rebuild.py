@@ -4576,9 +4576,28 @@ def _freeze_selected_candidate(
 
 def run_ladder(
     *, inputs_manifest: pathlib.Path, output_directory: pathlib.Path,
-    resume: bool, training_workers: int = 10,
+    resume: bool, training_workers: int = 10, replay_completed: bool = False,
 ) -> dict[str, object]:
     """Run the evidence-gated ladder through the sole residual fallback."""
+
+    from jacek_replay_rebuild_completion import completed_result
+
+    if replay_completed and not resume:
+        raise ValueError("--replay-completed requires --resume")
+    saved = completed_result(inputs_manifest, output_directory)
+    if saved is not None:
+        if not resume:
+            raise ValueError("rebuild is complete; use --resume to read its outcome")
+        if not replay_completed:
+            terminal_phases = {
+                "no-development-qualified-candidate": "complete-no-candidate",
+                "qualified-local-research-incumbent": "complete-qualified",
+                "final-qualification-rejected": "complete-rejected",
+            }
+            _status(output_directory / "status.json", terminal_phases[saved["terminal"]])
+            return saved
+    elif replay_completed:
+        raise ValueError("--replay-completed requires a completed rebuild")
 
     inputs = validate_rebuild_inputs(inputs_manifest)
     output_directory = output_directory.resolve()
@@ -6577,12 +6596,18 @@ def main() -> int:
     run.add_argument("--output-directory", type=pathlib.Path, required=True)
     run.add_argument("--training-workers", type=int, default=10)
     run.add_argument("--resume", action="store_true")
+    run.add_argument(
+        "--replay-completed", action="store_true",
+        help="with --resume, explicitly repeat the full computational audit of a completed run",
+    )
     qualify = subparsers.add_parser("qualify")
     qualify.add_argument("--inputs", type=pathlib.Path, required=True)
     qualify.add_argument("--selected-receipt", type=pathlib.Path, required=True)
     qualify.add_argument("--output-directory", type=pathlib.Path, required=True)
     qualify.add_argument("--workers", type=int, default=10)
     arguments = parser.parse_args()
+    if arguments.command == "run" and arguments.replay_completed and not arguments.resume:
+        parser.error("--replay-completed requires --resume")
     if arguments.command in {"matrix", "matrix-from-campaigns"}:
         if arguments.command == "matrix":
             v5_search = arguments.v5_search_runtime.resolve()
@@ -6741,6 +6766,7 @@ def main() -> int:
                     output_directory=arguments.output_directory,
                     resume=arguments.resume,
                     training_workers=arguments.training_workers,
+                    replay_completed=arguments.replay_completed,
                 ),
                 indent=2,
                 sort_keys=True,

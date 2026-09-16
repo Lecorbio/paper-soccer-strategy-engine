@@ -137,6 +137,7 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
               tests.codingame.test_jacek_replay_recovery
               tests.codingame.test_jacek_replay_runtime_v2
               tests.codingame.test_jacek_replay_rebuild
+              tests.codingame.test_jacek_replay_rebuild_completion
               tests.codingame.test_jacek_replay_promotion
               tests.codingame.test_jacek_replay_workflow
               tests.codingame.test_jacek_selfsearch_workflow
