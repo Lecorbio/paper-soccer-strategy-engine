@@ -1,0 +1,16 @@
+{
+  "observed_at_utc": "2026-09-27T08:31:25Z",
+  "rank": 3,
+  "population": 211,
+  "score": 43.36,
+  "percentage": 100,
+  "agent_id": 6764344,
+  "submission_id": 41384976,
+  "source_sha256": "78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8",
+  "editor_copyback_sha256": "78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8",
+  "same_archived_game_ids": true,
+  "new_games_since_completed_window": 0,
+  "own_operational_failures": 0,
+  "leaderboard_raw_sha256": "e9dcab4956e7a034c2951976ed1bb7306c3c270f73f0dd9ac86417c9a5d21c21",
+  "battles_raw_sha256": "031b3c2a8110c595c1bc1aed6755092a3bc87e7d8cc28bd6ab2dd6caac82b5c4"
+}

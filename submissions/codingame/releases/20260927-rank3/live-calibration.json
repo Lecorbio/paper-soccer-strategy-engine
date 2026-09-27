@@ -1,0 +1,1652 @@
+{
+  "agent_id": 6764344,
+  "archive_manifest_sha256": "678e34f148ee9fe8c37a7da2ac7d00b225476f0aa82525afbf99f62caef4356e",
+  "clean_record": {
+    "loss": 27,
+    "win": 52
+  },
+  "collected_at_utc": "2026-09-27T04:51:22Z",
+  "completed_rank": 3,
+  "coverage": {
+    "accepted_games": 90,
+    "battle_window_games": 90,
+    "clean_rule_terminal_games": 79,
+    "expected_games": 90,
+    "focus_operational_failures": 0,
+    "full_window_accounted": true,
+    "opponent_operational_failures": 11,
+    "status_counts": {
+      "accepted": 90
+    }
+  },
+  "games": [
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978288,
+      "opponent": {
+        "agent_id": 6582435,
+        "frozen_rank": 10,
+        "name": "Pduhard-",
+        "submission_id": 41064279
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "d0ff8ef7217d1eed8fd1ea9f8f1ec2a852a731bba31c167a744ecc52616d7cd1",
+      "own_status": "ok",
+      "raw_detail_sha256": "4eb43178818edf208f63c7e9236e2e89a920adaed89e9c1e038bc6ebe4d96b53",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/0/3/67/22/7/55/0/7/03/0521313/14/74235/6/3/167/52061414/5756/7034635/0/2056/0/3066334/1/25/002/56365/71/61433/1/7757116/72463012/461245344645/70/5252/52/02530/30/602/470/724242/1/4/1/3/17/5671/1/7534/71/603223525/36000/174474/4/725302725646/756436411102532/7135236/75/45"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978289,
+      "opponent": {
+        "agent_id": 2851491,
+        "frozen_rank": 24,
+        "name": "StephaneLaveau",
+        "submission_id": 14491676
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "12113b95f6c8c4a7b3b33c0fb1eac333ceb81e195f87bc1ec8e8d45b848d0dc9",
+      "own_status": "ok",
+      "raw_detail_sha256": "4310ed84e3833bc0ef4353a1498b1ca18f164780bde026750650d946808fa7c2",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/5/4/31/47/657/47/631671/3/47/412/232317/4/160/2557/577/467222/3241/42767/2310/5/6417567/45072/41672/31/20/53/21/4/4275707/23/23671/47/67/444/35002105557071/4/722/4/612525/42761771/0522/3/57/41/011"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978290,
+      "opponent": {
+        "agent_id": 5067018,
+        "frozen_rank": 50,
+        "name": "Meruem",
+        "submission_id": 32007379
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "c8f859bf4138c9d775beefe97347730925a4c8f292bd81124fe0a2041550bb83",
+      "own_status": "ok",
+      "raw_detail_sha256": "0be66179282db7e0551740d8231d2ad599791ad1b4cd426845ed046c8a239ec0",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/1/0/1/6/1367474/2477/65/2/745/714/43/1/76524/20/20553/02/54/7/061232/71/7420253/13/27457530/1605/3605022422/5/3/177235/7423635/27/436/07/2055/7/03/67/7613/4612/0503134/46114676522/025443/16/363/50/55"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 1,
+      "game_id": 905978292,
+      "opponent": {
+        "agent_id": 4440891,
+        "frozen_rank": 66,
+        "name": "Ficek",
+        "submission_id": 26197341
+      },
+      "opponent_status": "timeout",
+      "original_record_sha256": "6f1693201093e1c3e5dc0dd9e62a97d1ae6d693bd883f70201e809b1bf517030",
+      "own_status": "ok",
+      "raw_detail_sha256": "e6a354b1749f31fd1e0441365754bc362c37081bb64d4d541b2ad5a0b1717229",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/0/13/035/2745/0/703/0"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 1,
+      "game_id": 905978294,
+      "opponent": {
+        "agent_id": 6036309,
+        "frozen_rank": 99,
+        "name": "gottadothisforschool",
+        "submission_id": 38950034
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "c938f0809be49f281f314afc98c3f25ebe2af505f699aef8edd3253c1e75b3b8",
+      "own_status": "ok",
+      "raw_detail_sha256": "d585f4dc951faffbf1e5f1a02c3f4da725cb5edbb9275e4bcc24253c20a7c4d3",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "0/0/0/2/0/13/0"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 1,
+      "game_id": 905978295,
+      "opponent": {
+        "agent_id": 2753749,
+        "frozen_rank": 110,
+        "name": "icecream17",
+        "submission_id": 14067037
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "f8935eb27f55f85f973b0100ebe469093715a6358e13e7e58b5bd192fa1d5e41",
+      "own_status": "ok",
+      "raw_detail_sha256": "6d09ba484e68ba3bad2a1eec048a6b1a9c6620ad26243bdc9cd3d9ccd26fcdc3",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "0/0/0/2/0/13/0"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905978296,
+      "opponent": {
+        "agent_id": 2995982,
+        "frozen_rank": 133,
+        "name": "iDxMeG",
+        "submission_id": 14918815
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "23562fe782e797f7468d63c06f72c4c1d8d52cff44d648f135696e12f32375f3",
+      "own_status": "ok",
+      "raw_detail_sha256": "53429cce93058a055e2d1943924ee27e9685d663d912558b8e136f7fe2cdee40",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "3/0/3/0/55/0/224/0"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905978297,
+      "opponent": {
+        "agent_id": 3489501,
+        "frozen_rank": 154,
+        "name": "2kpro",
+        "submission_id": 18619048
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "51632ad7574c8bffb735f08d6002b8c5766e7099a16778e6d65b046886188b24",
+      "own_status": "ok",
+      "raw_detail_sha256": "1c282f7a5812609552a74cc85649d069f2e88b349386adaa9eff82cabceda856",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "3/7"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 1,
+      "game_id": 905978298,
+      "opponent": {
+        "agent_id": 6003719,
+        "frozen_rank": 178,
+        "name": "julioca",
+        "submission_id": 38715070
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "0b9ee2e8ed689fd9285047f4d1ea128d779626c42b3c12c0d0d1f20061ce083a",
+      "own_status": "ok",
+      "raw_detail_sha256": "27e4a1cdd29e071df3cbab693d395f79e19a9cbe549037ee712822eb9557e845",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "0/0/0/6/0/75/0"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905978299,
+      "opponent": {
+        "agent_id": 2722689,
+        "frozen_rank": 210,
+        "name": "Fahim22b",
+        "submission_id": 13965337
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "b9c7b171c7001a38db4b3759e650ff24a801b59c9bc14ce8a44027dfe763a82d",
+      "own_status": "ok",
+      "raw_detail_sha256": "2cb8047ef22ee52b0d9a2b8cbf92b4516b16584498a64ae37b07286e9afd8821",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "3/N"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978316,
+      "opponent": {
+        "agent_id": 2588583,
+        "frozen_rank": 34,
+        "name": "daaskare",
+        "submission_id": 12798974
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "626a5cc2f40d7fc77cf4d57afc3f44859d1a88b1455acde0b9ffd87101d82da7",
+      "own_status": "ok",
+      "raw_detail_sha256": "b29df03b22b4dee1878f36f444a6a366c0ffe6f91f2c5dcddbf5396f8f5b2eeb",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/4/31/47/657/41/650/21/416367/213/67/20/5547/25052721/47/47222471/10/3/64146647/232/77/5572/30672/30/211/3/50/23/17/25/614435/35/25061/02547/460053161/2503670361/125/4725061/247630767/5/450132101/316/66/42/14601/035074/77"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978329,
+      "opponent": {
+        "agent_id": 5369481,
+        "frozen_rank": 36,
+        "name": "PierreEG",
+        "submission_id": 34412058
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "d1559038127a7924485c097d2835be41ce753b4c04bc3edade01061a68b7e01c",
+      "own_status": "ok",
+      "raw_detail_sha256": "f48bd587eaef34034c0076f2293347e9ddfdca55125bbc718521110a92d85664",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/0/3/0/522/77/75/03/66/033/272533/01/1/75/5203452/01/2744/70/366120353652/723636/35/0/35/07/2056/70/255/7/121336/74/1447253/05/23357/0/2555"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978339,
+      "opponent": {
+        "agent_id": 6763480,
+        "frozen_rank": 25,
+        "name": "gpoussel_",
+        "submission_id": 41384101
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "b93a40365a5854abe3c348c1d6db0de774201419c3375a260bc3b3aac1517b68",
+      "own_status": "ok",
+      "raw_detail_sha256": "1c52aa7f7d2c37b44c5511b2049655536ba995f9e5f5bea9f961e7afa16335c7",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/4/31/47/657/2/5050/1/3132316/60/7/03/666/36/3600525672/1/4474610/2313/14502317/25/72457611/66/560/2/1447475632771/31/457/01/1/3/1/3/2/35/630500/00/325/05236057/7576/1/7/533/46720632001/44/247523125066070/60/13/4613/321/0/03636350/06/42550/00/65770534/222/1357724567721/0"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978356,
+      "opponent": {
+        "agent_id": 4792144,
+        "frozen_rank": 22,
+        "name": "About",
+        "submission_id": 29816496
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "770a0dd85e2d36c37bd8eb7c1e375408d1319b87594da1bbb2a76e4d318ce1bd",
+      "own_status": "ok",
+      "raw_detail_sha256": "92416898ea8555dbb4032f08f9efceba6d97b474644ffc7ca97a6de8451f8bc5",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/3/3/357/50/31/025667/5/57/1/347/1/6466317/21/420/12/0/6/33/64/41025650/7543/16/35"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978367,
+      "opponent": {
+        "agent_id": 2767844,
+        "frozen_rank": 30,
+        "name": "audrey",
+        "submission_id": 14112671
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "3f4b2998520a419f3e909c19787c7badc98b7fbc152ccf63c1190f8faae75f53",
+      "own_status": "ok",
+      "raw_detail_sha256": "ad3276c8a96c8ae6a34f4cb18f5e485707a0d5f25ec0f65af0247daf3bfbde9a",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/3/3/6/3/16357/410550/1465/67/41/650/1/30/3/5024271/205460/664672/21/45772/2/4771/3/365461010/3/506/331/3607431/612/522/0/5032501616/4616/1/47/217/5/0/5/307/45/4561/24/3064617657271/3/317/4/56110/6/563/2223/1447560031/60/12216/35/3606663427217174/56/6301/6/71"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978383,
+      "opponent": {
+        "agent_id": 2850654,
+        "frozen_rank": 20,
+        "name": "Spoonboy82",
+        "submission_id": 14487123
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "d452aa252bf539decf697cf8b299cb1146705f35bb0e3ee6889ef5921da786d7",
+      "own_status": "ok",
+      "raw_detail_sha256": "20914333ceace2ff9bd1e0b86d2f06ebecfa67e8143f94845f41f34256a8519b",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/1/74/1467/65/752/1464/12/3142/0136/63/036676/74233/136/5/00366/61432/03675/23/0366/761453/105/44/7/16422/06077/20025505/03675224/74/24/763/05224/752/0114/33353/0/65/7/4/7/216/761125/0633555/71/61412/0257254/47230055/5203/225/47/410557124275/7"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905978399,
+      "opponent": {
+        "agent_id": 5476643,
+        "frozen_rank": 26,
+        "name": "mokaspark",
+        "submission_id": 35003291
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "0bf0a93248708e992c2a081b47b3f598eafe04e9597ee1a3a9f8162e88f543b9",
+      "own_status": "ok",
+      "raw_detail_sha256": "44348459cc4f8eb3bd2e2ec52048da4c69c6985fb312520e6cfb203f2968411a",
+      "result": "win",
+      "rules_validation": "incomplete",
+      "transcript": "3/4/5/6/1/43/41/475/67/16/4572/241/7571/31/223/52316/602/57/674467/20/500/333/502427123160/50/225764172/57/2505667272/3/602/456113/474110/5/366121/3/4316/507/061/47/22/1/6/1/3636/60335/2561476701/43/6176/46/13167/75/03/30666/6133/45/36050/72/366172"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978419,
+      "opponent": {
+        "agent_id": 5296809,
+        "frozen_rank": 15,
+        "name": "matlewan7",
+        "submission_id": 33439519
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "bea600be901be982aba9b46bab61d4579747b3a7f68975df09d63c8f6cb57757",
+      "own_status": "ok",
+      "raw_detail_sha256": "c43425b12e909454b7e944594af51033c74972b2b3f4ec318119c259daa10904",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/6/0/75/03/146331/1/74/1464617/55/06321/16447233/0/3/17/054125/06336067671"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978428,
+      "opponent": {
+        "agent_id": 2767844,
+        "frozen_rank": 30,
+        "name": "audrey",
+        "submission_id": 14112671
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "b7b0a5963701033aeb7c396e5243f1af785b1aacfac0c1031c7cb2e6fd70f739",
+      "own_status": "ok",
+      "raw_detail_sha256": "c93419851f501452dd8b28d45bdeb4a6fa01ec8b3fefdab1de863ce6444b8246",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/3/3/25/25006/4/41650/5/67/2/5050/1/31/6/506/1/31/436/50307606/31/3460060/3214/245210/65/616303127/25050/216/557/220/24750/64121/7/1/35257/20/505/41655/0/5224741720/56/4563427610/16/360633171/47/222307/57/0/5/305572/71/35200/366/0220/3/32216175/5/663/17/71"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905978440,
+      "opponent": {
+        "agent_id": 4003712,
+        "frozen_rank": 19,
+        "name": "red1ynx",
+        "submission_id": 22974209
+      },
+      "opponent_status": "timeout",
+      "original_record_sha256": "036232b2e8b0b0ab51c6f018ce38da90191c02b392c9ab6c0c6a313db6f0c47d",
+      "own_status": "ok",
+      "raw_detail_sha256": "45d8866e72addcaeb34dbcb78e0209597d73c9408a2a5ba604e01618fd7e715f",
+      "result": "win",
+      "rules_validation": "incomplete",
+      "transcript": "3/5/4/4/31/6/657/2/5050/21/416367/213/67/1/46550/1/44763610/21/14646307/232/530341/7/7067/1/47/23/1/4/50667/21/6/4456/4725214772/1132/33/5/671077/2/1/4/2/5/5002527507/14/74245/35/6300027/45/63072/17/052246"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978472,
+      "opponent": {
+        "agent_id": 4792144,
+        "frozen_rank": 22,
+        "name": "About",
+        "submission_id": 29816496
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "c5be40ee965ee9ec08ae933bb120ac44991d63f1c5c45d9d15b4ce5eac36870f",
+      "own_status": "ok",
+      "raw_detail_sha256": "b3bcb50d234cf30281651548541e334725bb5eb65387b44a8d938b8c1a6237b8",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/5/47/22/31/47/2316/60/577/25/541024705/33/2064611/453"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978483,
+      "opponent": {
+        "agent_id": 2850654,
+        "frozen_rank": 20,
+        "name": "Spoonboy82",
+        "submission_id": 14487123
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "09896f126205db5ceaa4ed1445cdfcc0e5e142687b19c294d4e822c87e70183b",
+      "own_status": "ok",
+      "raw_detail_sha256": "99c9e9d80955e904c69dea4a1fe8b282a7f6b46db1d76d72261bd37eb3de3b84",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/6/7/14/7421/23/136/6034/76/3/136605/6145705/21/274472324/136/4/7275/2743/136605/23/0366/761476/70752/25/275252/4/6103/614552/02/553/1/3/1/3/1/136/747/2055014776411365/005325/723636/0527/636/520114644/113/225/6035/7/164665/023/17446/13/2054/2/45"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978500,
+      "opponent": {
+        "agent_id": 3915005,
+        "frozen_rank": 17,
+        "name": "saraneth",
+        "submission_id": 21954707
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "2b711f0b0982d7f2df4a52b38d5535a339070dec2b499513b98decc8683ec531",
+      "own_status": "ok",
+      "raw_detail_sha256": "1813dace91e676cc0923761f36d96f59d974a5f88c95f35b836d338aca8a06c5",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/0/3/67/22/7/55/0/7/05213/24752005/21/47223/50/614203/05225/2744/7/036502755/074367/0254/7225230213/227563/05/54/7/7/246/0763/0521413/03614214/65/53/0/074365/0/0257725/05221255/34/7/16752/14653/14/12/06356652/00/03053531/47/67230303/31/1/17/27/5/65212027474/742125653/0035335741/00/664/74/453"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978516,
+      "opponent": {
+        "agent_id": 5296809,
+        "frozen_rank": 15,
+        "name": "matlewan7",
+        "submission_id": 33439519
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "f7e0a8c3898fd037e2895ac92d7f8c15779f97d5c77aa78f3e482fa3c9747ab1",
+      "own_status": "ok",
+      "raw_detail_sha256": "6287305c0a9401d0da403b155b5d461fcf399d4967025f677527364fda16aa84",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/0/13/0366/7456/7/14/603431167/55/21/02533/0/76635/706/6135/034/20574/165224/752/2122/16422/0/0363670353/0366/3/0366/5/2/007574/31/20533/03667/4725/06/013655/0/713503323/135/5/3170/364/507/105/76/72463/03/61435/0/20643/250657/572/24771/61/250714/416534/1/235/0/335"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978524,
+      "opponent": {
+        "agent_id": 6752485,
+        "frozen_rank": 16,
+        "name": "Aketchan",
+        "submission_id": 41351813
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "1519aa36608a7497c7ca4fb1ba5a5ee729253a5ea96352f21fcbd4814677ba29",
+      "own_status": "ok",
+      "raw_detail_sha256": "6491094b5f538c75686a503f8c5ddaa9695877e7e4912bba36bd944121cdd56e",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/3/50/2475/67/41/6572/20/30/3/641207/23/1/35/47061/75560/30/5571/227/536/06317/63021/6/441/3607572/32022/7/47/250561/33/32217/6/65201/452/117/534/4741364/60352274757/5301600531107/67/0/3/65213432160/027/25016/46/36/366105/6412470/50/547/7/714/5203/412227/03/052357057/52005/6131/25/00"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978550,
+      "opponent": {
+        "agent_id": 2616930,
+        "frozen_rank": 11,
+        "name": "trictrac",
+        "submission_id": 13025558
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "eb4f269d6dd567b87c3636a06000b6feaeb988264d7662559f470902155410a5",
+      "own_status": "ok",
+      "raw_detail_sha256": "a47ce1b4bc6f02f1659560e321cabe50d007d282da7ab8326bf6ce6fb63f248e",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/7/2/0/13/05/214/25/06325/0367/7675/6/613054/1316/314/50270/3066444/46/6/713/416553/1/4/1/61474763/32/16476453/1/0633/0/64/11/3/2/3/17/50/0/3653/3/0605/00/74211/25/42727453/6727/5643/665/7246123/47/472143/21/4127274506652/52000/3535"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978563,
+      "opponent": {
+        "agent_id": 6651418,
+        "frozen_rank": 4,
+        "name": "Waffle3z",
+        "submission_id": 41181101
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "0eabd3d554ec130663b76f93dbb8db3318a20fb5d114e9307133fb5fd110a0c3",
+      "own_status": "ok",
+      "raw_detail_sha256": "51a376ca962517c94447cb89a2f9e80bf0765fac8e31d829cd5920ca26ed3168",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/4/31/30/5020/57/557/50/3060/52722/4771/1/4/3/236757/7221/1/463/01/2/1/35/77/56/466/63034/50032122/135/42770/53/225707/0361424/552/236746/110160/17/2500/0356/50/2347/5636750/7/5316/072/714/45203/3602/7/2/5533/652124707107/61414/65246111/23/53003567/742541/630027/0635324710/70"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978580,
+      "opponent": {
+        "agent_id": 6752485,
+        "frozen_rank": 16,
+        "name": "Aketchan",
+        "submission_id": 41351813
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "c050c30da275990b9d8dffb7b8f6479b645c76b7c754fdd21d257443f93a23a1",
+      "own_status": "ok",
+      "raw_detail_sha256": "229be943779f1c84a22930b09cf3cb397744cd57a04d6dc6b731d883cd49a911",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/3/50/2475/67/41/6572/20/30/3/641207/23/1/35/47061/75560/357/631612/57/47220/50/2324/25427074231061/363/520027/4165066/00/5/7/4/416572/52021/36027/460/1/467/72/5253/630217/7424533/305011/3/4272/4167/661/341/25060/641317/57/47/661/05/6131/23/135756741/06332/56/772245234/2505746717/10542314311/166300/641746/70"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978593,
+      "opponent": {
+        "agent_id": 4553858,
+        "frozen_rank": 13,
+        "name": "YurkovAS",
+        "submission_id": 27523462
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "82d9e82823523acdf675f00e4a719c503cf2e11a309a6bed65bf0ce9e48cfef1",
+      "own_status": "ok",
+      "raw_detail_sha256": "57fa15f078d630fa4423fa6371ae9fcd7fe82ca92d65b0ca446cdd57453320b8",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/1/0/1/0366/74/14477/65/03/66/033/05/22/123/03656/124/5/6074/71/0527435/705/27520634/3/12230225/03664/136/6774/76/05246/05252/13/6/3/10545/0/0635/7101753302/005334/6610224/55/6652/52/006317/234/1/07221335/25/274357/17/1/460/20572435/07/54/674/127432/2450/241/06500/063536/76701111/4534253367553"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978604,
+      "opponent": {
+        "agent_id": 4553858,
+        "frozen_rank": 13,
+        "name": "YurkovAS",
+        "submission_id": 27523462
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "74f54515d412330b876b00c9de2fea30dd05d45e8cbabc52fe5fcbdd2fb85148",
+      "own_status": "ok",
+      "raw_detail_sha256": "dbdcae92ea98c925e1fad933242ee1a31d20449c6a326ef8f5509aea4f40aec0",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/3/5/3/50/2475/67/2/5050/1/31/246/36064117/14/64122/5/7424316/75747/506/0/6342761327/0/571/33/2501/06/331/60/7/423325/036461702/2507/41/25065611/2/257460/6550/0/1/6/45220/03655/4225077272/131/3576672/71/4/3602/320/50/64122/4/502363116/7/67/75/050366313117"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978615,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "8e10fdc59f0bc83ea5b9af939669fbdb5dd38057372b85b7a458059623233358",
+      "own_status": "ok",
+      "raw_detail_sha256": "d0a5bfee0e153dc7ecb93b7b05337ba71cc62f392ad37e15eb3f999cc99220eb",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/7/7/2/1/13/5/703/67/65/752/1464/135/4/7/614276352/3/0653/12/23/1/2/7/44/117/70235561/02/71364364/603570/74235/67/633/13666/143/13/36/17/036444/277/16465/0/771754/43/5/71613/253/105/714422034/6/6764/5/7246122053/47/47221643/21/1644167031654/6/44"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978622,
+      "opponent": {
+        "agent_id": 6718213,
+        "frozen_rank": 12,
+        "name": "Zylo",
+        "submission_id": 41263591
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "1060e9e0df774f59ccd34dceaf97d9dead27209c992f128c96d38ee6d8dc57a5",
+      "own_status": "ok",
+      "raw_detail_sha256": "60f25557ce9253aac71d7d705321c523ae265fca90d35a28bcb5b7cac471b92b",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/7/75/2/30674752/3/4/7/02525/21/0503313/0/1/75/652132/7/144276500345/66/06364/11322/2747643/14/605/57/130574670524/132225/75/6/03225/7056/16527233/142/4/766/145/7/613653/4/4727210054/3/0613/4/61634/47/6317413/31/7/01/65/31/6661452/25013/001/6/470313674531/4/27635441/0/530272575/661074335/4"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978638,
+      "opponent": {
+        "agent_id": 2844708,
+        "frozen_rank": 14,
+        "name": "ILove47",
+        "submission_id": 14453166
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "33c8e30c52f81a4256d2d287acabb1cafb307d3384db0a3f8a34e018b89f82ea",
+      "own_status": "ok",
+      "raw_detail_sha256": "20d85b14abe95a39133f8090dee24794ca44f80e54a2c63cbdaa8e76499e9b29",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "2/3/4/5/7/4/7/25/07/4/3222/5/31/25074/7441217/50275/21/252744/6767/464/6/1165/52071/36/0635201/672/1/4/671/33/357161/44/50031/32/4216/47216/17/25/0174/45/2477/2/44/305050/5070/56/350072714/441/36022/24/3175250527/613652071/71"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978655,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "669345afc191cf4b28456d366b24a7d2919370a7633ea458478b2f71fc6b44b6",
+      "own_status": "ok",
+      "raw_detail_sha256": "25f1f4562f6aaf68371764a555d4cae6aaf2c726c71f12b7bb14a694d76d8e32",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/2/35/50/225750/6/57/50/3060/31/30/327/667/5521/672/461321/133/0256/3050052171/6/0/5/305067/6/1/44/1/45/560/3442/217705/5720/632716/71/714/53/44710014/14/63/43327/2336/1617/16/6/325/6144465/641441721717/20505/521477/743/24752001/03/135747203/56/07/55/052222567530/35/7111/06334271243"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978667,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "1c578fa6d662f2221b364797632ad8744dd1f43f01511389248fbe8755c8bacb",
+      "own_status": "ok",
+      "raw_detail_sha256": "6983d08a24ff3fe5724df17898d6fdb1dd6ceeadde6686cd2e936d8172524e8e",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/6/4/2/055/4/47/0/36165/0/632474170/1/6/3/60527271/4/721/7/532/53446133/31/30/64117/4/4271617/7/0/5/50/224/217/55/035071/47/227/546/742345/0/52727/641117/4/1/67/75314/36060/214/75311/23/5477465/312022/360005/3532/16471/175674/71"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978687,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "dd3256e79752e8ac68f1c041054a87d8c11a39e6c1eb696e120f2a770a04647f",
+      "own_status": "ok",
+      "raw_detail_sha256": "d8f7fd403ff4142bafab6fc1d40ea2a01192bf0fb8a3ccc00c2c5a62d02c0055",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/7/2/7/05/032/13/03/275235/6/1/75/502750635/7/17530/53/61453/2/5/721/06343/11/3/0/614103635/77/47255/22/5/771/332235/6/5/7/723/23/160/02571/654/5007/1663445/700/2254/16701/7243132741/347060/30650206/1"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978710,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "fb9f114c558c36d4f1f315aa883def2528cd9dfac5d05adbc4f7e3500cb320ed",
+      "own_status": "ok",
+      "raw_detail_sha256": "44bd6d797db86f36b1090c9e0c50bb4445c30bc0b0fb56d458d79966f4b3441d",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/1/6/7/05/21/23/136/74236/753/136/66/747/1/06364705/63/6144/3/6/721/616034220341/44/171444/5/0236/7766/55/610521/0346020535/7423/14/2/12075/74/146434/71/272543/1/27436/666/5/7/1244/2/776/45/71/21/745613021642143/2475410656/174433/41/743066/06357/57131075/3/074463/13/43"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978723,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "25310cccf4ec92f754a6d725549c87ae1d6376a6295f73b682068c90f69810d3",
+      "own_status": "ok",
+      "raw_detail_sha256": "f7a8a2565f48e1b233a9cd7f85ace0d2db78c5979e3699eba3d251127da4c31f",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/2/75/6/1/364/76/6/530/01/45720/1/460/21/20/54/57636171/2/1/33/457121/4/60/33/16/3635/350/060/712761/1/7/74/7/65/3/46/10/6035/43/22570723/56054/720/3530/030532/4275/06333/4714131671016/171750525/50/203/436077/025250603523/661710"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978738,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "a5dc6a4a91eac4733bbf6d06fea686648e694bee9cf0ed8aad43a86582f2f332",
+      "own_status": "ok",
+      "raw_detail_sha256": "6ee7b74b86910acfa83219c07560051f34cbe668ee6bcc5a4b7ec70795db48d6",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "2/4/4/7/7/2411/4/565/3/6/1/647/5/2/7/71/61/47272/72/442/52/27471/4722/2/3/36053521/02/77/1/4/520660/552/07/63355/525202417/63050031035/46124414/65/47/5713272547/5"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978772,
+      "opponent": {
+        "agent_id": 2616930,
+        "frozen_rank": 11,
+        "name": "trictrac",
+        "submission_id": 13025558
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "481b825e74974aeff003382bfa37cd3c629d708b2de4b46987755e0018769599",
+      "own_status": "ok",
+      "raw_detail_sha256": "faec1229a8040a1b8193151b9e00ef093e4a3d7d9e4c0a03c4a9e51a46e8908c",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/3/350/6/145050/6/57/41/6572/20/321/45/74207/2/327650650/1/35727/46122/507/2/50636171/3/0/3/5021/464/50211/2/3/35/7117/55/724432250366/050/57071/32356/64114310/02560/02/7/5320027/547/561/7/2/447/07/5/71311"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978783,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "4a9d82a677207e90db67db26ee7e69e54daac70915ebc87167fc8b7422814141",
+      "own_status": "ok",
+      "raw_detail_sha256": "729e8aa3e43b4af7ac39bb98079f7ea448df4372e1818cb6c493b51525ece1ec",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/2/75/6/1/364/76/6/530/01/45720/1/460/21/20/54/57636171/2/1/33/457121/4/60/33/16/3635/350/060/712761/1/7/74/7/65/3/46/10/6035/43/22570723/56054/720/3530/030532/4275/06333/4714131671016/171750525/50/203/436077/025250603523/661710"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978798,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "6d957957c002c0332d29ec1bfa95b38b971f5a7928fc6564d295c7d6a5842f5a",
+      "own_status": "ok",
+      "raw_detail_sha256": "68cb97859afb30ad072db631dd35ce8c8affa04195d9266c541358eb94ff2a7d",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "4/6/3/5/0/07/1/1/4/1/4/77/7/14/7474/2242/75/74/143/22753411/3/17/16/452/3601645/66605/46/12350/353/4/72002/52/07670/0632055/47235/616352/53/4722/311/01/61/07242543/25/2717/57/032755352766/63/03644716/00316/60311343/246/61410/53350/57/631/645"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978806,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "4b5a68428c4ddc55e1212b75183ca189f2d8ab6c7ba9e21e43394e9f588250f8",
+      "own_status": "ok",
+      "raw_detail_sha256": "77eda425818dfaf821d4abf613d7afb4c41e4d5e3b2d4f594b9dcbd56033480d",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/5/6/4/57/47/63071/2/7/630524/36014/1/60/333/4717/14/64123/357/6307011/6/0/325/605312717/6/7/5/7/5/7/63/22/5/76172/4453/6327105/23/50/74224/161/06344/4725071/21/3117/25/5665007/61414/1/23/03442771466/444/1465770/05216743547"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978816,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "850a7d7663dc0ea0d691679b819cc80f08eb9a12e833be0eaf066b4b755bcc24",
+      "own_status": "ok",
+      "raw_detail_sha256": "23971cbdf2545e95277538060a1340b4c46427de64900d38ab5c53d07d77b8fb",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/6/6/7/0524/3/4/7/0632131/3/0/1/0364/54/7/722523/5/021725/067/4455/22/11425/0366672/7242335/35/41650/50/6/57/0/6/1/1/1145/606/0333/2/5/36057/602/45571347/06317/4721/0364672/16/4723353/01/242/0253602/160/771270/655/557113606524/31/000/05/05221/30663/00"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978832,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "277ef7258862b6cdefb30a00c04d549f2321363dba6faa968ee9e68b72be9a8c",
+      "own_status": "ok",
+      "raw_detail_sha256": "abfad5c793227186cb908840c1d645cf1a5bd960b29cc90caaf253983f3cba0e",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/5/47/2501/7/5/53174/20/3021/03/61/3/602/435/2500/1616535/2507/72463/250014/55/72/53"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978841,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "3f359bd1e6db128673b25243a1011db43d0933fe0bbeab369423c1856e48dc5e",
+      "own_status": "ok",
+      "raw_detail_sha256": "e02decae44b308cc4d9ad72edeccec18afefa84ffe99fb2aef3a0c2a9a19643a",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/5/6/4/57/50/24761/32/7/50241/250317/134/3/417/25072/464/25011670/6/7/45/6/4/1347/4606/31650636116/6303310/64120507/22/56/57/63072/2/2417/6/5411471/3/1/3/57601/34/5055/30607/63020/6/63120/0313/05/4163/523/0/74217/035/724363657060/753116433/0166667/75334333/1714543117/035/564356/4"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978865,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "518bdbc35802c333cf850405e1420363b450a20170b8f56227fdd204380f35ba",
+      "own_status": "ok",
+      "raw_detail_sha256": "5728d3c85c0175a4b8c900c5c32671465c10be1f6738f66fbac6c91996d2f3a3",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/4/3/4166/50/2476/57/2/50571/31/3607/563/00/22/2/133/250507/6503/110/5422/52017/57/2217/5/7/4/2567/4/2147/55/7/533/5201744225767216/01/2210/5/3607/4/221/1/75/363/447103172746/502745/67/4/6/53/63021410574/772/1411"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978883,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "9cefa5c64dd3b211da976ce64636536dd9f571f2573baccde365d78db7ecd6e7",
+      "own_status": "ok",
+      "raw_detail_sha256": "b9c998f799124706904e742e911a2a7c6ef81a93ce9bd4394af72b1e49db16de",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/5/6/1/23/3/2500/7/7544/70/5/5/31/250724177/4/6/34/66307117/2/0/3/6411/2/501/43/0/3/17/567/21/1/75/03/67/65/753/2/03/67/41613/4343/67/66/4725211/250713/643657714/14/474121130203636/36066/64143525001/03617533/464/52422557/11/1753255/50636/3"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978891,
+      "opponent": {
+        "agent_id": 5773889,
+        "frozen_rank": 9,
+        "name": "derjack",
+        "submission_id": 37205029
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "a2da346e9918ca5ed1c2cc0a8c61422188eba3df6d2d2b6b13fc9725640d3375",
+      "own_status": "ok",
+      "raw_detail_sha256": "5ce1c616b263e46995c4806cba3081307e317acb98b06917cf8d899a53ec5221",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/1/3/17/54/25/065/5/2/02/27457/47/27/7/2/2/545/2/5/071/7252201/32/7/7/0/3/5250020/2/1/74/7/65/32145441/433/5/02272535/76/765074/46121/02565325/472753130/74212035/41/412506605/03636/703524"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978905,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "bbc757b19c47b2d64ffa1fce9f321453fe65ef2efe9efd22c5a918c4e19fdcb9",
+      "own_status": "ok",
+      "raw_detail_sha256": "878dfdff11122068bb3c8ac22a55275a96d53d086ca294a53b5ba0fe9084aee4",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/1/3/0/2525/4/1743636/6/410550/7/6/5/30/7/24647/0/24641771/3/457216/1/663072/3431/13/4/52017/0257/21/41617/16/5/6/6/6/5/7/0/13/05/21/23/03427634/7053/0255/442255/3307677/14/167/5/6413600/034/360212/0257/23647071/3505/07435631/166/36007752252/425572/716135/360253253/14605231/236706345/05225/5"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978924,
+      "opponent": {
+        "agent_id": 6651418,
+        "frozen_rank": 4,
+        "name": "Waffle3z",
+        "submission_id": 41181101
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "dbd2a753a9ba6e130ea662d251d61ae9b858f5d0042ae177ba332e8e4fa04563",
+      "own_status": "ok",
+      "raw_detail_sha256": "f4c4a822706b2932346c3550c9b605057030257a85b703669baa18b3d6259187",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/6/31/3/0/1/03674/520235/75/7242225/2746/766/07/14/7421/233/534/35/7/5/0/74/6/4/1220/0327555/036716/31/771746/5/2/25/0012/063555/071/247035/52522347/25/34/5/30/3/21/0/6/7546417/27/0005/0523254167/53/24572/2747216/1605211/07606333323163/45746/3/03610/164235/64127/447176552/117011067/503061421"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978948,
+      "opponent": {
+        "agent_id": 2616930,
+        "frozen_rank": 11,
+        "name": "trictrac",
+        "submission_id": 13025558
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "da2eb7e4b0b983db3e5f00a52aef16d32787f0755e8728099ac214dc6d8100ef",
+      "own_status": "ok",
+      "raw_detail_sha256": "b682cc9f19f5a001cd9fcbab059bf6357b96775a18807507c4f4677e7b5fc61c",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/1/1/174/6/034774/6/5/7/134/66/074/22/57145/06323/113/064/67232227542/75/23/17446/13635/7/4/7/03060034565/6/4/7/21/7/103/66/44/3061/363/122/3635/7/0255/0/5/7/6144/76/616353/61/431/7/2443"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978957,
+      "opponent": {
+        "agent_id": 5773889,
+        "frozen_rank": 9,
+        "name": "derjack",
+        "submission_id": 37205029
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "34db821421bbe32ed1bb50a328163b19c6bdbe93c705ded1f69c9ef802597581",
+      "own_status": "ok",
+      "raw_detail_sha256": "93237875fd0320545000e4da8997bcb875d59775364799b9980a9f2c0251e358",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/1/3/17/54/25/065/5/2/02/27457/47/27/7/2/2/545/2/5/071/7252201/32/7/7/0/3/5250020/2/1/74/7/65/32145441/433/5/02163635/76/765074/46121/16465325/472753130/74212035/41/225050605/03636/6145"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978965,
+      "opponent": {
+        "agent_id": 6273433,
+        "frozen_rank": 1,
+        "name": "jacek",
+        "submission_id": 40081011
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "535fe27f86f8d1b82e2f7c25211d86d4626559733b3085e428c2201f126dc209",
+      "own_status": "ok",
+      "raw_detail_sha256": "fe7857d543f76b83ebcdebf5cd867ad5704cd13a575911c80073bf99d92e67f7",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/0/3/66/4/7/5/3/14/66/5/4720/16/366171/1/0/7/4/5363/32/213/5/67010/364553/47/630203/05212/3/17/55/630072/24714271/25/2717/6/6/57/2/21/6/30325/017/0364/55/6010/5/21/036743245/500303476705576161/632/427521/35/002307/16/0"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905978980,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "cb927d9eb1d88f5201767c5fb2851b5fd47475138cd42e1d5558c619868acbc7",
+      "own_status": "ok",
+      "raw_detail_sha256": "2357dc9d8a0f162c84117f741bd5efa2e2d7e36cfffb98408e49fb2688401c96",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/3/350/05/25050/6/57/50/30672/46131/31/30/225750175/54/236/3"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905978999,
+      "opponent": {
+        "agent_id": 5773889,
+        "frozen_rank": 9,
+        "name": "derjack",
+        "submission_id": 37205029
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "1b968c2b7206799d190460cdfee0505699b1a8a88c601cc41aa4cdcc1702da99",
+      "own_status": "ok",
+      "raw_detail_sha256": "fc09c5587106ae84b47e87ba3c5abcb79f051cbceb37c4ec0e2291aa8f0a9191",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "6/7/5/71/34/661/06335/001/1/2/2/2/1/27436/63/2744/7/23636/06/34/6/5/0/6/01/144/52077/4/7/50671/0524/3220506/641713/05/4143131075/03/63050571/36/663101"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979023,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "693591a950a50241711c09c38eef271c47f1ba7ac0f55a985cc25e06f4f9823a",
+      "own_status": "ok",
+      "raw_detail_sha256": "49e4a1185239ce618e9cf39802e10aca5d74cdd8d7837b212a436a4ab62e1a09",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "6/7/5/71/1/7/2/0561343/2/1/4/3/4/1/27/521616/6/3436/70/205611/27475/343464/136/65/7/75/3/4/1/6103/4613/061335/765/3/0/60314/603531/250061/05242777/4647/2160/025544365/30/50206/16/025433/141/75/614520776/713534572/7163/17/720/06324/520311/41617003/30667/655/432/2741307/16/0254275/414764/346716723172/01"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979029,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "e011931e353d9ef2577ff6f1e5fe8b0ffc31e7e78cc4b15cedf4a3f712e49069",
+      "own_status": "ok",
+      "raw_detail_sha256": "8d4e88ec3a31f8560162055e04665f0849897a4a0e24fb882e87a6be5372ed1d",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "2/0/50/1/465/0/233/2/35/6/3/6/41035016550/5/67/2/5050/1/31/0/3/2577/547/72/4630270/71/71/72/42/4/54/523/61/74212772/71/3/30/2/2/27/416553/54/56600/672323/27447/2507102/4712501/03/03657/742230336/35/3600/36714661/14746656/076135/4234634/755221224271/7246/654327/53"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979041,
+      "opponent": {
+        "agent_id": 2616930,
+        "frozen_rank": 11,
+        "name": "trictrac",
+        "submission_id": 13025558
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "514c948b46f37b8f5aa801a1425e8e7671441abc2bef3a91914c2f36d5ca7383",
+      "own_status": "ok",
+      "raw_detail_sha256": "ac4186ad669b837a640427273de7005ff9feb1f6d5adfa4cb0a6545e4a111575",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/7/2/1/13/6/6031365/77/65/74/14663/131/442/77/030544/6/76144/4/61631305/061/025323/0103/27436/0635/2/06/472554/1/13/16706/06354/65/0635/72/5203/2/107124533/0/064213655/0/634/1/72465/7/0254/7/2741741/22413/276765661334/23/660524/31/7553"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979065,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "0a61c086f60d14d191a06b34a01b48b858fb989d3f34a5a0457432ddbd108029",
+      "own_status": "ok",
+      "raw_detail_sha256": "8cce745c15aba9587074342a7547af6a2bedb6278e1efb2b80260be79c504e63",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/7/7/2/1/13/5/703/67/65/752/1464/135/4/7/614276352/3/0653/12/3/0671/205654/46121/33/1/4/1/60/317/702355631/36017/00354467/6570/24444/10/2053/5225/5/7/133/6/00034/43/4160/7566/005/22/724227553/174457/17753/4/3067232/231/4116505/757/2443"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979080,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "8381e922fc0a26e6fa837ecd6c8831796bf141c38e75da2f9906a372db4ee6fa",
+      "own_status": "ok",
+      "raw_detail_sha256": "ade4ad60ce25a072de54b0a06eb40a6644964617846cc1a133ffdf17261b2c08",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/5/47/572/2470/323/21/30/507/2/361/4167/575/21/27466/46/5722305016/6/414761/631/33201/66/33001/6/0/5/247507/4/56307/41/17/4/522227/5347/1066442250077/72/46132/31/0/5/67/41/6672/354/4611652214177/14/74641411/23/136/74235/357127/756/7421/43/67501/14763442301463/42766/7425"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979108,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "ec2937814ffba72dfecf3b91b77d8150d9ed63ce99884ccbfefbbd99dd7bd7fe",
+      "own_status": "ok",
+      "raw_detail_sha256": "d7df2156ef58735271304783058e16a382b909c0c0be5a0308893332335fe17f",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/6/6/11/4/50241/2/17/6/57/5/7/1/30/61/75/36/005/036345/53/53/1/6/463/6301/07471/061/4727163/25012/243/20/54363/01/0253655/74/1463/2/741/03/50235/41672/025457/41/746/7/7136/07/64172/2501/714466353/532074217/270223/306170/750/7"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979117,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "f6c401740f49dc98ae2712a9451d8359e2f25cdc0d4a2dcf969f2d7398bef839",
+      "own_status": "ok",
+      "raw_detail_sha256": "4b01f4335c6392464eacc431f5d4f561bbf95533ba12eac1d9d273e17cfd0425",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/1/6/7/05/21/23/136/74236/753/136/66/747/1/06364705/63/6103644/3/6/0524/53/1/3/0/14/66711/22074643/6011/6143/0670"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979134,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "76e8c04a54033b18ff57f7dde151cb1f0519f7a36e1902d7265cfc8c193de83b",
+      "own_status": "ok",
+      "raw_detail_sha256": "7ac4899c056bad7572d4ec27db7602caaeb4aa675eea44a4642fce3a5fe3895b",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/2/1/0364/25/065/65/7/7/2/7/0525252/25/0144/7522234/7/75/03/2165663/05214/653/63/47202/7/114/11/3/0/7423/1755/5663/12/0710534631235/25/274350/07/1/025465/2/06/35/41/164475/67/6114/2/146705/357003421/27445/500303/44"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979159,
+      "opponent": {
+        "agent_id": 6273433,
+        "frozen_rank": 1,
+        "name": "jacek",
+        "submission_id": 40081011
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "8d6c3e73f8d2ce93cc122c8cb71b0f7064d7d910408634e61a1d94c2d33c507a",
+      "own_status": "ok",
+      "raw_detail_sha256": "a58365b17c7115241ab98d4703d3dd0bdc3d2c4dc4d5da861bc81f50947cb68c",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "2/4/3/4/3/17/0/256117/5/577/2/1/7/6/4/30/54/7/5/71/3145/25/0636/61633/6/53/1/70521446/447111/013233657/4/13/441707/55/27/1246643/02541/16465/67/6302/71/0363533"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979171,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "16226fd442c65626309cbc81be5244005bbd4ed271a8b719de0b57a598e97d65",
+      "own_status": "ok",
+      "raw_detail_sha256": "d2456cd2e21cfea59df461849c1e017c9cf8bb0cd9dc4641c8712e2b27a678c7",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "2/4/2/71/2/17/4/42716174/5/357/6/5/2/476/5/71/2/44/3/133/00/65/2114/60355/766/7243/03/223/0/25271725/465/76141443/135750/302/7/01635502466/7/5/0/206/7/6142445/306417/461714/360210/6145552132/416753/43"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 1,
+      "game_id": 905979180,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "timeout",
+      "original_record_sha256": "9a076a6ee794621ebfb86691e097161cfbd48bdc450fb4f4380be426511a6255",
+      "own_status": "ok",
+      "raw_detail_sha256": "868a67b70c5d851f0e6c51394c06161ba2c1fba1f2561ddb1c3c18cdb228eb65",
+      "result": "win",
+      "rules_validation": "incomplete",
+      "transcript": "7/1/1/6/7/05/21/23/136/74236/753/136/66/747/20/0635705/4/16614524/3/6/3/3/6/5/0/523/5/31/47/50222/31/7/7/5/472506/47207223/010/023/00/146502352/2745/4/7/203/2775/3236/05235/531727/44/500/6570275/41600022144722564/2/0541230753"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979200,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "7be717954a7897a7564146b6cef13573dfd546277110cb47733a01a9d1f4feae",
+      "own_status": "ok",
+      "raw_detail_sha256": "1dbb2690e42028bd0fb9029b2b3f28d69883012d644c96a0f5ce1f70ef380396",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "6/7/1/2/0/2/2/1/6/0327543/0/36174754/125/752224/4/27256/3/35/6/6/1/10366/5/3067/74/145/3/6/0024/41655/30/3/21/76557/25071/71/10/216/0/75/613/146355/5203/6722435/2276/16443467/7225521/6031774/11/77/52/0025633232/2175/434335703/50127/70753/07/0503203/67747/52021/71"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979241,
+      "opponent": {
+        "agent_id": 6582435,
+        "frozen_rank": 10,
+        "name": "Pduhard-",
+        "submission_id": 41064279
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "2e2e3f6032b76e64b5adc44c76efb58e9f32a999e16fa739de0640f29a8fbdee",
+      "own_status": "ok",
+      "raw_detail_sha256": "8a0e7b11cebc11140d0210311a131e934b94a7c6a087fcb9e9655d01d3d9a36f",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/0/3/67/22/7/55/0/7/03/0521313/14/74235/6/3/167/52061414/5756/7034635/0/2056/0/3066334/1/25/002/56365/71/61433/1/77571714/21/465012245344645/70/5252/52/022/03/2/1/6/71/4/721/1464/6714/603205354567/72413/025243/50/2470744/71666414531/43"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979248,
+      "opponent": {
+        "agent_id": 6273433,
+        "frozen_rank": 1,
+        "name": "jacek",
+        "submission_id": 40081011
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "acafb7822ef5820cbbdf7bca005c25e0da7d64b4449f58f370952bce055c96e9",
+      "own_status": "ok",
+      "raw_detail_sha256": "7c960a26945c453b184cdb55ed1f55e6691948e644f5c322bf1fb751fd0518ae",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/532/27412/41/654/74234/3/5/5/47/22/31/0/2/17/6/536/502331727/017/17/25/3606/1174/46/47235/274653/65/30/121/3544/647/07666/4357163/2417/2/505021474702/03/35231170/1447274542/50606501/4472161646074/71/353112/25017/530003/67/65/46014661330/125/3105600"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979263,
+      "opponent": {
+        "agent_id": 6273433,
+        "frozen_rank": 1,
+        "name": "jacek",
+        "submission_id": 40081011
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "0ae5b659cb00d36ef30fe24aafe4cd27d7b16175833292e455443ebfafa82204",
+      "own_status": "ok",
+      "raw_detail_sha256": "cde1032a6a5805af5b65cd51773099c7453390505a789ab486dd913ccd3e47c1",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/3/67/27/45/5/2/5/6143/5/717271/1/7/5330/27412/41/2/5/063454/7/23/66/074353/6/02/5661/452/1720/344/47/41613/1/3/0/0/0/63522/357172/361670/3/17/27/452/3506101671/27436/60/034774/41650/566/366171441/614136/47201"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979285,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "0eb54a4cd2918d1f9ea0c5f5fc2616fe0e609d27d8c5e68bcd2a824c4dfb8db5",
+      "own_status": "ok",
+      "raw_detail_sha256": "6df9dcc8955bc5a143760c2928ba04b58511ec1845c053069618832cbea3f1b0",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/5/6/6/7/4/5/63030/16430/3/21/30/5077/2/27545660/21/2506572/5201/33113/350/52270631616/7/0/5/2503217/541/017/174/46/4/43167125/52065/57/6/7/53/346712/41/05271/6/301/6/7/4/411/7574/14653120/533/24754/66/1357061/7246"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979316,
+      "opponent": {
+        "agent_id": 5773889,
+        "frozen_rank": 9,
+        "name": "derjack",
+        "submission_id": 37205029
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "f50ca7a279bbff952751176a621cc0fb4e9bc92d7ffc7aadba9aa4f3ad2ef1b8",
+      "own_status": "ok",
+      "raw_detail_sha256": "06f3ae818c93040b231ce7f3aede80fb1d2e3dffaaf37ec458b6d4f37df4452f",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "6/7/5/71/34/661/06335/001/1/2/2/2/1/27436/63/2744/7/23636/06/34/6/5/0/74/71/0/00/3344/327507/645/720/135760354/2055/6127534/52/0613/1/02574/46160322/27253/6/0753/101/025427253/64114/74225/036350/06/7564/43"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979325,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "8e7c3769b454b5f34eb45bb749f535750177b26888d91c15785090bf3b1115b0",
+      "own_status": "ok",
+      "raw_detail_sha256": "60525bd3369c616b59cdc42497cbb81464865e91046995039388f9af3bc4cd3b",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/3/50/3065/67/2/50572/1/30/5023/641207/25/2542706112/3/6/3/53170364/7/12567201/6/5345707/4/57/63/3606171/2/310/5/65/03/507271/2/2/4/4460175/00/72/4521/63030/67533/327275641017/050314/3/63/0521/63/64101/4/2/5/6167/5050221330/603274542/0363525/7424177/03/505/0/031466170/7/0"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979351,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "8d93a3d5dc7c6afefcaf3be26818f099c3563fd0c0e24801d26449770a29913e",
+      "own_status": "ok",
+      "raw_detail_sha256": "d7a3f4b7c6c80c424bceb8aea53c705a81c386317d9e390fb3f89c3200d8f7b4",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/3/5/3/50/6/1430316/7/52217/7/42541/00/3571665/4/457/7/53147/1/46021/7/7/2/46/0634/616171/0/63613/3/30/652/11/1/0/74/7/65/75316/143/0/3/133/25/6/136016/761413561/45/477655/41/061/16460324/56302422/30/31750522/36055/4676/56130014/652132007774212/4275/00/05032475324/7421347655423277/54/101035667533235/5"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979363,
+      "opponent": {
+        "agent_id": 2602969,
+        "frozen_rank": 8,
+        "name": "EricSMSO",
+        "submission_id": 12906094
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "3b31038873533911a64c74ab880b9369e9c233529e256f119937aebe87db5952",
+      "own_status": "ok",
+      "raw_detail_sha256": "a8f3960fcbabc7e51ddd5028c204e68344a5b04f4d37bdd12b19d1540f66f5e3",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/2/1/0364/25/065/65/7/7/0/052524/612/525/03/234/7/1645/0/063223/1/2/174/42754/17/216543/0366666/3/01/7135454/2/75/6/6/4/725231/02547/23/21/72/2/350/025500361175/03/4725050/27454/46167417/02123535/0524770/3354"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979384,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "43c7321531dffbafb42ec57bf9b75bcecb0ea31298a59fc874b33389af8cc3ba",
+      "own_status": "ok",
+      "raw_detail_sha256": "78800c9702624453c713cb407b04472cd6cde1f1f63c161b76afb00af91d060a",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/5/6/1/45/57/41/306671/2/347/413/31/30/500/327/52067611/4/2/3527/02571/2576/42767/5/4/45/4167271/23/10/35/475471771/3/227/5563/2227/2434/6412147/54/100521060/0/5/412/257665742001/6/42/57/1333117/174/3657/2/146430/75/3166641720/7/0"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979405,
+      "opponent": {
+        "agent_id": 5773889,
+        "frozen_rank": 9,
+        "name": "derjack",
+        "submission_id": 37205029
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "adbfa2ca7e7f3d80c0a0678fda664c39f013c82239fc8b88286947a73a2851f8",
+      "own_status": "ok",
+      "raw_detail_sha256": "7a726ca9ac16e3343160b4c41cf0c95595f6478f8624eec22a187202aec7e771",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/1/3/17/54/25/065/5/2/02/27457/47/5/2/5/071/1/0/1/3/1/3/217/4/547/505/72/366145/360634127/60303/054134/64/112/163635/2500/6/030753100/766606/1/41/1/4/667/14/1/313/366/703/3003664647774241/06333/03350754/316646432350/5750/064/47723663113677/071/10/5/6305225/46135212170/0017"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979432,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "06a287cd74197229fb0a60d624a47697c6b17c9c7c694854d0d0bb4117124916",
+      "own_status": "ok",
+      "raw_detail_sha256": "741f117e610ca9fff4004680725e61e7b3beaa55a0b29fdee62aa018535d1de4",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/6/1/1/03/2/2750335/0/75/2/146064642/177/65/753/105/23/233/3/35/36/05/2350/07/0/3646/0/255/0/6/7/5/530/02/2331/7616/6/6411/311176/6031367444/20/614364/603355070/6035474134/13647657/771/1/7/72/00534532/470/06323/47230616/17033/36/4117505357647524/463247172107/14/2257500/367227/1/4500230/71"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979455,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "cdc4c0d215e5b6fd8d93d5c62e75b6c7d94484ab47f51d8129f0035a44d9a14a",
+      "own_status": "ok",
+      "raw_detail_sha256": "542ebb57bd44bbffda539dc36d9588305aa9d97e3b40038166032e52082205f3",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/5/4/5/47/6/631470/322/31/2/50307/2/2500/547/507/22/522701/4/52/2763575/07/5/46171/34/66317/21/7/5443/161/2/47147460/34120/666671/72/72/43/4702/3/602/43/0/3/50230/6422/54316177571/0/1/4/2/713525/0365711/7474/7/65/55210336545720/13/250660210/3/42714236/5023/036607661/74757"
+    },
+    {
+      "classification": "operationally-terminated",
+      "color": 0,
+      "game_id": 905979481,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "illegal-action",
+      "original_record_sha256": "71b03e03a774662e62b1186f1b04dec5e8e3384a1ebb0206b736501da61dac04",
+      "own_status": "ok",
+      "raw_detail_sha256": "8dd245479a460a8b26b0758d25f479de2b5e5aa332477bc706f15d012ae34099",
+      "result": "win",
+      "rules_validation": "invalid",
+      "transcript": "3/2/4/3/350/57/7/6/7/5/61/4530/07227/633/00/3/4612/55/4716330/10135/41/2477/11/6/1/4163635/42764170546305761/41/4710/3/507/6/1/45/46412750/72/522061/1/436745072/72/713/14/7424754270/3/31/755432/2227/2/217/6/6/3/4546712110/036546/0661/4331/63002775/354432/70343605676001/416660230163003/67/4725216"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979507,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "4d9b57164f1f736b0d813d9d473c17e4e3b2a04252b7293fc9948bd4e507cd60",
+      "own_status": "ok",
+      "raw_detail_sha256": "0b3ef82deea23bead7de20c95eaa87d5038c2bb07c93ef7ebb25070a392ec1e4",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/2/35/50/225750/6/57/572/2470/1/2/4/1/4/472321/75/677/4352/2130/2025476714/24172/7/7/56/1/47/455/46161/63020/572/2127/7/0/14/1/23/5/5/3602/03/1/35/352505711761/44/742441/66/354417660/067/6332570072/2/225750117422/5/45/4314/14677002774/36/063633201/6300322175325/654122571702/444443"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979550,
+      "opponent": {
+        "agent_id": 2632888,
+        "frozen_rank": 2,
+        "name": "Marchete",
+        "submission_id": 13179017
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "b1b23efdc6e858ec096f2021b82101b92b218c3b9cd94b3456ae29a3e245635c",
+      "own_status": "ok",
+      "raw_detail_sha256": "51765481081ff95b6441d39c113f84d113f839cfbbc68f163b9c2b38bb32d2f9",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/4/2/75/3/41/2/25760341741/0/350610/5/2257560/7/16/45/2/5/5/0/636114672/0/367272/72/2/35/60071/4/721/14/1/23/5/3/6/02/44/74/6/6/305061/41/63110136/7424/613655710/5/7747530/23/343/61443666771743/3643/036111/7252316/4257/17420/5457/13666417617/21654445323/57/2/050314642/5"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979570,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "906ad8d639bae606500df3de60ac0ad8a4cba4f86bd6d02a887f7e9dc05da072",
+      "own_status": "ok",
+      "raw_detail_sha256": "fd5e2ef3e223fdf29ec679c09e959ee6bbde13cb0b4e081a61e7e5538aa1d6f8",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/4/3/257/41650/6/57/2/50572/21/7/2/43601/133/6521417/41666/3171/6/7/56/1/45/32101/36164350/67/41355/24776055/47230/07/532343"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979581,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "1698c4268cb0a366cf9e4707de1df3f4596627db35c758039027204604b54e32",
+      "own_status": "ok",
+      "raw_detail_sha256": "398ec98b84a2baeadd77ea511fcb9913eb37c2c5be347e2a0ec05737a3517921",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/2/4/2/35/50/225750/6/57/1/30/64/647/47272/36072/41/671/2/5/063330/30/664/3131/03/47410256117/57/4556702/1/1/464/50036771/71/05214/14/664/523/1/336532/03610/0/7/4/3276610/3/45011/35/25070/66/31216/44/4617174/14674/4147572/457/05412/44/630500/334/767/25011135/70563222221676671"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979607,
+      "opponent": {
+        "agent_id": 6075670,
+        "frozen_rank": 6,
+        "name": "Laars",
+        "submission_id": 39274054
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "13fa0853b51c29f55bfaa4abf3242be0063ed9459eebf5047aff1f0ec55532f0",
+      "own_status": "ok",
+      "raw_detail_sha256": "7aa2452c0e684b54ab3070e064dd8de33acd9d36de214661f5584cb2ba50a368",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/1/0/1/25/03652/27477/4/7/20575/2/74753/13/0253/6/5/0/70/3/06522420613/236/4720257655/714/366143/2/746/05212/105752355/61452/4/611/643/1/4/1/674/52021/44/1/707431/1/6466503/321/2/0/713536160/7425/472254/2/25/6/10535/7/2455"
+    },
+    {
+      "classification": "clean",
+      "color": 0,
+      "game_id": 905979657,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "d05cbc12479f70562ab068d52c54f9f60bd0feb0e0618dbf5ae79f7a61747f88",
+      "own_status": "ok",
+      "raw_detail_sha256": "7945333540c9b382d70ccd45b98feef13a2df815f62c8f19883a9d52d6d8d427",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "3/4/5/5/47/0/36572/71/35307/724421/20/23/6/4/72711/3/27/435/6531/2501646/64171/11667/2/1/16/43575/4344172/7/52072410/175/3641060/6/6/5/7/7/13/54/23/2465/6/52/135746107/2/1/24776/12/03654/101/33556/50075312463010/0013/427136/654/247535/46/46116476/71/45301706317/1/11"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979680,
+      "opponent": {
+        "agent_id": 6305973,
+        "frozen_rank": 7,
+        "name": "Snekkers",
+        "submission_id": 40182972
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "70c01b0440bc41e3c12136f97671272a097d83033ca48bcfbad2da2e1105648c",
+      "own_status": "ok",
+      "raw_detail_sha256": "6216e069ba42bf7fb43ac6459296c9c045bd13866299e46b4f80d342e5d83b25",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "7/1/1/6/7/05/21/23/136/74236/76/546/47/6/71/2056135/4612/36003/25032/003/0521464/14/5/061325/035/723635/7/5/7/05/0/365/0/6/71/61411057434/30613/4657/53/6133/0/75001642/123/55664/2/056135/2/33"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979714,
+      "opponent": {
+        "agent_id": 5471081,
+        "frozen_rank": 5,
+        "name": "Deltaspace",
+        "submission_id": 34989848
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "95bbcfa471789d09a9aac74a0ef4185df3f4a139eb8b7da40e059af59223b6bd",
+      "own_status": "ok",
+      "raw_detail_sha256": "6560908ceb98a0a6f0e53c569a24a133ee47ecfaf963c5ea0489c6f3574a171e",
+      "result": "win",
+      "rules_validation": "terminal-valid",
+      "transcript": "1/1/0/1/0366/74/6/75/03/66/033/5/0/125605/063613636/6143/4/5/71/61433/10/6/66130/03/4764120/6031300523/27463/61425/0365/77534/1/7243/2/35/27/02544/4176/6/0/766/014/5653/2/2/2/1317035/01/036666645/2/743034/11616/344/5771/052205360745053/07/453133"
+    },
+    {
+      "classification": "clean",
+      "color": 1,
+      "game_id": 905979731,
+      "opponent": {
+        "agent_id": 6651418,
+        "frozen_rank": 4,
+        "name": "Waffle3z",
+        "submission_id": 41181101
+      },
+      "opponent_status": "ok",
+      "original_record_sha256": "7c5733f2977882fbb2d9eaee0367c63617c10ce484b93678799839316edff52f",
+      "own_status": "ok",
+      "raw_detail_sha256": "d4aad583f45ae87d93a79f88261877211c372bc04969622fde1fc7c3350ca2b4",
+      "result": "loss",
+      "rules_validation": "terminal-valid",
+      "transcript": "0/0/0/2/7/75/5/71305/52024/4/721/35/212/2/175/335/6/4/10/707543/5775/614225/4/5/2/3/1/05/60322/77/7421231160/603554/664/55/53/31/47/22/31/7/50/53/07/564720/0632/2222/1/35/743160/02560/714/4217/0367632530/65/2505744710034/200/7522077/445275/472714/1121/07"
+    }
+  ],
+  "percentage": 100,
+  "population": 211,
+  "schema": "papersoccer.published-calibration-evidence.v1",
+  "score": 43.36,
+  "source_binding": "Exact independent editor copyback and one arena activation, bound to new public agent/submission identities; no remote source digest is exposed.",
+  "source_sha256": "78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8",
+  "submission_id": 41384976,
+  "window": "First completed window observed after this submission; later observations must be appended separately."
+}
