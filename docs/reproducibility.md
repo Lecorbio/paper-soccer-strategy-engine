@@ -96,7 +96,26 @@ inflated to mirror a developer machine.
 
 ## Generated CodinGame submissions
 
-The current production snapshot is
+The [current published release](../submissions/codingame/releases/20261009-rank2/README.md)
+is the exact source behind the best recorded **rank 2/212**, observed on
+9 October 2026. It is immutable and outside the per-bot generation workflow.
+Compile it and verify its identity:
+
+```bash
+mkdir -p build/codingame
+clang++ -std=c++20 -O3 -DNDEBUG \
+  submissions/codingame/releases/20261009-rank2/submission.cpp \
+  -o build/codingame/rank2
+cmake -E sha256sum submissions/codingame/releases/20261009-rank2/submission.cpp
+```
+
+Expected SHA-256:
+
+```text
+78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8
+```
+
+The historical registered production snapshot remains
 `submissions/codingame/bots/rank_4/submission.cpp`. It combines complete-turn
 search, the retained replay book and replay-value anchor, and the generated
 teacher-residual model. Verify its generators without writing any artifact:

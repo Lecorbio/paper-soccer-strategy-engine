@@ -7,7 +7,7 @@ reported separately.
 
 | Family | Recorded status and supported result | Entry point / evidence |
 | --- | --- | --- |
-| Canonical contest submissions | Historical Rank-4 snapshot: version 56, 66–24, score 44.29750553418035. Rank-5 is an immutable predecessor. | [Submission archive](../submissions/codingame/README.md); per-bot generators and ledgers. |
+| Canonical contest submissions | Best recorded rank **2/212**, observed 9 October 2026, with exact source and screenshot in the [current release](../submissions/codingame/releases/20261009-rank2/README.md). Historical Rank-4 and Rank-5 records remain unchanged. | [Submission archive](../submissions/codingame/README.md); per-bot generators and ledgers. |
 | Flagship demo study | Published 4,800-game test study under demo rules; predecessor v3 stopped at validation. | `benchmarks/flagship_study/`; [report](../benchmarks/flagship_study/REPORT.md), [history](history.md). |
 | Game Review | Accepted `deep-400k` demo analysis profile with frozen native/Wasm and accuracy gates. | `benchmarks/game_review_gate/gate.py`; [report](../benchmarks/game_review_gate/REPORT.md). |
 | Local contest leaderboard | Frozen 22-bot, 990-game local comparison, not a public ladder reproduction. | `benchmarks/codingame_leaderboard/leaderboard.py`; [workflow](../benchmarks/codingame_leaderboard/README.md). |

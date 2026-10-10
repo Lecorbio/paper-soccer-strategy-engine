@@ -1,0 +1,49 @@
+{
+  "schema": "papersoccer.codingame-release.v1",
+  "platform": "CodinGame",
+  "puzzle": "Paper Soccer",
+  "best_recorded_result": {
+    "rank": 2,
+    "players": 212,
+    "observed_at_utc": "2026-10-09T06:39:43.296Z",
+    "historical_snapshot": true,
+    "new_submission": false,
+    "new_formal_qualification": false
+  },
+  "source": {
+    "file": "submission.cpp",
+    "sha256": "78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8",
+    "ascii_characters": 99032,
+    "architecture": [
+      6301,
+      12,
+      8,
+      1
+    ],
+    "weight_bits": 4,
+    "biases": false,
+    "search": "complete-turn-alpha-beta",
+    "search_budgets_ms": [
+      550,
+      140
+    ],
+    "same_source_as": "20260927-rank3"
+  },
+  "screenshot": {
+    "file": "leaderboard.png",
+    "sha256": "ee6dd14d1456bc3e3d4a4a8acebb7d0fb633b9f489021c6e5c997c10a75fc132",
+    "original_capture_sha256": "3d666029a001faa41f90b1c38766429a90db84d47c64d0259edfd435f1198930",
+    "crop_pixels": {
+      "x": 90,
+      "y": 0,
+      "width": 410,
+      "height": 42
+    },
+    "description": "Archived platform leaderboard status bar; game board, editor and transcripts omitted."
+  },
+  "retained_evidence": {
+    "leaderboard_receipt_sha256": "f9bade0ae271af102d04c6c4b86dd2dfe613ce17dcf712bdaf8f409a9d6e8e61",
+    "source_identity_audit_sha256": "8b45edc2d4c38f01e06b3b2b6cb2ddaf0e4bd5f2aa1f0f2cfcfabdb282b51cb4",
+    "remote_source_digest_available": false
+  }
+}

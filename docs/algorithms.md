@@ -33,7 +33,7 @@ the goal rows are 0 and 12.
 The historical `rank_5` CodinGame source behind `Rank5DerivedBot` used a
 different explicit contract: `OwnGoalsAllowed` and `MoverLoses`. That
 distinction is one reason its browser adaptation cannot inherit the contest
-result. The current `rank_4` platform snapshot is separate. See
+result. The [current rank-2 release](../submissions/codingame/releases/20261009-rank2/README.md) is separate. See
 [Rank5DerivedBot](#rank5derivedbot).
 
 ## RandomBot
@@ -341,7 +341,7 @@ confidence intervals.
 
 `Rank5DerivedBot — 50k demo profile` adapts complete-turn search from the
 immutable historical rank-5 source to the normal browser rules. It is neither
-the authentic rank-5 entrant nor the current rank-4 platform snapshot.
+the authentic rank-5 entrant nor the current rank-2 contest release.
 
 | Property | Verified CodinGame `rank_5` | `Rank5DerivedBot` demo |
 | --- | --- | --- |

@@ -183,3 +183,39 @@
     transition: none;
   }
 }
+
+.platform-result {
+  display: flex;
+  width: min(calc(100% - 36px), 1144px);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 16px auto 0;
+  padding: 12px 16px;
+  border: 1px solid var(--study-line);
+  border-radius: 6px;
+  background: var(--study-panel);
+  color: var(--study-ink);
+}
+
+.platform-result img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.platform-result p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.platform-result span {
+  color: var(--study-muted);
+  font-size: 0.8rem;
+}
+
+.platform-result a {
+  color: var(--study-accent);
+}

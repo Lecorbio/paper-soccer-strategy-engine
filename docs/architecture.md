@@ -105,11 +105,13 @@ API.
 
 ## CodinGame referee and leaderboard boundaries
 
-The canonical current local snapshot associated with the platform result is
-`rank_4`; `rank_5` is its immutable predecessor and remains the source of the
-separately named Rank5Derived demo adapter. The offline leaderboard includes
-both along with the other reviewed artifacts and does not reinterpret any
-historical platform rank.
+The current [immutable contest release](../submissions/codingame/releases/20261009-rank2/README.md)
+records the best observed platform rank, **2 of 212 players** on 9 October 2026.
+It uses a 6,301 → 12 → 8 → 1 four-bit value network within complete-turn
+alpha-beta search. The registered `rank_4` and `rank_5` sources retain their
+historical results; `rank_5` remains the source of the separately named
+Rank5Derived demo adapter. The 22-bot offline leaderboard is a distinct frozen
+roster and does not include the newer immutable release.
 
 The CodinGame leaderboard deliberately exercises the generated standalone
 submissions rather than adapting their search code to the arena API. For each

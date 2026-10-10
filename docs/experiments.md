@@ -394,8 +394,13 @@ a separate MCTS measurement and does not measure quiescence or Rank5Derived.
 
 ## CodinGame evidence
 
-The canonical current local snapshot associated with the platform result is the
-`rank_4` generated source:
+The [current published release](../submissions/codingame/releases/20261009-rank2/README.md)
+records **rank 2 of 212 players**, observed on 9 October 2026. Its exact source
+and archived leaderboard status screenshot are published together. The source
+is unchanged from the 27 September rank-3 release; this later observation is
+not a new formal qualification or a new paired strength estimate.
+
+The historical `rank_4` generated source records:
 history version 56, agent `6604719`, submission `41114327`, rank 4 of 208 with
 score `44.29750553418035` after a completed 66-24 batch. Its maintained local
 source is 98,624 characters with SHA-256
@@ -410,7 +415,7 @@ The immutable predecessor remains important for demo provenance: `rank_5`
 history version 26, agent `6561779`, submission `41015554`, ranked 5 of 206 with
 score `42.42773147296124` after a completed 57-33 batch. Its generated source
 SHA-256 is `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`.
-`Rank5DerivedBot` adapts that source—not `rank_4`—to different browser rules
-and fixed work, so its measurements cannot be assigned to either platform
-artifact. The [submission archive](../submissions/codingame/README.md) records
+`Rank5DerivedBot` adapts the historical rank-5 source to different browser
+rules and fixed work. Its measurements cannot be assigned to the historical
+rank-4 artifact or the current rank-2 release. The [submission archive](../submissions/codingame/README.md) records
 the full lineage and every separate experiment.

@@ -1,7 +1,8 @@
 # CodinGame Paper Soccer submission
 
-**Status:** retained historical production baseline. The current production
-snapshot is [`rank_4`](../rank_4/README.md); this artifact remains buildable for
+**Status:** retained historical production baseline. The current published
+result is [rank 2/212](../../releases/20261009-rank2/README.md), observed
+9 October 2026; this artifact remains buildable for
 reproduction, regression tests, and the local CodinGame-rules leaderboard.
 
 `submission.cpp` is the paste-ready C++20 submission. Copy the

@@ -33,6 +33,8 @@ does not reopen a completed campaign or allocate another experiment.
 
 ## Read results and provenance
 
+- [Best recorded CodinGame result: rank 2/212](../submissions/codingame/releases/20261009-rank2/README.md): exact source and leaderboard screenshot, 9 October 2026
+
 - [Historical evidence guide](history.md)
 - [Frozen flagship study](../benchmarks/flagship_study/REPORT.md)
 - [Game Review acceptance](../benchmarks/game_review_gate/REPORT.md)

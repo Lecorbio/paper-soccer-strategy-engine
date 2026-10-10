@@ -4,6 +4,18 @@ The current guides organize the repository; frozen records describe what was
 actually run. Do not rewrite an old result to fit a newer implementation or
 interpret a diagnostic as a passing qualification.
 
+## Best recorded public result
+
+The [9 October 2026 release](../submissions/codingame/releases/20261009-rank2/README.md)
+records **rank 2 of 212 players** on CodinGame Paper Soccer. It includes the
+exact standalone source, a crop of the archived leaderboard status screenshot,
+and public provenance metadata. The source SHA-256 is
+`78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8`.
+
+The same bytes were released at rank 3/211 on 27 September. The later snapshot
+does not replace that calibration record or establish new formal qualification.
+Full game transcripts and private campaign material remain private.
+
 ## Where evidence lives
 
 - `benchmarks/` contains curated reports, compact data, and reproducibility tools.

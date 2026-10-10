@@ -1,8 +1,9 @@
 # Historical Paper Soccer rank-5 submission
 
 **Status:** immutable verified predecessor and the contest source behind the
-separately named `Rank5DerivedBot` demo adapter. The current production snapshot
-is [`rank_4`](../rank_4/README.md); this directory is retained for provenance,
+separately named `Rank5DerivedBot` demo adapter. The current published result
+is [rank 2/212](../../releases/20261009-rank2/README.md), observed 9 October 2026;
+this directory is retained for provenance,
 reproduction, and historical comparisons.
 
 This folder originally replaced the production reference maintained in

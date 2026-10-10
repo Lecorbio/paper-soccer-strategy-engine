@@ -2,14 +2,22 @@
 import random
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 import numpy as np
 from tools import rank_two_live_eight_model_v1 as model
-from tools import rank_two_focused_native_v3 as native
+from tools import rank_two_focused_native_v4 as native
 from tools import rank_two_focused_training_v9 as training
 
 
 class Precision(unittest.TestCase):
+    def test_native_adapter_keeps_disabled_platform_headers_disabled(self):
+        source = '#if 0\n#include <unavailable-platform-header.h>\n#endif\nnamespace fixture {}\n'
+        probe = native.probe_source(source, {})
+        result = subprocess.run(['/usr/bin/clang++', '-std=c++20', '-E', '-x', 'c++', '-'],
+                                input=probe, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_independent_signed_bit_stream_and_padding(self):
         rng=random.Random(2026101001)
         for width in (4,6,7):

@@ -15,10 +15,18 @@ model experiments.
 
 ![A late-game Paper Soccer match against Expert DeepTurnSearchBot at move 33 with live search diagnostics](docs/assets/expert-game.png)
 
+**Best recorded CodinGame result: [rank 2 of 212 players](submissions/codingame/releases/20261009-rank2/README.md), observed 9 October 2026.**
+
+![CodinGame Paper Soccer status showing rank 2 of 212](submissions/codingame/releases/20261009-rank2/leaderboard.png)
+
+[Download the exact standalone bot](https://github.com/Lecorbio/paper-soccer-strategy-engine/releases/tag/codingame-rank2-20261009).
+This is a dated platform result; the screenshot shows the archived rank and player count.
+
 ## Recorded results
 
 | Result | What the evidence establishes |
 | --- | --- |
+| [Rank 2/212 on CodinGame](submissions/codingame/releases/20261009-rank2/README.md) | Best recorded rank, observed 9 October 2026; exact released source and leaderboard screenshot. |
 | [Rank 4/208 on CodinGame](submissions/codingame/bots/rank_4/README.md) | Historical version 56: 66–24 over 90 games, score `44.29750553418035`. |
 | [4,800-game frozen study](benchmarks/flagship_study/REPORT.md) | Four selected bots, 2,400 color-swapped opening pairs, and disjoint selection/test data under the demo rules. |
 | [Accepted local large teacher](benchmarks/large_teacher_campaign/REPORT.md) | Four strength panels and retention passed; uncontended maximum 981.945875 ms. This is a local teacher result. |

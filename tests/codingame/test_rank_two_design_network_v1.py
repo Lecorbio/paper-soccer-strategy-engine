@@ -43,6 +43,16 @@ def output_pre(values, scales, dimensions, active):
 class DesignNetworkTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # The public fixture has the exact historical A180 bytes. Keep the
+        # producer's private campaign binding unchanged outside this test.
+        template = ROOT / 'submissions/codingame/research/focused-network/template.cpp'
+        for attribute, value in (
+            ('TEMPLATE_PATH', template),
+            ('TEMPLATE_REF', {'path': str(template), 'sha256': net.TEMPLATE_SHA256}),
+        ):
+            binding = patch.object(net, attribute, value)
+            binding.start()
+            cls.addClassCleanup(binding.stop)
         cls.base_source, cls.old, cls.scales = historical.baseline()
         cls.runtimes = {name: net.initialize(name) for name in net.PROFILES}
         cls.template = net.TEMPLATE_PATH.read_text()
