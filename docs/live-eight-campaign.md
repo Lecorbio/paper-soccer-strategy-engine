@@ -20,6 +20,12 @@ opponent submission versions and colors, weight opponents and colors equally,
 and bootstrap paired complete calibration windows rather than independent
 individual games. All unmatched games remain descriptive evidence.
 
+A confidence interval requires all 10,000 whole-window resamples to contain the
+required opponent and color cells. If any resample is unidentified, report no
+interval rather than condition on the supported subset. Exploration results
+cannot replace the independent qualification blocks. Own operational failures
+in later games also block promotion, even when the initial calibration is clean.
+
 Only new games explicitly designated as exploration may supply training
 positions. Teacher evaluations of alternative actions provide targets; a losing
 outcome is not assigned to every preceding position. Retained TRAIN roots and
