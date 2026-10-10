@@ -14,11 +14,6 @@ Use the same filenames so shared tooling and CMake can treat every bot alike:
 - Optional model, replay-book, experiment, local-gate, and timing files remain
   in that bot directory.
 
-The [current public release](../releases/20261009-rank2/README.md) records the
-best observed CodinGame rank, **2/212** on 9 October 2026. Its immutable source
-is retained under `releases/`, outside this maintained bot contract and the
-frozen 22-bot local leaderboard.
-
 ## Start a new bot
 
 1. Copy the existing bot closest to the design you want into `bots/<new_name>`.

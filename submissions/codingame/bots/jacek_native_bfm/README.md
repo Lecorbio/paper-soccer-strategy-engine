@@ -1,7 +1,5 @@
 # Native Jacek-style best-first minimax candidate
 
-**Current repository result:** [rank 2/212, 9 October 2026](../../releases/20261009-rank2/README.md). This directory retains a separate historical candidate.
-
 `jacek_native_bfm` is a clean challenger built around complete-turn generation,
 best-first minimax search with UCT-style allocation, and a compact neural value
 function. It is intentionally independent of every incumbent bot, replay table,

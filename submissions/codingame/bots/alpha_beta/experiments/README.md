@@ -1,9 +1,7 @@
 # Paper Soccer experiment archive
 
 This directory intentionally keeps only the compact historical evidence behind
-the former alpha-beta production bot. The current published result is
-[rank 2/212](../../../releases/20261009-rank2/README.md), observed 9 October 2026.
-Raw harnesses, generated binaries, caches,
+the former alpha-beta production bot. Raw harnesses, generated binaries, caches,
 and rejected or superseded experiment implementations were not retained.
 
 ## Recorded production result
