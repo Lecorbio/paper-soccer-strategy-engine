@@ -1,8 +1,9 @@
 # Historical Paper Soccer rank-5 submission
 
 **Status:** immutable verified predecessor and the contest source behind the
-separately named `Rank5DerivedBot` demo adapter. This directory is retained
-for provenance, reproduction, and historical comparisons.
+separately named `Rank5DerivedBot` demo adapter. The current production snapshot
+is [`rank_4`](../rank_4/README.md); this directory is retained for provenance,
+reproduction, and historical comparisons.
 
 This folder originally replaced the production reference maintained in
 `../alpha_beta/`.

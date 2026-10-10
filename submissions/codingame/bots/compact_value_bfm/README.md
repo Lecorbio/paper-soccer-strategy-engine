@@ -2,7 +2,7 @@
 
 `compact_value_bfm` is a standalone, value-only complete-turn best-first
 minimax bot for the 8x10 CodinGame rules. It is isolated from the maintained
-historical Rank-4 bot. The checked-in `model.hpp` is an explicit
+Rank-4 bot and does not replace it. The checked-in `model.hpp` is an explicit
 zero-valued build fixture, identified as `bootstrap-zero-not-qualified`; it is
 not a strength artifact and cannot authorize an upload.
 

@@ -1,6 +1,6 @@
 # Paper Soccer rank-4 bot
 
-`rank_4` is the historical production snapshot of the teacher-residual bot that
+`rank_4` is the canonical production snapshot of the teacher-residual bot that
 completed CodinGame history version 56 as agent `6604719`, submission
 `41114327`. Its completed 90-game arena batch ranked 4 of 208 with score
 `44.29750553418035` and a 66-24 record.

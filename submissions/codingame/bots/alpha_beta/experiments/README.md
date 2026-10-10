@@ -1,7 +1,8 @@
 # Paper Soccer experiment archive
 
 This directory intentionally keeps only the compact historical evidence behind
-the former alpha-beta production bot. Raw harnesses, generated binaries, caches,
+the former alpha-beta production bot. Current production is documented in
+[`rank_4`](../../rank_4/README.md). Raw harnesses, generated binaries, caches,
 and rejected or superseded experiment implementations were not retained.
 
 ## Recorded production result
