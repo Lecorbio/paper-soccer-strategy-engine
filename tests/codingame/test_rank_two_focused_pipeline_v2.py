@@ -1,3 +1,4 @@
+import datetime as dt
 import io
 import json
 from pathlib import Path
@@ -83,12 +84,13 @@ class PipelineRegressionTests(unittest.TestCase):
                 work.checked(plan, "enqueue", launch=True)
 
     def test_current_deadline_and_incident_apply_at_work_boundaries(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        at = dt.datetime(2026, 10, 8, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(campaign, "now", return_value=at):
             root = Path(tmp)
             body = state()
             body["control_guard"] = campaign.record(controller.__file__)
             body["closures"] = campaign.immutable(root / "CLOSURES.json", {})
-            body["focused_usage_observation"] = campaign.immutable(root / "USAGE.json", usage(7))
+            body["focused_usage_observation"] = campaign.immutable(root / "USAGE.json", usage(7, at))
             body["deadline_utc"] = "2026-10-01T00:00:00+00:00"
             campaign.immutable(root / "CURRENT.json", body)
             plan = dict(campaign_current=str(root / "CURRENT.json"), owner_thread_id="owner", activation=body["focused_activation"])
