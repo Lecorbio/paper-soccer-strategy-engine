@@ -6,7 +6,7 @@ import subprocess
 import unittest
 import numpy as np
 from tools import rank_two_live_eight_model_v1 as model
-from tools import rank_two_focused_native_v4 as native
+from tools import rank_two_focused_native_v5 as native
 from tools import rank_two_focused_training_v9 as training
 
 
