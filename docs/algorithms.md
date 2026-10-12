@@ -33,7 +33,7 @@ the goal rows are 0 and 12.
 The historical `rank_5` CodinGame source behind `Rank5DerivedBot` used a
 different explicit contract: `OwnGoalsAllowed` and `MoverLoses`. That
 distinction is one reason its browser adaptation cannot inherit the contest
-result. The [current rank-2 release](../submissions/codingame/releases/20261009-rank2/README.md) is separate. See
+result. The [quantized alpha-beta bot](../submissions/codingame/bots/quantized_alpha_beta/README.md) is separate. See
 [Rank5DerivedBot](#rank5derivedbot).
 
 ## RandomBot

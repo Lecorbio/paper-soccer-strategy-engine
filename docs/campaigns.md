@@ -1,14 +1,14 @@
-# Campaign catalog
+# Experiment catalog
 
-This is the current navigation layer over historical evidence. A completed
-experiment's protocol remains useful documentation; its example commands do
-not allocate another run. Local qualification and public platform results are
-reported separately.
+This index connects each experiment to its outcome and implementation. Protocols
+describe how past comparisons were run; their example commands are not part of
+the normal build. Local evaluation and dated platform results are reported
+separately.
 
 | Family | Recorded status and supported result | Entry point / evidence |
 | --- | --- | --- |
-| Live-led 8/8 extension | Closed by the owner on 12 October 2026 without promotion. Seven experimental versions had negative matched point estimates. Ten subsequent unchanged-incumbent retries had best rank 4, final rank 10 and zero own failures. | [Outcome](live-eight-campaign-outcome.md); [historical protocol](live-eight-campaign.md). Raw evidence remains private. |
-| Canonical contest submissions | Best recorded rank **2/212**, observed 9 October 2026, with exact source and screenshot in the [current release](../submissions/codingame/releases/20261009-rank2/README.md). Historical Rank-4 and Rank-5 records remain unchanged. | [Submission archive](../submissions/codingame/README.md); per-bot generators and ledgers. |
+| Eight-unit model study | Closed on 12 October 2026 without replacing the baseline. Seven candidate versions had negative matched point estimates. Ten later submissions of the unchanged baseline had best rank 4, final rank 10, and zero operational failures. | [Outcome](live-eight-campaign-outcome.md); [historical protocol](live-eight-campaign.md). Raw evidence remains private. |
+| Standalone contest bots | Best recorded rank **2/212**, observed on 9 October 2026, with exact source and screenshot in the [quantized alpha-beta record](../submissions/codingame/bots/quantized_alpha_beta/README.md). Historical Rank-4 and Rank-5 results remain unchanged. | [Bot guide](../submissions/codingame/README.md); per-bot source verification and history. |
 | Flagship demo study | Published 4,800-game test study under demo rules; predecessor v3 stopped at validation. | `benchmarks/flagship_study/`; [report](../benchmarks/flagship_study/REPORT.md), [history](history.md). |
 | Game Review | Accepted `deep-400k` demo analysis profile with frozen native/Wasm and accuracy gates. | `benchmarks/game_review_gate/gate.py`; [report](../benchmarks/game_review_gate/REPORT.md). |
 | Local contest leaderboard | Frozen 22-bot, 990-game local comparison, not a public ladder reproduction. | `benchmarks/codingame_leaderboard/leaderboard.py`; [workflow](../benchmarks/codingame_leaderboard/README.md). |

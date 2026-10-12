@@ -5,7 +5,7 @@ engine and historical scientific evidence; their maintenance requirements differ
 
 ## Build and test
 
-Follow the [quick start](../README.md#quick-start) to install the pinned research
+Follow [Build and play](../README.md#build-and-play) to install the pinned research
 dependency. The [reproducibility guide](reproducibility.md) lists all prerequisites.
 
 ```sh
@@ -40,8 +40,8 @@ of a model passing a gate.
 - Treat frozen manifests, report hashes, source snapshots, seeds, exclusions,
   and spent execution claims as immutable. A correction needs new evidence and
   a stated relationship to the original result.
-- Keep machine-local configuration such as `AGENTS.md` untracked and locally
-  excluded. Do not copy local absolute paths into public documentation.
+- Keep machine-local settings and private output directories outside version
+  control. Do not copy local absolute paths into public documentation.
 
 ## Historical worktrees
 

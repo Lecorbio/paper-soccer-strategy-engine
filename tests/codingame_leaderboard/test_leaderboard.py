@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import math
+import re
 import stat
 import subprocess
 import tempfile
@@ -111,6 +112,29 @@ def make_executable(path: Path, source: str) -> None:
 
 
 class RosterTests(unittest.TestCase):
+    def test_catalog_lists_every_bot_once_with_a_source_link(self) -> None:
+        bot_root = REPOSITORY / "submissions/codingame/bots"
+        directories = {path.name for path in bot_root.iterdir()
+                       if path.is_dir() and (path / "submission.cpp").is_file()}
+        catalog = (bot_root / "README.md").read_text()
+        entries = []
+        source_pattern = r"\[[^\]]+\]\(([a-z0-9][a-z0-9_-]*)/submission\.cpp\)"
+        for line in catalog.splitlines():
+            if not line.startswith("|"):
+                continue
+            sources = re.findall(source_pattern, line)
+            if not sources:
+                continue
+            self.assertEqual(len(sources), 1, "A catalog row must identify one standalone source")
+            bot_id = sources[0]
+            entries.append(bot_id)
+            overview = re.fullmatch(r"\s*\[[^\]]+\]\(([^)]+)\)\s*", line.split("|")[1])
+            self.assertIsNotNone(overview, f"Missing overview link for {bot_id}")
+            overview_path = overview.group(1).split("#", 1)[0]
+            self.assertTrue((bot_root / overview_path).is_file(), f"Missing overview for {bot_id}")
+        self.assertIn("quantized_alpha_beta", directories)
+        self.assertEqual(Counter(entries), Counter({name: 1 for name in directories}))
+
     def test_checked_in_roster_accounts_for_every_registered_artifact(self) -> None:
         roster = subject.load_roster()
         entrants = subject.validate_roster(roster, REPOSITORY)
@@ -125,9 +149,12 @@ class RosterTests(unittest.TestCase):
         }
         registered = set(subject._registered_bots(REPOSITORY, roster))
         research = set(subject._research_bots(REPOSITORY, roster))
+        standalone = set(subject._standalone_bots(REPOSITORY, roster))
         self.assertEqual(registered, rostered)
         self.assertEqual(research, {"compact_value_bfm"})
         self.assertTrue(registered.isdisjoint(research))
+        self.assertEqual(standalone, {"quantized_alpha_beta"})
+        self.assertTrue(standalone.isdisjoint(registered | research))
         self.assertTrue(all(not entrant["aliases"] for entrant in entrants))
 
     def test_stale_submission_hash_is_rejected(self) -> None:
@@ -165,6 +192,72 @@ class RosterTests(unittest.TestCase):
             subject, "_cmake_bot_list", side_effect=forged
         ), self.assertRaisesRegex(subject.ContractError, "exact.*union"):
             subject.validate_roster(roster, REPOSITORY)
+
+    def test_standalone_bot_cannot_be_omitted_from_build_union(self) -> None:
+        roster = subject.load_roster()
+        original = subject._cmake_bot_list
+
+        def forged(repository, *, cmake_path, variable, required=True):
+            values = original(repository, cmake_path=cmake_path,
+                              variable=variable, required=required)
+            if variable == "PAPERSOCCER_CODINGAME_BUILD_BOTS":
+                return [value for value in values
+                        if value != "${PAPERSOCCER_CODINGAME_STANDALONE_BOTS}"]
+            return values
+
+        with mock.patch.object(subject, "_cmake_bot_list", side_effect=forged), \
+                self.assertRaisesRegex(subject.ContractError, "exact.*union"):
+            subject.validate_roster(roster, REPOSITORY)
+
+    def test_standalone_registry_must_not_overlap_or_duplicate(self) -> None:
+        roster = subject.load_roster()
+        original = subject._cmake_bot_list
+        for values, message in [(["alpha_beta"], "registries overlap"),
+                                (["compact_value_bfm"], "registries overlap"),
+                                (["quantized_alpha_beta"] * 2, "contains duplicates")]:
+            def forged(repository, *, cmake_path, variable, required=True):
+                if variable == "PAPERSOCCER_CODINGAME_STANDALONE_BOTS":
+                    return values
+                return original(repository, cmake_path=cmake_path,
+                                variable=variable, required=required)
+
+            with self.subTest(values=values), \
+                    mock.patch.object(subject, "_cmake_bot_list", side_effect=forged), \
+                    self.assertRaisesRegex(subject.ContractError, message):
+                subject.validate_roster(roster, REPOSITORY)
+
+    def test_unlisted_standalone_artifact_is_rejected(self) -> None:
+        roster = subject.load_roster()
+        original = subject._cmake_bot_list
+
+        def forged(repository, *, cmake_path, variable, required=True):
+            if variable == "PAPERSOCCER_CODINGAME_STANDALONE_BOTS":
+                return []
+            values = original(repository, cmake_path=cmake_path,
+                              variable=variable, required=required)
+            if variable == "PAPERSOCCER_CODINGAME_BUILD_BOTS":
+                return [value for value in values
+                        if value != "${PAPERSOCCER_CODINGAME_STANDALONE_BOTS}"]
+            return values
+
+        with mock.patch.object(subject, "_cmake_bot_list", side_effect=forged), \
+                self.assertRaisesRegex(subject.ContractError, "cover directories"):
+            subject.validate_roster(roster, REPOSITORY)
+
+    def test_previous_build_union_without_standalone_bots_is_supported(self) -> None:
+        roster = subject.load_roster()
+        original = subject._cmake_bot_list
+
+        def previous(repository, *, cmake_path, variable, required=True):
+            values = original(repository, cmake_path=cmake_path,
+                              variable=variable, required=required)
+            if variable == "PAPERSOCCER_CODINGAME_BUILD_BOTS":
+                return [value for value in values
+                        if value != "${PAPERSOCCER_CODINGAME_STANDALONE_BOTS}"]
+            return values
+
+        with mock.patch.object(subject, "_cmake_bot_list", side_effect=previous):
+            subject._validate_build_bot_registry(REPOSITORY, roster, ["compact_value_bfm"])
 
 
 class SplitMixTests(unittest.TestCase):

@@ -1,98 +1,142 @@
-# Rank-4 full-turn best-first minimax experiment
+# Full-turn value minimax
 
-`rank_4_fullturn_bfm` is an isolated search experiment built around the exact
-quantized evaluator, replay corrections, rules, and 800/165 ms deployment
-clock of `../rank_4`. It does not replace or modify the maintained rank-4 bot.
+[Bot catalog](../README.md) · [Standalone C++20 source](submission.cpp)
 
-The candidate makes complete legal turns its explicit tree actions. It samples
-at most 250 actions with a deterministic mixed DFS/BFS deque walk, assigns a
-value to every newly created complete-turn child, selects a frontier with an
-article-style UCT score, and backs values up with minimax rather than Monte Carlo
-averaging. Exact attacking-goal and own-goal BFS probes bracket a
-path-sensitive, 32-extraction handoff probe, reserving prioritized results
-before ordinary capped sampling so an immediate goal cannot disappear solely
-because of traversal order. Handoff-probe extractions count toward fixed work.
-Capped sampling uses a 64-bit canonical seed and direction frame across
-identity, horizontal reflection, 180-degree player rotation, and their
-composition. Rebound-goal BFS uses canonical direction order and directly
-prefers a legal center-goal edge.
-Every retained handoff is classified on its actual result position; exact
+## Design
+
+Best-first minimax over complete turns using the teacher-residual evaluator.
+
+The implementation ID is `rank_4_fullturn_bfm`. This stable name is used by the build,
+generators, and historical evidence.
+
+## Usage
+
+[`submission.cpp`](submission.cpp) is the self-contained contest program. The maintained
+inputs and local checks live beside it. Use the source for local comparisons; the
+results below describe its measured status.
+
+## Results
+
+The frozen equal-clock comparison finished 24–82 over 106 games. A later exploratory
+live source recorded 55–35 raw and 42–35 clean, with no current top-10 opponents; that
+did not establish elite strength. The current local artifact has not been uploaded.
+
+See the [frozen local
+leaderboard](../../../../benchmarks/codingame_leaderboard/README.md) for comparisons
+under the shared contest protocol. Local scores and historical platform ranks are
+different measurements.
+
+## Testing
+
+From the repository root after [project
+setup](../../../../docs/development.md#build-and-test):
+
+```sh
+node submissions/codingame/tools/generate_submission.mjs rank_4_fullturn_bfm --check
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native --parallel 2 --target \
+  papersoccer_codingame_rank_4_fullturn_bfm_submission \
+  papersoccer_codingame_rank_4_fullturn_bfm_submission_test
+ctest --test-dir build/native \
+  -R '^papersoccer_codingame_rank_4_fullturn_bfm_(submission_current|submission_test|protocol_smoke_test)$' \
+  --output-on-failure
+```
+
+## History
+
+The [experiment log](EXPERIMENTS.md) retains the chronological comparisons, rejected
+hypotheses, and source identities. Frozen source snapshots and reports keep their
+recorded identities.
+
+<details>
+<summary>Detailed design and comparison notes</summary>
+
+`rank_4_fullturn_bfm` is an isolated search experiment built around the exact quantized
+evaluator, replay corrections, rules, and 800/165 ms deployment clock of `../rank_4`. It
+does not replace or modify the maintained rank-4 bot.
+
+The candidate makes complete legal turns its explicit tree actions. It samples at most
+250 actions with a deterministic mixed DFS/BFS deque walk, assigns a value to every
+newly created complete-turn child, selects a frontier with an article-style UCT score,
+and backs values up with minimax rather than Monte Carlo averaging. Exact attacking-goal
+and own-goal BFS probes bracket a path-sensitive, 32-extraction handoff probe, reserving
+prioritized results before ordinary capped sampling so an immediate goal cannot
+disappear solely because of traversal order. Handoff-probe extractions count toward
+fixed work. Capped sampling uses a 64-bit canonical seed and direction frame across
+identity, horizontal reflection, 180-degree player rotation, and their composition.
+Rebound-goal BFS uses canonical direction order and directly prefers a legal center-goal
+edge. Every retained handoff is classified on its actual result position; exact
 forced-cutoff and opponent-immediate-win classifications propagate as solved
-mate-distance children. The precise guarantees and bounded limits are frozen
-in the experiment ledger.
+mate-distance children. The precise guarantees and bounded limits are frozen in the
+experiment ledger.
 
-These symmetry measures make the focused transformed-state fixtures pass, but
-they are not a universal stabilizer-equivariance proof. In particular, cap-one
-completed-turn retention need not return a symmetry-fixed action for every
-self-symmetric position. That residual limitation is recorded as a no-submit
-consideration in the ledger.
+These symmetry measures make the focused transformed-state fixtures pass, but they are
+not a universal stabilizer-equivariance proof. In particular, cap-one completed-turn
+retention need not return a symmetry-fixed action for every self-symmetric position.
+That residual limitation is recorded as a no-submit consideration in the ledger.
 
-Tree expansion commits a retained child batch atomically. If the batch cannot
-fit a hard work or node cap, the only partial-commit exception is one generated
-proven win for the mover—a terminal win or exact forced cutoff—when one work
-unit and child slot still remain.
+Tree expansion commits a retained child batch atomically. If the batch cannot fit a hard
+work or node cap, the only partial-commit exception is one generated proven win for the
+mover—a terminal win or exact forced cutoff—when one work unit and child slot still
+remain.
 
-The CodinGame program emits the selected complete turn as one encoded output
-line. It does not cache or emit primitive segments across protocol rounds.
-Received opponent turns and replay corrections are applied atomically to a
-copy before the authoritative state is updated.
+The CodinGame program emits the selected complete turn as one encoded output line. It
+does not cache or emit primitive segments across protocol rounds. Received opponent
+turns and replay corrections are applied atomically to a copy before the authoritative
+state is updated.
 
-This directory owns its generated CodinGame source, focused tests, timing
-probe, comparison harness, clock-screen recorder, replay decision auditor,
-strict offline decision-audit analyzer, and experiment ledger. Generate and
-check it from the repository root:
+This directory owns its generated CodinGame source, focused tests, timing probe,
+comparison harness, clock-screen recorder, replay decision auditor, strict offline
+decision-audit analyzer, and experiment ledger. Generate and check it from the
+repository root:
 
 ```sh
 node submissions/codingame/tools/generate_submission.mjs rank_4_fullturn_bfm
-cmake -S . -B build
-cmake --build build -j4 --target \
+cmake -S . -B build/native
+cmake --build build/native --parallel 2 --target \
   papersoccer_codingame_rank_4_fullturn_bfm_submission_test \
   papersoccer_codingame_rank_4_fullturn_bfm_timing_probe \
   papersoccer_codingame_rank_4_fullturn_bfm_comparison_gate
-ctest --test-dir build --output-on-failure \
+ctest --test-dir build/native --output-on-failure \
   -R 'rank_4_fullturn_bfm'
 ```
 
 The comparison harness uses only its five public in-source openings and
-deterministically generated seed batches; it has no promotion-bank or
-`matches.json` input. Mixed even/odd opening depths and explicit search-policy
-knobs support small 800/165 ms hypothesis screens. `run_clock_screen.py`
-records the exact command, source and gate hashes, clock maxima, and operational
-counters in a write-once JSON report. Fixed work remains a reproducibility and
-profiling tool, not a strength criterion.
+deterministically generated seed batches; it has no promotion-bank or `matches.json`
+input. Mixed even/odd opening depths and explicit search-policy knobs support small
+800/165 ms hypothesis screens. `run_clock_screen.py` records the exact command, source
+and gate hashes, clock maxima, and operational counters in a write-once JSON report.
+Fixed work remains a reproducibility and profiling tool, not a strength criterion.
 
 The synchronized generated source is 99,955 ASCII characters, SHA-256
-`5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da`.
-Regenerate and recheck both values after any source change.
-Its exploratory policy uses UCT exploration `0.5`, final visit weight `0`, the
-full 250-action cap at root and deeper nodes, and normal BFM expansion.
-Root-only and narrower-deeper settings remain explicit diagnostic hooks; both
-were rejected in clock screens.
+`5672104dce377acff8b4a675085f4d47eacb226c868bc4a186f91661d57cd4da`. Regenerate and
+recheck both values after any source change. Its exploratory policy uses UCT exploration
+`0.5`, final visit weight `0`, the full 250-action cap at root and deeper nodes, and
+normal BFM expansion. Root-only and narrower-deeper settings remain explicit diagnostic
+hooks; both were rejected in clock screens.
 
-The exact formulas, tactical guarantees, frozen promotion gates, commands,
-and results are recorded in [EXPERIMENTS.md](EXPERIMENTS.md). The final
-equal-clock result was 24-82 over 106 games, with both deterministic seed
-batches and both color thresholds failing. That remains a reproducible
-promotion rejection, but it no longer forbids exploratory live submissions.
-The clock-led development ladder and pivot criteria are in
-[IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md).
-An asserted `dd1192...` artifact was later tested publicly as agent `6606663`,
-submission `41119120`; public APIs cannot prove the editor bytes, so replay
-evidence retains `source_binding_status=asserted-not-api-verified`.
-The `c268...` artifact was then copy-back verified in the authenticated
-editor immediately before exploratory upload as history version 60. Public
-battle metadata identifies it as agent `6608659`, submission `41121957`; this
-is diagnostic only and retains the same conservative public-API binding label.
-Its complete public window was 55-35 raw and 42-35 after removing 13 opponent
-operational failures, with zero candidate operational failures and positive
-clean records in both colors. The batch contained no current top-10 opponents,
-so it does not establish elite strength.
-The current `567210...` local artifact changes only the default UCT exploration
-constant from `1.5` to `0.5`; it has not been uploaded.
+The exact formulas, tactical guarantees, frozen promotion gates, commands, and results
+are recorded in [EXPERIMENTS.md](EXPERIMENTS.md). The final equal-clock result was 24-82
+over 106 games, with both deterministic seed batches and both color thresholds failing.
+That remains a reproducible promotion rejection, but it no longer forbids exploratory
+live submissions. The clock-led development ladder and pivot criteria are in
+[IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md). An asserted `dd1192...` artifact was later
+tested publicly as agent `6606663`, submission `41119120`; public APIs cannot prove the
+editor bytes, so replay evidence retains
+`source_binding_status=asserted-not-api-verified`. The `c268...` artifact was then
+copy-back verified in the authenticated editor immediately before exploratory upload as
+history version 60. Public battle metadata identifies it as agent `6608659`, submission
+`41121957`; this is diagnostic only and retains the same conservative public-API binding
+label. Its complete public window was 55-35 raw and 42-35 after removing 13 opponent
+operational failures, with zero candidate operational failures and positive clean
+records in both colors. The batch contained no current top-10 opponents, so it does not
+establish elite strength. The current `567210...` local artifact changes only the
+default UCT exploration constant from `1.5` to `0.5`; it has not been uploaded.
 
-`collect_arena_batch.py` archives complete public batches behind a frozen
-ID-only exclusion registry, and `papersoccer_fullturn_replay_decision_auditor`
-compares observed actions with raw BFM, replay-book control flow, rank 4, and a
-deterministic root action set. The current continuation results and rejected
-search/evaluator ablations are appended to the ledger rather than rewriting
-the frozen promotion result.
+`collect_arena_batch.py` archives complete public batches behind a frozen ID-only
+exclusion registry, and `papersoccer_fullturn_replay_decision_auditor` compares observed
+actions with raw BFM, replay-book control flow, rank 4, and a deterministic root action
+set. The current continuation results and rejected search/evaluator ablations are
+appended to the ledger rather than rewriting the frozen promotion result.
+
+</details>

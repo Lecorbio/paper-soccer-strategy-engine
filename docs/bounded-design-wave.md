@@ -1,4 +1,7 @@
-# Bounded network and search research
+# Network and search experiments
+
+This design study is complete. Its candidate descriptions and comparisons are
+historical; the [experiment catalog](campaigns.md) links the resulting studies.
 
 This implementation supports a fixed research wave around the verified rank-three release. It exports bias-free four-bit networks with the existing activations and fixed scales, rejects sources at or above 100,000 characters, and keeps source generation separate from correctness, timing, live admission, and promotion.
 

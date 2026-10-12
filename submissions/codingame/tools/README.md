@@ -10,10 +10,15 @@ models, replay books, timing probes, and experiment evidence belong under
 node submissions/codingame/tools/generate_submission.mjs BOT_NAME [--check]
 ```
 
-The generator reads `bots/BOT_NAME/submission.json` and `sources.txt`, runs any
-configured bot-local generators, removes repository-local includes, combines
-standard headers, strips comments and redundant blank lines, rejects unexpected
-dependencies, and enforces the configured source-size limit.
+Every bot has a `submission.json` descriptor. For generated bots, the tool reads
+`sources.txt`, runs configured data generators, combines sources and standard
+headers, and checks the source-size limit. `--check` rejects stale output instead
+of rewriting it.
+
+The [quantized alpha-beta bot](../bots/quantized_alpha_beta/README.md) is a
+standalone snapshot. Both normal invocation and `--check` verify its hash,
+ASCII encoding, and size without changing the source. It has no concatenation
+or model-generation step.
 
 ## Protocol smoke test
 

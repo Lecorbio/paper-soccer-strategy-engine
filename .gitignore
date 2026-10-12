@@ -2,6 +2,7 @@ build/
 /results/
 !/results/
 /results/*
+!/results/README.md
 !/results/jacek_arena_bfm/
 /results/jacek_arena_bfm/*
 !/results/jacek_arena_bfm/exclusions/

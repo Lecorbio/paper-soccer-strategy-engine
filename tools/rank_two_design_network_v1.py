@@ -29,7 +29,7 @@ FEATURES = dict(historical.FEATURES)
 PROFILES = {'dd8': ('distance-degree', 8, 8),
             'dd12wide': ('distance-degree', 12, 16),
             'd32': ('distance-only', 32, 32)}
-HISTORICAL_SHA256 = 'de16e2fce62bd112d6fdec43cb5a611a08484289cf00c9f6136ed8f98102e1fe'
+SUPPORT_SHA256 = 'b29c72fe7dd6a362654ebe585ac3c78b53c274d0dd3f13f4552ecf497780c47c'
 BASE_SHA256 = '78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8'
 TEMPLATE_PATH = ROOT / 'results/rank_two_20260927/live-loss-v3/campaign-next-v1/calibration/180/candidate.cpp'
 TEMPLATE_SHA256 = 'adda8a04d568f9cd6c4cd3e70d9f669137fec39fbb7d68a85eed4d4bf9065552'
@@ -46,14 +46,14 @@ def _sha(payload):
 
 def _source_refs():
     old_path = ROOT / 'tools/rank_two_network32_v2.py'
-    if _sha(old_path.read_bytes()) != HISTORICAL_SHA256:
-        raise ValueError('historical architecture producer changed')
+    if _sha(old_path.read_bytes()) != SUPPORT_SHA256:
+        raise ValueError('architecture support producer changed')
     return {
         'producer': {'path': 'tools/rank_two_design_network_v1.py',
                      'sha256': _sha(Path(__file__).read_bytes())},
         'architecture_support': {'path': 'tools/rank_two_network32_v2.py',
-                                 'sha256': HISTORICAL_SHA256},
-        'incumbent': {'path': 'submissions/codingame/releases/20260927-rank3/submission.cpp',
+                                 'sha256': SUPPORT_SHA256},
+        'incumbent': {'path': 'submissions/codingame/bots/quantized_alpha_beta/submission.cpp',
                       'sha256': BASE_SHA256},
     }
 

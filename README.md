@@ -1,94 +1,113 @@
 # Paper Soccer Strategy Engine
 
-A deterministic C++20 and WebAssembly engine for playing paper soccer, studying
-search algorithms, and testing standalone CodinGame bots. It includes a browser
-game, possession-by-possession Game Review, native arenas, and reproducible
-model experiments.
+A C++20 engine for a small game with a surprisingly large search space. Play
+paper soccer in the browser, inspect complete-turn decisions, or compare
+standalone CodinGame bots with the native match runner.
 
 [![CI and Pages](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/workflows/pages.yml/badge.svg)](https://github.com/Lecorbio/paper-soccer-strategy-engine/actions/workflows/pages.yml)
 [![MIT License](https://img.shields.io/github/license/Lecorbio/paper-soccer-strategy-engine)](LICENSE)
 
 **[Play the demo](https://lecorbio.github.io/paper-soccer-strategy-engine/)**
-· **[Bot leaderboard](https://lecorbio.github.io/paper-soccer-strategy-engine/leaderboard/)**
-· **[Benchmark results](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/)**
-· **[Documentation](docs/README.md)**
+· **[Explore the bots](submissions/codingame/bots/README.md)**
+· **[Read the documentation](docs/README.md)**
 
-![A late-game Paper Soccer match against Expert DeepTurnSearchBot at move 33 with live search diagnostics](docs/assets/expert-game.png)
+![Paper Soccer match with the board, move history, and search diagnostics](docs/assets/expert-game.png)
 
-**Best recorded CodinGame result: [rank 2 of 212 players](submissions/codingame/releases/20261009-rank2/README.md), observed 9 October 2026.**
+The [quantized alpha-beta bot](submissions/codingame/bots/quantized_alpha_beta/README.md)
+reached **rank 2 of 212 players** on CodinGame, recorded on **9 October 2026**.
+The exact standalone source and dated leaderboard evidence are included.
 
-![CodinGame Paper Soccer status showing rank 2 of 212](submissions/codingame/releases/20261009-rank2/leaderboard.png)
+## Inside the engine
 
-[Download the exact standalone bot](https://github.com/Lecorbio/paper-soccer-strategy-engine/releases/tag/codingame-rank2-20261009).
-This is a dated platform result; the screenshot shows the archived rank and player count.
+Paper soccer adds a twist to ordinary turn-based search: touching a used vertex
+or the boundary keeps possession. A single turn can therefore contain a long
+sequence of rebounds. The engine searches those complete turns while one shared
+rules implementation handles legal moves, goals, and blocked positions.
 
-## Recorded results
+- **Search:** possession-aware alpha-beta, Monte Carlo tree search, neural
+  evaluation, and exact endgame solving.
+- **Game Review:** replay validation, complete-turn alternatives, and estimated
+  decision quality with separate fast and deep analysis.
+- **Contest bots:** 24 standalone implementations, including learned evaluators,
+  proof search, and move-ordering experiments.
+- **Evaluation:** deterministic openings, color-swapped matches, bounded process
+  execution, and reproducible benchmark reports.
 
-| Result | What the evidence establishes |
-| --- | --- |
-| [Rank 2/212 on CodinGame](submissions/codingame/releases/20261009-rank2/README.md) | Best recorded rank, observed 9 October 2026; exact released source and leaderboard screenshot. |
-| [Rank 4/208 on CodinGame](submissions/codingame/bots/rank_4/README.md) | Historical version 56: 66–24 over 90 games, score `44.29750553418035`. |
-| [4,800-game frozen study](benchmarks/flagship_study/REPORT.md) | Four selected bots, 2,400 color-swapped opening pairs, and disjoint selection/test data under the demo rules. |
-| [Accepted local large teacher](benchmarks/large_teacher_campaign/REPORT.md) | Four strength panels and retention passed; uncontended maximum 981.945875 ms. This is a local teacher result. |
-| [Closed compact-training experiment](benchmarks/compact_value_bfm/TRAINED_V2_OUTCOME.md) | Four pilots and bounded follow-up research produced no newly trained candidate passing the original gates. |
+```mermaid
+flowchart LR
+    Native[CLI and arena] --> Core[C++ rules and game state]
+    Browser[Browser game] --> Wasm[WebAssembly bridge]
+    Wasm --> Core
+    Core --> Search[Search and evaluation]
+    Contest[Standalone bots] --> Referee[Native contest referee]
+    Referee --> Core
+    Referee --> Results[Match reports]
+```
 
-The [22-bot local leaderboard](benchmarks/codingame_leaderboard/README.md) reports
-990 protocol-faithful games. Local ratings, historical public ranks, offline
-prediction accuracy, and live qualification are separate measurements. The
-[campaign catalog](docs/campaigns.md) explains the status and evidence for each
-research family.
+The browser and native tools share the same engine. Contest matches run the
+actual standalone programs through a referee configured for CodinGame rules. See the
+[architecture](docs/architecture.md) for the boundaries and
+[algorithms](docs/algorithms.md) for the search details.
 
-## Quick start
+## Build and play
 
-Install CMake 3.20+, a C++20 compiler, Node.js 18+, Python 3.12–3.14, and Chrome
-or Chromium. Set up the small research dependency used by the full test suite:
+For the native engine, install CMake 3.20+ and a C++20 compiler:
+
+```sh
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native --target papersoccer_cli papersoccer_tests -j2
+ctest --test-dir build/native -R '^papersoccer_tests$' --output-on-failure
+./build/native/papersoccer_cli
+```
+
+The checked-in WebAssembly modules also let you open `web/index.html` directly
+in a browser. The [demo and replay guide](docs/demo-and-replays.md) covers play,
+review, and replay export.
+
+The full development suite also needs Node.js 18+, Python 3.12–3.14, Chrome or
+Chromium, and the pinned research dependency:
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements-research.txt
 PAPERSOCCER_BUILD_JOBS=2 ./scripts/build-and-test.sh
-./build/native/papersoccer_cli
 ```
 
-The build script uses the local `.venv` automatically. Tests use small fixed
-fixtures; they do not start a production campaign. The checked-in Wasm modules
-also let you open `web/index.html` directly in a browser (`open web/index.html`
-on macOS). Rebuilding those modules requires pinned Emscripten 6.0.2.
+See [development](docs/development.md) for focused checks and
+[reproducibility](docs/reproducibility.md) for toolchains and generated artifacts.
 
-See [Reproducibility](docs/reproducibility.md) for individual targets, compiler
-settings, browser discovery, generated-artifact checks, and optional local
-forensics.
+## Results
 
-## Repository map
-
-| Location | Purpose |
+| Comparison | Recorded result |
 | --- | --- |
-| `include/`, `src/` | Public C++ API, rules, bots, search, arenas, and browser bridges. |
-| `web/` | Static game, Game Review, leaderboard, and benchmark pages. |
-| `tests/`, `cmake/` | Correctness and integration checks; grouped build/test registration. |
-| `tools/`, `scripts/` | Research workflows, artifact validators, and build entry points. |
-| `submissions/codingame/` | Standalone contest bots, generators, and historical records. |
-| `models/`, `benchmarks/` | Reviewed model artifacts and curated, reproducible results. |
-| `results/` | Mostly ignored local evidence; a few explicitly tracked historical collections. |
-| `docs/` | Architecture, workflows, campaign status, and provenance guidance. |
+| [CodinGame](submissions/codingame/bots/quantized_alpha_beta/README.md) | Best observed rank: 2 of 212, on 9 October 2026. |
+| [Four-bot study](benchmarks/flagship_study/REPORT.md) | 4,800 games from 2,400 color-swapped opening pairs under demo rules. |
+| [Local contest leaderboard](benchmarks/codingame_leaderboard/README.md) | 990 protocol-faithful games across a frozen 22-bot roster. |
+| [Game Review evaluation](benchmarks/game_review_gate/REPORT.md) | Selected the deep 400k-node analysis profile with native and WebAssembly checks. |
 
-Development starts from `main`. Evidence-bearing historical worktrees are kept
-at their original paths because archived receipts can bind absolute paths.
-They are not active development checkouts. See [Development](docs/development.md)
-before starting another experiment.
+Platform ranks are dated observations. The local leaderboard uses its own
+frozen roster and scoring model; it is a separate measurement. Completed
+training experiments, including negative results, are indexed in the
+[research archive](docs/archive/README.md).
 
-## Documentation
+## Find your way around
 
-- [Documentation index](docs/README.md): choose a reading path.
-- [Architecture](docs/architecture.md) and [algorithms](docs/algorithms.md).
-- [Demo, CLI, Game Review, and replays](docs/demo-and-replays.md).
-- [Development and testing](docs/development.md).
-- [Tooling guide](docs/tooling.md) and [campaign catalog](docs/campaigns.md).
-- [Experiment methodology](docs/experiments.md) and [reproducibility](docs/reproducibility.md).
-- [Historical evidence](docs/history.md), [contest artifacts](submissions/codingame/README.md), and [model provenance](models/README.md).
+| Directory | Contents |
+| --- | --- |
+| `include/`, `src/` | C++ rules, search, bots, match runners, and browser bridges. |
+| `submissions/codingame/bots/` | Standalone contest bots and their tests. |
+| `tests/`, `cmake/` | Test suites and build configuration. |
+| `tools/`, `scripts/` | Training, data validation, and build tools. |
+| `models/`, `benchmarks/` | Model records, benchmark data, and reports. |
+| `web/` | Static browser game, review interface, and result pages. |
+| `docs/` | Engine guides, development instructions, and research history. |
+| `results/` | Local experiment output and selected historical records. |
+
+The [documentation index](docs/README.md) provides four starting points:
+**Engine**, **Bots**, **Results**, and **Development**.
 
 ## License
 
-Owner-authored source and documentation are available under the [MIT License](LICENSE).
-See [NOTICE](NOTICE.md) for attribution and the status of generated or external material.
+Source and documentation are available under the [MIT License](LICENSE).
+See [NOTICE](NOTICE.md) for third-party attribution and artifact licenses.

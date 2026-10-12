@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const toolsDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,11 @@ if (config.schema !== "papersoccer.codingame-submission.v1" ||
   fail(`Invalid bot configuration: ${path.relative(repositoryRoot, configPath)}`);
 }
 
+const mode = config.mode ?? "generated";
+if (mode !== "generated" && mode !== "standalone") {
+  fail("mode must be generated or standalone.");
+}
+
 const manifestPath = containedPath(
   botDirectory,
   config.sources ?? "sources.txt",
@@ -76,6 +82,37 @@ if (!Array.isArray(generators) ||
     !generators.every((value) => typeof value === "string")) {
   fail("generators must be an array of relative script paths.");
 }
+
+if (mode === "standalone") {
+  if (generators.length > 0 || stripLeadingWhitespace || config.sources !== undefined) {
+    fail("Standalone submissions cannot use generators or source transformations.");
+  }
+  if (typeof config.source_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(config.source_sha256)) {
+    fail("Standalone submissions require a source_sha256 digest.");
+  }
+  if (!fs.existsSync(outputPath)) {
+    fail(`Missing standalone submission: ${path.relative(repositoryRoot, outputPath)}`);
+  }
+  const source = fs.readFileSync(outputPath);
+  if (source.length === 0 || source.some((value) => value > 0x7f)) {
+    fail("Standalone submission must contain non-empty ASCII source.");
+  }
+  if (source.length > sourceLimit || source.length >= 100_000) {
+    fail(`Standalone submission is ${source.length} characters; limit is ${Math.min(sourceLimit, 99_999)}.`);
+  }
+  if (/^\s*#\s*include\s*"/m.test(source.toString("ascii"))) {
+    fail("Standalone submission cannot contain a local include.");
+  }
+  if (createHash("sha256").update(source).digest("hex") !== config.source_sha256) {
+    fail("Standalone submission does not match its source_sha256 digest.");
+  }
+  process.stdout.write(
+    `${botName} standalone submission verified (${source.length} characters).\n`,
+  );
+  process.exit(0);
+}
+
 for (const generator of generators) {
   const generatorPath = containedPath(botDirectory, generator, "generator");
   const result = spawnSync(

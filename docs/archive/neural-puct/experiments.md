@@ -95,7 +95,7 @@ All operational checks were clean, so the failure is performance rather than
 legality or truncation. Fixed-work strength did not survive the action head's
 equal-clock cost. The seed-20260809 maintained model remains deployed, and no
 performance candidate was uploaded. Full hash-bound evidence is in
-[`live_replay/FIRST_ITERATION_REPORT.md`](live_replay/FIRST_ITERATION_REPORT.md).
+[first model iteration](first-iteration.md).
 
 ## Rejected architecture and search families
 
@@ -139,5 +139,5 @@ ended before label construction. The neural bot's own 2,079 played primitive
 actions were not copied as expert targets; the 2,659 available strong-opponent
 actions remain untrained. The action-conditioned head, three-seed training,
 candidate match gates, and performance upload were all skipped. See
-[`live_replay/FIRST_ROUND_REPORT.md`](live_replay/FIRST_ROUND_REPORT.md) for the
+[first collection round](first-round.md) for the
 hash-bound audit.

@@ -6,7 +6,7 @@ interpret a diagnostic as a passing qualification.
 
 ## Best recorded public result
 
-The [9 October 2026 release](../submissions/codingame/releases/20261009-rank2/README.md)
+The [quantized alpha-beta record](../submissions/codingame/bots/quantized_alpha_beta/README.md)
 records **rank 2 of 212 players** on CodinGame Paper Soccer. It includes the
 exact standalone source, a crop of the archived leaderboard status screenshot,
 and public provenance metadata. The source SHA-256 is

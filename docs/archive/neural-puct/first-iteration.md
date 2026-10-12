@@ -1,5 +1,7 @@
 # First live replay model iteration: rejected at equal clock
 
+Artifact paths in this report refer to the [live replay evidence store](../../../submissions/codingame/bots/neural_puct/live_replay/README.md).
+
 The resumed append-only round crossed the frozen 50-game floor, produced the
 first shared action-conditioned policy candidate, and exercised every allowed
 gate. The selected candidate passed preflight, passed the 7-5 default floor,

@@ -1,0 +1,8 @@
+{
+  "schema": "papersoccer.codingame-submission.v1",
+  "mode": "standalone",
+  "output": "submission.cpp",
+  "source_limit": 99999,
+  "allowed_local_includes": [],
+  "source_sha256": "78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8"
+}

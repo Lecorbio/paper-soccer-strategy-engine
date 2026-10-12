@@ -202,9 +202,12 @@ set(PAPERSOCCER_CODINGAME_BOTS
 # reviews them.  Their own campaign receipts must not imply a leaderboard claim.
 set(PAPERSOCCER_CODINGAME_RESEARCH_BOTS
   compact_value_bfm)
+set(PAPERSOCCER_CODINGAME_STANDALONE_BOTS
+  quantized_alpha_beta)
 set(PAPERSOCCER_CODINGAME_BUILD_BOTS
   ${PAPERSOCCER_CODINGAME_BOTS}
-  ${PAPERSOCCER_CODINGAME_RESEARCH_BOTS})
+  ${PAPERSOCCER_CODINGAME_RESEARCH_BOTS}
+  ${PAPERSOCCER_CODINGAME_STANDALONE_BOTS})
 
 macro(papersoccer_register_codingame_submissions)
   foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
@@ -215,6 +218,17 @@ macro(papersoccer_register_codingame_submissions)
 
     add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission.cpp")
+    if(PAPERSOCCER_CODINGAME_BOT IN_LIST PAPERSOCCER_CODINGAME_STANDALONE_BOTS)
+      if(Python3_Interpreter_FOUND)
+        add_test(NAME ${PAPERSOCCER_CODINGAME_PREFIX}_artifact_identity
+          COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE} -m unittest
+            tests.codingame.test_rank_two_release.RankTwoRelease.test_published_source_and_screenshot_match_manifest)
+        set_tests_properties(${PAPERSOCCER_CODINGAME_PREFIX}_artifact_identity
+          PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+      endif()
+      continue()
+    endif()
     add_executable(${PAPERSOCCER_CODINGAME_PREFIX}_submission_test
       "${PAPERSOCCER_CODINGAME_BOT_DIRECTORY}/submission_test.cpp")
     if(PAPERSOCCER_CODINGAME_BOT STREQUAL "all_depth_proof" OR
@@ -453,6 +467,10 @@ endmacro()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CodingameTargets.cmake)
 macro(papersoccer_register_submission_protocol_checks)
+      add_test(
+        NAME papersoccer_codingame_submission_generator_tests
+        COMMAND ${PAPERSOCCER_NODE_EXECUTABLE} --test
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/codingame/generate_submission_test.mjs)
       foreach(PAPERSOCCER_CODINGAME_BOT IN LISTS PAPERSOCCER_CODINGAME_BUILD_BOTS)
         papersoccer_codingame_target_prefix(
           PAPERSOCCER_CODINGAME_PREFIX "${PAPERSOCCER_CODINGAME_BOT}")

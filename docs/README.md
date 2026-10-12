@@ -1,48 +1,31 @@
 # Documentation
 
-Start with the [project overview](../README.md), then choose the task you want
-to perform. Current instructions live here; frozen reports retain the contract
-and conclusions of the experiment that produced them.
+Start with the [project overview](../README.md), then choose a path below.
 
-## Play and understand the engine
+## Engine
 
-- [Demo, CLI, Game Review, and replays](demo-and-replays.md)
-- [Architecture and repository boundaries](architecture.md)
-- [Rules, bots, and search algorithms](algorithms.md)
+- [Architecture](architecture.md): the shared rules engine, native tools, and WebAssembly boundaries.
+- [Rules and algorithms](algorithms.md): rebounds, complete-turn search, neural evaluation, and endgame proofs.
+- [Play and review games](demo-and-replays.md): browser play, the CLI, Game Review, and replay export.
 
-## Develop and verify changes
+## Bots
 
-- [Development workflow](development.md): checkouts, builds, tests, and evidence handling
-- [Reproducibility](reproducibility.md): exact toolchains and artifact checks
-- [Tooling guide](tooling.md): script families and responsibilities
+- [Bot catalog](../submissions/codingame/bots/README.md): all 24 standalone contest bots.
+- [Quantized alpha-beta](../submissions/codingame/bots/quantized_alpha_beta/README.md): the source behind the recorded rank-2 result.
+- [CodinGame guide](../submissions/codingame/README.md): source generation, protocol, and contest records.
+- [Model guide](../models/README.md): feature representations, training, and checked-in checkpoints.
 
-## Plan an experiment
+## Results
 
-- [Campaign catalog](campaigns.md): status, outcomes, commands, and evidence
-- [Experiment methodology](experiments.md): paired comparisons and claim boundaries
-- [Replay BFM](jacek-replay-bfm.md), [self-search](jacek-selfsearch-campaign.md),
-  [rebuild](jacek-replay-rebuild.md), and [exploratory self-search](jacek-selfsearch-exploratory.md)
-- [Compact value model](compact-value-bfm.md), [teacher training](compact-value-bfm-teacher-training.md),
-  [pilot pipeline](compact-value-bfm-pilot-pipeline.md), and [training v2](compact-value-bfm-trained-v2.md)
-- [Rank-4 challenger](compact-value-bfm-rank4-teacher-challenger.md),
-  [release bridge](compact-value-bfm-rank4-teacher-release.md), and
-  [dual-final execution](compact-value-bfm-rank4-teacher-dual-final.md)
+- [Four-bot benchmark study](../benchmarks/flagship_study/REPORT.md): 4,800 color-swapped games under demo rules.
+- [Local contest leaderboard](../benchmarks/codingame_leaderboard/README.md): a frozen 22-bot, 990-game comparison.
+- [Game Review evaluation](../benchmarks/game_review_gate/REPORT.md): analysis quality and native/WebAssembly measurements.
+- [Experiment methodology](experiments.md): paired comparisons, search budgets, and interpretation.
+- [Research archive](archive/README.md): completed experiments, outcomes, and historical protocols.
 
-These pages describe capabilities and historical protocols. An example command
-does not reopen a completed campaign or allocate another experiment.
+## Development
 
-## Read results and provenance
-
-- [Eight-unit campaign outcome](live-eight-campaign-outcome.md): closed on 12 October 2026 without promotion; separate unchanged-source retries did not regain rank two
-
-- [Best recorded CodinGame result: rank 2/212](../submissions/codingame/releases/20261009-rank2/README.md): exact source and leaderboard screenshot, 9 October 2026
-
-- [Historical evidence guide](history.md)
-- [Frozen flagship study](../benchmarks/flagship_study/REPORT.md)
-- [Game Review acceptance](../benchmarks/game_review_gate/REPORT.md)
-- [Local bot leaderboard](../benchmarks/codingame_leaderboard/README.md)
-- [Large-teacher outcome](../benchmarks/large_teacher_campaign/REPORT.md)
-- [Compact Rank-4 campaign outcome](compact-value-bfm-rank4-campaign-outcome.md)
-- [Compact training-v2 outcome](../benchmarks/compact_value_bfm/TRAINED_V2_OUTCOME.md)
-- [Contest submission archive](../submissions/codingame/README.md)
-- [Model artifacts](../models/README.md)
+- [Build and test](development.md): the normal workflow and focused checks.
+- [Reproducibility](reproducibility.md): exact toolchains, generated sources, and benchmark commands.
+- [Tooling guide](tooling.md): data, training, evaluation, and publication tools.
+- [Historical records](history.md): preserved sources and result provenance.

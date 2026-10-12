@@ -1,106 +1,68 @@
-# CodinGame submissions
+# CodinGame bots
 
-CodinGame support is split into reusable tooling and self-contained bots:
+Standalone C++20 bots for [Paper Soccer on CodinGame](https://www.codingame.com/multiplayer/bot-programming/paper-soccer),
+from complete-turn alpha-beta search to neural tree search and exact rebound
+proofs. Each bot has its own source, tests, and design notes.
+
+Start with **[Quantized alpha-beta](bots/quantized_alpha_beta/README.md)**, the
+bot behind the best recorded result: **rank 2 of 212 players**, observed on
+**9 October 2026**. Its [standalone source](bots/quantized_alpha_beta/submission.cpp)
+is 99,032 ASCII characters and uses a four-bit value network with complete-turn
+alpha-beta search. The earlier
+[27 September record](bots/quantized_alpha_beta/history/2026-09-27/README.md)
+contains the same source. These are dated platform observations; they do not
+promise a current rank.
+
+**[Browse all 24 bots](bots/README.md)** ·
+**[Local comparison results](../../benchmarks/codingame_leaderboard/README.md)** ·
+**[Generation and protocol tools](tools/README.md)**
+
+## Layout
 
 ```text
 submissions/codingame/
-├── bots/                 22 leaderboard artifacts plus research-only entrants
-├── promotion/            historical rank-5-baseline promotion evidence
-├── releases/             immutable, source-bound public releases
-└── tools/                shared generation, protocol, and replay utilities
+├── bots/       standalone bots, tests, design notes, and source history
+├── promotion/  frozen comparison protocol and historical evidence
+└── tools/      source generation, protocol checks, and replay utilities
 ```
 
-Every registered bot uses the same small contract. Immutable releases under
-`releases/` retain their exact source bytes separately. Its directory contains
-`submission.json`, an ordered `sources.txt`, maintained implementation files,
-`submission_test.cpp`, and the generated paste-ready `submission.cpp`. Optional
-data generators and timing probes stay beside the bot that owns them. Historical
-bot-specific ledgers normally stay with their source; the two newer campaign
-tracks keep their content-addressed cross-tool evidence under
-`results/rank_4_jacek_hybrid/` and selected `results/jacek_arena_bfm/` paths.
+Most bots pair maintained implementation files with a generated
+`submission.cpp`. Quantized alpha-beta is an exact source snapshot with an
+identity check instead of a generator. See the
+[bot directory guide](bots/README.md#working-with-a-bot) for the distinction.
 
-Generate or verify any registered submission from the repository root:
+## Build and test
+
+Run these commands from the repository root after the
+[project setup](../../docs/development.md#build-and-test):
 
 ```sh
-node submissions/codingame/tools/generate_submission.mjs BOT_NAME
-node submissions/codingame/tools/generate_submission.mjs BOT_NAME --check
-cmake -S . -B build
-cmake --build build -j4
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native --parallel 2 --target \
+  papersoccer_codingame_quantized_alpha_beta_submission
+ctest --test-dir build/native -R quantized_alpha_beta --output-on-failure
 ```
 
-The separate historical promotion manifest currently binds `all_depth_proof`.
-Validate that frozen contract explicitly with:
+Each bot page gives its own focused checks. For the complete project suite,
+run `PAPERSOCCER_BUILD_JOBS=2 ./scripts/build-and-test.sh`.
 
-```sh
-python3 submissions/codingame/tools/promotion_gate.py validate \
-  --bot all_depth_proof
-```
+## Reading the results
 
-Do not edit a registered bot's generated `submission.cpp` directly. Immutable
-release sources are also preserved byte for byte. Change the maintained bot source or
-data and regenerate it. See [bots/README.md](bots/README.md) for the directory
-contract and the shortest path to starting another bot. Shared command details
-are in [tools/README.md](tools/README.md).
+The [bot catalog](bots/README.md) distinguishes historical platform ranks,
+local match results, and experiments that did not pass their comparison gates.
+The frozen local leaderboard compares 22 bots under the same contest rules;
+Quantized alpha-beta and Compact value minimax are additional buildable bots,
+outside that roster. Adding a bot to the project does not add a result to the
+frozen tournament.
 
-## Current production and provenance
+The browser's `Rank5DerivedBot` is an adapter of the historical replay-guided
+alpha-beta bot. Its rules and work limits differ from CodinGame, so platform
+ranks do not transfer to the demo.
 
-The [current published bot](releases/20261009-rank2/README.md) achieved the
-best recorded result: **rank 2 of 212 players**, observed on **9 October 2026**.
-The release includes its exact 99,032-character C++20 source and the archived
-leaderboard status screenshot. It uses a 6,301 → 12 → 8 → 1 four-bit value
-network with complete-turn alpha-beta search and 550/140 ms budgets. This is
-the same source as the [27 September rank-3 release](releases/20260927-rank3/README.md).
-The rank-2 observation is a dated snapshot, not a new formal qualification.
+## Historical evidence
 
-[`rank_4`](bots/rank_4/README.md) retains the historical version-56 result:
-agent `6604719`, submission `41114327`, rank 4/208, score
-`44.29750553418035` and a 66-24 record. Its generated source and evidence remain
-unchanged. The current published release is outside the 22-bot registry.
-
-[`rank_5`](bots/rank_5/README.md) is the immutable verified predecessor and the
-source behind the separately named browser `Rank5DerivedBot`. Its historical
-rank 5/206 result remains valid, but it is not the current production result.
-The browser adapter uses different rules and fixed work, so it inherits neither
-historical platform rank or the latest release result. Local tournament standings are likewise reported only as
-**Local CodinGame-style score**.
-
-## Registered artifact index
-
-The CMake registry and local leaderboard contain the same 22 submission
-directories, with every directory represented by one entrant. Leaderboard
-inclusion records protocol-faithful local tournament performance and is
-independent of live-upload or promotion status.
-
-- **Current published release:** [rank 2/212](releases/20261009-rank2/README.md),
-  outside the registered local roster.
-- **Historical registered production snapshot:** [`rank_4`](bots/rank_4/README.md).
-- **Verified lineage and prior baseline:**
-  [`rank_5`](bots/rank_5/README.md) and
-  [`alpha_beta`](bots/alpha_beta/README.md).
-- **Rank-4 search experiments:**
-  [`rank_4_jacek_hybrid`](bots/rank_4_jacek_hybrid/README.md),
-  [`rank_4_exchange`](bots/rank_4_exchange/README.md), and
-  [`rank_4_fullturn_bfm`](bots/rank_4_fullturn_bfm/README.md).
-- **Other search and learning tracks:**
-  [`challenger`](bots/challenger/README.md),
-  [`selfplay_nn`](bots/selfplay_nn/README.md),
-  [`jacek_nn`](bots/jacek_nn/README.md),
-  [`jacek_native_bfm`](bots/jacek_native_bfm/README.md),
-  [`jacek_arena_bfm`](bots/jacek_arena_bfm/README.md), and
-  [`neural_puct`](bots/neural_puct/README.md).
-- **Proof and ordering experiments:**
-  [`topology`](bots/topology/README.md),
-  [`safe_inward`](bots/safe_inward/README.md),
-  [`rebound_proof`](bots/rebound_proof/README.md),
-  [`defensive_proof`](bots/defensive_proof/README.md),
-  [`shell_proof`](bots/shell_proof/README.md),
-  [`all_depth_proof`](bots/all_depth_proof/README.md),
-  [`reply_proof`](bots/reply_proof/README.md),
-  [`exchange_proof`](bots/exchange_proof/README.md),
-  [`frontier_proof`](bots/frontier_proof/README.md), and
-  [`conservative_frontier_proof`](bots/conservative_frontier_proof/README.md).
-
-All 22 entrants and their artifact hashes are in
-[`benchmarks/codingame_leaderboard/roster.json`](../../benchmarks/codingame_leaderboard/roster.json);
-each registered submission directory is represented exactly once.
+Source snapshots, frozen reports, seeds, and recorded game identities retain
+their original bytes. Bot-specific records are linked from each bot page;
+cross-tool research records remain at their original paths. The
+[history guide](../../docs/history.md) explains those boundaries, and the
+[campaign catalog](../../docs/campaigns.md) records completed work.

@@ -31,7 +31,7 @@ source-bound Rank-4 gate. Its raw shards, checkpoints, banks, games, and live
 records remain ignored; no result is promoted by offline evaluator metrics
 alone.
 
-For a reader-focused presentation of the current frozen four-bot result, see
+For a compact view of the four-bot study, see
 the live [benchmark overview](https://lecorbio.github.io/paper-soccer-strategy-engine/benchmarks/).
 The [flagship study report](../benchmarks/flagship_study/REPORT.md) retains the
 full technical analysis.
@@ -57,8 +57,8 @@ interval. Position reports contain equivalent per-entrant work on shared states.
 Create a release build and reserve the local output directory:
 
 ```bash
-cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
 mkdir -p results
 ```
 
@@ -67,13 +67,13 @@ against the frozen Tactical + RolloutOnly MCTS reference, both at 2,000 new
 iterations and the same exploration and tree-node limits:
 
 ```bash
-./build/release/papersoccer_arena positions --positions 16 \
+./build/native/papersoccer_arena positions --positions 16 \
   > results/quiescence-positions.json
 
-./build/release/papersoccer_arena matches --pairs 20 \
+./build/native/papersoccer_arena matches --pairs 20 \
   > results/quiescence-equal-iterations-20-pairs.json
 
-./build/release/papersoccer_arena matches --pairs 20 --opening-plies 8 \
+./build/native/papersoccer_arena matches --pairs 20 --opening-plies 8 \
   > results/quiescence-randomized-openings.json
 ```
 
@@ -92,7 +92,7 @@ and an external versioned checkpoint. A loader/search smoke run with the
 checked-in, explicitly untrained bootstrap checkpoint is:
 
 ```bash
-./build/release/papersoccer_arena positions \
+./build/native/papersoccer_arena positions \
   --rules codingame \
   --positions 16 \
   --candidate-kind jacek-replay-bfm \
@@ -152,7 +152,7 @@ Reproduce an alpha-beta versus MCTS report without writing raw JSON at the
 repository root:
 
 ```bash
-./build/release/papersoccer_arena positions \
+./build/native/papersoccer_arena positions \
   --positions 32 \
   --candidate-kind alpha-beta \
   --candidate-alpha-beta-depth 6 \
@@ -161,7 +161,7 @@ repository root:
   --reference-iterations 2000 \
   > results/alpha-beta-positions.json
 
-./build/release/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 200 \
   --candidate-kind alpha-beta \
   --candidate-alpha-beta-depth 6 \
@@ -195,7 +195,7 @@ The later staged evaluation kept TacticalQuiescence experimental. The exact
 equal-iteration preliminary command was:
 
 ```bash
-./build/release/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 20 \
   --seed 828927513140 \
   --candidate-policy tactical \
@@ -216,13 +216,13 @@ iteration can perform extra tactical search. Shared-position measurements were
 used to choose an approximately latency-matched 1,250-iteration candidate:
 
 ```bash
-./build/release/papersoccer_arena positions \
+./build/native/papersoccer_arena positions \
   --positions 32 \
   --candidate-iterations 2000 \
   --reference-iterations 2000 \
   > results/quiescence-latency-tuning.json
 
-./build/release/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 20 \
   --candidate-iterations 1250 \
   --reference-iterations 2000 \
@@ -394,7 +394,7 @@ a separate MCTS measurement and does not measure quiescence or Rank5Derived.
 
 ## CodinGame evidence
 
-The [current published release](../submissions/codingame/releases/20261009-rank2/README.md)
+The [featured standalone bot](../submissions/codingame/bots/quantized_alpha_beta/README.md)
 records **rank 2 of 212 players**, observed on 9 October 2026. Its exact source
 and archived leaderboard status screenshot are published together. The source
 is unchanged from the 27 September rank-3 release; this later observation is
@@ -417,5 +417,5 @@ score `42.42773147296124` after a completed 57-33 batch. Its generated source
 SHA-256 is `f29959c4b6db6225de4e3913ee1eb020c7adf4e5363cabff545bfa275d0dce29`.
 `Rank5DerivedBot` adapts the historical rank-5 source to different browser
 rules and fixed work. Its measurements cannot be assigned to the historical
-rank-4 artifact or the current rank-2 release. The [submission archive](../submissions/codingame/README.md) records
+rank-4 artifact or the quantized alpha-beta source. The [submission archive](../submissions/codingame/README.md) records
 the full lineage and every separate experiment.

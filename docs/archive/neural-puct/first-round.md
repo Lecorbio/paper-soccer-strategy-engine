@@ -1,5 +1,7 @@
 # First live replay round: waiting for data
 
+Artifact paths in this report refer to the [live replay evidence store](../../../submissions/codingame/bots/neural_puct/live_replay/README.md).
+
 The first append-only round completed on 2026-08-09 with **34 independent,
 rule-valid new games**, below the predeclared floor of 50. The result is the
 protocol's completion path B: retain the maintained neural model, perform no

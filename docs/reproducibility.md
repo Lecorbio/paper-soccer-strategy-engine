@@ -22,8 +22,8 @@ Training and research scripts additionally use Python 3.12–3.14 and the pinned
 package in `requirements-research.txt`. The C++ engine, CLI, checked-in models,
 and live browser game have no Python or NumPy runtime dependency.
 
-The [quick start](../README.md#quick-start) installs that dependency before the
-complete suite. The [development guide](development.md) explains portable
+The [build guide](../README.md#build-and-play) separates the core engine from the
+complete suite, which needs that dependency. The [development guide](development.md) explains portable
 contract checks and optional local recovery forensics. The [tooling guide](tooling.md)
 maps script families; the [campaign catalog](campaigns.md) distinguishes current
 capabilities from completed experiments.
@@ -48,15 +48,15 @@ test recipe.
 The equivalent manual sequence is useful while developing a single target:
 
 ```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build/native
+cmake --build build/native
+ctest --test-dir build/native --output-on-failure
 ```
 
 Run the core binary directly when isolating a C++ failure:
 
 ```bash
-./build/papersoccer_tests
+./build/native/papersoccer_tests
 ```
 
 When Node.js 18+ is available, CTest registers browser/Wasm, UI support, replay
@@ -94,19 +94,17 @@ python tools/train_jacek_neural.py --help >/dev/null
 by research/training code; application and test runtime dependencies are not
 inflated to mirror a developer machine.
 
-## Generated CodinGame submissions
+## Standalone CodinGame bots
 
-The [current published release](../submissions/codingame/releases/20261009-rank2/README.md)
+The [featured standalone bot](../submissions/codingame/bots/quantized_alpha_beta/README.md)
 is the exact source behind the best recorded **rank 2/212**, observed on
-9 October 2026. It is immutable and outside the per-bot generation workflow.
-Compile it and verify its identity:
+9 October 2026. It is a standalone snapshot: the submission tool verifies its
+identity without rewriting it. Compile it and verify its identity:
 
 ```bash
-mkdir -p build/codingame
-clang++ -std=c++20 -O3 -DNDEBUG \
-  submissions/codingame/releases/20261009-rank2/submission.cpp \
-  -o build/codingame/rank2
-cmake -E sha256sum submissions/codingame/releases/20261009-rank2/submission.cpp
+node submissions/codingame/tools/generate_submission.mjs quantized_alpha_beta --check
+cmake --build build/native --target papersoccer_codingame_quantized_alpha_beta_submission -j2
+cmake -E sha256sum submissions/codingame/bots/quantized_alpha_beta/submission.cpp
 ```
 
 Expected SHA-256:
@@ -186,8 +184,8 @@ First configure a Release build and compile the native referee and submission
 executables:
 
 ```bash
-cmake -S . -B build/leaderboard -DCMAKE_BUILD_TYPE=Release
-cmake --build build/leaderboard
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
 ```
 
 Run the fast contract validation independently of a full tournament:
@@ -203,9 +201,9 @@ complete-turn protocol, and enforces 1,000 ms for each bot's first response and
 
 ```bash
 python3 benchmarks/codingame_leaderboard/leaderboard.py run \
-  --referee build/leaderboard/papersoccer_codingame_referee \
-  --build-dir build/leaderboard \
-  --checkpoint build/leaderboard/leaderboard-checkpoint.json \
+  --referee build/native/papersoccer_codingame_referee \
+  --build-dir build/native \
+  --checkpoint build/native/leaderboard-checkpoint.json \
   --output benchmarks/codingame_leaderboard/tournament.json
 ```
 
@@ -231,12 +229,12 @@ Validate a completed raw artifact, then derive the compact static snapshot:
 ```bash
 python3 benchmarks/codingame_leaderboard/leaderboard.py validate \
   --artifact benchmarks/codingame_leaderboard/tournament.json \
-  --referee build/leaderboard/papersoccer_codingame_referee
+  --referee build/native/papersoccer_codingame_referee
 
 python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
   --input benchmarks/codingame_leaderboard/tournament.json \
   --output web/leaderboard/leaderboard-results.js \
-  --referee build/leaderboard/papersoccer_codingame_referee
+  --referee build/native/papersoccer_codingame_referee
 ```
 
 The raw `papersoccer.codingame-leaderboard-tournament.v1` artifact retains the
@@ -250,7 +248,7 @@ freshness without rewriting either file:
 python3 benchmarks/codingame_leaderboard/leaderboard.py publish \
   --input benchmarks/codingame_leaderboard/tournament.json \
   --output web/leaderboard/leaderboard-results.js \
-  --referee build/leaderboard/papersoccer_codingame_referee \
+  --referee build/native/papersoccer_codingame_referee \
   --allow-historical-sources --check
 ```
 
@@ -356,11 +354,11 @@ In that archival environment, first build an optimized native arena and verify
 all frozen opening identities:
 
 ```bash
-cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
 
 python3 benchmarks/game_review_gate/run_gate.py validate \
-  --opening-tool build/release/papersoccer_opening_bank \
+  --opening-tool build/native/papersoccer_opening_bank \
   --verify-regeneration
 ```
 
@@ -369,11 +367,11 @@ stores raw reports below the manifest-bound `results/game_review_gate/` path:
 
 ```bash
 python3 benchmarks/game_review_gate/run_gate.py run \
-  --phase development --arena build/release/papersoccer_arena
+  --phase development --arena build/native/papersoccer_arena
 python3 benchmarks/game_review_gate/run_gate.py aggregate --phase development
 
 python3 benchmarks/game_review_gate/run_gate.py run \
-  --phase validation --arena build/release/papersoccer_arena
+  --phase validation --arena build/native/papersoccer_arena
 python3 benchmarks/game_review_gate/run_gate.py aggregate --phase validation
 ```
 
@@ -435,11 +433,11 @@ an arena from another or dirty source state. They rebuilt the native Release
 arena from that exact clean commit, then ran the test exactly once:
 
 ```bash
-cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release --target papersoccer_arena
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native --target papersoccer_arena
 
 python3 benchmarks/game_review_gate/run_gate.py run \
-  --phase test --arena build/release/papersoccer_arena
+  --phase test --arena build/native/papersoccer_arena
 python3 benchmarks/game_review_gate/run_gate.py aggregate --phase test
 python3 benchmarks/game_review_gate/run_gate.py report
 python3 benchmarks/game_review_gate/run_gate.py validate --require-complete
@@ -493,7 +491,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target papersoccer_jacek_training_data
 mkdir -p results/research/jacek_article
 
-./build/papersoccer_jacek_training_data \
+./build/native/papersoccer_jacek_training_data \
   results/research/jacek_article/training_v2.jsonl 1024 73194721 4000
 
 python3 tools/train_jacek_neural.py \

@@ -1,8 +1,8 @@
-# Eight-unit network campaign outcome
+# Eight-unit model study
 
-The live-led 8/8 extension was **stopped by its owner on 12 October 2026**.
-No experimental source qualified for promotion. The original incumbent was
-restored for the post-stop ranking retries: a bias-free 6,301 → 12 → 8 → 1
+The experiment closed on **12 October 2026** without replacing the baseline bot.
+No candidate passed the final selection requirements. The original bot was
+restored for the later ranking submissions: a bias-free 6,301 → 12 → 8 → 1
 network, four-bit weights and 550/140 ms search budgets. Its source bytes were
 unchanged throughout that block.
 
@@ -86,7 +86,7 @@ failures. Source bytes were unchanged throughout and independently checked
 against editor copybacks. These ranking-only retries are exclusion evidence,
 not training data, a new qualification block or evidence of a strength increase.
 
-The [9 October rank-2 release](../submissions/codingame/releases/20261009-rank2/README.md)
+The [9 October rank-2 observation](../submissions/codingame/bots/quantized_alpha_beta/README.md)
 remains an immutable, dated historical observation. Its source hash is unchanged:
 
 ```text

@@ -1,8 +1,8 @@
-# Tooling guide
+# Tools and workflows
 
-The tools follow the same pipeline: freeze inputs, generate or label positions,
-train, select on development evidence, qualify on protected evidence, then
-publish a bounded claim. A stage's receipt is the input to the next stage.
+Start with the task you want to complete. Build commands, submission verification,
+and small contract tests are separate from the runners used for past experiments.
+The [tool directory](../tools/README.md) provides a shorter entry-point index.
 
 ## Build, application, and publication tools
 
@@ -58,3 +58,21 @@ then follow validation before execution. Tests under `tests/codingame/` show
 small valid fixtures and rejection cases. The [architecture guide](architecture.md)
 covers native boundaries; [historical evidence](history.md) explains which
 files must retain their original bytes.
+
+## Small-network and live comparisons
+
+| Family | What it covers | Documentation |
+| --- | --- | --- |
+| `rank_two_focused_*` | Small-network training, checkpoint conversion, data isolation, and native validation | [Focused-network study](focused-network-campaign.md) |
+| `rank_two_live_eight_*` | Eight-unit models, quantization, timing, and matched live comparisons | [Eight-unit outcome](live-eight-campaign-outcome.md) |
+| `rank_two_live_*` | Historical platform observations, game archives, and comparison windows | [Live comparison protocol](rank-two-live-research.md) |
+| `top_three_*` and versioned queue modules | Earlier search experiments and bounded job execution | [Research archive](archive/README.md) |
+
+The [experiment catalog](campaigns.md) records the status of each study. Version
+suffixes distinguish recorded procedures, not interchangeable commands. Reading
+a completed result does not require replaying its training or games.
+
+Some historical recorders require a particular archived workspace. They are kept
+for reproducing old records and are not portable setup commands. Use the recorded
+tool version when checking old evidence; source and runtime records can include
+that tool's hash.

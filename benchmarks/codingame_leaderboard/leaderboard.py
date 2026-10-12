@@ -268,10 +268,22 @@ def _research_bots(repository: Path, roster: Mapping[str, Any]) -> list[str]:
     )
 
 
+def _standalone_bots(repository: Path, roster: Mapping[str, Any]) -> list[str]:
+    registry = roster.get("cmakeRegistry")
+    _require(isinstance(registry, dict), "roster.cmakeRegistry must be an object")
+    return _cmake_bot_list(
+        repository,
+        cmake_path=repository / str(registry.get("path", "")),
+        variable="PAPERSOCCER_CODINGAME_STANDALONE_BOTS",
+        required=False,
+    )
+
+
 def _validate_build_bot_registry(
-    repository: Path, roster: Mapping[str, Any], research: Sequence[str]
+    repository: Path, roster: Mapping[str, Any], research: Sequence[str],
+    standalone: Sequence[str] = (),
 ) -> None:
-    if not research:
+    if not research and not standalone:
         return
     registry = roster.get("cmakeRegistry")
     _require(isinstance(registry, dict), "roster.cmakeRegistry must be an object")
@@ -281,13 +293,13 @@ def _validate_build_bot_registry(
         cmake_path=cmake_path,
         variable="PAPERSOCCER_CODINGAME_BUILD_BOTS",
     )
-    _require(
-        build_sources == [
-            "${PAPERSOCCER_CODINGAME_BOTS}",
-            "${PAPERSOCCER_CODINGAME_RESEARCH_BOTS}",
-        ],
-        "CMake build bot registry is not the exact leaderboard/research union",
-    )
+    expected_sources = ["${PAPERSOCCER_CODINGAME_BOTS}"]
+    if research:
+        expected_sources.append("${PAPERSOCCER_CODINGAME_RESEARCH_BOTS}")
+    if standalone:
+        expected_sources.append("${PAPERSOCCER_CODINGAME_STANDALONE_BOTS}")
+    _require(build_sources == expected_sources,
+             "CMake build bot registry is not the exact leaderboard/research/standalone union")
     text = cmake_path.read_text(encoding="utf-8")
     build_loops = re.findall(
         r"foreach\s*\(\s*PAPERSOCCER_CODINGAME_BOT\s+IN\s+LISTS\s+"
@@ -296,7 +308,7 @@ def _validate_build_bot_registry(
     )
     _require(
         len(build_loops) == 2,
-        "CMake submission build/current-test loops do not use the research union",
+        "CMake submission build/current-test loops do not use the complete build union",
     )
 
 
@@ -395,7 +407,8 @@ def validate_roster(
 
     registered = _registered_bots(repository, roster)
     research = _research_bots(repository, roster)
-    _validate_build_bot_registry(repository, roster, research)
+    standalone = _standalone_bots(repository, roster)
+    _validate_build_bot_registry(repository, roster, research, standalone)
     _require(
         len(registered) == EXPECTED_REGISTERED_BOTS,
         f"CMake must register exactly {EXPECTED_REGISTERED_BOTS} bots",
@@ -409,6 +422,10 @@ def validate_roster(
         set(registered).isdisjoint(research),
         "leaderboard and research bot registries overlap",
     )
+    _require(len(set(standalone)) == len(standalone),
+             "CMake standalone bot registry contains duplicates")
+    _require(set(standalone).isdisjoint(set(registered) | set(research)),
+             "standalone and leaderboard/research bot registries overlap")
     _require(
         set(registered) == covered_directories,
         "leaderboard roster does not exactly cover the CMake bot registry",
@@ -418,8 +435,8 @@ def validate_roster(
         path.name for path in bot_root.iterdir() if path.is_dir() and (path / "submission.cpp").is_file()
     }
     _require(
-        artifact_directories == set(registered) | set(research),
-        "CMake leaderboard/research registries do not exactly cover directories containing submission.cpp",
+        artifact_directories == set(registered) | set(research) | set(standalone),
+        "CMake leaderboard/research/standalone registries do not exactly cover directories containing submission.cpp",
     )
     return normalized
 

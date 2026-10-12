@@ -1,7 +1,7 @@
 # Neural PUCT live replay archive
 
 This directory is the append-only public CodinGame evidence store used by the
-protocol in [`../LIVE_REPLAY_LOOP.md`](../LIVE_REPLAY_LOOP.md). The collector
+protocol in [live replay protocol](../../../../../docs/archive/neural-puct/live-replay-protocol.md). The collector
 freezes an exclusion registry before making any public API request, fetches
 battle metadata before replay details, and requests a detail only when the game
 is unseen, complete, and contains a current strong player whose actions are
@@ -94,7 +94,7 @@ decision. Its SHA-256 is
 `5c73139e9607ea97477aef212b6c015207cf66fb462fda8759003f98a4e897ef`.
 
 The completed first iteration is documented in
-[`FIRST_ITERATION_REPORT.md`](FIRST_ITERATION_REPORT.md). It crossed the
+[first model iteration](../../../../../docs/archive/neural-puct/first-iteration.md). It crossed the
 threshold with 68 games, trained three action-conditioned seeds, passed the
 default and fixed-work gates, then failed equal-clock development 29-67. No
 performance candidate was submitted.

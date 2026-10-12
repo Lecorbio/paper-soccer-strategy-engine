@@ -13,7 +13,7 @@ models/jacek_replay_bfm_promoted/*.runtime binary linguist-generated=true
 models/jacek_replay_bfm_promoted/*.runtime.json linguist-generated=true
 benchmarks/game_review_gate/game_review_calibration_lock.hpp linguist-generated=true
 
-# Paste-ready contest bundles and their generated private data headers.
+# Paste-ready contest bundles and their generated model and replay headers.
 submissions/codingame/bots/*/submission.cpp linguist-generated=true
 submissions/codingame/bots/*/replay_book.hpp linguist-generated=true
 submissions/codingame/bots/*/*_model.hpp linguist-generated=true

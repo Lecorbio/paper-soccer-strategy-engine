@@ -19,7 +19,7 @@ except ImportError:
     import compact_representation as codec, rank_two_minify as compact
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = ROOT / 'submissions/codingame/releases/20260927-rank3/submission.cpp'
+BASE = ROOT / 'submissions/codingame/bots/quantized_alpha_beta/submission.cpp'
 BASE_SHA = '78e731a81ce7cc702a200d0832a6c75e967a11b12452051724ab1387c226e4b8'
 SCHEMA = 'papersoccer.network32.runtime.v2'
 FEATURES = {

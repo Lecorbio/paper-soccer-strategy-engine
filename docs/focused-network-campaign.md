@@ -1,6 +1,10 @@
-# Focused network research
+# Focused-network study
 
-The successor begins with a common deployment and training pipeline, compares
+This study is complete. The later eight-unit extension also closed without
+replacing the baseline bot; see the [final outcome](live-eight-campaign-outcome.md).
+The plan and procedures below describe the historical experiment.
+
+The experiment began with a common deployment and training pipeline, compares
 degree-aware 8/8 and 12/16 networks under matched conditions, then retains one
 family for cumulative development. A failed promotion test retains its useful
 checkpoints, data and implementation findings.

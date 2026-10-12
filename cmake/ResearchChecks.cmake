@@ -42,6 +42,12 @@ if(Python3_Interpreter_FOUND AND NOT EMSCRIPTEN)
     NAME papersoccer_codingame_promotion_unit_tests
     COMMAND ${CMAKE_COMMAND} -E env
             PYTHONDONTWRITEBYTECODE=1
+            MKL_NUM_THREADS=1
+            NUMEXPR_NUM_THREADS=1
+            OMP_NUM_THREADS=1
+            OPENBLAS_NUM_THREADS=1
+            VECLIB_MAXIMUM_THREADS=1
+            PAPERSOCCER_COMPACT_TRAINING_THREADS_FIXED_BEFORE_NUMPY=1
             ${Python3_EXECUTABLE} -m unittest discover
             # Start here deliberately: tests/codingame is not a Python package,
             # so discovery rooted at tests does not recurse into this suite.

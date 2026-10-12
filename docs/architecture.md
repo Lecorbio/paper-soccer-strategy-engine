@@ -3,8 +3,8 @@
 Paper Soccer Strategy Engine keeps one C++20 rules model behind every frontend.
 The CLI, arena, replay exporter, native CodinGame referee, and browser session
 layer all operate on the same `GameState`, geometry, move-validation, and bot
-APIs. This avoids a common failure mode in strategy-engine projects: benchmarking one
-implementation while users play against another.
+APIs. Games, replay validation, and bot comparisons therefore use the same
+move and terminal-state logic.
 
 ## System flow
 
@@ -105,7 +105,7 @@ API.
 
 ## CodinGame referee and leaderboard boundaries
 
-The current [immutable contest release](../submissions/codingame/releases/20261009-rank2/README.md)
+The [featured standalone bot](../submissions/codingame/bots/quantized_alpha_beta/README.md)
 records the best observed platform rank, **2 of 212 players** on 9 October 2026.
 It uses a 6,301 → 12 → 8 → 1 four-bit value network within complete-turn
 alpha-beta search. The registered `rank_4` and `rank_5` sources retain their
@@ -132,7 +132,7 @@ decision timings, outcomes, failure classifications, artifact identities, and
 runtime provenance are retained in the raw match records.
 
 Only entries in `benchmarks/codingame_leaderboard/roster.json` are runnable.
-The manifest covers all 22 CMake-registered submission directories and stores
+The manifest covers the frozen 22-bot tournament roster and stores
 each entrant's generated-source SHA-256 and documentation link. Every directory
 maps to its own entrant. The runner invokes resolved executables directly with
 a clean environment and temporary working directory, bounds captured output,

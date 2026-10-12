@@ -37,7 +37,7 @@ def source_ref(path):
 def admit(root,source,*,safety=None,pilot=None,correctness=None,development=None,panel=None):
  root=Path(root);m=config(root);src=source_ref(source);refs={}
  if src['sha256']==m['control']['source']['sha256']:
-  release=ROOT/'submissions/codingame/releases/20260927-rank3/live-calibration.json'
+  release=ROOT/'submissions/codingame/bots/quantized_alpha_beta/history/2026-09-27/live-calibration.json'
   old=e.read(release)
   if old['coverage']['focus_operational_failures']!=0:raise ValueError('baseline operational evidence')
   refs['baseline_release']=e.raw_record(release);kind='verified-baseline'

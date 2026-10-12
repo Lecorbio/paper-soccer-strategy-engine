@@ -1,9 +1,13 @@
 # Model artifacts
 
-The repository tracks three independent model families. Two live directly in
-this directory; the fresh-arena campaign keeps its selected models with its
-curated evidence under `results/jacek_arena_bfm/`. They are not interchangeable
-and do not share a deployment identity.
+The repository contains four model families: the demo value model, the replay
+value model, the native best-first model, and the fresh-arena model. Related
+checkpoints share a row below only when they use the same representation.
+The fresh-arena models stay with their experiment records under
+`results/jacek_arena_bfm/`.
+
+Standalone contest bots also embed their own weights or replay data. Their exact
+sources and measured results are listed in the [bot catalog](../submissions/codingame/bots/README.md).
 
 | Family | Role | Canonical documentation |
 | --- | --- | --- |
@@ -59,7 +63,7 @@ mode to reject stale generated weights.
 
 ## Training provenance
 
-The checked-in model was produced on July 23, 2026 from scratch:
+The checked-in model was produced on 23 July 2026 from scratch:
 
 - 1,024 deterministic self-play games, 1,023 terminal.
 - 22,597 exported samples before cross-split duplicate removal. Searches that did not
@@ -111,7 +115,7 @@ mkdir -p results/research/jacek_article
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target papersoccer_jacek_training_data papersoccer_arena
 
-./build/papersoccer_jacek_training_data \
+./build/native/papersoccer_jacek_training_data \
   results/research/jacek_article/training_v2.jsonl 1024 73194721 4000
 
 .venv/bin/python tools/train_jacek_neural.py \
@@ -162,7 +166,7 @@ strength.
 Reproduce the fixed gates with:
 
 ```bash
-./build/papersoccer_arena positions \
+./build/native/papersoccer_arena positions \
   --positions 32 --generation-plies 24 --seed 828927513140 \
   --candidate-kind jacek-inspired \
   --candidate-alpha-beta-depth 6 \
@@ -171,7 +175,7 @@ Reproduce the fixed gates with:
   --reference-alpha-beta-depth 6 \
   --reference-alpha-beta-max-nodes 20000
 
-./build/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 12 --opening-plies 12 --max-plies 512 \
   --bootstrap-samples 2000 --seed 828927513140 \
   --candidate-kind jacek-inspired \
@@ -181,7 +185,7 @@ Reproduce the fixed gates with:
   --reference-alpha-beta-depth 6 \
   --reference-alpha-beta-max-nodes 20000
 
-./build/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 12 --opening-plies 12 --max-plies 512 \
   --bootstrap-samples 2000 --seed 828927513140 \
   --candidate-kind jacek-inspired \
@@ -189,7 +193,7 @@ Reproduce the fixed gates with:
   --candidate-alpha-beta-max-nodes 20000 \
   --reference-kind mcts --reference-iterations 2000
 
-./build/papersoccer_arena matches \
+./build/native/papersoccer_arena matches \
   --pairs 20 --opening-plies 12 --max-plies 512 \
   --bootstrap-samples 4000 --seed 828927513140 \
   --candidate-kind jacek-inspired \
