@@ -1,5 +1,10 @@
 # Live-led 8/8 research extension
 
+**Closed on 12 October 2026 by the owner, without an experimental promotion.**
+The [outcome report](live-eight-campaign-outcome.md) records all seven live
+versions and the subsequent ten unchanged-incumbent ranking retries. The
+protocol below is historical and does not authorize another run.
+
 The extension uses live CodinGame exploration to improve the existing bias-free
 6,301 → 8 → 8 → 1 value network. It preserves the original campaign deadline,
 21 October 2026 at 23:28 Warsaw time, with finalist selection 48 hours earlier.

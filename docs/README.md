@@ -33,6 +33,8 @@ does not reopen a completed campaign or allocate another experiment.
 
 ## Read results and provenance
 
+- [Eight-unit campaign outcome](live-eight-campaign-outcome.md): closed on 12 October 2026 without promotion; separate unchanged-source retries did not regain rank two
+
 - [Best recorded CodinGame result: rank 2/212](../submissions/codingame/releases/20261009-rank2/README.md): exact source and leaderboard screenshot, 9 October 2026
 
 - [Historical evidence guide](history.md)
