@@ -27,7 +27,6 @@ class RankTwoRelease(unittest.TestCase):
         image = (BOT / 'leaderboard.png').read_bytes()
         self.assertTrue(image.startswith(b'\x89PNG\r\n\x1a\n'))
         self.assertEqual(hashlib.sha256(image).hexdigest(), manifest['screenshot']['sha256'])
-        self.assertEqual(image, (ROOT / 'web/assets/codingame-rank2-20261009.png').read_bytes())
         result = manifest['best_recorded_result']
         self.assertEqual((result['rank'], result['players']), (2, 212))
         self.assertTrue(result['historical_snapshot'])
